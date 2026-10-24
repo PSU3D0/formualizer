@@ -3,8 +3,10 @@
 pub(in crate::xlsx) use super::events as emission;
 use super::*;
 mod generated;
+mod rules;
+use rules::{RuleContext, RuleEvent};
 mod state;
-use state::OpenCellState;
+use state::SheetState;
 #[cfg(test)]
 mod path_tests;
 mod scalar;
@@ -158,40 +160,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
     path_counts: &mut (usize, usize),
 ) -> Result<Scan, IoError> {
     let (observed, logical_cells) = counts;
-    let mut hidden_rows = Vec::new();
-    let mut rows_hidden_by_default = false;
-    let mut outline_rows = Vec::new();
-    let mut outline_collapsed = false;
-    let mut active_filters = Vec::new();
-    let mut filter_seen = false;
-    let mut filter_ref: Option<SourceRect> = None;
-    let mut filter_active = false;
-    let mut table_merges = Vec::new();
-    let mut table_ids = Vec::new();
-    let mut table_count = None;
-    let mut serialized = 0usize;
-    let mut cells = Vec::new();
-    let mut open_cell = OpenCellState::default();
-    let mut row = 0;
-    let mut column = 0;
-    let mut sheet_data_count = 0;
-    let mut dimension = None;
-    let mut raw_dimension_span = None;
-    let mut raw_row_refusal_span = None;
-    let mut max_row = 0u32;
-    let mut max_col = 0u32;
-    let mut index = (mode == ScanRetention::Indexed).then(|| SourceIndex {
-        dimension: None,
-        sheet_data: 0..0,
-        sheet_data_open_end: 0,
-        sheet_data_empty: false,
-        rows: Vec::new(),
-        cells: Vec::new(),
-        merges: Vec::new(),
-    });
-    let mut extent_cells = 0u64;
-    let mut families = shared::Families::default();
-    let mut generated_children = generated::GeneratedChildren::default();
+    let mut sheet = SheetState::new(mode);
     let mut cursor = Cursor::new();
     use crate::xlsx::options::checkpoint;
     use crate::xlsx::xml::{
@@ -230,10 +199,12 @@ fn scan_inner<const COUNT_PATHS: bool>(
     macro_rules! accept_text {
         ($value:expr, $start:expr, $end:expr) => {{
             let value = $value;
-            if open_cell.is_inline() {
+            if sheet.open_cell.is_inline() {
                 cursor.materialize(&mut path, depth)?;
             }
-            open_cell.text(value, $start..$end, text, &path, cursor.position)?;
+            sheet
+                .open_cell
+                .text(value, $start..$end, text, &path, cursor.position)?;
         }};
     }
     loop {
@@ -488,7 +459,7 @@ fn scan_inner<const COUNT_PATHS: bool>(
             }
             Event::Comment(_) | Event::PI(_) => continue,
         };
-        if open_cell.is_inline() {
+        if sheet.open_cell.is_inline() {
             if path.len() < depth {
                 cursor.materialize(&mut path, depth - 1)?;
                 path.push(element.clone());
@@ -500,7 +471,8 @@ fn scan_inner<const COUNT_PATHS: bool>(
                 },
                 Boundary::Close => Kind::Close,
             };
-            open_cell
+            sheet
+                .open_cell
                 .inline_text
                 .event(&path, &Node::new(kind, span.clone()), bytes)?;
         }
@@ -509,634 +481,33 @@ fn scan_inner<const COUNT_PATHS: bool>(
             cursor.open(tag, element.local, depth);
         }
         let closes = matches!(boundary, Boundary::Open { empty: true } | Boundary::Close);
-        'rules: {
-            let position = cursor.position;
-            let is_cell = position == Position::Cell;
-            let direct = cursor.direct(depth);
-            match &boundary {
-                Boundary::Open { empty } => {
-                    if (position == Position::SheetFormatPr)
-                        && matches!(attrs.value("zeroHeight"), Some("1" | "true"))
-                    {
-                        rows_hidden_by_default = true;
-                    }
-                    if position == Position::AutoFilter {
-                        if filter_seen {
-                            return Err(unsupported("duplicate worksheet autoFilter", "worksheet"));
-                        }
-                        filter_seen = true;
-                        filter_ref = Some(SourceRect::parse(attrs.required("ref")?)?);
-                    }
-                    if path.len() == 4
-                        && path[1].ns.is_main()
-                        && path[1].local == "autoFilter"
-                        && path[2].local == "filterColumn"
-                    {
-                        filter_active = true;
-                    }
-                    if depth == 1 && position != Position::Worksheet {
-                        return Err(unsupported("worksheet root/namespace", "worksheet"));
-                    }
-                    // Structural names (and merge metadata) outside the main
-                    // namespace.
-                    if !tag.main
-                        && matches!(
-                            tag.local,
-                            Local::Worksheet
-                                | Local::SheetData
-                                | Local::Row
-                                | Local::C
-                                | Local::F
-                                | Local::V
-                                | Local::Is
-                                | Local::T
-                                | Local::R
-                                | Local::RPr
-                                | Local::Dimension
-                                | Local::MergeCells
-                                | Local::MergeCell
-                        )
-                    {
-                        if inert_extension(&path) {
-                            break 'rules;
-                        }
-                        return Err(unsupported("foreign worksheet lookalike", element.local));
-                    }
-                    if matches!(tag.local, Local::F | Local::V | Local::Is) && !direct {
-                        return Err(unsupported("misplaced cell payload", "worksheet"));
-                    }
-                    if matches!(tag.local, Local::TableParts | Local::TablePart) {
-                        let valid = if tag.local == Local::TableParts {
-                            position == Position::TableParts
-                        } else {
-                            position == Position::TablePart
-                        };
-                        if !valid {
-                            return Err(unsupported(
-                                "misplaced/foreign table metadata",
-                                "worksheet",
-                            ));
-                        }
-                        if tag.local == Local::TableParts {
-                            if table_count.is_some() {
-                                return Err(unsupported("duplicate tableParts", "worksheet"));
-                            }
-                            let count =
-                                attrs.required("count")?.parse::<usize>().map_err(|_| {
-                                    unsupported("invalid tableParts count", "worksheet")
-                                })?;
-                            if count > options.limits.max_entries.min(options.limits.max_cells) {
-                                return Err(unsupported("table count limit", "worksheet"));
-                            }
-                            table_count = Some(count);
-                        } else {
-                            if table_ids.len() >= table_count.unwrap_or(0) {
-                                return Err(unsupported(
-                                    "tablePart count disagreement",
-                                    "worksheet",
-                                ));
-                            }
-                            table_ids.push(
-                                attrs
-                                    .attribute(xml::OFFICE, "id")
-                                    .ok_or_else(|| {
-                                        unsupported("missing table relationship ID", "worksheet")
-                                    })?
-                                    .value
-                                    .clone()
-                                    .into_owned(),
-                            );
-                        }
-                    }
-                    if tag.local == Local::Dimension {
-                        if position != Position::Dimension
-                            || dimension.is_some()
-                            || sheet_data_count != 0
-                        {
-                            return Err(unsupported("duplicate/misplaced dimension", "worksheet"));
-                        }
-                        let range = rect(attrs.required("ref")?)?;
-                        let area = u64::from(range.2) * u64::from(range.3);
-                        if range.3 > options.limits.max_columns {
-                            return Err(unsupported("worksheet width limit", "worksheet"));
-                        }
-                        if area > options.limits.max_cells as u64 {
-                            return Err(unsupported("worksheet dimension cell limit", "worksheet"));
-                        }
-                        dimension = Some(range);
-                        raw_dimension_span = Some(raw_attribute_span(
-                            bytes,
-                            &attrs.required_attribute("ref")?.span,
-                        )?);
-                        if let Some(index) = index.as_mut() {
-                            let span = attrs
-                                .attribute("", "ref")
-                                .expect("required ref")
-                                .span
-                                .clone();
-                            index.dimension = Some((
-                                SourceRect {
-                                    first_row: range.0,
-                                    first_col: range.1,
-                                    last_row: range.2,
-                                    last_col: range.3,
-                                },
-                                span,
-                            ));
-                        }
-                    }
-                    if tag.local == Local::SheetData {
-                        if position != Position::SheetData {
-                            return Err(unsupported("misplaced sheetData", "worksheet"));
-                        }
-                        sheet_data_count += 1;
-                        if sheet_data_count != 1 {
-                            return Err(unsupported("duplicate sheetData", "worksheet"));
-                        }
-                        if let Some(index) = index.as_mut() {
-                            index.sheet_data = span.clone();
-                            index.sheet_data_open_end = span.end;
-                            index.sheet_data_empty = *empty;
-                        }
-                    }
-                    if tag.local == Local::MergeCell {
-                        if position != Position::MergeCell {
-                            return Err(unsupported("misplaced merge cell", "worksheet"));
-                        }
-                        let merge = SourceRect::parse(attrs.required("ref")?)?;
-                        if mode == ScanRetention::TablePlain {
-                            if table_merges.len() >= options.limits.max_cells {
-                                return Err(unsupported("merge count limit", "worksheet"));
-                            }
-                            table_merges.push(merge);
-                        }
-                        if let Some(index) = index.as_mut() {
-                            if index.merges.len() >= options.limits.max_cells {
-                                return Err(unsupported("merge count limit", "worksheet"));
-                            }
-                            index.merges.push(merge);
-                        }
-                    }
-                    if tag.local == Local::Row {
-                        if position != Position::Row {
-                            return Err(unsupported("misplaced row", "worksheet"));
-                        }
-                        let next_row = integer(attrs.required("r")?)?;
-                        if raw_row_refusal_span.is_none() {
-                            let raw =
-                                raw_attribute_span(bytes, &attrs.required_attribute("r")?.span)?;
-                            if bytes[raw.clone()].iter().any(|byte| !byte.is_ascii_digit()) {
-                                raw_row_refusal_span = Some(raw);
-                            }
-                        }
-                        if next_row <= row || next_row > 1_048_576 {
-                            return Err(unsupported(
-                                "invalid/non-increasing worksheet row",
-                                "worksheet",
-                            ));
-                        }
-                        // Excel shows a zero-height row as hidden even without
-                        // the `hidden` flag.
-                        let zero_height = attrs
-                            .value("ht")
-                            .is_some_and(|h| h.trim().parse::<f64>().map_or(true, |h| h <= 0.0));
-                        if matches!(attrs.value("hidden"), Some("1" | "true")) || zero_height {
-                            if hidden_rows.len() >= options.limits.max_cells {
-                                return Err(unsupported("hidden row count limit", "worksheet"));
-                            }
-                            hidden_rows.push(next_row);
-                        } else if !matches!(attrs.value("hidden"), None | Some("0" | "false")) {
-                            return Err(unsupported("invalid row hidden flag", "worksheet"));
-                        }
-                        if attrs.value("outlineLevel").is_some_and(|l| l.trim() != "0") {
-                            if outline_rows.len() >= options.limits.max_cells {
-                                return Err(unsupported("outline row count limit", "worksheet"));
-                            }
-                            outline_rows.push(next_row);
-                        }
-                        if !matches!(attrs.value("collapsed"), None | Some("0" | "false")) {
-                            outline_collapsed = true;
-                        }
-                        row = next_row;
-                        column = 0;
-                        if let Some(index) = index.as_mut() {
-                            let at = index.cells.len();
-                            index.rows.push(RowEntry {
-                                row,
-                                span: span.clone(),
-                                open_end: span.end,
-                                empty: *empty,
-                                qualified: element.qualified.to_owned(),
-                                spans_attr: attrs.attribute("", "spans").map(|a| a.span.clone()),
-                                cells: at..at,
-                            });
-                        }
-                    }
-                    if tag.local == Local::C {
-                        if !is_cell || open_cell.cell.is_some() {
-                            return Err(unsupported("misplaced/nested cell", "worksheet"));
-                        }
-                        let coordinate_attribute = attrs.required_attribute("r")?;
-                        open_cell.raw_coordinate =
-                            Some(raw_attribute_span(bytes, &coordinate_attribute.span)?);
-                        let address = &coordinate_attribute.value;
-                        let canonical = plain_coord(address);
-                        let (r, c) = canonical.map_or_else(|| coord(address), Ok)?;
-                        if c > options.limits.max_columns {
-                            return Err(unsupported("worksheet width limit", "worksheet"));
-                        }
-                        max_row = max_row.max(r);
-                        max_col = max_col.max(c);
-                        if row != r || c <= column {
-                            return Err(unsupported(
-                                "duplicate/non-increasing cell coordinate",
-                                "worksheet",
-                            ));
-                        }
-                        column = c;
-                        if let Some((r1, c1, r2, c2)) = dimension
-                            && (!(r1..=r2).contains(&r) || !(c1..=c2).contains(&c))
-                        {
-                            return Err(unsupported(
-                                "cell outside worksheet dimension",
-                                "worksheet",
-                            ));
-                        }
-                        *observed = observed
-                            .checked_add(1)
-                            .ok_or_else(|| unsupported("cell count overflow", "worksheet"))?;
-                        if *observed > options.limits.max_cells {
-                            return Err(unsupported("serialized cell count limit", "worksheet"));
-                        }
-                        if attrs.value("vm").is_some() {
-                            return Err(unsupported("rich value metadata (vm)", "worksheet"));
-                        }
-                        let cm = attrs
-                            .value("cm")
-                            .map(|value| {
-                                value.parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| {
-                                    unsupported(
-                                        "dangling or invalid dynamic cell metadata index (cm)",
-                                        "worksheet",
-                                    )
-                                })
-                            })
-                            .transpose()?;
-                        if cm.is_some() && index.is_none() {
-                            *needs_index = true;
-                            return Err(unsupported(NEEDS_INDEX, "worksheet"));
-                        }
-                        serialized += 1;
-                        let kind_attribute = attrs.attribute("", "t");
-                        let kind = kind_attribute.as_ref().map(|a| &a.value);
-                        if !matches!(
-                            kind.map(|k| &**k),
-                            None | Some("n" | "b" | "e" | "str" | "s" | "inlineStr" | "d")
-                        ) {
-                            return Err(unsupported("unknown cell type", "worksheet"));
-                        }
-                        let kind_span = kind_attribute.as_ref().map(|a| a.span.clone());
-                        open_cell.raw_type = kind_attribute
-                            .as_ref()
-                            .map(|a| raw_attribute_span(bytes, &a.span))
-                            .transpose()?;
-                        let style_attribute = attrs.attribute("", "s");
-                        open_cell.raw_style = style_attribute
-                            .as_ref()
-                            .map(|a| raw_attribute_span(bytes, &a.span))
-                            .transpose()?;
-                        open_cell.style = style_attribute.map(|a| a.value);
-                        open_cell.literal_text = Cow::Borrowed("");
-                        open_cell.inline_text = emission::DisplayString::default();
-                        if !*empty {
-                            open_cell.cell = Some(ScalarCell {
-                                row: r,
-                                col: c,
-                                span: span.clone(),
-                                open_end: span.end,
-                                qualified: element.qualified,
-                                kind: kind.and_then(|k| CellKind::parse(k)),
-                                kind_span,
-                                value: None,
-                                inline: None,
-                                has_formula: false,
-                                dynamic: (cm.is_some() || canonical.is_none()).then(|| {
-                                    Box::new(DynamicAttributes {
-                                        original_address: canonical
-                                            .is_none()
-                                            .then(|| address.to_string().into_boxed_str()),
-                                        cm,
-                                        cm_span: attrs.attribute("", "cm").map(|a| a.span.clone()),
-                                        ..Default::default()
-                                    })
-                                }),
-                            });
-                        } else if let Some(index) = index.as_mut() {
-                            if cm.is_some() {
-                                return Err(unsupported(
-                                    "cell metadata on a non-dynamic-array cell",
-                                    "worksheet",
-                                ));
-                            }
-                            index.cells.push(IndexedCell {
-                                row: r,
-                                col: c,
-                                span: span.clone(),
-                                open_end: span.end,
-                                empty: true,
-                                kind_span,
-                                kind: kind.map(|k| k.to_string()),
-                                cm: None,
-                                value: None,
-                                inline: None,
-                                formula: None,
-                                literal_refusal: None,
-                            });
-                            index.rows.last_mut().expect("open row").cells.end = index.cells.len();
-                        }
-                        if *empty {
-                            emit(emission::Literal {
-                                row: r,
-                                col: c,
-                                generated_child_hint: generated_children.contains(r, c),
-                                style: open_cell.style.take(),
-                                raw_coordinate_span: open_cell.raw_coordinate.take(),
-                                raw_type_span: open_cell.raw_type.take(),
-                                raw_style_span: open_cell.raw_style.take(),
-                                raw_value_span: None,
-                                value: emission::Value::Empty,
-                            })?;
-                        }
-                    }
-                    if direct {
-                        let cell = open_cell
-                            .cell
-                            .as_mut()
-                            .ok_or_else(|| unsupported("payload without cell", "worksheet"))?;
-                        match tag.local {
-                            Local::F => {
-                                if cell.has_formula || cell.value.is_some() || cell.inline.is_some()
-                                {
-                                    return Err(unsupported(
-                                        "duplicate/misordered formula",
-                                        "worksheet",
-                                    ));
-                                }
-                                cell.has_formula = true;
-                                open_cell.formula = FormulaState::default();
-                                let kind_attribute = attrs.attribute("", "t");
-                                open_cell.formula.kind = match kind_attribute
-                                    .as_ref()
-                                    .map_or("normal", |a| &*a.value)
-                                {
-                                    "normal" => "normal",
-                                    "shared" => "shared",
-                                    "array" => "array",
-                                    "dataTable" => {
-                                        return Err(unsupported("data-table formula", "worksheet"));
-                                    }
-                                    _ => {
-                                        return Err(unsupported(
-                                            "unknown formula kind",
-                                            "worksheet",
-                                        ));
-                                    }
-                                };
-                                open_cell.formula.open = span.clone();
-                                open_cell.formula.kind_span =
-                                    kind_attribute.map(|a| a.span.clone());
-                                let extent = attrs.attribute("", "ref");
-                                if open_cell.formula.kind == "array" {
-                                    if index.is_none() {
-                                        *needs_index = true;
-                                        return Err(unsupported(NEEDS_INDEX, "worksheet"));
-                                    }
-                                    if let Some(extent) = extent.as_ref() {
-                                        let rect = SourceRect::parse(&extent.value)?;
-                                        // Validate declared geometry before any
-                                        // ownership index or child enumeration.
-                                        if rect.last_col > options.limits.max_columns {
-                                            return Err(unsupported(
-                                                "dynamic array extent width limit",
-                                                "worksheet",
-                                            ));
-                                        }
-                                        extent_cells = rect
-                                            .cell_count()
-                                            .and_then(|n| extent_cells.checked_add(n))
-                                            .filter(|n| *n <= options.limits.max_cells as u64)
-                                            .ok_or_else(|| {
-                                                unsupported(
-                                                    "dynamic array extent cell limit",
-                                                    "worksheet",
-                                                )
-                                            })?;
-                                        max_row = max_row.max(rect.last_row);
-                                        max_col = max_col.max(rect.last_col);
-                                        let dynamic = cell.dynamic.get_or_insert_default();
-                                        dynamic.array_ref = Some(rect);
-                                        dynamic.array_ref_span = Some(extent.span.clone());
-                                    }
-                                } else if extent.is_some() && open_cell.formula.kind != "shared" {
-                                    return Err(unsupported(
-                                        "non-shared formula extent",
-                                        "worksheet",
-                                    ));
-                                }
-                                if open_cell.formula.kind == "shared" {
-                                    open_cell.formula.shared_id =
-                                        Some(integer(attrs.required("si")?)?);
-                                    open_cell.formula.shared_range =
-                                        extent.map(|a| rect(&a.value)).transpose()?;
-                                }
-                                if *empty {
-                                    open_cell.formula.end = span.end;
-                                }
-                            }
-                            Local::V => {
-                                if cell.value.is_some() || cell.inline.is_some() {
-                                    return Err(unsupported(
-                                        "duplicate/ambiguous cell cache",
-                                        "worksheet",
-                                    ));
-                                }
-                                cell.value = Some(OpenValue {
-                                    span: span.clone(),
-                                    open_end: span.end,
-                                    close_start: span.end,
-                                    empty: *empty,
-                                    qualified: element.qualified,
-                                    text: Cow::Borrowed(""),
-                                });
-                            }
-                            Local::Is => {
-                                if cell.inline.is_some() || cell.value.is_some() {
-                                    return Err(unsupported(
-                                        "duplicate/ambiguous inline cache",
-                                        "worksheet",
-                                    ));
-                                }
-                                cell.inline = Some(span.clone());
-                            }
-                            _ => {}
-                        }
-                    }
-                    if depth > 5
-                        && matches!(cursor.restore, Position::CellFormula | Position::CellValue)
-                    {
-                        return Err(unsupported("nested formula/cache content", "worksheet"));
-                    }
-                }
-                Boundary::Close => {
-                    if (position == Position::AutoFilter) && filter_active {
-                        let mut rect = filter_ref.take().expect("validated autoFilter");
-                        rect.first_row += 1;
-                        if rect.first_row <= rect.last_row {
-                            active_filters.push(rect);
-                        }
-                    }
-                    if direct {
-                        open_cell.close_payload(tag.local, &span)?;
-                    }
-                    if let Some(index) = index.as_mut() {
-                        if position == Position::Row {
-                            let entry = index.rows.last_mut().expect("open row");
-                            entry.span.end = span.end;
-                        }
-                        if position == Position::SheetData {
-                            index.sheet_data.end = span.end;
-                        }
-                    }
-                    if is_cell {
-                        let cell = open_cell
-                            .cell
-                            .as_mut()
-                            .ok_or_else(|| unsupported("unbalanced cell", "worksheet"))?;
-                        cell.span.end = span.end;
-                        let emitted_value = (!cell.has_formula).then(|| {
-                            cell.decode(
-                                std::mem::take(&mut open_cell.literal_text),
-                                std::mem::take(&mut open_cell.inline_text),
-                            )
-                        });
-                        let refusal = emitted_value
-                            .as_ref()
-                            .and_then(|value| cell.refusal(bytes, value));
-                        cell.dynamic_anchor_extent(&open_cell.formula)?;
-                        if cell.has_formula
-                            && open_cell.formula.kind == "array"
-                            && let Some(extent) = cell.dynamic.as_ref().and_then(|d| d.array_ref)
-                        {
-                            // cm/XLDAPR and legacy array anchors share the same
-                            // validated top-left source extent. Do not resolve
-                            // metadata or check overlap/ownership here.
-                            generated_children.observe(extent);
-                        }
-                        if let Some(index) = index.as_mut() {
-                            // Ownership decides later whether a refused literal
-                            // is a masked generated child or a refused input.
-                            index.cells.push(IndexedCell {
-                                row: cell.row,
-                                col: cell.col,
-                                span: cell.span.clone(),
-                                open_end: cell.open_end,
-                                empty: false,
-                                kind: cell.kind.as_deref().map(str::to_owned),
-                                kind_span: cell.kind_span.clone(),
-                                cm: cell.cm(),
-                                value: cell.value.as_ref().map(|v| v.span.clone()),
-                                inline: cell.inline.clone(),
-                                formula: cell.has_formula.then_some(cells.len()),
-                                literal_refusal: refusal,
-                            });
-                            index.rows.last_mut().expect("open row").cells.end = index.cells.len();
-                        } else if let Some(refusal) = refusal {
-                            return Err(unsupported(refusal, "worksheet"));
-                        }
-                        if let Some(value) = emitted_value {
-                            emit(emission::Literal {
-                                row: cell.row,
-                                col: cell.col,
-                                generated_child_hint: generated_children
-                                    .contains(cell.row, cell.col),
-                                style: open_cell.style.take(),
-                                raw_coordinate_span: open_cell.raw_coordinate.take(),
-                                raw_type_span: open_cell.raw_type.take(),
-                                raw_style_span: open_cell.raw_style.take(),
-                                raw_value_span: cell
-                                    .value
-                                    .as_ref()
-                                    .map(|v| v.open_end..v.close_start),
-                                value,
-                            })?;
-                            open_cell.cell = None;
-                        } else {
-                            if open_cell.formula.kind == "normal"
-                                && open_cell.formula.text.trim().is_empty()
-                            {
-                                return Err(unsupported("empty ordinary formula", "worksheet"));
-                            }
-                            if open_cell.formula.end == 0 {
-                                return Err(unsupported("missing formula boundary", "worksheet"));
-                            }
-                            cells.push(
-                                open_cell
-                                    .cell
-                                    .take()
-                                    .expect("open cell")
-                                    .retain(std::mem::take(&mut open_cell.formula), bytes),
-                            );
-                            if cells.len() > options.limits.max_formula_cells {
-                                return Err(unsupported("formula cell count limit", "worksheet"));
-                            }
-                            if let Some(cell) = cells.last() {
-                                families.observe(cell, cells.len() - 1, options);
-                            }
-                        }
-                    }
-                }
-            }
+        let rule_event = RuleEvent {
+            attrs,
+            element,
+            path: &path,
+            span,
+            tag,
+            position: cursor.position,
+            restore: cursor.restore,
+            depth,
+            direct: cursor.direct(depth),
+            empty: matches!(boundary, Boundary::Open { empty: true }),
+        };
+        let mut context = RuleContext {
+            bytes,
+            options,
+            mode,
+            observed,
+            needs_index,
+        };
+        match boundary {
+            Boundary::Open { .. } => sheet.open(&rule_event, &mut context, emit)?,
+            Boundary::Close => sheet.close(&rule_event, &mut context, emit)?,
         }
+
         if closes {
             cursor.close(depth);
         }
     }
-    if sheet_data_count != 1 {
-        return Err(unsupported("missing sheetData", "worksheet"));
-    }
-    if let Some((_, _, r, c)) = dimension {
-        max_row = max_row.max(r);
-        max_col = max_col.max(c);
-    }
-    *logical_cells = logical_cells
-        .checked_add(u64::from(max_row) * u64::from(max_col))
-        .ok_or_else(|| unsupported("logical area overflow", "workbook"))?;
-    if *logical_cells > options.limits.max_cells as u64 {
-        return Err(unsupported("workbook logical cell limit", "workbook"));
-    }
-    families.finish()?;
-    if table_count.is_some_and(|n| n != table_ids.len()) {
-        return Err(unsupported("tablePart count disagreement", "worksheet"));
-    }
-    // A collapsed outline may hide grouped rows that carry no `hidden` flag:
-    // treat every grouped row as hidden.
-    if outline_collapsed && !outline_rows.is_empty() {
-        hidden_rows.extend(outline_rows);
-        hidden_rows.sort_unstable();
-        hidden_rows.dedup();
-    }
-    Ok(Scan {
-        active_filters,
-        hidden_rows,
-        rows_hidden_by_default,
-        has_dimension: dimension.is_some(),
-        raw_dimension_span,
-        raw_row_refusal_span,
-        table_merges,
-        table_ids,
-        cells,
-        index,
-        serialized,
-        bounds: (max_row, max_col),
-    })
+    sheet.finish(options, logical_cells)
 }

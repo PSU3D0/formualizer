@@ -75,3 +75,119 @@ impl<'a> OpenCellState<'a> {
         Ok(())
     }
 }
+
+/// Semantic sheet state, independent of XML namespace/tokenizer bookkeeping.
+pub(super) struct SheetState<'a> {
+    pub open_cell: OpenCellState<'a>,
+    pub hidden_rows: Vec<u32>,
+    pub rows_hidden_by_default: bool,
+    pub outline_rows: Vec<u32>,
+    pub outline_collapsed: bool,
+    pub active_filters: Vec<SourceRect>,
+    pub filter_seen: bool,
+    pub filter_ref: Option<SourceRect>,
+    pub filter_active: bool,
+    pub table_merges: Vec<SourceRect>,
+    pub table_ids: Vec<String>,
+    pub table_count: Option<usize>,
+    pub serialized: usize,
+    pub cells: Vec<FormulaMark>,
+    pub row: u32,
+    pub column: u32,
+    pub sheet_data_count: usize,
+    pub dimension: Option<(u32, u32, u32, u32)>,
+    pub raw_dimension_span: Option<Range<usize>>,
+    pub raw_row_refusal_span: Option<Range<usize>>,
+    pub max_row: u32,
+    pub max_col: u32,
+    pub index: Option<SourceIndex>,
+    pub extent_cells: u64,
+    pub families: shared::Families,
+    pub generated_children: generated::GeneratedChildren,
+}
+
+impl<'a> SheetState<'a> {
+    pub fn new(mode: ScanRetention) -> Self {
+        Self {
+            open_cell: OpenCellState::default(),
+            hidden_rows: Vec::new(),
+            rows_hidden_by_default: false,
+            outline_rows: Vec::new(),
+            outline_collapsed: false,
+            active_filters: Vec::new(),
+            filter_seen: false,
+            filter_ref: None,
+            filter_active: false,
+            table_merges: Vec::new(),
+            table_ids: Vec::new(),
+            table_count: None,
+            serialized: 0,
+            cells: Vec::new(),
+            row: 0,
+            column: 0,
+            sheet_data_count: 0,
+            dimension: None,
+            raw_dimension_span: None,
+            raw_row_refusal_span: None,
+            max_row: 0,
+            max_col: 0,
+            index: (mode == ScanRetention::Indexed).then(|| SourceIndex {
+                dimension: None,
+                sheet_data: 0..0,
+                sheet_data_open_end: 0,
+                sheet_data_empty: false,
+                rows: Vec::new(),
+                cells: Vec::new(),
+                merges: Vec::new(),
+            }),
+            extent_cells: 0,
+            families: shared::Families::default(),
+            generated_children: generated::GeneratedChildren::default(),
+        }
+    }
+
+    pub fn finish(
+        mut self,
+        options: &XlsxRecalculateOptions,
+        logical_cells: &mut u64,
+    ) -> Result<Scan, IoError> {
+        if self.sheet_data_count != 1 {
+            return Err(unsupported("missing sheetData", "worksheet"));
+        }
+        if let Some((_, _, r, c)) = self.dimension {
+            self.max_row = self.max_row.max(r);
+            self.max_col = self.max_col.max(c);
+        }
+        *logical_cells = logical_cells
+            .checked_add(u64::from(self.max_row) * u64::from(self.max_col))
+            .ok_or_else(|| unsupported("logical area overflow", "workbook"))?;
+        if *logical_cells > options.limits.max_cells as u64 {
+            return Err(unsupported("workbook logical cell limit", "workbook"));
+        }
+        self.families.finish()?;
+        if self.table_count.is_some_and(|n| n != self.table_ids.len()) {
+            return Err(unsupported("tablePart count disagreement", "worksheet"));
+        }
+        // A collapsed outline may hide grouped rows that carry no `hidden` flag:
+        // treat every grouped row as hidden.
+        if self.outline_collapsed && !self.outline_rows.is_empty() {
+            self.hidden_rows.extend(self.outline_rows);
+            self.hidden_rows.sort_unstable();
+            self.hidden_rows.dedup();
+        }
+        Ok(Scan {
+            active_filters: self.active_filters,
+            hidden_rows: self.hidden_rows,
+            rows_hidden_by_default: self.rows_hidden_by_default,
+            has_dimension: self.dimension.is_some(),
+            raw_dimension_span: self.raw_dimension_span,
+            raw_row_refusal_span: self.raw_row_refusal_span,
+            table_merges: self.table_merges,
+            table_ids: self.table_ids,
+            cells: self.cells,
+            index: self.index,
+            serialized: self.serialized,
+            bounds: (self.max_row, self.max_col),
+        })
+    }
+}
