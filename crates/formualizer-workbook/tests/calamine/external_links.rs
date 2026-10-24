@@ -127,6 +127,61 @@ fn check_mode(config: WorkbookConfig) {
     );
 }
 
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn native_cached_links_match_supported_refused_and_named_values() {
+    use formualizer_workbook::backends::NativeXlsxAdapter;
+    let formulas = [
+        "[1]Data!A1",
+        "SUM([1]Data!A1:A2)",
+        "ROW([1]Data!A1)",
+        "Linked+1",
+    ];
+    let bytes = linked_book(
+        &formulas,
+        false,
+        "<definedName name=\"Linked\">[1]Data!A1</definedName>",
+    );
+    for config in [
+        WorkbookConfig::ephemeral(),
+        WorkbookConfig::interactive(),
+        WorkbookConfig::ephemeral()
+            .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental),
+    ] {
+        let (mut baseline, baseline_stats) = Workbook::from_reader_with_adapter_stats(
+            CalamineAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            config.clone(),
+        )
+        .unwrap();
+        let (mut native, native_stats) = Workbook::from_reader_with_adapter_stats(
+            NativeXlsxAdapter::open_bytes(bytes.clone()).unwrap(),
+            LoadStrategy::EagerAll,
+            config,
+        )
+        .unwrap();
+        assert_eq!(baseline_stats, native_stats);
+        assert_eq!(
+            baseline.name_import_diagnostics(),
+            native.name_import_diagnostics()
+        );
+        assert_eq!(
+            baseline.cached_external_link_indices(),
+            native.cached_external_link_indices()
+        );
+        for row in 1..=4 {
+            assert_eq!(
+                baseline.get_formula("Sheet1", row, 1),
+                native.get_formula("Sheet1", row, 1)
+            );
+            assert_eq!(
+                baseline.evaluate_cell("Sheet1", row, 1).unwrap(),
+                native.evaluate_cell("Sheet1", row, 1).unwrap()
+            );
+        }
+    }
+}
+
 #[test]
 fn cached_links_eager() {
     check_mode(WorkbookConfig::ephemeral());

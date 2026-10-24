@@ -112,7 +112,14 @@ impl CalculationNames {
         self.name_analysis.take();
         self.grounded_names.take();
     }
-    fn raw_calculation_names(&self) -> &Vec<(String, String, Option<usize>)> {
+    pub(in crate::xlsx) fn admit_external_snapshot(
+        &mut self,
+        snapshot: &crate::CachedExternalLinkValues,
+    ) {
+        self.admit_external(snapshot.values.clone(), snapshot.skipped_names.clone());
+        self.refused_external_names = snapshot.refused_names.clone();
+    }
+    pub(in crate::xlsx) fn raw_calculation_names(&self) -> &Vec<(String, String, Option<usize>)> {
         &self.raw
     }
     fn lazy_defined_names(&self) -> &Vec<DefinedName> {
@@ -522,7 +529,11 @@ impl CalculationNames {
         legacy || self.skipped_external_names.contains(&name)
     }
 
-    fn skippable_name_registration_error(&self, name: &str, error: &ExcelError) -> bool {
+    pub(in crate::xlsx) fn skippable_name_registration_error(
+        &self,
+        name: &str,
+        error: &ExcelError,
+    ) -> bool {
         self.policy.referenced_only
             && !self.legacy_calculation_name(name)
             && error.kind == ExcelErrorKind::Name

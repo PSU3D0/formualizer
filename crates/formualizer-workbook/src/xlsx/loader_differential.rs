@@ -397,8 +397,13 @@ where
     let mut coverage = Coverage::default();
     let mut divergences = 0;
     for path in paths {
+        writeln!(output, "BEGIN {}", path.display())?;
         let bytes = std::fs::read(path)?;
+        writeln!(output, "ARM baseline")?;
+        output.flush()?;
         let a = project(capture(&bytes, baseline));
+        writeln!(output, "ARM native")?;
+        output.flush()?;
         let b = project(capture(&bytes, candidate));
         coverage.files += 1;
         coverage.sheets += a.coverage.sheets;
@@ -524,7 +529,7 @@ fn native_ordinary_names_diagnostics_and_calc_settings_match() {
         ),
         (
             "xl/workbook.xml",
-            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets><definedNames><definedName name=\"Input\">Sheet1!$A$1</definedName><definedName name=\"Twice\">Input*2</definedName><definedName name=\"Bad\">Bad+1</definedName><definedName name=\"Local\" localSheetId=\"0\">3</definedName></definedNames><calcPr iterate=\"1\" iterateCount=\"10\" iterateDelta=\"0.001\"/></workbook>",
+            "<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"rId1\"/></sheets><definedNames><definedName name=\"Input\">Sheet1!$A$1</definedName><definedName name=\"Twice\">Input*2</definedName><definedName name=\"Bad\">Bad+1</definedName><definedName name=\"Local\" localSheetId=\"0\">3</definedName><definedName name=\"Bad\\Name\">#REF!</definedName></definedNames><calcPr iterate=\"1\" iterateCount=\"10\" iterateDelta=\"0.001\"/></workbook>",
         ),
         (
             "xl/worksheets/sheet1.xml",
@@ -545,7 +550,7 @@ fn native_ordinary_names_diagnostics_and_calc_settings_match() {
     b.records.retain(|key, _| !key.starts_with("reader/sheet/"));
     assert_eq!(first_difference(&a, &b), None);
     assert!(a.coverage.names >= 2);
-    assert_eq!(a.coverage.diagnostics, 1);
+    assert_eq!(a.coverage.diagnostics, 2);
 }
 
 #[test]

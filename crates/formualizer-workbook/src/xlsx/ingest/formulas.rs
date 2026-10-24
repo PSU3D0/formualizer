@@ -249,6 +249,48 @@ pub(in crate::xlsx) fn stage_records<C: formualizer_eval::traits::EvaluationCont
     usage: WorkbookSpoolUsage,
     cancel: &Option<formualizer_eval::engine::CancelToken>,
 ) -> Result<StagedFormulas, IoError> {
+    stage_records_inner::<C, false>(
+        engine,
+        sheet,
+        sheet_instance,
+        records,
+        usage,
+        cancel,
+        &Default::default(),
+    )
+}
+
+pub(in crate::xlsx) fn stage_records_with_refusals<
+    C: formualizer_eval::traits::EvaluationContext,
+>(
+    engine: &mut Engine<C>,
+    sheet: &str,
+    sheet_instance: u32,
+    records: impl IntoIterator<Item = Result<OwnedSpoolFormulaRecord, IoError>>,
+    usage: WorkbookSpoolUsage,
+    cancel: &Option<formualizer_eval::engine::CancelToken>,
+    refused: &std::collections::HashSet<(u32, u32)>,
+) -> Result<StagedFormulas, IoError> {
+    stage_records_inner::<C, true>(
+        engine,
+        sheet,
+        sheet_instance,
+        records,
+        usage,
+        cancel,
+        refused,
+    )
+}
+
+fn stage_records_inner<C: formualizer_eval::traits::EvaluationContext, const FILTER: bool>(
+    engine: &mut Engine<C>,
+    sheet: &str,
+    sheet_instance: u32,
+    records: impl IntoIterator<Item = Result<OwnedSpoolFormulaRecord, IoError>>,
+    usage: WorkbookSpoolUsage,
+    cancel: &Option<formualizer_eval::engine::CancelToken>,
+    refused: &std::collections::HashSet<(u32, u32)>,
+) -> Result<StagedFormulas, IoError> {
     checkpoint(cancel)?;
     let deferred = engine.config.defer_graph_building;
     let eager = !deferred && engine.config.formula_plane_mode == FormulaPlaneMode::Off;
@@ -329,7 +371,18 @@ pub(in crate::xlsx) fn stage_records<C: formualizer_eval::traits::EvaluationCont
                     |_, _| true,
                     |_, coord, text, shared| {
                         checkpoint(cancel).map_err(engine_error)?;
-                        staging.stage(engine, sheet, (coord.row, coord.col), text, shared, false)
+                        staging.stage(
+                            engine,
+                            sheet,
+                            (coord.row, coord.col),
+                            if FILTER && refused.contains(&(coord.row, coord.col)) {
+                                "#REF!"
+                            } else {
+                                text
+                            },
+                            shared,
+                            false,
+                        )
                     },
                 )
                 .map_err(IoError::Calamine)?;
@@ -399,7 +452,18 @@ pub(in crate::xlsx) fn stage_records<C: formualizer_eval::traits::EvaluationCont
             |_| false,
             |coord, text, shared| {
                 checkpoint(cancel).map_err(engine_error)?;
-                staging.stage(engine, sheet, (coord.row, coord.col), text, shared, false)
+                staging.stage(
+                    engine,
+                    sheet,
+                    (coord.row, coord.col),
+                    if FILTER && refused.contains(&(coord.row, coord.col)) {
+                        "#REF!"
+                    } else {
+                        text
+                    },
+                    shared,
+                    false,
+                )
             },
         )
         .map_err(IoError::Calamine)?;

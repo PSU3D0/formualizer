@@ -28,8 +28,9 @@ use formualizer_eval::{
 };
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
-    io::Read,
+    io::{Cursor, Read},
     path::Path,
+    sync::Arc,
 };
 
 struct SheetSource {
@@ -49,6 +50,10 @@ pub struct NativeXlsxAdapter {
     names: super::ingest::names::CalculationNames,
     calc_settings: Option<crate::traits::CalcSettings>,
     name_diagnostics: Vec<crate::traits::NameImportDiagnostic>,
+    has_links: bool,
+    external: Option<Arc<crate::CachedExternalLinkValues>>,
+    prepared: Vec<Option<ParsedSheet>>,
+    admission_error: Option<IoError>,
 }
 impl NativeXlsxAdapter {
     /// Open an XLSX path using an explicitly selected retained backing source.
@@ -60,7 +65,7 @@ impl NativeXlsxAdapter {
     }
     fn open_source(source: XlsxSource) -> Result<Self, IoError> {
         let options = ReadOptions::default();
-        let (sheets, strings, styles, names, calc_settings) = {
+        let (sheets, strings, styles, names, calc_settings, has_links) = {
             let bytes = source.bytes(options.limits.max_input_bytes)?;
             let mut archive = package::admit_with(&bytes, &options, Ok)?;
             let root = package::relationships_read(&mut archive, "", &options)?;
@@ -72,8 +77,19 @@ impl NativeXlsxAdapter {
             let relationships = package::relationships_read(&mut archive, &workbook, &options)?;
             let workbook_xml =
                 package::read_part(&mut archive, &workbook, options.limits.max_worksheet_bytes)?;
+            let mut has_links = archive
+                .file_names()
+                .any(|part| part.starts_with("xl/externalLinks/"));
             let mut declared = Vec::new();
             read_source(&workbook_xml, &options, |path, node| {
+                if xml::path_is(
+                    path,
+                    xml::MAIN,
+                    &["workbook", "externalReferences", "externalReference"],
+                ) && matches!(node.kind, xml::Kind::Open { .. })
+                {
+                    has_links = true;
+                }
                 if xml::path_is(path, xml::MAIN, &["workbook", "sheets", "sheet"])
                     && matches!(node.kind, xml::Kind::Open { .. })
                     && let (Some(name), Some(id)) =
@@ -139,7 +155,7 @@ impl NativeXlsxAdapter {
                 super::ingest::names::NameImportPolicy::COMPATIBLE_REFERENCED,
             );
             let calc_settings = crate::calc_pr::parse_calc_pr(&workbook_xml);
-            (sheets, strings, styles, names, calc_settings)
+            (sheets, strings, styles, names, calc_settings, has_links)
         };
         Ok(Self {
             source,
@@ -152,7 +168,51 @@ impl NativeXlsxAdapter {
             names,
             calc_settings,
             name_diagnostics: Vec::new(),
+            has_links,
+            external: None,
+            prepared: Vec::new(),
+            admission_error: None,
         })
+    }
+    fn prepare_external(&mut self) -> Result<Arc<crate::CachedExternalLinkValues>, IoError> {
+        let mut formulas = Vec::new();
+        let mut prepared = Vec::new();
+        for sheet in &self.sheets {
+            let parsed =
+                self.scan_sheet(sheet, &Default::default(), DateSystem::Excel1900, false)?;
+            let mut replay = FormulaReplayState::default();
+            for record in &parsed.records {
+                replay
+                    .emit_record(
+                        record.clone(),
+                        &sheet.name,
+                        |_, _| true,
+                        |_, coord, text, _| {
+                            formulas.push((
+                                sheet.name.clone(),
+                                coord.row + 1,
+                                coord.col + 1,
+                                text.to_owned(),
+                            ));
+                            Ok(())
+                        },
+                    )
+                    .map_err(IoError::from)?;
+            }
+            prepared.push(Some(parsed));
+        }
+        let snapshot = {
+            let bytes = self.source.bytes(self.options.limits.max_input_bytes)?;
+            Arc::new(crate::cached_external_links::load(
+                Cursor::new(bytes.as_ref()),
+                &formulas,
+                self.names.raw_calculation_names(),
+                &self.options,
+            ))
+        };
+        self.names.admit_external_snapshot(&snapshot);
+        self.prepared = prepared;
+        Ok(snapshot)
     }
     fn scan_sheet(
         &self,
@@ -312,6 +372,24 @@ impl SpreadsheetReader for NativeXlsxAdapter {
     fn sheet_names(&self) -> Result<Vec<String>, IoError> {
         Ok(self.sheets.iter().map(|s| s.name.clone()).collect())
     }
+    fn cached_external_link_values(&mut self) -> Option<Arc<crate::CachedExternalLinkValues>> {
+        if !self.has_links {
+            return None;
+        }
+        if let Some(snapshot) = &self.external {
+            return Some(snapshot.clone());
+        }
+        match self.prepare_external() {
+            Ok(snapshot) => {
+                self.external = Some(snapshot.clone());
+                Some(snapshot)
+            }
+            Err(error) => {
+                self.admission_error = Some(error);
+                None
+            }
+        }
+    }
     fn calc_settings(&self) -> Option<crate::traits::CalcSettings> {
         self.calc_settings.clone()
     }
@@ -412,11 +490,18 @@ impl SpreadsheetReader for NativeXlsxAdapter {
 impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
     type Error = IoError;
     fn stream_into_engine(&mut self, engine: &mut Engine<R>) -> Result<(), IoError> {
-        // Keep the opened source alive, including the explicit mapping contract.
-        let _source = &self.source;
+        if let Some(error) = self.admission_error.take() {
+            return Err(error);
+        }
         let names = self.sheet_names()?;
         engine.adopt_file_sheets(names.iter().map(String::as_str))?;
-        let previous = LoadConfig::begin(engine, false, false);
+        let previous = LoadConfig::begin(
+            engine,
+            self.external.is_some(),
+            self.external
+                .as_ref()
+                .is_some_and(|snapshot| !snapshot.refused_formulas.is_empty()),
+        );
         let result = (|| {
             let mut batches = FormulaBatches::default();
             let mut usage = WorkbookSpoolUsage::default();
@@ -426,22 +511,54 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
             let mut formulas_handed = 0;
             let mut shared = 0;
             for (index, sheet) in self.sheets.iter().enumerate() {
-                let parsed = self.scan_sheet(
-                    sheet,
+                let mut parsed = match self.prepared.get_mut(index).and_then(Option::take) {
+                    Some(parsed) => parsed,
+                    None => self.scan_sheet(
+                        sheet,
+                        engine.workbook_load_limits(),
+                        engine.config.date_system,
+                        false,
+                    )?,
+                };
+                crate::load_limits::enforce_sheet_dimension_limits(
+                    "calamine",
+                    &sheet.name,
+                    parsed.values.dimensions.0 as u32,
+                    parsed.values.dimensions.1 as u32,
                     engine.workbook_load_limits(),
-                    engine.config.date_system,
-                    false,
                 )?;
+                let populated = (parsed.values.values_observed as u64)
+                    .saturating_add(parsed.records.len() as u64);
+                if populated > engine.workbook_load_limits().max_sheet_logical_cells {
+                    return Err(IoError::Calamine(super::ingest::staging::engine_error(
+                        format!(
+                            "Workbook load budget exceeded in calamine for sheet {}: observed populated cell count exceeds configured logical-cell budget of {}",
+                            sheet.name,
+                            engine.workbook_load_limits().max_sheet_logical_cells
+                        ),
+                    )));
+                }
+                // The source sink stores raw numeric serials, not converted chrono
+                // values. Select the caller's epoch before these lanes are installed.
+                parsed.values.arrow.date_system = engine.config.date_system;
+                let refused: HashSet<_> = self
+                    .external
+                    .iter()
+                    .flat_map(|snapshot| snapshot.refused_formulas.keys())
+                    .filter(|(name, _, _)| name == &sheet.name)
+                    .map(|(_, row, col)| (row - 1, col - 1))
+                    .collect();
                 values_observed += parsed.values.values_observed as u64;
                 values_handed += parsed.values.values_handed_to_engine as u64;
                 install_values(engine, &sheet.name, parsed.values.arrow);
-                let staged = formulas::stage_records(
+                let staged = formulas::stage_records_with_refusals(
                     engine,
                     &sheet.name,
                     index as u32,
                     parsed.records.into_iter().map(Ok),
                     usage,
                     &self.options.cancel,
+                    &refused,
                 )?;
                 usage.bytes += staged.spool_bytes;
                 usage.files += u32::from(staged.spool_spilled);
@@ -492,11 +609,18 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                             "Defined name `{}` could not be evaluated",
                             diagnostic.name
                         ));
-                engine.define_name(
+                if let Err(error) = engine.define_name(
                     &diagnostic.name,
                     NamedDefinition::Literal(LiteralValue::Error(error)),
                     scope,
-                )?;
+                ) && !self
+                    .names
+                    .skippable_name_registration_error(&diagnostic.name, &error)
+                {
+                    return Err(IoError::Calamine(super::ingest::staging::engine_error(
+                        error,
+                    )));
+                }
             }
             self.stats = AdapterLoadStats {
                 formula_cells_observed: Some(formulas_observed),
