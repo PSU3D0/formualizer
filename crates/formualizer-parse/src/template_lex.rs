@@ -1,28 +1,90 @@
 //! Conservative lexical recognition of relocatable formula templates.
 //!
-//! A formula in the supported subset is fixed bytes plus A1 cell and finite
-//! range coordinates, optionally preceded by invariant sheet qualifiers. [`lex_template`] finds those reference slots
-//! with the parser's own tokenizer, and [`TemplateLexeme::match_relocated`]
-//! decides, without parsing, whether another formula's text is exactly the
-//! template with every reference relocated by a row/column offset. A load
-//! path uses this to recognise copies of an already parsed formula; the
-//! engine certifies the template's parsed tree against its slots before it
-//! trusts a match.
+//! [`lex_template`] retains the conservative SDK 4.0 subset: local canonical
+//! A1 cells and finite ranges, an allowlist of pure functions, and no names,
+//! qualifiers, whitespace or `@` outside string literals.
 //!
-//! Whitespace, defined names, sheet qualifiers, `@` and general functions
-//! are fixed bytes. External references, whole rows/columns, structured
-//! references, arrays, error literals, `#`, unions and intersections remain
-//! excluded. Coordinate spelling must be canonical (uppercase letters, no
-//! leading zeros), so a relocated coordinate has exactly one spelling.
-//! This is a lexical envelope, not an AST certification: callers must check
-//! its slots against the already parsed tree and reject structural rewrites
-//! or node/reference kinds their family comparator cannot instantiate.
+//! [`lex_template_for_certified_ast`] additionally recognises invariant names,
+//! sheet qualifiers, whitespace, `@` and general functions. It provides only a
+//! lexical envelope, **not** purity, non-volatility or AST certification. Callers
+//! must certify every parsed leaf against its slots and reject structural
+//! rewrites or node/reference kinds their family comparator cannot instantiate
+//! before trusting a match. The engine's source-family ingress does this.
+//!
+//! Both functions use the parser's tokenizer and canonical coordinate spelling
+//! (uppercase letters, no leading zeros). External references, whole rows or
+//! columns, structured references, arrays, error literals, `#`, unions and
+//! intersections remain excluded. [`TemplateLexeme::match_relocated`] compares
+//! fixed bytes and relocated reference slots without parsing.
 
 use crate::tokenizer::{TokenSubType, TokenType, tokenize_spans_with_limits};
 use crate::types::FormulaDialect;
 
 const MAX_ROW: u32 = 1_048_576;
 const MAX_COL: u32 = 16_384;
+
+// Preserve the published SDK 4.0 recognizer's exact function inventory.
+const FUNCTIONS: &[&str] = &[
+    "ABS",
+    "AND",
+    "AVERAGE",
+    "AVERAGEIF",
+    "AVERAGEIFS",
+    "CHOOSE",
+    "CONCATENATE",
+    "COUNT",
+    "COUNTA",
+    "COUNTBLANK",
+    "COUNTIF",
+    "COUNTIFS",
+    "DATE",
+    "DAY",
+    "EXACT",
+    "EXP",
+    "FIND",
+    "HLOOKUP",
+    "IF",
+    "IFERROR",
+    "INT",
+    "ISBLANK",
+    "ISERR",
+    "ISERROR",
+    "ISNA",
+    "ISNUMBER",
+    "ISTEXT",
+    "LEFT",
+    "LEN",
+    "LN",
+    "LOWER",
+    "MATCH",
+    "MAX",
+    "MID",
+    "MIN",
+    "MOD",
+    "MONTH",
+    "NOT",
+    "OR",
+    "POWER",
+    "PRODUCT",
+    "PROPER",
+    "RIGHT",
+    "ROUND",
+    "ROUNDDOWN",
+    "ROUNDUP",
+    "SEARCH",
+    "SIGN",
+    "SQRT",
+    "SUBSTITUTE",
+    "SUM",
+    "SUMIF",
+    "SUMIFS",
+    "SUMPRODUCT",
+    "TRIM",
+    "UPPER",
+    "VALUE",
+    "VLOOKUP",
+    "YEAR",
+];
 
 /// One endpoint's A1 coordinates: 1-based coordinates and `$` flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -127,9 +189,26 @@ impl TemplateLexeme {
 }
 
 /// Recognise `formula` (with its leading `=`) as a relocatable template.
-/// Returns `None` for anything outside the conservative subset described in
-/// the module documentation.
+/// Returns `None` for anything outside the original SDK 4.0 conservative subset
+/// described in the module documentation. Broader recognition is opt-in through
+/// [`lex_template_for_certified_ast`].
 pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
+    lex_template_impl::<false>(formula)
+}
+
+/// Recognise a broader lexical envelope for an AST-certified source family.
+///
+/// Invariant names, sheet qualifiers, whitespace, `@` and arbitrary functions
+/// are accepted. `Some` is **not** proof of purity or non-volatility: for example,
+/// `NOW()` and `INDIRECT(...)` can be recognised. Before trusting relocation,
+/// callers must certify the parsed tree and every reference leaf against these
+/// slots, including the safety rules of their source-family implementation.
+/// This function neither parses nor certifies that tree itself.
+pub fn lex_template_for_certified_ast(formula: &str) -> Option<TemplateLexeme> {
+    lex_template_impl::<true>(formula)
+}
+
+fn lex_template_impl<const CERTIFIED_AST: bool>(formula: &str) -> Option<TemplateLexeme> {
     let body = formula.strip_prefix('=')?;
     if body.is_empty() || formula.len() > u32::MAX as usize {
         return None;
@@ -140,7 +219,11 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
     for &b in body.as_bytes() {
         if b == b'"' {
             in_string = !in_string;
-        } else if !in_string && matches!(b, b'[' | b']' | b'{' | b'}' | b'#' | b';') {
+        } else if !in_string
+            && (matches!(b, b'[' | b']' | b'{' | b'}' | b'#' | b';')
+                || (!CERTIFIED_AST
+                    && matches!(b, b' ' | b'\t' | b'\r' | b'\n' | b'!' | b'\'' | b'@')))
+        {
             return None;
         }
     }
@@ -163,6 +246,14 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
             }
             (TokenType::Operand, TokenSubType::Text | TokenSubType::Logical) => {}
             (TokenType::Operand, TokenSubType::Range) => {
+                if !CERTIFIED_AST {
+                    slots.push(RefSlot {
+                        start: span.start as u32,
+                        end: span.end as u32,
+                        reference: canonical_reference(text)?,
+                    });
+                    continue;
+                }
                 // A qualifier is invariant source text; only its coordinate
                 // suffix relocates. Other range operands may be invariant
                 // defined names. The engine must certify every parsed leaf
@@ -189,7 +280,9 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
             }
             (TokenType::Func, TokenSubType::Open) => {
                 let name = text.strip_suffix('(')?;
-                if name.trim().is_empty() {
+                if name.trim().is_empty()
+                    || (!CERTIFIED_AST && !FUNCTIONS.iter().any(|f| f.eq_ignore_ascii_case(name)))
+                {
                     return None;
                 }
                 open.push(true);
@@ -211,7 +304,7 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
                 }
             }
             (TokenType::OpPrefix, _) => {
-                if !matches!(text, "+" | "-" | "@") {
+                if !(matches!(text, "+" | "-") || (CERTIFIED_AST && text == "@")) {
                     return None;
                 }
             }
@@ -228,7 +321,7 @@ pub fn lex_template(formula: &str) -> Option<TemplateLexeme> {
                     return None;
                 }
             }
-            (TokenType::Whitespace, _) => {}
+            (TokenType::Whitespace, _) if CERTIFIED_AST => {}
             _ => return None,
         }
     }
@@ -397,7 +490,7 @@ mod tests {
     use crate::parser::{ASTNode, ASTNodeType, ReferenceType, parse};
 
     fn slots(formula: &str) -> Option<Vec<String>> {
-        lex_template(formula).map(|lex| {
+        lex_template_for_certified_ast(formula).map(|lex| {
             lex.slots()
                 .iter()
                 .map(|s| formula[s.start as usize..s.end as usize].to_string())
@@ -464,6 +557,72 @@ mod tests {
     }
 
     #[test]
+    fn legacy_api_keeps_the_published_conservative_subset() {
+        for formula in [
+            "=A1 + B1",
+            "=Sheet1!A1",
+            "='Sheet 1'!A1",
+            "=@A1",
+            "=A0",
+            "=XFE1",
+            "=A1048577",
+            "=TAXRATE",
+            "=MyName+1",
+            "=R1C1",
+            "=RC",
+            "=_A1",
+            "=A1_name",
+            "=name.with.dots",
+            "=LOG10(A1)",
+            "=ROW()",
+            "=COLUMN(A1)",
+            "=INDIRECT(\"A1\")",
+            "=OFFSET(A1,1,1)",
+            "=NOW()",
+            "=_xlfn.IFS(A1,1)",
+            "=MYFUNC(A1)",
+            "=TAX2024(1)",
+        ] {
+            assert_eq!(lex_template(formula), None, "{formula}");
+        }
+        let formula = "=SUM($A1:B$2)";
+        let template = lex_template(formula).unwrap();
+        assert_eq!(template.slots().len(), 1);
+        assert_eq!(
+            template.match_relocated(formula, "=SUM($A2:C$2)", 1, 1),
+            RelocatedMatch::Match,
+        );
+        // Exclusions inside a string literal were never exclusions of the formula.
+        assert!(lex_template("=IF(A1,\"NOW() ! @ # [ ]\",\"\")").is_some());
+    }
+
+    #[test]
+    fn broader_recognition_is_explicit_and_not_a_purity_certificate() {
+        for formula in [
+            "=NOW()",
+            "=INDIRECT(\"A1\")",
+            "=@A1",
+            "=Sheet1!A1",
+            "='Sheet 1'!A1",
+            "=A1 + B1",
+            "=Rate+1",
+            "=MYFUNC(A1)",
+        ] {
+            assert!(lex_template(formula).is_none(), "{formula}");
+            assert!(
+                lex_template_for_certified_ast(formula).is_some(),
+                "{formula}"
+            );
+        }
+        for formula in ["=A1+B1", "=SUM($A1:B$2)", "=IF(A1,\"x\",FALSE)"] {
+            assert_eq!(
+                lex_template(formula),
+                lex_template_for_certified_ast(formula)
+            );
+        }
+    }
+
+    #[test]
     fn qualified_slots_leave_names_whitespace_and_functions_byte_exact() {
         let root = "=SPDVOL( Sheet1!A1, 'Sheet 1'!$B2, Rate, @(C1:C10))";
         let follower = "=SPDVOL( Sheet1!A2, 'Sheet 1'!$B3, Rate, @(C2:C11))";
@@ -471,7 +630,7 @@ mod tests {
             slots(root),
             Some(vec!["A1".into(), "$B2".into(), "C1:C10".into()])
         );
-        let lexical = lex_template(root).unwrap();
+        let lexical = lex_template_for_certified_ast(root).unwrap();
         assert_eq!(
             lexical.match_relocated(root, follower, 1, 0),
             RelocatedMatch::Match
