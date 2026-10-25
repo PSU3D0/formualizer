@@ -759,7 +759,11 @@ fn walk_inner<'a, const CDATA: u8>(
                 };
                 pending_pop = empty && !fast;
                 if path.len() >= options.limits.max_xml_depth {
-                    return Err(unsupported("XML depth limit", "XLSX XML"));
+                    return Err(crate::xlsx::options::resource(
+                        options,
+                        "XML depth limit",
+                        "XLSX XML",
+                    ));
                 }
                 if path.is_empty() {
                     roots += 1;

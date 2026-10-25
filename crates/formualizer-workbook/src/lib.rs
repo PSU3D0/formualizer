@@ -92,6 +92,9 @@ pub use workbook::{extract_wasm_manifest_json_from_module, parse_wasm_manifest_j
 pub use worksheet::WorksheetHandle;
 
 #[cfg(feature = "xlsx-recalc")]
-pub use backends::NativeXlsxAdapter;
+pub use backends::{NativeXlsxAdapter, XlsxLoadLimits};
+#[cfg(all(test, feature = "xlsx-recalc"))]
+#[path = "../tests/support/source_xlsx.rs"]
+pub(crate) mod test_source_xlsx;
 #[cfg(feature = "xlsx-recalc")]
 pub use xlsx::types::{XlsxError, XlsxReadError};

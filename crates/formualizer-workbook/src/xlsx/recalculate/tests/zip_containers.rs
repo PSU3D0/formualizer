@@ -5,6 +5,7 @@
 //! the raw writer below builds the edge cases.
 use super::super::{XlsxRecalculateOptions, package};
 use super::dynamic_admission::refused;
+use crate::test_source_xlsx as source_xlsx;
 use std::io::{Cursor, Read};
 use zip::ZipArchive;
 
@@ -35,7 +36,7 @@ fn admit(bytes: &[u8]) -> Result<(), crate::IoError> {
 }
 
 #[test]
-fn bulk_retention_keeps_physical_crc_expansion_and_error_order() {
+fn ordinary_discovery_errors_are_not_replaced_by_unread_payload_errors() {
     use crate::xlsx::options::ReadOptions;
     use std::collections::HashSet;
     for duplicate in [false, true] {
@@ -68,19 +69,19 @@ fn bulk_retention_keeps_physical_crc_expansion_and_error_order() {
                 Err(e) => e.to_string(),
             };
             assert!(
-                !error.contains("must follow CRC"),
-                "physical failure must win: {error}"
+                error.contains("must follow CRC"),
+                "discovery failure must win: {error}"
             );
         }
         let bytes = build(&entries);
         let mut options = ReadOptions::default();
         options.limits.max_expanded_bytes = entries.iter().map(|e| e.data.len()).sum::<usize>() - 1;
-        assert!(package::admit_retaining(&bytes, &options, |_| Ok(((), HashSet::new()))).is_err());
+        assert!(package::admit_retaining(&bytes, &options, |_| Ok(((), HashSet::new()))).is_ok());
     }
 }
 
 #[test]
-fn bulk_decoded_unicode_name_collisions_cannot_hide_physical_payloads() {
+fn ordinary_decoded_unicode_name_collisions_skip_shadowed_payloads() {
     use crate::xlsx::options::ReadOptions;
     let mut entries = workbook();
     for (i, entry) in entries.iter_mut().take(2).enumerate() {
@@ -107,12 +108,16 @@ fn bulk_decoded_unicode_name_collisions_cannot_hide_physical_payloads() {
             (),
             std::collections::HashSet::new()
         )))
-        .is_err()
+        .is_ok()
+    );
+    assert!(
+        admit(&bytes).is_err(),
+        "Strict still refuses Unicode aliases"
     );
 }
 
 #[test]
-fn bulk_retention_streams_unselected_members_and_bounds_cached_parts() {
+fn ordinary_admission_inflates_nothing_until_consumed() {
     use crate::xlsx::options::ReadOptions;
     use std::collections::HashSet;
     let entries = workbook();
@@ -125,8 +130,8 @@ fn bulk_retention_streams_unselected_members_and_bounds_cached_parts() {
         package::admit_retaining(&bytes, &options, |_| Ok(((), needed))).unwrap();
     assert_eq!(
         package::retained_bytes(&archive),
-        9,
-        "only bounded consumer prefix retained"
+        0,
+        "no speculative consumer buffers retained"
     );
     assert!(package::take_part(&mut archive, &entries[1].name, 8).is_err());
     assert!(package::take_part_inflates().values().all(|&n| n == 1));
@@ -183,10 +188,9 @@ fn compatible_container_reads_keep_payload_and_resource_defences() {
         if case == 6 {
             bytes[30 + entries[0].name.len()] ^= 1;
         }
-        assert!(
-            package::admit_with(&bytes, &options, |_| panic!("strict binding")).is_err(),
-            "safety case {case}"
-        );
+        let result = package::admit_with(&bytes, &options, |_| panic!("strict binding"))
+            .and_then(|mut archive| package::read_part(&mut archive, &entries[0].name, 1 << 20));
+        assert!(result.is_err(), "selected safety case {case}");
     }
 }
 
@@ -238,7 +242,7 @@ fn compatible_relationship_extraction_has_no_strict_binding_authority() {
 }
 
 #[test]
-fn duplicate_physical_crc_cannot_be_shadowed() {
+fn ordinary_duplicate_crc_checks_only_selected_identity() {
     use crate::xlsx::options::ReadOptions;
     for corrupt_first in [true, false] {
         let mut entries = workbook();
@@ -251,18 +255,21 @@ fn duplicate_physical_crc_cannot_be_shadowed() {
             .map(|e| 30 + e.name.len() + e.data.len())
             .sum();
         bytes[local + 30 + entries[index].name.len()] ^= 1;
-        assert!(
-            package::admit_with(&bytes, &ReadOptions::default(), |_| panic!(
-                "strict binding"
-            ))
-            .is_err(),
-            "CRC failure in physical member {index} must not be hidden by name resolution"
+        let mut archive = package::admit_with(&bytes, &ReadOptions::default(), |_| {
+            panic!("strict binding")
+        })
+        .unwrap();
+        assert_eq!(
+            package::read_part(&mut archive, &entries[0].name, 1 << 20).is_ok(),
+            corrupt_first,
+            "only last-wins selected member is decoded"
         );
+        assert!(admit(&bytes).is_err());
     }
 }
 
 #[test]
-fn duplicate_physical_expansion_counts_shadowed_members() {
+fn ordinary_duplicate_expansion_does_not_count_shadowed_members() {
     use crate::xlsx::options::ReadOptions;
     let mut entries = workbook();
     entries.push(entries[0].clone());
@@ -271,13 +278,13 @@ fn duplicate_physical_expansion_counts_shadowed_members() {
     options.limits.max_expanded_bytes = physical - entries[0].data.len();
     let bytes = build(&entries);
     assert!(
-        package::admit_with(&bytes, &options, |_| panic!("strict binding")).is_err(),
-        "the shadowed member must count toward actual cumulative expansion"
+        package::admit_with(&bytes, &options, |_| panic!("strict binding")).is_ok(),
+        "unread shadowed output is not charged"
     );
-    // A shadowed member independently exceeding the per-member bound is also refused.
+    // Even an oversized shadowed member emits no output and is not charged.
     entries[0].data = vec![b'x'; options.limits.max_expanded_bytes + 1];
     let bytes = build(&entries);
-    assert!(package::admit_with(&bytes, &options, |_| panic!("strict binding")).is_err());
+    assert!(package::admit_with(&bytes, &options, |_| panic!("strict binding")).is_ok());
 }
 
 #[test]
@@ -297,6 +304,78 @@ fn duplicate_physical_valid_members_keep_permissive_name_resolution() {
         package::read_part(&mut archive, &winner.name, 1024).unwrap(),
         winner.data
     );
+}
+
+#[test]
+fn ordinary_main_and_external_readers_agree_on_duplicate_and_unicode_selection() {
+    use crate::{NativeXlsxAdapter, SpreadsheetReader};
+    use source_xlsx::*;
+    let bytes = book(&[Ws::new("Sheet1", vec![formula("A1", "[1]Data!A1")])], "");
+    let mut p = unpack(&bytes);
+    let link = "xl/externalLinks/externalLink1.xml";
+    p.insert(link.into(), format!("<externalLink xmlns=\"{MAIN}\" xmlns:r=\"{OFFICE}\"><externalBook r:id=\"r\"><sheetNames><sheetName val=\"Data\"/></sheetNames><sheetDataSet><sheetData sheetId=\"0\"><row r=\"1\"><cell r=\"A1\"><v>7</v></cell></row></sheetData></sheetDataSet></externalBook></externalLink>"));
+    p = edit(
+        p,
+        "xl/workbook.xml",
+        "</sheets>",
+        "</sheets><externalReferences><externalReference r:id=\"e\"/></externalReferences>",
+    );
+    p = edit(
+        p,
+        WB_RELS,
+        "</Relationships>",
+        &format!(
+            "<Relationship Id=\"e\" Type=\"{OFFICE}/externalLink\" Target=\"externalLinks/externalLink1.xml\"/></Relationships>"
+        ),
+    );
+    p = edit(
+        p,
+        TYPES,
+        "</Types>",
+        &format!(
+            "<Override PartName=\"/{link}\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml\"/></Types>"
+        ),
+    );
+    for target in ["xl/workbook.xml", WB_RELS, SHEET, link] {
+        for unicode in [false, true] {
+            for selected in [false, true] {
+                let mut entries = entries_from(&pack(&p));
+                let shadow = entries.iter().position(|e| e.name == target).unwrap();
+                let winner = entries[shadow].clone();
+                if unicode {
+                    let e = &mut entries[shadow];
+                    e.name = "raw-shadow.xml".into();
+                    let mut extra = vec![1];
+                    extra.extend_from_slice(&crc32(e.name.as_bytes()).to_le_bytes());
+                    extra.extend_from_slice(target.as_bytes());
+                    e.local_extra = field(0x7075, &extra);
+                    e.central_extra = e.local_extra.clone();
+                }
+                entries.push(winner);
+                let damaged = if selected { entries.len() - 1 } else { shadow };
+                let offset: usize = entries[..damaged]
+                    .iter()
+                    .map(|e| 30 + e.name.len() + e.local_extra.len() + e.data.len())
+                    .sum();
+                let mut bytes = build(&entries);
+                bytes[offset
+                    + 30
+                    + entries[damaged].name.len()
+                    + entries[damaged].local_extra.len()] ^= 1;
+                let result = NativeXlsxAdapter::open_bytes(bytes).and_then(|mut a| {
+                    if a.cached_external_link_values().is_none() {
+                        return Err(crate::xlsx::options::unsupported("failed cache", "test"));
+                    }
+                    a.read_sheet("Sheet1").map(|_| ())
+                });
+                assert_eq!(
+                    result.is_ok(),
+                    !selected,
+                    "target={target} unicode={unicode} selected={selected}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -378,7 +457,7 @@ fn opaque_payloads_are_streamed_before_discovery_not_retained() {
 }
 
 #[test]
-fn bulk_opaque_members_remain_streamed_with_retaining_admission() {
+fn ordinary_opaque_members_are_never_inflated() {
     use crate::xlsx::options::ReadOptions;
     let bytes = opaque_first(FIXTURES[0].1);
     package::take_part_inflates();
@@ -396,9 +475,9 @@ fn bulk_opaque_members_remain_streamed_with_retaining_admission() {
     assert!(package::retained_bytes(&archive) < 64 * 1024);
     let counts = package::take_part_inflates();
     assert!(counts.values().all(|&n| n == 1), "{counts:?}");
-    assert_eq!(counts["opaque/0.bin"], 1);
-    assert_eq!(counts["opaque/1.bin"], 1);
-    assert_eq!(package::take_audit_buffer_peak(), 64 * 1024);
+    assert!(!counts.contains_key("opaque/0.bin"));
+    assert!(!counts.contains_key("opaque/1.bin"));
+    assert_eq!(package::take_audit_buffer_peak(), 0);
 }
 
 #[test]
@@ -460,7 +539,10 @@ struct Entry {
     gap: usize,
 }
 fn workbook() -> Vec<Entry> {
-    let mut z = ZipArchive::new(Cursor::new(FIXTURES[0].1)).unwrap();
+    entries_from(FIXTURES[0].1)
+}
+fn entries_from(bytes: &[u8]) -> Vec<Entry> {
+    let mut z = ZipArchive::new(Cursor::new(bytes)).unwrap();
     (0..z.len())
         .map(|i| {
             let mut f = z.by_index(i).unwrap();

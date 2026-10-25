@@ -160,10 +160,23 @@ impl XlsxSource {
     pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
         Self(SharedXlsxReader::from_bytes(bytes))
     }
-    pub(crate) fn open_path(path: &Path, policy: XlsxPathSource) -> std::io::Result<Self> {
-        SharedXlsxReader::from_file(File::open(path)?, policy).map(Self)
+    pub(crate) fn open_path(
+        path: &Path,
+        policy: XlsxPathSource,
+        limit: usize,
+    ) -> std::io::Result<Self> {
+        let file = File::open(path)?;
+        if file.metadata()?.len() > limit as u64 {
+            return Err(std::io::Error::other("XLSX input byte limit exceeded"));
+        }
+        SharedXlsxReader::from_file(file, policy).map(Self)
     }
-    pub(crate) fn bytes(&self, limit: usize) -> std::io::Result<std::borrow::Cow<'_, [u8]>> {
+    pub(crate) fn bytes(
+        &self,
+        options: &super::options::ReadOptions,
+    ) -> Result<std::borrow::Cow<'_, [u8]>, crate::IoError> {
+        let limit = options.limits.max_input_bytes;
+        super::options::checkpoint(&options.cancel)?;
         let borrowed = match &self.0 {
             SharedXlsxReader::Bytes { bytes, .. } => Some(bytes.as_ref()),
             #[cfg(any(unix, windows))]
@@ -172,19 +185,42 @@ impl XlsxSource {
         };
         if let Some(bytes) = borrowed {
             if bytes.len() > limit {
-                return Err(std::io::Error::other("XLSX input byte limit exceeded"));
+                return Err(std::io::Error::other("XLSX input byte limit exceeded").into());
             }
             return Ok(std::borrow::Cow::Borrowed(bytes));
         }
-        let mut bytes = Vec::new();
-        self.0
-            .reader()
-            .take((limit as u64).saturating_add(1))
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > limit {
-            return Err(std::io::Error::other("XLSX input byte limit exceeded"));
+        Ok(std::borrow::Cow::Owned(read_input(
+            self.0.reader(),
+            options,
+        )?))
+    }
+}
+
+pub(crate) fn read_input(
+    mut reader: impl Read,
+    options: &super::options::ReadOptions,
+) -> Result<Vec<u8>, crate::IoError> {
+    let mut bytes = Vec::new();
+    let mut scratch = [0; 64 * 1024];
+    loop {
+        super::options::checkpoint(&options.cancel)?;
+        let remaining = options.limits.max_input_bytes - bytes.len();
+        let window = remaining.saturating_add(1).min(scratch.len());
+        let n = reader.read(&mut scratch[..window])?;
+        if n > remaining {
+            return Err(super::options::unsupported(
+                "input byte limit",
+                "XLSX source",
+            ));
         }
-        Ok(std::borrow::Cow::Owned(bytes))
+        if n == 0 {
+            super::options::checkpoint(&options.cancel)?;
+            return Ok(bytes);
+        }
+        bytes
+            .try_reserve_exact(n)
+            .map_err(|e| crate::IoError::from_backend("xlsx allocation", e))?;
+        bytes.extend_from_slice(&scratch[..n]);
     }
 }
 
@@ -371,6 +407,37 @@ mod tests {
         let mut large = vec![0_u8; 2 * SHARED_FILE_READAHEAD];
         reader.read_exact(&mut large).unwrap();
         assert_eq!(&large[..], &data[3..3 + 2 * SHARED_FILE_READAHEAD]);
+    }
+    #[test]
+    fn bounded_source_reads_poll_cancellation_between_chunks() {
+        struct Cancelling {
+            cancel: crate::CancelToken,
+            reads: usize,
+        }
+        impl Read for Cancelling {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                self.reads += 1;
+                assert_eq!(self.reads, 1, "must stop before another input chunk");
+                out.fill(b'x');
+                self.cancel.cancel();
+                Ok(out.len())
+            }
+        }
+        let cancel = crate::CancelToken::new();
+        let options = super::super::options::ReadOptions {
+            cancel: Some(cancel.clone()),
+            ..Default::default()
+        };
+        assert!(read_input(Cancelling { cancel, reads: 0 }, &options).is_err());
+        for (size, limit, success) in [(0, 0, true), (1, 0, false), (3, 3, true), (4, 3, false)] {
+            let mut options = options.clone();
+            options.cancel = None;
+            options.limits.max_input_bytes = limit;
+            assert_eq!(
+                read_input(std::io::Cursor::new(vec![0; size]), &options).is_ok(),
+                success
+            );
+        }
     }
     #[test]
     fn immutable_byte_cursors_share_one_allocation() {

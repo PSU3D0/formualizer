@@ -287,7 +287,11 @@ fn parse_part(
                     let coord = crate::xlsx::xml::plain_coord(r).ok_or_else(|| malformed(part))?;
                     *counted += 1;
                     if *counted > options.limits.max_cells {
-                        return Err(unsupported("external link cache cell limit", part));
+                        return Err(crate::xlsx::options::resource(
+                            options,
+                            "external link cache cell limit",
+                            part,
+                        ));
                     }
                     cell = Some((
                         coord,
@@ -497,7 +501,11 @@ impl Links {
                         .max_cells
                         .saturating_mul(EXTERNAL_AREA_FACTOR)
                 {
-                    return Err(unsupported("external range cell limit", context));
+                    return Err(crate::xlsx::options::resource(
+                        options,
+                        "external range cell limit",
+                        context,
+                    ));
                 }
                 let mut cells = HashMap::new();
                 for (i, (&(row, col), raw)) in sheet.cells.iter().enumerate() {

@@ -239,7 +239,7 @@ use super::{
         values::{Context, ValueSink},
     },
     metadata::{SharedStringTable, Styles, read_source},
-    options::ReadOptions,
+    options::{ReadOptions, XlsxLoadLimits},
     package, worksheet, xml,
 };
 use crate::{
@@ -274,6 +274,7 @@ pub struct NativeXlsxAdapter {
     strings: SharedStringTable,
     styles: Styles,
     options: ReadOptions,
+    budget: package::ConsumptionBudget,
     loaded: HashSet<String>,
     stats: AdapterLoadStats,
     names: super::ingest::names::CalculationNames,
@@ -294,30 +295,70 @@ impl NativeXlsxAdapter {
         path: P,
         source: XlsxPathSource,
     ) -> Result<Self, IoError> {
-        Self::open_source(XlsxSource::open_path(path.as_ref(), source)?)
+        Self::open_path_with_source_and_limits(path, source, XlsxLoadLimits::default())
     }
     /// Open immutable XLSX bytes with cooperative cancellation during admission and ingestion.
     pub fn open_bytes_cancellable(
         bytes: Vec<u8>,
         cancel: crate::CancelToken,
     ) -> Result<Self, IoError> {
-        Self::open_source_with_options(
-            XlsxSource::from_bytes(bytes),
-            ReadOptions {
-                cancel: Some(cancel),
-                ..ReadOptions::default()
-            },
-        )
+        Self::open_bytes_cancellable_with_limits(bytes, cancel, XlsxLoadLimits::default())
     }
-    fn open_source(source: XlsxSource) -> Result<Self, IoError> {
-        Self::open_source_with_options(source, ReadOptions::default())
+    /// Open a retained path with limits validated before opening or mapping it.
+    pub fn open_path_with_source_and_limits<P: AsRef<Path>>(
+        path: P,
+        source: XlsxPathSource,
+        limits: XlsxLoadLimits,
+    ) -> Result<Self, IoError> {
+        let options = limits.read_options()?;
+        let source = XlsxSource::open_path(path.as_ref(), source, options.limits.max_input_bytes)?;
+        Self::open_source_with_options(source, options)
+    }
+    /// Open owned bytes with explicit ordinary package/XML limits.
+    pub fn open_bytes_with_limits(bytes: Vec<u8>, limits: XlsxLoadLimits) -> Result<Self, IoError> {
+        let options = limits.read_options()?;
+        if bytes.len() > options.limits.max_input_bytes {
+            return Err(super::options::unsupported(
+                "input byte limit",
+                "XLSX source",
+            ));
+        }
+        Self::open_source_with_options(XlsxSource::from_bytes(bytes), options)
+    }
+    /// Open bytes with chunk-level decode cancellation. XML cancellation remains
+    /// cooperative between parser events, not within an individual XML token.
+    pub fn open_bytes_cancellable_with_limits(
+        bytes: Vec<u8>,
+        cancel: crate::CancelToken,
+        limits: XlsxLoadLimits,
+    ) -> Result<Self, IoError> {
+        let mut options = limits.read_options()?;
+        options.cancel = Some(cancel);
+        super::options::checkpoint(&options.cancel)?;
+        if bytes.len() > options.limits.max_input_bytes {
+            return Err(super::options::unsupported(
+                "input byte limit",
+                "XLSX source",
+            ));
+        }
+        Self::open_source_with_options(XlsxSource::from_bytes(bytes), options)
+    }
+    /// Read from the reader's current position, retaining the resulting bytes.
+    /// Seeking is not required and the incoming cursor is never rewound.
+    pub fn open_reader_with_limits(
+        reader: Box<dyn Read + Send + Sync>,
+        limits: XlsxLoadLimits,
+    ) -> Result<Self, IoError> {
+        let options = limits.read_options()?;
+        let bytes = super::source::read_input(reader, &options)?;
+        Self::open_source_with_options(XlsxSource::from_bytes(bytes), options)
     }
     fn open_source_with_options(source: XlsxSource, options: ReadOptions) -> Result<Self, IoError> {
         super::options::checkpoint(&options.cancel)?;
         let debug_load = std::env::var_os("FZ_DEBUG_LOAD").is_some();
         let load_clock = timing::Timer::start(debug_load);
-        let (sheets, strings, styles, names, calc_settings, has_links, sheet_diagnostics) = {
-            let bytes = source.bytes(options.limits.max_input_bytes)?;
+        let (sheets, strings, styles, names, calc_settings, has_links, sheet_diagnostics, budget) = {
+            let bytes = source.bytes(&options)?;
             let (mut archive, (workbook_xml, relationships, declared, has_links)) =
                 package::admit_retaining(&bytes, &options, |archive| {
                     let root = package::relationships_read(archive, "", &options)?;
@@ -472,6 +513,7 @@ impl NativeXlsxAdapter {
                 calc_settings,
                 has_links,
                 sheet_diagnostics,
+                archive.take_consumption_budget(),
             )
         };
         let package_ms = load_clock.elapsed_ms();
@@ -481,6 +523,7 @@ impl NativeXlsxAdapter {
             strings,
             styles,
             options,
+            budget,
             loaded: HashSet::new(),
             stats: AdapterLoadStats::default(),
             names,
@@ -496,7 +539,14 @@ impl NativeXlsxAdapter {
             external_formulas_ms: 0.0,
         })
     }
+    fn finish_read<T>(&mut self, result: Result<T, IoError>) -> Result<T, IoError> {
+        if result.as_ref().is_err_and(super::options::is_safety) {
+            self.budget.fail();
+        }
+        result
+    }
     fn prepare_external(&mut self) -> Result<Arc<crate::CachedExternalLinkValues>, IoError> {
+        self.budget.check()?;
         let mut formulas = Vec::new();
         for sheet in &self.sheets {
             let parsed = self.parsed_sheet(sheet)?;
@@ -524,13 +574,14 @@ impl NativeXlsxAdapter {
         }
         let package_timer = timing::Timer::start(self.debug_load);
         let snapshot = {
-            let bytes = self.source.bytes(self.options.limits.max_input_bytes)?;
+            let bytes = self.source.bytes(&self.options)?;
             Arc::new(crate::cached_external_links::load(
                 Cursor::new(bytes.as_ref()),
                 &formulas,
                 self.names.raw_calculation_names(),
                 &self.options,
-            ))
+                &mut self.budget,
+            )?)
         };
         self.names.admit_external_snapshot(&snapshot);
         self.package_ms += package_timer.elapsed_ms();
@@ -988,15 +1039,10 @@ impl SpreadsheetReader for NativeXlsxAdapter {
         Self::open_path_with_source(path, XlsxPathSource::SharedFile)
     }
     fn open_bytes(data: Vec<u8>) -> Result<Self, IoError> {
-        Self::open_source(XlsxSource::from_bytes(data))
+        Self::open_bytes_with_limits(data, XlsxLoadLimits::default())
     }
-    fn open_reader(mut reader: Box<dyn Read + Send + Sync>) -> Result<Self, IoError> {
-        let mut data = Vec::new();
-        reader
-            .by_ref()
-            .take((ReadOptions::default().limits.max_input_bytes as u64).saturating_add(1))
-            .read_to_end(&mut data)?;
-        Self::open_bytes(data)
+    fn open_reader(reader: Box<dyn Read + Send + Sync>) -> Result<Self, IoError> {
+        Self::open_reader_with_limits(reader, XlsxLoadLimits::default())
     }
     fn access_granularity(&self) -> AccessGranularity {
         AccessGranularity::Sheet
@@ -1014,6 +1060,9 @@ impl SpreadsheetReader for NativeXlsxAdapter {
         Ok(self.sheets.iter().map(|s| s.name.clone()).collect())
     }
     fn cached_external_link_values(&mut self) -> Option<Arc<crate::CachedExternalLinkValues>> {
+        if self.budget.check().is_err() {
+            return None;
+        }
         if !self.has_links {
             return None;
         }
@@ -1026,6 +1075,7 @@ impl SpreadsheetReader for NativeXlsxAdapter {
                 Some(snapshot)
             }
             Err(error) => {
+                self.budget.fail();
                 self.admission_error = Some(error);
                 None
             }
@@ -1047,17 +1097,19 @@ impl SpreadsheetReader for NativeXlsxAdapter {
         Some(self.stats.clone())
     }
     fn read_sheet(&mut self, name: &str) -> Result<SheetData, IoError> {
+        self.budget.check()?;
         let sheet = self.source_sheet(name)?;
-        let data = self.reader_sheet(sheet)?.clone();
+        let result = self.reader_sheet(sheet).cloned();
+        let data = self.finish_read(result)?;
         self.loaded.insert(name.to_owned());
         Ok(data)
     }
     fn read_cell(&mut self, name: &str, row: u32, col: u32) -> Result<Option<CellData>, IoError> {
-        let data = self
-            .reader_sheet(self.source_sheet(name)?)?
-            .cells
-            .get(&(row, col))
-            .cloned();
+        self.budget.check()?;
+        let result = self
+            .reader_sheet(self.source_sheet(name)?)
+            .map(|data| data.cells.get(&(row, col)).cloned());
+        let data = self.finish_read(result)?;
         self.loaded.insert(name.to_owned());
         Ok(data)
     }
@@ -1067,13 +1119,15 @@ impl SpreadsheetReader for NativeXlsxAdapter {
         start: (u32, u32),
         end: (u32, u32),
     ) -> Result<BTreeMap<(u32, u32), CellData>, IoError> {
-        let cells = self
-            .reader_sheet(self.source_sheet(sheet)?)?
-            .cells
-            .iter()
-            .filter(|((r, c), _)| *r >= start.0 && *r <= end.0 && *c >= start.1 && *c <= end.1)
-            .map(|(coord, cell)| (*coord, cell.clone()))
-            .collect();
+        self.budget.check()?;
+        let result = self.reader_sheet(self.source_sheet(sheet)?).map(|data| {
+            data.cells
+                .iter()
+                .filter(|((r, c), _)| *r >= start.0 && *r <= end.0 && *c >= start.1 && *c <= end.1)
+                .map(|(coord, cell)| (*coord, cell.clone()))
+                .collect()
+        });
+        let cells = self.finish_read(result)?;
         self.loaded.insert(sheet.to_owned());
         Ok(cells)
     }
@@ -1091,6 +1145,7 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
         if let Some(error) = self.admission_error.take() {
             return Err(error);
         }
+        self.budget.check()?;
         let names = self.sheet_names()?;
         engine.adopt_file_sheets(names.iter().map(String::as_str))?;
         let previous = LoadConfig::begin(
@@ -1283,6 +1338,6 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 phases.report(self.load_clock.elapsed_ms());
             }
         }
-        result
+        self.finish_read(result)
     }
 }

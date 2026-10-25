@@ -2,7 +2,7 @@
 pub mod calamine;
 
 #[cfg(feature = "xlsx-recalc")]
-pub use crate::xlsx::loader::NativeXlsxAdapter;
+pub use crate::xlsx::{loader::NativeXlsxAdapter, options::XlsxLoadLimits};
 #[cfg(feature = "xlsx-recalc")]
 pub use calamine::{CalamineAdapter, XlsxPathSource};
 

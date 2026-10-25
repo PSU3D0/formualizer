@@ -59,7 +59,8 @@ impl<'a, 'o> CellXml<'a, 'o> {
             if self.reader.buffer_position() == 0
                 && self.reader.get_ref().len() > self.options.limits.max_worksheet_bytes
             {
-                return Err(super::super::options::unsupported(
+                return Err(super::super::options::resource(
+                    self.options,
                     "XML part byte limit",
                     "worksheet XML",
                 ));
@@ -79,7 +80,8 @@ impl<'a, 'o> CellXml<'a, 'o> {
                 }
                 self.depth += 1;
                 if self.depth > self.options.limits.max_xml_depth {
-                    return Err(super::super::options::unsupported(
+                    return Err(super::super::options::resource(
+                        self.options,
                         "XML depth limit",
                         "worksheet XML",
                     ));
@@ -327,13 +329,15 @@ pub(super) fn scan(
                 };
                 cell_count += 1;
                 if cell_count > options.limits.max_cells {
-                    return Err(super::super::options::unsupported(
+                    return Err(super::super::options::resource(
+                        options,
                         "cell count limit",
                         "worksheet XML",
                     ));
                 }
                 if pos.0 >= 1_048_576 || pos.1 >= options.limits.max_columns {
-                    return Err(super::super::options::unsupported(
+                    return Err(super::super::options::resource(
+                        options,
                         "cell coordinate limit",
                         "worksheet XML",
                     ));
