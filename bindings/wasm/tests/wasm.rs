@@ -55,6 +55,96 @@ fn builtin_numeric_overflow_serializes_as_catchable_error() {
     assert_eq!(sheet.evaluate_cell(3, 1).unwrap().as_f64(), Some(0.0));
 }
 
+fn ordinary_load_options(key: &str, value: JsValue) -> JsValue {
+    let limits = Object::new();
+    set_prop(&limits, key, value);
+    let options = Object::new();
+    set_prop(&options, "loadLimits", limits.into());
+    options.into()
+}
+
+#[wasm_bindgen_test]
+fn ordinary_load_limits_reject_invalid_and_unknown_values() {
+    for value in [
+        JsValue::TRUE,
+        JsValue::from_f64(-1.0),
+        JsValue::from_f64(1.5),
+        JsValue::from_f64(f64::NAN),
+        JsValue::from_f64(f64::INFINITY),
+        JsValue::from_str("100"),
+        JsValue::NULL,
+        JsValue::from_f64(9_007_199_254_740_992.0),
+        JsValue::from_f64(2_147_483_648.0),
+        JsValue::from_f64(4_294_967_296.0),
+    ] {
+        assert!(
+            Workbook::from_xlsx_bytes_with_options(
+                build_fixture_xlsx_bytes(),
+                Some(ordinary_load_options("maxInputBytes", value)),
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        Workbook::from_xlsx_bytes_with_options(
+            build_fixture_xlsx_bytes(),
+            Some(ordinary_load_options(
+                "maxInp utBytes",
+                JsValue::from_f64(100.0)
+            )),
+        )
+        .is_err()
+    );
+}
+
+#[wasm_bindgen_test]
+fn ordinary_load_limits_zero_and_input_boundary() {
+    let bytes = build_fixture_xlsx_bytes();
+    for key in [
+        "maxInputBytes",
+        "maxEntries",
+        "maxExpandedBytes",
+        "maxPartBytes",
+        "maxXmlDepth",
+    ] {
+        assert!(
+            Workbook::from_xlsx_bytes_with_options(
+                bytes.clone(),
+                Some(ordinary_load_options(key, JsValue::from_f64(0.0))),
+            )
+            .is_err(),
+            "zero {key} must be enforced"
+        );
+    }
+    assert!(
+        Workbook::from_xlsx_bytes_with_options(
+            bytes.clone(),
+            Some(ordinary_load_options(
+                "maxInputBytes",
+                JsValue::from_f64((bytes.len() - 1) as f64),
+            ))
+        )
+        .is_err()
+    );
+    assert!(
+        Workbook::from_xlsx_bytes_with_options(
+            bytes.clone(),
+            Some(ordinary_load_options(
+                "maxInputBytes",
+                JsValue::from_f64(bytes.len() as f64),
+            ))
+        )
+        .is_ok()
+    );
+}
+
+#[wasm_bindgen_test]
+fn ordinary_load_limits_are_xlsx_only() {
+    let options = ordinary_load_options("maxEntries", JsValue::from_f64(100.0));
+    assert!(Workbook::new(Some(options.clone())).is_err());
+    assert!(Workbook::from_json_with_options("{}".into(), Some(options)).is_err());
+}
+
 fn build_fixture_xlsx_bytes() -> Vec<u8> {
     build_named_fixture_xlsx_bytes("Sheet1")
 }

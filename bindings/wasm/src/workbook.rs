@@ -46,6 +46,8 @@ thread_local! {
 struct JsWorkbookLoadOptions {
     /// XLSX reader: `native` (default) or `calamine` (compatibility alias).
     backend: Option<String>,
+    #[serde(skip)]
+    load_limits: Option<JsXlsxLoadLimits>,
     span_evaluation: Option<bool>,
     /// Cycle detection mode: `"static"` | `"runtime"` (spec §2).
     cycle_detection: Option<String>,
@@ -60,17 +62,122 @@ struct JsWorkbookLoadOptions {
     max_eval_time_ms: Option<u64>,
 }
 
+#[wasm_bindgen(typescript_custom_section)]
+const XLSX_LOAD_LIMIT_TYPES: &str = r#"
+/** Ordinary XLSX limits. Omitted fields inherit Rust defaults; zero means zero.
+ * Values must be non-negative safe integers within the host allocation width.
+ */
+export interface XlsxLoadLimits {
+    /** Compressed input bytes admitted after JS-to-WASM transfer. */
+    maxInputBytes?: number;
+    /** ZIP directory entry count. */
+    maxEntries?: number;
+    /** Aggregate actual output bytes of consumed parts. */
+    maxExpandedBytes?: number;
+    /** Actual output bytes per consumed part. */
+    maxPartBytes?: number;
+    /** XML nesting depth for consumed parts. */
+    maxXmlDepth?: number;
+}
+"#;
+
+#[derive(Debug, Default)]
+struct JsXlsxLoadLimits {
+    max_input_bytes: Option<usize>,
+    max_entries: Option<usize>,
+    max_expanded_bytes: Option<usize>,
+    max_part_bytes: Option<usize>,
+    max_xml_depth: Option<usize>,
+}
+
+impl JsXlsxLoadLimits {
+    fn parse(value: &JsValue) -> Result<Self, JsValue> {
+        if !value.is_object() || value.is_null() || js_sys::Array::is_array(value) {
+            return Err(js_error("loadLimits must be an object"));
+        }
+        let mut limits = Self::default();
+        for key in js_sys::Reflect::own_keys(value)? {
+            let name = key
+                .as_string()
+                .ok_or_else(|| js_error("unknown loadLimits key (symbol)"))?;
+            let field = match name.as_str() {
+                "maxInputBytes" => &mut limits.max_input_bytes,
+                "maxEntries" => &mut limits.max_entries,
+                "maxExpandedBytes" => &mut limits.max_expanded_bytes,
+                "maxPartBytes" => &mut limits.max_part_bytes,
+                "maxXmlDepth" => &mut limits.max_xml_depth,
+                _ => return Err(js_error(format!("unknown loadLimits key: {name}"))),
+            };
+            let number = js_sys::Reflect::get(value, &key)?.as_f64().ok_or_else(|| {
+                js_error(format!(
+                    "loadLimits.{name} must be a non-negative safe integer"
+                ))
+            })?;
+            if !number.is_finite()
+                || number < 0.0
+                || number.fract() != 0.0
+                || number > 9_007_199_254_740_991.0
+            {
+                return Err(js_error(format!(
+                    "loadLimits.{name} must be a non-negative safe integer"
+                )));
+            }
+            // The safe-integer check makes this cast exact. Check both the
+            // index and allocation representations before conversion to usize;
+            // do not rely on Rust's saturating float-to-integer casts.
+            let integer = number as u64;
+            let host = usize::try_from(integer)
+                .map_err(|_| js_error(format!("loadLimits.{name} exceeds host index width")))?;
+            if host > isize::MAX as usize || host.checked_add(1).is_none() {
+                return Err(js_error(format!(
+                    "loadLimits.{name} exceeds host allocation width"
+                )));
+            }
+            *field = Some(host);
+        }
+        Ok(limits)
+    }
+
+    #[cfg(feature = "xlsx-recalc")]
+    fn core_limits(&self) -> formualizer::workbook::XlsxLoadLimits {
+        let defaults = formualizer::workbook::XlsxLoadLimits::default();
+        formualizer::workbook::XlsxLoadLimits {
+            max_input_bytes: self.max_input_bytes.unwrap_or(defaults.max_input_bytes),
+            max_entries: self.max_entries.unwrap_or(defaults.max_entries),
+            max_expanded_bytes: self
+                .max_expanded_bytes
+                .unwrap_or(defaults.max_expanded_bytes),
+            max_part_bytes: self.max_part_bytes.unwrap_or(defaults.max_part_bytes),
+            max_xml_depth: self.max_xml_depth.unwrap_or(defaults.max_xml_depth),
+        }
+    }
+}
+
 fn workbook_config_from_options(
     options: Option<JsValue>,
 ) -> Result<formualizer::workbook::WorkbookConfig, JsValue> {
-    workbook_config_from_parsed(&parse_workbook_load_options(options)?)
+    let parsed = parse_workbook_load_options(options)?;
+    if parsed.load_limits.is_some() {
+        return Err(js_error("loadLimits is supported only for XLSX loading"));
+    }
+    workbook_config_from_parsed(&parsed)
 }
 
 fn parse_workbook_load_options(options: Option<JsValue>) -> Result<JsWorkbookLoadOptions, JsValue> {
     Ok(match options {
         Some(value) if !value.is_null() && !value.is_undefined() => {
-            serde_wasm_bindgen::from_value::<JsWorkbookLoadOptions>(value)
-                .map_err(|e| js_error(format!("invalid workbook load options: {e}")))?
+            let limits = js_sys::Reflect::get(&value, &JsValue::from_str("loadLimits"))?;
+            let load_limits = if limits.is_undefined()
+                && !js_sys::Reflect::has(&value, &JsValue::from_str("loadLimits"))?
+            {
+                None
+            } else {
+                Some(JsXlsxLoadLimits::parse(&limits)?)
+            };
+            let mut parsed = serde_wasm_bindgen::from_value::<JsWorkbookLoadOptions>(value)
+                .map_err(|e| js_error(format!("invalid workbook load options: {e}")))?;
+            parsed.load_limits = load_limits;
+            parsed
         }
         _ => JsWorkbookLoadOptions::default(),
     })
@@ -766,9 +873,9 @@ impl Workbook {
         {
             use formualizer::workbook::backends::JsonAdapter;
             use formualizer::workbook::traits::SpreadsheetReader;
+            let cfg = workbook_config_from_options(options)?;
             let adapter = <JsonAdapter as SpreadsheetReader>::open_bytes(json.into_bytes())
                 .map_err(|e| js_error(format!("open failed: {e}")))?;
-            let cfg = workbook_config_from_options(options)?;
             let wb = formualizer::workbook::Workbook::from_reader(
                 adapter,
                 formualizer::workbook::LoadStrategy::EagerAll,
@@ -797,6 +904,10 @@ impl Workbook {
     /// Construct from XLSX bytes with options, e.g. `{ backend: "native" }`
     /// for the native reader, or `{ spanEvaluation: true }` for spans.
     /// Native is the default; `calamine` is a compatibility alias.
+    /// `loadLimits` accepts optional maxInputBytes, maxEntries, maxExpandedBytes,
+    /// maxPartBytes and maxXmlDepth non-negative safe integers within host width.
+    /// Partial limits inherit Rust defaults; zero means zero. Unknown keys fail.
+    /// Limits apply before core admission, after the JS-to-WASM byte transfer.
     #[wasm_bindgen(js_name = "fromXlsxBytesWithOptions")]
     pub fn from_xlsx_bytes_with_options(
         bytes: Vec<u8>,
@@ -821,13 +932,20 @@ impl Workbook {
                     #[cfg(feature = "xlsx-recalc")]
                     {
                         use formualizer::workbook::backends::NativeXlsxAdapter;
-                        use formualizer::workbook::traits::SpreadsheetReader;
-                        let adapter = NativeXlsxAdapter::open_bytes(bytes)
+                        let limits = parsed
+                            .load_limits
+                            .as_ref()
+                            .map(JsXlsxLoadLimits::core_limits)
+                            .unwrap_or_default();
+                        let cfg = workbook_config_from_parsed(&parsed)?;
+                        // wasm-bindgen has already transferred the input Vec;
+                        // limits apply before core admission, not that transfer.
+                        let adapter = NativeXlsxAdapter::open_bytes_with_limits(bytes, limits)
                             .map_err(|e| js_error(format!("open failed: {e}")))?;
                         formualizer::workbook::Workbook::from_reader(
                             adapter,
                             formualizer::workbook::LoadStrategy::EagerAll,
-                            workbook_config_from_parsed(&parsed)?,
+                            cfg,
                         )
                         .map_err(|e| js_error(format!("load failed: {e}")))?
                     }

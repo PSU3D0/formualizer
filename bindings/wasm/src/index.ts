@@ -579,11 +579,16 @@ export interface SheetPortEvaluateOptions {
   deterministicTimezone?: DeterministicTimezone;
 }
 
-/**
- * Options accepted by the `Workbook` constructor and the
- * `fromJsonWithOptions` / `fromXlsxBytesWithOptions` loaders.
- */
+/** Ordinary XLSX admission/consumption limits; independent of evaluation limits. */
+export type XlsxLoadLimits = wasm.XlsxLoadLimits;
+
+/** Options for the Workbook constructor and JSON/XLSX loaders. */
 export interface WorkbookLoadOptions {
+  /** XLSX only. Partial limits inherit Rust defaults; zero means zero.
+   * Values must be non-negative safe integers within the host allocation width.
+   * Unknown nested keys are rejected. Does not bound JS-to-WASM transfer memory.
+   */
+  loadLimits?: XlsxLoadLimits;
   /** XLSX reader only: native is the default; calamine is a native compatibility alias. */
   backend?: 'calamine' | 'native';
   /** Opt into experimental FormulaPlane span evaluation. */
