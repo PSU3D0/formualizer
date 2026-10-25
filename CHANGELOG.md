@@ -2,6 +2,43 @@
 
 All notable changes to Formualizer will be documented in this file.
 
+## [Unreleased]
+
+XLSX reading moves in-house: Rust, Python and JavaScript now use Formualizer's native reader by default, without a second production parser underneath it. Ordinary loading reads the workbook data it needs rather than decompressing every picture and attachment along the way. Source-preserving recalculation keeps its stricter whole-package integrity contract, and Umya remains available for rich document editing and export.
+
+### Breaking changes and upgrading
+
+- **Retired the Calamine parser and dependency.** `NativeXlsxAdapter` replaces its implementation. The Rust `CalamineAdapter` name, `backends::calamine` module path and `calamine` / `calamine_integration` feature names remain native compatibility aliases, not an alternate parser or fallback. Python `backend="calamine"` and JavaScript `{ backend: 'calamine' }` also select native. Most binding users can simply omit `backend`.
+- **Changed Calamine-specific Rust error types.** The adapter's reader/stream associated error is now `IoError`. Removed `IoError::Calamine(calamine::Error)` and `From<calamine::Error>`; match `IoError::XlsxRead(XlsxReadError)` instead. Removed the adapter-only `external_link_target` accessor and test-only relocation-comparator injection hook. See [the native XLSX migration guide](docs/native-xlsx-migration.md) for replacements and retained interfaces.
+- **Changed ordinary loading from whole-package payload validation to selective consumption.** A corrupt or very large unused image, embedded object or other unread payload no longer prevents value/formula loading. Required parts still undergo CRC, decoded-size and actual-output-limit checks. Ordinary loading is not a certificate of every ZIP member's integrity; strict source-preserving recalc retains its full-package checks and refusal policy.
+- **Preserved supported rich-document capabilities.** Umya reading, mutable workbook operations and rich writing/export remain available where previously supported. Removing Calamine does not remove all spreadsheet dependencies. The former adapter used Calamine's XLSX reader, not its XLS implementation, so this does not withdraw an existing `.xls` integration.
+
+### Highlights
+
+- **Selected the native XLSX reader by default** across Rust and the Python/JavaScript bindings, including the Python API used by Pyodide. It preserves loaded values/formulas, names and calculation settings, date/time behavior, cached external references and inert-sheet diagnostics. Cached links remain read-only: linked files are never refreshed or opened.
+- **Added configurable ordinary XLSX limits before admission.** Rust exposes `XlsxLoadLimits` and additive native constructors; Python accepts keyword-only `load_limits`, including through the SheetPort path helper; JavaScript accepts nested `loadLimits`. Native and legacy backend aliases use the same options and checks.
+- **Raised the ordinary compressed-input default to 127 MiB** (133,169,152 bytes). Expanded data has independent defaults: 128 MiB per consumed part and 256 MiB aggregate actual output. Callers can raise or lower these separately; a compressed-size allowance is not a guarantee that the expanded workbook, formulas or engine state fit in memory.
+
+### Loading and safety
+
+- **Skipped decompression of unread payloads**, including shadowed ZIP entries, while retaining the existing Compatible ZIP structure/index checks and consistent selected-member resolution. Images and attachments remain in the retained source; they are not expanded, decoded, executed or removed by a value/formula load.
+- **Bounded actual consumed output throughout a load**, including lazy external-cache reads and real metadata rereads. Byte counts are based on emitted data, not trusted ZIP size claims. Existing worksheet buffers move to their consumers without a new retained-part cache. Source and part buffers grow geometrically within their allowance rather than requesting a new exact allocation for every chunk.
+- **Kept required-part failures fatal.** CRC errors, declared/actual decoded-size mismatches, resource failures and cancellation cannot disappear into an unavailable external cache or a successful partial workbook. Existing best-effort unsupported-link/name semantics remain separate. Terminal safety failures also prevent subsequent sheet reads and bounds lookups through the same adapter.
+- **Validated nested options strictly.** Unknown keys, booleans, negative/fractional/non-finite values and host-unrepresentable numbers are refused; JavaScript also rejects unsafe integers. Zero is a zero allowance, not unlimited. Explicit XLSX-only overrides are rejected on unsupported loading routes instead of being silently ignored.
+- **Preserved independent limits and host constraints.** XML/cell/grid protections and engine geometry/formula-spool budgets still apply. Cancellation is cooperative; a single XML token is not a hard real-time cancellation boundary. Browser/WASM memory and address-space limits remain relevant even when a caller raises byte allowances.
+
+### Performance
+
+- **Reduced recalculation ingestion overhead** by removing redundant formula payload staging/publication work, streamlining worksheet scanning, and loading native values/formulas without another general-reader pass. These changes build on the recalculation work in 0.12.0. (#537–#539)
+- **Removed decompression and CRC CPU work for unused ordinary-load parts.** The benefit depends on workbook contents; attachment-heavy examples are not representative of every formula/data-heavy workbook. Opaque payloads were already streamed through bounded scratch memory, so skipped expanded bytes must not be described as an equal reduction in peak RSS.
+- **Kept benchmark comparisons distinct.** Reader-transition measurements against an already optimized Calamine control are neither an isolated default-switch speedup nor a total 0.12.0-to-next-release improvement. Stage percentages are not additive. No universal speedup, wheel/WASM-size reduction or peak-memory saving is promised here.
+
+### Compatibility and validation
+
+- **Added boundary coverage** for selected versus unread corruption, Stored/Deflated decoded-size mismatches, exact/overflow output budgets, duplicate and Unicode member names, lazy-cache retries, retained source handles and current-position readers. Required-part checks do not depend on auditing unread content first.
+- **Expanded binding coverage** for configuration validation, native aliases, Python forwarding/stubs and actual WASM/TypeScript loading. Native-versus-legacy-alias tests check API compatibility, not independent parser equivalence. Pre-retirement differential evidence used the real Calamine implementation; Pyodide wheel/SDK execution remains a separate CI gate.
+- **Retained attribution** for the small shared-formula/error routines adapted from Calamine under its MIT license.
+
 ## [0.12.0] - 2026-10-19
 
 This release makes `formualizer recalc` and the ordinary loader accept the same workbooks, including ones with external links, chart sheets and unevaluable names; fixes date and time cells inside formulas; aligns summation with Excel's order; removes a set of crashes reachable from formula text and workbook content; and makes recalculation about a third faster. The parser and shared-types crates move to 4.0.0 with API changes; the product crates, Python and npm packages are 0.12.0.
