@@ -22,6 +22,10 @@ formualizer recalc <INPUT> [-o|--output <PATH>] [--check] [--json] [--max-errors
 
 Exit codes: 0 success, 1 error, 2 refused (unsupported workbook feature, nothing written), 3 `--check` found stale caches, 64 usage error, 130 interrupted. See the [CLI reference](https://www.formualizer.dev/docs/recalc-cli/cli-reference).
 
+## Engine benchmark
+
+The underlying native engine calculated a generated **1,000,000-formula financial model in 0.26 seconds median**, excluding load. This is a Rust Workbook API measurement, **not** npm startup, WASM or full `recalc` command timing. [Samples and reproduction](https://github.com/psu3d0/formualizer/blob/main/benchmarks/2026-10-25-native-financial-model.md).
+
 ## For agents
 
 Keep your workbook editor: save, then run `npx @formualizer/cli recalc file.xlsx --json`.

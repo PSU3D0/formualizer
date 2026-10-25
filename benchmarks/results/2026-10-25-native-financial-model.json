@@ -1,0 +1,118 @@
+{
+  "schema": "formualizer.headline-benchmark/1",
+  "date": "2026-10-25",
+  "commit": "d1bbae0339406a746d534c85be0a9f548525cc78",
+  "binary_sha256": "d9dd9ed8fa13ba96d6060a562b45d79b6dc3cb244eac1f2284a024361094f4f9",
+  "fixture": {
+    "name": "fin_1m.xlsx",
+    "bytes": 9184309,
+    "sha256": "94823c46cd53837d45802424527cf70c7a07515e38f655449ea16dd1efae6f1c",
+    "generator": "benchmarks/generate-financial-model.py --rows 100000 --output fin_1m.xlsx",
+    "formula_count": 1000000
+  },
+  "setup": {
+    "harness": "program1-perf",
+    "mode": "ephemeral",
+    "allocation_counting": false,
+    "fresh_processes": 3,
+    "edits": 20,
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cpu": "AMD Ryzen 9 3900XT, 24 logical CPUs, shared Linux host",
+    "timing_boundary": "first evaluate_all after load; no graph presync/prebuild",
+    "command": "program1-perf --xlsx fin_1m.xlsx --mode ephemeral --edits 20 --no-alloc-count",
+    "backend": "native (historical CalamineAdapter compatibility alias)"
+  },
+  "samples": [
+    {
+      "formulas": 1000000,
+      "values": 200013,
+      "parser_rejections": 0,
+      "load_ms": 2868.554213,
+      "first_eval_ms": 275.64996,
+      "first_ok": true,
+      "first_computed": 1000000,
+      "value_total_p50_ms": 47.028058,
+      "formula_total_p50_ms": 0.119626,
+      "value_edit_errors": 0,
+      "formula_edit_errors": 0,
+      "vm_hwm_eval_kb": 527012,
+      "vm_hwm_kb": 641072,
+      "digest_first": "42294d57a81b5caa",
+      "digest_end": "6685e3a4710bc69b"
+    },
+    {
+      "formulas": 1000000,
+      "values": 200013,
+      "parser_rejections": 0,
+      "load_ms": 2254.333558,
+      "first_eval_ms": 210.31817999999998,
+      "first_ok": true,
+      "first_computed": 1000000,
+      "value_total_p50_ms": 48.388158000000004,
+      "formula_total_p50_ms": 0.110068,
+      "value_edit_errors": 0,
+      "formula_edit_errors": 0,
+      "vm_hwm_eval_kb": 527548,
+      "vm_hwm_kb": 638392,
+      "digest_first": "42294d57a81b5caa",
+      "digest_end": "6685e3a4710bc69b"
+    },
+    {
+      "formulas": 1000000,
+      "values": 200013,
+      "parser_rejections": 0,
+      "load_ms": 2580.921086,
+      "first_eval_ms": 262.439912,
+      "first_ok": true,
+      "first_computed": 1000000,
+      "value_total_p50_ms": 48.973945,
+      "formula_total_p50_ms": 0.144062,
+      "value_edit_errors": 0,
+      "formula_edit_errors": 0,
+      "vm_hwm_eval_kb": 527136,
+      "vm_hwm_kb": 641308,
+      "digest_first": "42294d57a81b5caa",
+      "digest_end": "6685e3a4710bc69b"
+    }
+  ],
+  "summary": {
+    "load_ms": {
+      "median": 2580.921086,
+      "min": 2254.333558,
+      "max": 2868.554213
+    },
+    "first_eval_ms": {
+      "median": 262.439912,
+      "min": 210.31817999999998,
+      "max": 275.64996
+    },
+    "value_total_p50_ms": {
+      "median": 48.388158000000004,
+      "min": 47.028058,
+      "max": 48.973945
+    },
+    "formula_total_p50_ms": {
+      "median": 0.119626,
+      "min": 0.110068,
+      "max": 0.144062
+    },
+    "vm_hwm_eval_kb": {
+      "median": 527136,
+      "min": 527012,
+      "max": 527548
+    },
+    "formulas": 1000000,
+    "samples": 3,
+    "first_eval_vs_published_ratio": 0.690631347368421,
+    "first_eval_vs_published_speedup": 1.4479504931399307,
+    "first_eval_time_reduction_percent": 30.936865263157898,
+    "load_vs_published_ratio": 0.6145050204761905
+  },
+  "qualifications": [
+    "Comparison is against the historical published 380 ms number, not a same-day old/new A/B.",
+    "Native Rust timing; not a Python/WASM/browser/edge timing guarantee.",
+    "Allocation counting off; RSS is not live heap.",
+    "First-result digest rounds numbers; stability is not a bitwise historical-value proof.",
+    "No LibreOffice measurements were rerun or rescaled."
+  ]
+}

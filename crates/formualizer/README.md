@@ -8,6 +8,10 @@
 
 `formualizer` is the batteries-included entry point for the Formualizer ecosystem. It re-exports the workbook, engine, parser, and SheetPort crates behind feature flags, so you can depend on a single crate and get everything you need.
 
+## Native performance
+
+The shared engine calculated the generated **1,000,000-formula financial model in 0.26 seconds median**, excluding its separate 2.58-second XLSX load. Three fresh release processes in ephemeral mode; host/workload-specific results, not a guarantee for every integration. [Samples and reproduction](https://github.com/psu3d0/formualizer/blob/main/benchmarks/2026-10-25-native-financial-model.md).
+
 ## When to use this crate
 
 This is the **recommended default** for most Rust integrations. It gives you:

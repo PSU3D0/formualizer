@@ -2,6 +2,10 @@
 
 The `formualizer` command: recalculate the cached formula values in an `.xlsx` after another tool has edited it, preserving formula text, styles and the rest of the package. It is part of [Formualizer](https://github.com/psu3d0/formualizer), a Rust spreadsheet engine.
 
+## Engine benchmark
+
+The underlying native engine calculated a generated **1,000,000-formula financial model in 0.26 seconds median**, after loading. This is the public Workbook API's ephemeral-mode first-calculation timing, **not** an end-to-end `recalc` command measurement; ZIP admission, loading and cache writeback are separate work. [Samples and reproduction](https://github.com/psu3d0/formualizer/blob/main/benchmarks/2026-10-25-native-financial-model.md).
+
 ## Install
 
 ```sh

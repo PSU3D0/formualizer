@@ -4,7 +4,7 @@
 
 <p align="center"><b><big>The fastest open-source spreadsheet engine.</big></b></p>
 
-<p align="center">A million formulas in 0.38 seconds, anywhere you run code: Rust, Python or JavaScript, on a server, in the browser or at the edge.<br/>Load Excel workbooks, change inputs, recalculate and read results, in-process. Built for AI agents.</p>
+<p align="center">A million formulas in <b>0.26 seconds</b> in the <a href="benchmarks/2026-10-25-native-financial-model.md">native engine benchmark</a>.<br/>Rust, Python and JavaScript — on servers, in browsers and at the edge.<br/>Load Excel workbooks, change inputs, recalculate and read results, in-process. Built for AI agents.</p>
 
 <p align="center">
   <a href="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg" /></a>
@@ -47,21 +47,35 @@ Branch on the exit code, inspect `errors`, fix inputs or formulas and repeat; ex
 
 ## How fast?
 
-Load an `.xlsx` and calculate every formula in it, from a cold start. The comparison is headless LibreOffice Calc 24.2 with threaded calculation, the usual open-source way to do this, on the same 24-core Linux machine, median of 3 runs:
+### Latest native engine result
+
+The generated **1,000,000-formula financial model calculates in 0.262 seconds median**, after loading, on merged commit `d1bbae03` (2026-10-25). That is **31% less calculation time / 1.45× faster than the historical 0.38-second headline**.
+
+| Phase | Historical 0.10 figure | Current native median |
+|---|---:|---:|
+| Load the XLSX | 4.2 s | **2.58 s** |
+| First calculation, excluding load | 0.38 s | **0.262 s** |
+| Change one input and recalculate | 52 ms | **48 ms** |
+
+Three fresh Rust release processes, ephemeral mode, allocation counting off; first-calculation samples ranged from 0.210 to 0.276 seconds. This compares with historical published numbers, not a same-day old/new A/B. The small edit-time difference is not a strong improvement claim. These are native engine measurements, not browser/Python-call timing guarantees. [Exact samples, methodology and reproduction](benchmarks/2026-10-25-native-financial-model.md).
+
+### Historical LibreOffice comparison (Formualizer 0.10)
+
+Load an `.xlsx` and calculate every formula in it, from a cold start. This **historical 0.10** comparison used headless LibreOffice Calc 24.2 with threaded calculation, the usual open-source way to do this, on the same 24-core Linux machine, median of 3 runs. It has not been rerun or rescaled using the new single-model result:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/benchmark-load-calculate-dark.png" />
   <img alt="Load and calculate time for nine workloads, comparing LibreOffice Calc 24.2 with Formualizer 0.10 on a logarithmic time axis. Exact values and workload descriptions follow." src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/benchmark-load-calculate-light.png" />
 </picture>
 
-**Across all 52 workbooks and workloads we measured, Formualizer takes about a quarter of the time and is faster in 48.** The [full report](benchmarks/0.10-vs-0.9.3.md#libreoffice-calc) has the method and the four exceptions. These shared-machine results are indicative, not guarantees for every workload or runtime.
+**In that 0.10 comparison, across all 52 workbooks and workloads measured, Formualizer took about a quarter of the time and was faster in 48.** The [full report](benchmarks/0.10-vs-0.9.3.md#libreoffice-calc) has the method and the four exceptions. These shared-machine results are indicative, not guarantees for every workload or runtime.
 
 <details>
 <summary>Exact timings and workload descriptions</summary>
 
 Speedups use unrounded measurements; displayed times are rounded.
 
-| Workload | LibreOffice | Formualizer | |
+| Workload | LibreOffice | Formualizer 0.10 | |
 |---|---:|---:|---:|
 | Product lookups <sup>[1]</sup> | 53.3 s | **0.35 s** | **154× faster** |
 | Sales report joins <sup>[2]</sup> | 19.7 s | **0.50 s** | **40× faster** |
@@ -85,9 +99,9 @@ Speedups use unrounded measurements; displayed times are rounded.
 
 </details>
 
-### And against Formualizer 0.9.3
+### Historical 0.10 comparison against Formualizer 0.9.3
 
-0.10 is a new engine under the same API:
+The following numbers describe the **0.10 release**, not the latest rerun above. 0.10 introduced a new engine under the same API:
 
 | | 0.9.3 | 0.10 | |
 |---|---:|---:|---:|
@@ -99,13 +113,13 @@ Speedups use unrounded measurements; displayed times are rounded.
 | … change an input and recalculate | | | 6.7× faster |
 | … memory after calculation | | | 7.7× less |
 
-Values are unchanged. Every step of the rewrite was checked cell by cell against the previous engine.
+For that 0.10 rewrite, values were unchanged. Every step was checked cell by cell against the previous engine; this is historical validation, not a new cross-version value claim from the timing-only rerun.
 
 ### Why it's fast
 
 ![Illustration of filling a formula down a column, evaluating a formula family, and recalculating dependents after an input edit](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-calc.gif)
 
-*Illustrative animation, not a real-time recording. Its timing figures refer to the financial-model benchmark above.*
+*Illustrative animation, not a real-time recording. Its end-card figures refer to the [latest native financial-model benchmark](benchmarks/2026-10-25-native-financial-model.md). [Renderer, font setup and GIF/MP4 rebuild instructions](assets/animation/README.md); [historical LibreOffice chart renderer/setup](assets/README.md).*
 
 - **Copied formulas are one unit.** Fill a formula down 100,000 rows and Formualizer stores one template and one dependency node, and evaluates the run in one pass over typed [Apache Arrow](https://arrow.apache.org/) columns. It does not track 100,000 separate formulas.
 - **Lookups and conditional sums index their table once.** A column of `VLOOKUP`, `INDEX`/`MATCH`, `SUMIFS` or `COUNTIFS` over the same range builds one index for the whole run instead of scanning the table once per row.

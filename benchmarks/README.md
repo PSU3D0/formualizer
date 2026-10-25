@@ -1,5 +1,11 @@
 # Benchmarks
 
+## Published results and media
+
+- [Latest million-formula native rerun (2026-10-25)](2026-10-25-native-financial-model.md): **0.262 s median first calculation**, separately measured load, exact samples and seed-7 generator.
+- [Historical 0.10 / 0.9.3 and LibreOffice report](0.10-vs-0.9.3.md): retained versioned results, not relabeled as current measurements.
+- [Chart and animation source/setup](../assets/README.md): rebuild the historical LibreOffice PNGs or the illustrative GIF/MP4. The new single-model result does not establish new LibreOffice ratios.
+
 This directory contains benchmark suite inputs, governance metadata, and harness docs.
 
 ## Layout
