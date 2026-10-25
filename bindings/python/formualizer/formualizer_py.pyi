@@ -1192,7 +1192,7 @@ class SheetPortSession:
     @staticmethod
     def manifest_from_yaml(yaml: builtins.str) -> typing.Any: ...
     @classmethod
-    def from_manifest_path(cls, manifest_path: builtins.str, workbook_path: builtins.str, backend: typing.Optional[builtins.str] = None) -> SheetPortSession: ...
+    def from_manifest_path(cls, manifest_path: builtins.str, workbook_path: builtins.str, backend: typing.Optional[builtins.str] = None, *, load_limits: typing.Optional[dict] = None) -> SheetPortSession: ...
     @classmethod
     def from_manifest_yaml(cls, manifest_yaml: builtins.str, workbook: Workbook) -> SheetPortSession: ...
     def describe_ports(self) -> typing.Any:
@@ -1588,7 +1588,7 @@ class Workbook:
         """
     def __new__(cls, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
     @classmethod
-    def load_path(cls, path: builtins.str, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
+    def load_path(cls, path: builtins.str, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
         r"""
         Class method: load an XLSX workbook from a file path.
         
@@ -1602,6 +1602,7 @@ class Workbook:
                 Calamine `.xlsx` path whose underlying file is not destructively
                 modified or truncated while the workbook loads.
             mode/config: Optional workbook configuration.
+            load_limits: Optional native XLSX package limits; see `load_workbook`.
         
         Example:
         ```python
@@ -1633,9 +1634,9 @@ class Workbook:
         ```
         """
     @classmethod
-    def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
+    def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook: ...
     @classmethod
-    def from_bytes(cls, data: bytes, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
+    def from_bytes(cls, data: bytes, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
         r"""
         Class method: load an XLSX workbook from in-memory bytes.
         
@@ -1645,6 +1646,7 @@ class Workbook:
             data: XLSX payload as `bytes`.
             backend: Backend name. Defaults to `native` on all platforms. `calamine` is a compatibility alias.
             mode/config: Optional workbook configuration.
+            load_limits: Optional native XLSX package limits; see `load_workbook`.
         """
     def to_xlsx_bytes(self, backend: typing.Optional[builtins.str] = None) -> bytes:
         r"""
@@ -2112,7 +2114,7 @@ class XlsxPathSource(enum.Enum):
     def __str__(self) -> builtins.str: ...
     def __repr__(self) -> builtins.str: ...
 
-def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, backend: typing.Optional[builtins.str] = None, path_source: typing.Optional[XlsxPathSource] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
+def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, backend: typing.Optional[builtins.str] = None, path_source: typing.Optional[XlsxPathSource] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
     r"""
     Load an XLSX workbook from a filesystem path.
     
@@ -2126,6 +2128,11 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
             `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
             mapping; the underlying file must not be destructively modified or
             truncated while the workbook loads.
+        load_limits: Optional native XLSX dictionary with integer fields
+            `max_input_bytes`, `max_entries`, `max_expanded_bytes`,
+            `max_part_bytes`, `max_xml_depth`. Omitted fields use Rust defaults;
+            zero allows nothing. Unknown keys, bools and non-integers are errors.
+            These package limits do not replace engine ingest/spool limits.
     
     Example:
     ```python
@@ -2139,13 +2146,14 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
     ```
     """
 
-def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook:
+def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
     r"""
     Load an XLSX workbook from in-memory bytes.
     
     This is the byte-oriented counterpart to `load_workbook(...)`. All hosts,
     including Pyodide, default to `native`. `backend="calamine"` is a native
     compatibility alias; explicit `umya` rich reading remains available.
+    `load_limits` has the same native-only dictionary semantics as `load_workbook`.
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:

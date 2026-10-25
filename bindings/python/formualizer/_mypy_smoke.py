@@ -21,9 +21,21 @@ from . import (
     TokenizerError,
     TraceGraph,
     Workbook,
+    load_workbook,
+    load_workbook_bytes,
 )
 from .formualizer_py import Workbook as NativeWorkbook
 from .sheetport import Input, Manifest, Output, column, range_of, table_of
+
+
+def _ordinary_limits_smoke(path: str, data: bytes, manifest: str) -> None:
+    limits = {"max_input_bytes": 1024, "max_entries": 100}
+    load_workbook(path, load_limits=limits)
+    load_workbook_bytes(data, load_limits=limits)
+    Workbook.from_path(path, load_limits=limits)
+    Workbook.load_path(path, load_limits=limits)
+    NativeWorkbook.from_bytes(data, load_limits=limits)
+    SheetPortSession.from_manifest_path(manifest, path, load_limits=limits)
 
 
 def _builder_smoke(wb: Workbook) -> SheetPortSession:

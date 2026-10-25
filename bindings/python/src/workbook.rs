@@ -21,6 +21,68 @@ type PyObject = pyo3::Py<pyo3::PyAny>;
 
 pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "native";
 
+/// Convert only the five ordinary package limits; engine ingest limits remain separate.
+fn xlsx_load_limits(
+    overrides: Option<&Bound<'_, PyDict>>,
+    backend: &str,
+    path: Option<&str>,
+) -> PyResult<formualizer::workbook::XlsxLoadLimits> {
+    let mut limits = formualizer::workbook::XlsxLoadLimits::default();
+    let Some(overrides) = overrides else {
+        return Ok(limits);
+    };
+    if !matches!(backend, "native" | "calamine")
+        || path.is_some_and(|path| {
+            !std::path::Path::new(path)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
+        })
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "load_limits requires a native XLSX source (backend='native' or 'calamine')",
+        ));
+    }
+    for (key, value) in overrides.iter() {
+        let key = key.extract::<String>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err("load_limits keys must be strings")
+        })?;
+        let target = match key.as_str() {
+            "max_input_bytes" => &mut limits.max_input_bytes,
+            "max_entries" => &mut limits.max_entries,
+            "max_expanded_bytes" => &mut limits.max_expanded_bytes,
+            "max_part_bytes" => &mut limits.max_part_bytes,
+            "max_xml_depth" => &mut limits.max_xml_depth,
+            _ => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "unknown load_limits field: {key}"
+                )));
+            }
+        };
+        // Python bool is an int subclass; no coercion, rounding or saturation.
+        if value.is_instance_of::<pyo3::types::PyBool>()
+            || !value.is_instance_of::<pyo3::types::PyInt>()
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "load_limits.{key} must be a non-negative integer (not bool)"
+            )));
+        }
+        let value = value.extract::<usize>().map_err(|_| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "load_limits.{key} must be a non-negative host-representable integer"
+            ))
+        })?;
+        // The core's allocation/index representation also excludes values above
+        // isize::MAX, even when Python and usize can represent them.
+        if value > isize::MAX as usize {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "load_limits.{key} exceeds the core host representation"
+            )));
+        }
+        *target = value;
+    }
+    Ok(limits)
+}
+
 fn validate_cell_coords(row: u32, col: u32) -> PyResult<()> {
     if row == 0 || col == 0 {
         return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
@@ -276,6 +338,7 @@ impl PyWorkbook {
     ///         Calamine `.xlsx` path whose underlying file is not destructively
     ///         modified or truncated while the workbook loads.
     ///     mode/config: Optional workbook configuration.
+    ///     load_limits: Optional native XLSX package limits; see `load_workbook`.
     ///
     /// Example:
     /// ```python
@@ -287,7 +350,7 @@ impl PyWorkbook {
     ///     print(wb.sheet_names)
     /// ```
     #[classmethod]
-    #[pyo3(signature = (path, strategy=None, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None))]
+    #[pyo3(signature = (path, strategy=None, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None, load_limits=None))]
     pub fn load_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
@@ -297,6 +360,7 @@ impl PyWorkbook {
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
         span_evaluation: Option<bool>,
+        load_limits: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let _ = strategy; // currently unused, default eager
         Self::from_path(
@@ -307,6 +371,7 @@ impl PyWorkbook {
             mode,
             config,
             span_evaluation,
+            load_limits,
         )
     }
 
@@ -344,7 +409,9 @@ impl PyWorkbook {
     }
 
     #[classmethod]
-    #[pyo3(signature = (path, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None))]
+    // Keep the existing Python call shape while adding a keyword-only option.
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (path, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None, load_limits=None))]
     pub fn from_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
@@ -353,8 +420,10 @@ impl PyWorkbook {
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
         span_evaluation: Option<bool>,
+        load_limits: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let backend = backend.unwrap_or(DEFAULT_XLSX_BYTE_BACKEND);
+        let limits = xlsx_load_limits(load_limits, backend, Some(path))?;
         let path_source = path_source.unwrap_or_default();
         if path_source == PyXlsxPathSource::DirectMmap && !matches!(backend, "calamine" | "native")
         {
@@ -381,9 +450,10 @@ impl PyWorkbook {
                     ));
                 }
                 use formualizer::workbook::backends::NativeXlsxAdapter;
-                let adapter = NativeXlsxAdapter::open_path_with_source(
+                let adapter = NativeXlsxAdapter::open_path_with_source_and_limits(
                     std::path::Path::new(path),
                     path_source.into(),
+                    limits,
                 )
                 .map_err(|e| {
                     let source = match path_source {
@@ -438,8 +508,9 @@ impl PyWorkbook {
     ///     data: XLSX payload as `bytes`.
     ///     backend: Backend name. Defaults to `native` on all platforms. `calamine` is a compatibility alias.
     ///     mode/config: Optional workbook configuration.
+    ///     load_limits: Optional native XLSX package limits; see `load_workbook`.
     #[classmethod]
-    #[pyo3(signature = (data, backend=None, *, mode=None, config=None, span_evaluation=None))]
+    #[pyo3(signature = (data, backend=None, *, mode=None, config=None, span_evaluation=None, load_limits=None))]
     pub fn from_bytes<'py>(
         _cls: &Bound<'py, pyo3::types::PyType>,
         data: &Bound<'py, PyBytes>,
@@ -447,13 +518,20 @@ impl PyWorkbook {
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
         span_evaluation: Option<bool>,
+        load_limits: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<Self> {
+        let backend = backend.unwrap_or(DEFAULT_XLSX_BYTE_BACKEND);
+        let limits = xlsx_load_limits(load_limits, backend, None)?;
+        // Reject before the avoidable Python bytes -> Vec copy.
+        if matches!(backend, "native" | "calamine")
+            && data.as_bytes().len() > limits.max_input_bytes
+        {
+            return Err(pyo3::exceptions::PyIOError::new_err(
+                "open failed: XLSX input exceeds max_input_bytes",
+            ));
+        }
         let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
-        Self::from_bytes_impl(
-            data.as_bytes().to_vec(),
-            backend.unwrap_or(DEFAULT_XLSX_BYTE_BACKEND),
-            cfg,
-        )
+        Self::from_bytes_impl(data.as_bytes().to_vec(), backend, cfg, limits)
     }
 
     /// Serialize the current workbook contents into XLSX bytes.
@@ -1552,14 +1630,15 @@ impl PyWorkbook {
         data: Vec<u8>,
         backend: &str,
         cfg: formualizer::workbook::WorkbookConfig,
+        limits: formualizer::workbook::XlsxLoadLimits,
     ) -> PyResult<Self> {
         match backend {
             "native" | "calamine" => {
                 use formualizer::workbook::backends::NativeXlsxAdapter;
-                use formualizer::workbook::traits::SpreadsheetReader;
-                let adapter = NativeXlsxAdapter::open_bytes(data).map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
-                })?;
+                let adapter =
+                    NativeXlsxAdapter::open_bytes_with_limits(data, limits).map_err(|e| {
+                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
+                    })?;
                 let wb = formualizer::workbook::Workbook::from_reader(
                     adapter,
                     formualizer::workbook::LoadStrategy::EagerAll,
