@@ -5,3 +5,8 @@
 allowBuilds:
   esbuild: false
   sharp: false
+
+# Tailwind pins an older PostCSS patch; keep every build-time copy on the
+# patched 8.5 line as well as the direct dependency. Verified by the static build.
+overrides:
+  postcss: ^8.5.31

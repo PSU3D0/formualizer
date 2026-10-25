@@ -4,14 +4,18 @@
   "version": "0.1.0",
   "description": "Polyglot adapter runtime for comparative benchmark runs",
   "scripts": {
+    "test": "node --test scripts/test-dependencies.js",
     "check:hyperformula": "node -e \"require('hyperformula'); console.log('hyperformula ok')\""
   },
   "overrides": {
-    "brace-expansion": "^2.0.3"
+    "brace-expansion": "^2.1.7",
+    "exceljs": {
+      "uuid": "^11.1.1"
+    }
   },
   "dependencies": {
     "exceljs": "^4.4.0",
     "hyperformula": "^3.2.0",
-    "js-yaml": "^4.1.1"
+    "js-yaml": "^4.3.2"
   }
 }
