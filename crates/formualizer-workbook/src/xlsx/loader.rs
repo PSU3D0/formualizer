@@ -539,7 +539,7 @@ impl NativeXlsxAdapter {
             external_formulas_ms: 0.0,
         })
     }
-    fn finish_read<T>(&mut self, result: Result<T, IoError>) -> Result<T, IoError> {
+    fn finish_read<T>(&self, result: Result<T, IoError>) -> Result<T, IoError> {
         if result.as_ref().is_err_and(super::options::is_safety) {
             self.budget.fail();
         }
@@ -1132,8 +1132,9 @@ impl SpreadsheetReader for NativeXlsxAdapter {
         Ok(cells)
     }
     fn sheet_bounds(&self, name: &str) -> Option<(u32, u32)> {
-        let sheet = self.sheets.iter().find(|s| s.name == name)?;
-        self.reader_sheet(sheet).ok()?.dimensions
+        self.budget.check().ok()?;
+        let sheet = self.source_sheet(name).ok()?;
+        self.finish_read(self.reader_sheet(sheet)).ok()?.dimensions
     }
     fn is_loaded(&self, sheet: &str, _row: Option<u32>, _col: Option<u32>) -> bool {
         self.loaded.contains(sheet)

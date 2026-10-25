@@ -488,6 +488,76 @@ fn explicit_path_limits_and_retained_source_apply_to_both_aliases() {
     }
 }
 #[test]
+fn bounds_resource_failure_is_terminal_for_all_reads() {
+    let mut p = parts(false);
+    p.get_mut("xl/workbook.xml").unwrap().clone_from(&format!(
+        "<workbook xmlns=\"{MAIN}\" xmlns:r=\"{OFFICE}\"><sheets><sheet name=\"Sheet1\" sheetId=\"1\" r:id=\"s\"/><sheet name=\"Good\" sheetId=\"2\" r:id=\"good\"/></sheets></workbook>"
+    ));
+    p.get_mut("xl/_rels/workbook.xml.rels").unwrap().clone_from(&format!(
+        "<Relationships xmlns=\"{RELS}\"><Relationship Id=\"s\" Type=\"{OFFICE}/worksheet\" Target=\"worksheets/sheet1.xml\"/><Relationship Id=\"good\" Type=\"{OFFICE}/worksheet\" Target=\"worksheets/good.xml\"/></Relationships>"
+    ));
+    p.insert(SHEET.into(), format!(
+        "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>too deep</t></is></c></row></sheetData></worksheet>"
+    ));
+    p.insert("xl/worksheets/good.xml".into(), format!(
+        "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"A1\"><v>7</v></c></row></sheetData></worksheet>"
+    ));
+    let bytes = pack(&p, CompressionMethod::Deflated);
+    let mut adapter = NativeXlsxAdapter::open_bytes_with_limits(
+        bytes,
+        XlsxLoadLimits {
+            max_xml_depth: 5,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(adapter.sheet_bounds("Good"), Some((1, 1)));
+    assert!(adapter.sheet_bounds("Sheet1").is_none());
+    assert!(
+        adapter.sheet_bounds("Good").is_none(),
+        "cached bounds cannot escape terminal failure"
+    );
+    assert!(adapter.read_sheet("Good").is_err());
+    assert!(adapter.read_cell("Good", 1, 1).is_err());
+    assert!(adapter.read_range("Good", (1, 1), (1, 1)).is_err());
+    assert!(
+        adapter
+            .stream_into_engine(Workbook::new().engine_mut())
+            .is_err()
+    );
+}
+
+#[test]
+fn bounds_are_unavailable_after_external_safety_failure() {
+    let p = parts(true);
+    let opening: usize = [
+        "_rels/.rels",
+        "xl/_rels/workbook.xml.rels",
+        "xl/workbook.xml",
+        SHEET,
+    ]
+    .iter()
+    .map(|name| p[*name].len())
+    .sum();
+    for corruption in [false, true] {
+        let mut bytes = pack(&p, CompressionMethod::Deflated);
+        let mut limits = XlsxLoadLimits::default();
+        if corruption {
+            damage(&mut bytes, LINK, false);
+        } else {
+            limits.max_expanded_bytes = opening;
+        }
+        let mut adapter = NativeXlsxAdapter::open_bytes_with_limits(bytes, limits).unwrap();
+        assert!(adapter.cached_external_link_values().is_none());
+        assert!(
+            adapter.sheet_bounds("Sheet1").is_none(),
+            "terminal external failure cannot permit bounds: corrupt={corruption}"
+        );
+        assert!(adapter.read_sheet("Sheet1").is_err());
+    }
+}
+
+#[test]
 fn ordinary_defaults_are_independent_of_recalculation() {
     let strict = XlsxRecalculateLimits::default();
     let limits = XlsxLoadLimits::default();

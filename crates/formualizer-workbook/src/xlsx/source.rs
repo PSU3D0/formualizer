@@ -196,6 +196,43 @@ impl XlsxSource {
     }
 }
 
+// Compute requested growth without trusting archive size hints. The caller's
+// byte allowance bounds reservation targets; allocator rounding is not an RSS cap.
+fn bounded_capacity(current: usize, required: usize, limit: usize) -> Option<usize> {
+    if required > limit {
+        return None;
+    }
+    if required <= current {
+        return Some(current.min(limit));
+    }
+    Some(
+        current
+            .checked_mul(2)
+            .unwrap_or(limit)
+            .max(required)
+            .min(limit),
+    )
+}
+
+pub(crate) fn reserve_bounded(
+    bytes: &mut Vec<u8>,
+    additional: usize,
+    limit: usize,
+) -> Result<(), crate::IoError> {
+    let required = bytes
+        .len()
+        .checked_add(additional)
+        .ok_or_else(|| super::options::unsupported("buffer length overflow", "XLSX read"))?;
+    let target = bounded_capacity(bytes.capacity(), required, limit)
+        .ok_or_else(|| super::options::unsupported("buffer allocation limit", "XLSX read"))?;
+    if target > bytes.capacity() {
+        bytes
+            .try_reserve_exact(target - bytes.len())
+            .map_err(|error| crate::IoError::from_backend("xlsx allocation", error))?;
+    }
+    Ok(())
+}
+
 pub(crate) fn read_input(
     mut reader: impl Read,
     options: &super::options::ReadOptions,
@@ -217,9 +254,7 @@ pub(crate) fn read_input(
             super::options::checkpoint(&options.cancel)?;
             return Ok(bytes);
         }
-        bytes
-            .try_reserve_exact(n)
-            .map_err(|e| crate::IoError::from_backend("xlsx allocation", e))?;
+        reserve_bounded(&mut bytes, n, options.limits.max_input_bytes)?;
         bytes.extend_from_slice(&scratch[..n]);
     }
 }
@@ -352,6 +387,46 @@ impl Seek for SharedXlsxReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_capacity_handles_zero_tiny_exact_and_host_bounds() {
+        assert_eq!(bounded_capacity(0, 0, 0), Some(0));
+        assert_eq!(bounded_capacity(0, 1, 0), None);
+        assert_eq!(bounded_capacity(0, 1, 1), Some(1));
+        assert_eq!(bounded_capacity(1, 2, 3), Some(2));
+        assert_eq!(bounded_capacity(2, 3, 3), Some(3));
+        assert_eq!(bounded_capacity(3, 3, 3), Some(3));
+        assert_eq!(bounded_capacity(3, 4, 3), None);
+        let current = usize::MAX / 2 + 1;
+        assert_eq!(
+            bounded_capacity(current, current + 1, usize::MAX),
+            Some(usize::MAX)
+        );
+        assert_eq!(
+            bounded_capacity(0, isize::MAX as usize, isize::MAX as usize),
+            Some(isize::MAX as usize)
+        );
+    }
+
+    #[test]
+    fn bounded_capacity_growth_is_logarithmic_and_never_exceeds_allowance() {
+        let limit = 128 * 1024 * 1024;
+        let chunk = 64 * 1024;
+        let mut capacity = 0;
+        let mut growths = 0;
+        for required in (chunk..=limit).step_by(chunk) {
+            let next = bounded_capacity(capacity, required, limit).unwrap();
+            assert!(next >= required && next <= limit);
+            growths += usize::from(next != capacity);
+            capacity = next;
+        }
+        assert_eq!(capacity, limit);
+        assert_eq!(
+            growths, 12,
+            "64 KiB to 128 MiB requires only doubling steps"
+        );
+    }
+
     #[test]
     fn shared_file_cursors_keep_independent_positions_under_concurrency() {
         use std::io::Write;

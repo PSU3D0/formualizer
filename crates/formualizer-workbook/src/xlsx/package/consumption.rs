@@ -4,23 +4,26 @@ use crate::{
     IoError,
     xlsx::options::{ReadOptions, checkpoint, unsupported},
 };
-use std::io::{Read, Seek};
+use std::{
+    io::{Read, Seek},
+    sync::OnceLock,
+};
 
 #[derive(Default)]
 pub(crate) struct ConsumptionBudget {
     pub(crate) emitted: usize,
-    failed: bool,
+    failed: OnceLock<()>,
 }
 impl ConsumptionBudget {
     pub(crate) fn check(&self) -> Result<(), IoError> {
-        if self.failed {
+        if self.failed.get().is_some() {
             Err(unsupported("terminal XLSX read failure", "ordinary load"))
         } else {
             Ok(())
         }
     }
-    pub(crate) fn fail(&mut self) {
-        self.failed = true;
+    pub(crate) fn fail(&self) {
+        let _ = self.failed.set(());
     }
 }
 
@@ -40,6 +43,12 @@ pub(crate) fn read_selected<R: Read + Seek>(
         super::record_inflate(file.name());
         let declared = file.size();
         let mut bytes = Vec::new();
+        let buffer_limit = options.limits.max_worksheet_bytes.min(
+            options
+                .limits
+                .max_expanded_bytes
+                .saturating_sub(budget.emitted),
+        );
         let mut scratch = [0u8; 64 * 1024];
         loop {
             checkpoint(&options.cancel)?;
@@ -77,9 +86,7 @@ pub(crate) fn read_selected<R: Read + Seek>(
                 checkpoint(&options.cancel)?;
                 return Ok(bytes);
             }
-            bytes
-                .try_reserve_exact(n)
-                .map_err(|e| IoError::from_backend("xlsx allocation", e))?;
+            crate::xlsx::source::reserve_bounded(&mut bytes, n, buffer_limit)?;
             bytes.extend_from_slice(&scratch[..n]);
         }
     })();
