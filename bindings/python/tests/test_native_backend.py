@@ -52,5 +52,7 @@ def test_unknown_backends_are_not_silently_fallbacks(xlsx_builder, backend):
 
 
 def test_legacy_reader_name_does_not_claim_a_writer():
-    with pytest.raises(NotImplementedError, match="does not currently support XLSX byte export"):
+    with pytest.raises(
+        NotImplementedError, match="does not currently support XLSX byte export"
+    ):
         fz.Workbook().to_xlsx_bytes(backend="calamine")
