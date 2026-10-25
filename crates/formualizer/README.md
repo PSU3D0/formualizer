@@ -8,6 +8,10 @@
 
 `formualizer` is the batteries-included entry point for the Formualizer ecosystem. It re-exports the workbook, engine, parser, and SheetPort crates behind feature flags, so you can depend on a single crate and get everything you need.
 
+## Native performance
+
+A million formulas in **0.26 seconds**, with incremental input recalculation in **48 ms**. [See the benchmarks](https://github.com/psu3d0/formualizer#how-fast).
+
 ## When to use this crate
 
 This is the **recommended default** for most Rust integrations. It gives you:

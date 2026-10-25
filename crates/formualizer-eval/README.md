@@ -8,6 +8,10 @@
 
 `formualizer-eval` is the calculation core of Formualizer. It takes ASTs from `formualizer-parse`, tracks dependencies between cells, and evaluates 400+ Excel-compatible functions with incremental recomputation and optional parallel execution.
 
+## Native performance
+
+The engine calculates a million-formula financial model in **0.26 seconds**, excluding load. [See the benchmarks](https://github.com/psu3d0/formualizer#how-fast).
+
 ## When to use this crate
 
 Use `formualizer-eval` when you want **full control** over the evaluation engine:

@@ -13,6 +13,8 @@
 
 **The fastest open-source spreadsheet engine. In your JavaScript app.**
 
+The shared Rust engine calculates a million-formula financial model in **0.26 seconds**. [See the benchmarks](https://github.com/psu3d0/formualizer#how-fast).
+
 Load Excel workbooks, change inputs, recalculate and read results—in the browser, Node.js or a compatible JavaScript edge runtime. Formualizer ships a Rust calculation engine as WebAssembly with a typed JavaScript API. No Excel installation, office-suite process or remote calculation service. Built for AI agents and applications that need spreadsheet logic without a spreadsheet UI.
 
 - **No compromise on speed.** Copied formulas compute as families over Arrow columns; lookups reuse indexes; only affected cells recalculate. The [engine benchmarks](https://github.com/psu3d0/formualizer#how-fast) report native measurements, not browser or edge timings.

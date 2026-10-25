@@ -4,7 +4,7 @@
 
 <p align="center"><b><big>The fastest open-source spreadsheet engine.</big></b></p>
 
-<p align="center">A million formulas in 0.38 seconds, anywhere you run code: Rust, Python or JavaScript, on a server, in the browser or at the edge.<br/>Load Excel workbooks, change inputs, recalculate and read results, in-process. Built for AI agents.</p>
+<p align="center">A million formulas in <b>0.26 seconds</b>.<br/>Rust, Python and JavaScript — on servers, in browsers and at the edge.<br/>Load Excel workbooks, change inputs, recalculate and read results, in-process. Built for AI agents.</p>
 
 <p align="center">
   <a href="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/psu3d0/formualizer/actions/workflows/ci.yml/badge.svg" /></a>
@@ -47,31 +47,31 @@ Branch on the exit code, inspect `errors`, fix inputs or formulas and repeat; ex
 
 ## How fast?
 
-Load an `.xlsx` and calculate every formula in it, from a cold start. The comparison is headless LibreOffice Calc 24.2 with threaded calculation, the usual open-source way to do this, on the same 24-core Linux machine, median of 3 runs:
+Load an `.xlsx` and calculate every formula in a fresh workbook. **Formualizer 0.13.0 versus LibreOffice Calc 24.2**, the usual open-source way to do this, on the same shared 24-thread Linux machine, median of 3 runs. Formualizer was measured again on current code; LibreOffice's saved baseline is unchanged.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/benchmark-load-calculate-dark.png" />
-  <img alt="Load and calculate time for nine workloads, comparing LibreOffice Calc 24.2 with Formualizer 0.10 on a logarithmic time axis. Exact values and workload descriptions follow." src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/benchmark-load-calculate-light.png" />
+  <img alt="Load and calculate time for nine workloads, comparing LibreOffice Calc 24.2 with Formualizer 0.13.0 on a logarithmic time axis. Exact values and workload descriptions follow." src="https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/benchmark-load-calculate-light.png" />
 </picture>
 
-**Across all 52 workbooks and workloads we measured, Formualizer takes about a quarter of the time and is faster in 48.** The [full report](benchmarks/0.10-vs-0.9.3.md#libreoffice-calc) has the method and the four exceptions. These shared-machine results are indicative, not guarantees for every workload or runtime.
+**Across all 52 workbooks and workloads, Formualizer takes about a fifth of the time and is faster in 50.** The overall time ratio is 0.184× (geometric mean). Native release measurements are from October 25, 2026; the saved LibreOffice baseline is from September 29. These shared-machine results are indicative, not guarantees for every workbook or runtime.
 
 <details>
 <summary>Exact timings and workload descriptions</summary>
 
-Speedups use unrounded measurements; displayed times are rounded.
+Speedups use unrounded measurements; displayed times are rounded. Each case uses the median of three load-plus-first-calculation totals. Formualizer uses the native reader in interactive mode, one fresh process per sample. LibreOffice runs headless with threaded calculation and OpenCL off; listener startup is excluded, and import may itself calculate uncached formulas. Filesystem caches are warm. This is a fresh native run against a saved baseline, not a newly interleaved A/B.
 
-| Workload | LibreOffice | Formualizer | |
+| Workload | LibreOffice 24.2 | Formualizer 0.13.0 | |
 |---|---:|---:|---:|
-| Product lookups <sup>[1]</sup> | 53.3 s | **0.35 s** | **154× faster** |
-| Sales report joins <sup>[2]</sup> | 19.7 s | **0.50 s** | **40× faster** |
-| Enron cash-flow forecast <sup>[3]</sup> | 1.57 s | **0.07 s** | **23× faster** |
-| Multi-criteria summary report <sup>[4]</sup> | 6.11 s | **0.28 s** | **22× faster** |
-| Revenue rollup <sup>[5]</sup> | 4.46 s | **0.58 s** | **7.7× faster** |
-| Service operations model <sup>[6]</sup> | 212 ms | **80 ms** | **2.6× faster** |
-| Enron trading workbook <sup>[7]</sup> | 1.31 s | **0.50 s** | **2.6× faster** |
-| 100,000-row running balance <sup>[8]</sup> | 525 ms | **291 ms** | **1.8× faster** |
-| 100,000 copied formulas <sup>[9]</sup> | 550 ms | **347 ms** | **1.6× faster** |
+| Product lookups <sup>[1]</sup> | 53.2 s | **0.22 s** | **244× faster** |
+| Sales report joins <sup>[2]</sup> | 19.7 s | **0.33 s** | **61× faster** |
+| Enron cash-flow forecast <sup>[3]</sup> | 1.57 s | **0.06 s** | **26× faster** |
+| Multi-criteria summary report <sup>[4]</sup> | 6.11 s | **0.22 s** | **28× faster** |
+| Revenue rollup <sup>[5]</sup> | 4.46 s | **0.41 s** | **11× faster** |
+| Service operations model <sup>[6]</sup> | 212 ms | **45 ms** | **4.7× faster** |
+| Enron trading workbook <sup>[7]</sup> | 1.31 s | **288 ms** | **4.5× faster** |
+| 100,000-row running balance <sup>[8]</sup> | 525 ms | **193 ms** | **2.7× faster** |
+| 100,000 copied formulas <sup>[9]</sup> | 550 ms | **239 ms** | **2.3× faster** |
 
 1. 20,000 query rows, each with two `INDEX`/`MATCH` lookups of a product key in a 50,000-row table.
 2. A 5,000-row report that finds each sale in a 50,000-row fact table on another sheet, then looks up its region and product in two dimension tables (`INDEX`/`MATCH` throughout). The fact table computes 50,000 revenue formulas.
@@ -83,29 +83,15 @@ Speedups use unrounded measurements; displayed times are rounded.
 8. A balance where each row adds to the one above (`=A1+1`, `=A2+1`, …), the hardest shape to parallelize.
 9. One formula (`=A1*2`) filled down 100,000 rows, plus a `SUM` over the results.
 
+The two exceptions are the 100,000-unique-formula witness and one Enron financial model (`Mesa_Model_1_19_01`), where LibreOffice is 1.2× and 2.6× faster, respectively.
+
 </details>
-
-### And against Formualizer 0.9.3
-
-0.10 is a new engine under the same API:
-
-| | 0.9.3 | 0.10 | |
-|---|---:|---:|---:|
-| 1M-formula financial model: load | 25.1 s | 4.2 s | 6× faster |
-| … first calculation | 4.8 s | 0.38 s | 12× faster |
-| … change one input and recalculate | 2.5 s | 52 ms | 47× faster |
-| … memory after calculation | 897 MB | 45 MB | 20× less |
-| Enron spreadsheets (25): load and calculate | | | 3.2× faster |
-| … change an input and recalculate | | | 6.7× faster |
-| … memory after calculation | | | 7.7× less |
-
-Values are unchanged. Every step of the rewrite was checked cell by cell against the previous engine.
 
 ### Why it's fast
 
 ![Illustration of filling a formula down a column, evaluating a formula family, and recalculating dependents after an input edit](https://raw.githubusercontent.com/psu3d0/formualizer/main/assets/formualizer-calc.gif)
 
-*Illustrative animation, not a real-time recording. Its timing figures refer to the financial-model benchmark above.*
+*Illustrative animation, not a real-time recording. The generated million-formula financial model calculated in 0.26 seconds after a separate 2.58-second load; changing one input and recalculating took 48 ms (native release build, ephemeral mode, median of 3 runs).*
 
 - **Copied formulas are one unit.** Fill a formula down 100,000 rows and Formualizer stores one template and one dependency node, and evaluates the run in one pass over typed [Apache Arrow](https://arrow.apache.org/) columns. It does not track 100,000 separate formulas.
 - **Lookups and conditional sums index their table once.** A column of `VLOOKUP`, `INDEX`/`MATCH`, `SUMIFS` or `COUNTIFS` over the same range builds one index for the whole run instead of scanning the table once per row.
@@ -131,18 +117,18 @@ print(wb.get_value("Summary", 5, 2))       # read an output (B5)
 
 ### Rust
 
-In this checkout, the legacy `calamine` feature and `CalamineAdapter` names below are native-reader compatibility aliases. New integrations can use `xlsx-recalc` and `NativeXlsxAdapter`; see the [migration guide](docs/native-xlsx-migration.md).
+The native XLSX reader is the default in 0.13. See the [migration guide](docs/native-xlsx-migration.md) for integrations using legacy Calamine names.
 
 ```toml
 [dependencies]
-formualizer = { version = "0.10", features = ["calamine"] }
+formualizer = { version = "0.13", features = ["xlsx-recalc"] }
 ```
 
 ```rust
-use formualizer::workbook::{CalamineAdapter, SpreadsheetReader};
+use formualizer::workbook::{NativeXlsxAdapter, SpreadsheetReader};
 use formualizer::{LiteralValue, LoadStrategy, Workbook, WorkbookConfig};
 
-let reader = CalamineAdapter::open_path("financial_model.xlsx")?;
+let reader = NativeXlsxAdapter::open_path("financial_model.xlsx")?;
 let mut wb = Workbook::from_reader(reader, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())?;
 wb.set_value("Assumptions", 3, 2, LiteralValue::Number(0.07))?;
 wb.evaluate_all()?;
@@ -438,7 +424,7 @@ formualizer              <-- recommended: batteries-included re-export
 - **`portable-wasm`:** no JS imports, safe for raw `wasm32-unknown-unknown` hosts such as wasmtime. Time functions default to the UTC epoch unless you inject a clock (`FixedClock` or a `ClockProvider`).
 
 ```toml
-formualizer = { version = "0.10", default-features = false, features = ["portable-wasm"] }
+formualizer = { version = "0.13", default-features = false, features = ["portable-wasm"] }
 ```
 
 Native Rust needs no feature selection.

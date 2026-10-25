@@ -8,6 +8,10 @@
 
 `formualizer-workbook` is the recommended high-level interface for Formualizer. It wraps the calculation engine with workbook-friendly APIs for managing sheets, editing cells, evaluating formulas, tracking changes, and importing/exporting files.
 
+## Native performance
+
+A million-formula financial model loads in **2.58 seconds**, then calculates in **0.26 seconds**. [See the benchmarks](https://github.com/psu3d0/formualizer#how-fast).
+
 ## When to use this crate
 
 Use `formualizer-workbook` for **most integrations**:

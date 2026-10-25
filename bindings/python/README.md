@@ -13,6 +13,8 @@
 
 **The fastest open-source spreadsheet engine. Native speed, from Python.**
 
+The shared Rust engine calculates a million-formula financial model in **0.26 seconds**. [See the benchmarks](https://github.com/psu3d0/formualizer#how-fast).
+
 Load Excel workbooks, change inputs, recalculate and read results—in-process, with no Excel installation or office-suite service. Formualizer runs the calculation in Rust and gives you a Python API. Built for financial models, data pipelines and AI agents.
 
 - **No compromise on speed.** Copied formulas compute as families over Arrow columns; lookups reuse indexes; only affected cells recalculate. See the [benchmarks and methodology](https://github.com/psu3d0/formualizer#how-fast).
