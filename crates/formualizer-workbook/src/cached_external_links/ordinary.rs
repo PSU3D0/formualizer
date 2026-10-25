@@ -1,10 +1,13 @@
 use super::*;
+use crate::xlsx::{
+    options::is_safety,
+    package::{ConsumptionBudget, read_selected},
+};
 use std::io::{Read, Seek};
 use zip::ZipArchive;
 
 #[cfg(all(test, feature = "xlsx-recalc"))]
-#[path = "../../tests/support/source_xlsx.rs"]
-mod source_xlsx;
+use crate::test_source_xlsx as source_xlsx;
 
 #[cfg(all(test, feature = "xlsx-recalc"))]
 #[test]
@@ -63,6 +66,35 @@ fn direct_compressed_request_falls_back_for_cached_sources() {
     );
 }
 
+#[cfg(all(test, feature = "xlsx-recalc"))]
+#[test]
+fn cache_parser_classifies_resource_and_cancel_errors_at_origin() {
+    let body = format!(
+        "<externalLink xmlns=\"{}\"><externalBook><sheetNames><sheetName val=\"Data\"/></sheetNames><sheetDataSet><sheetData sheetId=\"0\"><row r=\"1\"><cell r=\"A1\"><v>7</v></cell></row></sheetData></sheetDataSet></externalBook></externalLink>",
+        xml::MAIN
+    );
+    let mut options = CacheOptions::default();
+    options.limits.max_cells = 0;
+    let error = parse_part(body.as_bytes(), "cache", &options, &mut 0)
+        .err()
+        .unwrap();
+    assert!(is_safety(&error), "{error}");
+    let cancel = crate::CancelToken::new();
+    cancel.cancel();
+    options.cancel = Some(cancel);
+    let error = parse_part(body.as_bytes(), "cache", &options, &mut 0)
+        .err()
+        .unwrap();
+    assert!(is_safety(&error), "{error}");
+    let error = parse_part(b"<invalid/>", "cache", &CacheOptions::default(), &mut 0)
+        .err()
+        .unwrap();
+    assert!(
+        !is_safety(&error),
+        "semantic invalidity remains best effort"
+    );
+}
+
 /// Read-only values cached in an XLSX package for linked workbooks.
 /// Constructed only by workbook readers; linked files are never opened.
 pub struct CachedExternalLinkValues {
@@ -73,57 +105,30 @@ pub struct CachedExternalLinkValues {
     pub(crate) skipped_names: Vec<String>,
 }
 
-pub(crate) fn has_links(reader: impl Read + Seek) -> bool {
-    let Ok(mut archive) = ZipArchive::new(reader) else {
-        return false;
-    };
-    if archive
-        .file_names()
-        .any(|p| p.starts_with("xl/externalLinks/"))
-    {
-        return true;
-    }
-    let options = CacheOptions::default();
-    let Ok(workbook) = read_part(&mut archive, "xl/workbook.xml", &options) else {
-        return false;
-    };
-    let mut found = false;
-    let _ = xml::walk(&workbook, &options, |path, node| {
-        if xml::path_is(
-            path,
-            xml::MAIN,
-            &["workbook", "externalReferences", "externalReference"],
-        ) && matches!(node.kind, xml::Kind::Open { .. })
-        {
-            found = true;
-        }
-        Ok(())
-    });
-    found
-}
-
 fn read_part<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
     part: &str,
     options: &CacheOptions,
+    budget: &mut ConsumptionBudget,
 ) -> Result<Vec<u8>, IoError> {
-    let entry = archive.by_name(part).map_err(|_| malformed(part))?;
-    if entry.size() > options.limits.max_worksheet_bytes as u64 {
-        return Err(unsupported("external link part byte limit", part));
+    // An absent semantic cache description remains unavailable. Once a
+    // selected payload is read, all safety/I/O failures are terminal.
+    if !archive.file_names().any(|name| name == part) {
+        return Err(malformed(part));
     }
-    let mut bytes = Vec::new();
-    entry
-        .take(options.limits.max_worksheet_bytes as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| malformed(part))?;
-    if bytes.len() > options.limits.max_worksheet_bytes {
-        return Err(unsupported("external link part byte limit", part));
-    }
-    Ok(bytes)
+    read_selected(archive, part, options, budget)
 }
 
-fn read_links(reader: impl Read + Seek, options: &CacheOptions) -> Result<Links, IoError> {
-    let mut archive = ZipArchive::new(reader).map_err(|_| malformed("XLSX package"))?;
+fn read_links(
+    reader: impl Read + Seek,
+    options: &CacheOptions,
+    budget: &mut ConsumptionBudget,
+) -> Result<Links, IoError> {
+    budget.check()?;
+    let mut archive = ZipArchive::new(reader).map_err(|error| {
+        budget.fail();
+        IoError::from_backend("zip", error)
+    })?;
     if archive.len() > options.limits.max_entries
         || archive
             .file_names()
@@ -132,23 +137,13 @@ fn read_links(reader: impl Read + Seek, options: &CacheOptions) -> Result<Links,
             .len()
             != archive.len()
     {
-        return Err(unsupported(
+        return Err(crate::xlsx::options::resource(
+            options,
             "external link package entry limit or duplicate entry",
             "XLSX package",
         ));
     }
-    let expanded = (0..archive.len())
-        .try_fold(0u64, |sum, i| {
-            sum.checked_add(archive.by_index(i).ok()?.size())
-        })
-        .ok_or_else(|| malformed("XLSX package"))?;
-    if expanded > options.limits.max_expanded_bytes as u64 {
-        return Err(unsupported(
-            "external link expanded byte limit",
-            "XLSX package",
-        ));
-    }
-    let rels = read_part(&mut archive, "xl/_rels/workbook.xml.rels", options)?;
+    let rels = read_part(&mut archive, "xl/_rels/workbook.xml.rels", options, budget)?;
     let mut targets = HashMap::new();
     xml::walk(&rels, options, |path, node| {
         if xml::path_is(path, xml::RELS, &["Relationships", "Relationship"])
@@ -183,7 +178,7 @@ fn read_links(reader: impl Read + Seek, options: &CacheOptions) -> Result<Links,
         }
         Ok(())
     })?;
-    let workbook = read_part(&mut archive, "xl/workbook.xml", options)?;
+    let workbook = read_part(&mut archive, "xl/workbook.xml", options, budget)?;
     let mut parts = Vec::new();
     xml::walk(&workbook, options, |path, node| {
         if xml::path_is(
@@ -200,7 +195,7 @@ fn read_links(reader: impl Read + Seek, options: &CacheOptions) -> Result<Links,
         }
         Ok(())
     })?;
-    let content_types = read_part(&mut archive, "[Content_Types].xml", options)?;
+    let content_types = read_part(&mut archive, "[Content_Types].xml", options, budget)?;
     let mut overrides = HashMap::new();
     let mut defaults = HashMap::new();
     const TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
@@ -244,14 +239,20 @@ fn read_links(reader: impl Read + Seek, options: &CacheOptions) -> Result<Links,
                         })
                         .is_some_and(|t| t == LINK_CONTENT_TYPE)
                 })
-                .and_then(|p| {
-                    read_part(&mut archive, &p, options)
-                        .ok()
-                        .and_then(|data| parse_part(&data, &p, options, &mut counted).ok())
+                .map(|p| {
+                    read_part(&mut archive, &p, options, budget)
+                        .and_then(|data| parse_part(&data, &p, options, &mut counted))
                 })
-                .unwrap_or(Link::Other("invalid"))
+                .unwrap_or(Ok(Link::Other("invalid")))
+                .or_else(|error| {
+                    if is_safety(&error) || budget.check().is_err() {
+                        Err(error)
+                    } else {
+                        Ok(Link::Other("invalid"))
+                    }
+                })
         })
-        .collect();
+        .collect::<Result<Vec<_>, IoError>>()?;
     Ok(Links { links })
 }
 
@@ -260,8 +261,17 @@ pub(crate) fn load(
     formulas: &[(String, u32, u32, String)],
     names: &[(String, String, Option<usize>)],
     options: &CacheOptions,
-) -> CachedExternalLinkValues {
-    let links = read_links(reader, options).unwrap_or(Links { links: Vec::new() });
+    budget: &mut ConsumptionBudget,
+) -> Result<CachedExternalLinkValues, IoError> {
+    budget.check()?;
+    let links = match read_links(reader, options, budget) {
+        Ok(links) => links,
+        Err(error) if is_safety(&error) || budget.check().is_err() => {
+            budget.fail();
+            return Err(error);
+        }
+        Err(_) => Links { links: Vec::new() },
+    };
     let parsed_names: Vec<_> = names
         .iter()
         .map(|(_, text, _)| parse_formula(text))
@@ -296,25 +306,41 @@ pub(crate) fn load(
     let mut values = ExternalValues::default();
     let mut indices = BTreeSet::new();
     let mut area = 0;
+    let mut safety_error = None;
     let mut serve = |ast: &ASTNode| -> Result<(), IoError> {
-        let mut reads = Reads::default();
-        collect(ast, &mut reads);
-        for ext in reads.externals {
-            if values.contains(&ext.raw) {
-                continue;
-            }
-            let (index, served) = links.serve(ext, &ext.raw, &mut area, options)?;
-            indices.insert(index);
-            match served {
-                Served::Scalar(v) => {
-                    values.scalars.insert(ext.raw.clone(), v);
+        let result = (|| {
+            budget.check()?;
+            checkpoint(&options.cancel)?;
+            let mut reads = Reads::default();
+            collect(ast, &mut reads);
+            for ext in reads.externals {
+                if values.contains(&ext.raw) {
+                    continue;
                 }
-                Served::Range(v) => {
-                    values.ranges.insert(ext.raw.clone(), v);
+                let (index, served) = links.serve(ext, &ext.raw, &mut area, options)?;
+                indices.insert(index);
+                match served {
+                    Served::Scalar(v) => {
+                        values.scalars.insert(ext.raw.clone(), v);
+                    }
+                    Served::Range(v) => {
+                        values.ranges.insert(ext.raw.clone(), v);
+                    }
                 }
             }
+            Ok(())
+        })();
+        match result {
+            Err(error) if is_safety(&error) => {
+                budget.fail();
+                safety_error = Some(error);
+                Err(unsupported(
+                    "terminal external cache failure",
+                    "ordinary load",
+                ))
+            }
+            result => result,
         }
-        Ok(())
     };
     let mut refused_formulas = HashMap::new();
     for (sheet, row, col, text) in formulas {
@@ -376,11 +402,19 @@ pub(crate) fn load(
             }
         }
     }
-    CachedExternalLinkValues {
+    if let Some(error) = safety_error {
+        return Err(error);
+    }
+    budget.check()?;
+    if let Err(error) = checkpoint(&options.cancel) {
+        budget.fail();
+        return Err(error);
+    }
+    Ok(CachedExternalLinkValues {
         values: Arc::new(values),
         indices: indices.into_iter().collect(),
         refused_formulas,
         refused_names,
         skipped_names,
-    }
+    })
 }

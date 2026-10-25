@@ -15,20 +15,20 @@ pub(crate) fn expand_shared_formula_into(
     start: (u32, u32),
     end: (u32, u32),
     out: &mut String,
-) -> Result<(), calamine::XlsxError> {
+) -> Result<(), crate::xlsx::types::XlsxError> {
     #[cfg(test)]
     UTILITY_CALLS.with(|calls| {
         let (e, p) = calls.get();
         calls.set((e + 1, p));
     });
-    calamine::expand_shared_formula_into(formula, start, end, out)
+    crate::xlsx::types::expand_shared_formula_into(formula, start, end, out)
 }
 
 /// Parse a cache error token using the pinned compatibility vocabulary.
 #[cfg(any(test, feature = "xlsx-recalc"))]
 pub(crate) fn parse_error_token(
     token: &str,
-) -> Result<calamine::CellErrorType, calamine::XlsxError> {
+) -> Result<crate::xlsx::types::CellErrorType, crate::xlsx::types::XlsxError> {
     #[cfg(test)]
     UTILITY_CALLS.with(|calls| {
         let (e, p) = calls.get();

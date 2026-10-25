@@ -14,16 +14,23 @@ impl SharedStringTable {
         Self::parse_read(bytes, &ReadOptions::from(options))
     }
 
-    /// Extraction uses shared read bounds, not evaluation/publication admission.
-    pub(in crate::xlsx) fn parse_read(
+    pub(in crate::xlsx) fn parse_direct(
         bytes: &[u8],
+        options: &ReadOptions,
+    ) -> Result<Self, IoError> {
+        crate::xlsx::loader::cells::shared_strings(bytes, options).map(Self)
+    }
+
+    /// Extraction uses shared read bounds, not evaluation/publication admission.
+    pub(in crate::xlsx) fn parse_read<'a>(
+        bytes: &'a [u8],
         options: &ReadOptions,
     ) -> Result<Self, IoError> {
         let mut values = Vec::new();
         let mut current: Option<DisplayString<'_>> = None;
         let mut closing = None;
         let mut done = false;
-        xml::walk(bytes, options, |path, node| {
+        let visit = |path: &[xml::Element<'a>], node: xml::Node<'_, 'a>| {
             let Some(element) = path.last() else {
                 return Ok(());
             };
@@ -62,7 +69,12 @@ impl SharedStringTable {
                 }
             }
             Ok(())
-        })?;
+        };
+        if options.policy == crate::xlsx::options::ReadPolicy::Compatible {
+            xml::walk_display_cdata(bytes, options, visit)?;
+        } else {
+            xml::walk(bytes, options, visit)?;
+        }
         Ok(Self(values))
     }
     pub(in crate::xlsx) fn len(&self) -> usize {
@@ -70,9 +82,11 @@ impl SharedStringTable {
     }
     pub(in crate::xlsx) fn get(&self, index: usize) -> Result<&str, IoError> {
         self.0.get(index).map(String::as_str).ok_or_else(|| {
-            IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Unexpected(
-                "Cell string index not found in shared strings table",
-            )))
+            IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                crate::xlsx::types::XlsxError::Unexpected(
+                    "Cell string index not found in shared strings table",
+                ),
+            ))
         })
     }
 }

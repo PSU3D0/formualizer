@@ -1,5 +1,7 @@
 #![cfg(feature = "xlsx-recalc")]
-use calamine::{Data, Reader, Xlsx};
+#[path = "support/cached_reader.rs"]
+mod cached_reader;
+use crate::cached_reader::{Data, Xlsx};
 use formualizer_workbook::{XlsxRecalculateOptions, recalculate_xlsx_bytes};
 use std::{
     collections::BTreeMap,
@@ -164,14 +166,17 @@ fn calculation_name_literal_types_and_legitimate_error() {
         ("TRUE", Data::Bool(true)),
         ("FALSE", Data::Bool(false)),
         ("&quot;a &amp; b&quot;", Data::String("a & b".into())),
-        ("#N/A", Data::Error(calamine::CellErrorType::NA)),
-        ("#DIV/0!", Data::Error(calamine::CellErrorType::Div0)),
-        ("#VALUE!", Data::Error(calamine::CellErrorType::Value)),
-        ("#REF!", Data::Error(calamine::CellErrorType::Ref)),
-        ("Sheet1!#REF!", Data::Error(calamine::CellErrorType::Ref)),
-        ("#NUM!", Data::Error(calamine::CellErrorType::Num)),
-        ("#NULL!", Data::Error(calamine::CellErrorType::Null)),
-        ("#NAME?", Data::Error(calamine::CellErrorType::Name)),
+        ("#N/A", Data::Error(cached_reader::CellErrorType::NA)),
+        ("#DIV/0!", Data::Error(cached_reader::CellErrorType::Div0)),
+        ("#VALUE!", Data::Error(cached_reader::CellErrorType::Value)),
+        ("#REF!", Data::Error(cached_reader::CellErrorType::Ref)),
+        (
+            "Sheet1!#REF!",
+            Data::Error(cached_reader::CellErrorType::Ref),
+        ),
+        ("#NUM!", Data::Error(cached_reader::CellErrorType::Num)),
+        ("#NULL!", Data::Error(cached_reader::CellErrorType::Null)),
+        ("#NAME?", Data::Error(cached_reader::CellErrorType::Name)),
         ("-0.07", Data::Float(-0.07)),
     ] {
         let p = with_names(
@@ -517,7 +522,7 @@ fn newly_admitted_workbooks_do_not_expose_masked_legacy_name_errors() {
     let p = with_names(single("1+1", "<v>99</v>"), legacy);
     assert!(matches!(
         recalculate_xlsx_bytes(&pack(&p), Default::default()),
-        Err(formualizer_workbook::IoError::Calamine(_))
+        Err(formualizer_workbook::IoError::XlsxRead(_))
     ));
     let mut p = inert_fixture("chartsheet", false, "1+1");
     let workbook = p.get_mut("xl/workbook.xml").unwrap();
@@ -694,7 +699,11 @@ fn missing_cache_and_typed_cache_repairs() {
             "<v>hi &amp; &lt; 💡</v>",
         ),
         ("&quot;&quot;", Data::String(String::new()), "<v></v>"),
-        ("1/0", Data::Error(calamine::CellErrorType::Div0), "t=\"e\""),
+        (
+            "1/0",
+            Data::Error(cached_reader::CellErrorType::Div0),
+            "t=\"e\"",
+        ),
     ] {
         let input = pack(&single(formula, ""));
         let out = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::default()).unwrap();

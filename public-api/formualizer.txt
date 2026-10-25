@@ -79,6 +79,7 @@ pub use formualizer::Workbook
 pub use formualizer::WorkbookConfig
 pub use formualizer::WorkbookMode
 pub use formualizer::WorksheetHandle
+pub use formualizer::XlsxLoadLimits
 pub use formualizer::XlsxRecalculateLimits
 pub use formualizer::XlsxRecalculateOptions
 pub use formualizer::XlsxRecalculateResult

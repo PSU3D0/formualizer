@@ -46,13 +46,13 @@ let payment = wb.evaluate_cell("Sheet1", 1, 2)?;
 | `system-clock` | Yes | Ambient wall-clock time for `NOW()`, `TODAY()` and friends; disable for wasmtime/non-JS wasm guests and inject a clock instead |
 | `json` | Yes | JSON workbook serialization |
 | `csv` | Yes | CSV workbook loading |
-| `xlsx-recalc` | Yes | Explicitly invoked cache-only XLSX recalculation (`recalculate_xlsx_bytes` / file variants) |
+| `xlsx-recalc` | Yes | Native Compatible XLSX reading and explicitly invoked source-preserving cache recalculation (`recalculate_xlsx_bytes` / file variants) |
 | `eval` | via preset | Calculation engine and built-in functions |
 | `workbook` | via preset | Workbook API with sheets, undo/redo |
 | `sheetport` | via preset | SheetPort runtime (spreadsheets as typed APIs) |
 | `parse` | via preset | Tokenizer, parser, pretty-printer |
 | `common` | via preset | Shared types (values, errors, references) |
-| `calamine` | No | XLSX/ODS reading via calamine, including runtime `XlsxPathSource` selection |
+| `calamine` | No | Compatibility alias for native XLSX reading, including runtime `XlsxPathSource` selection (no Calamine dependency) |
 | `umya` | No | XLSX reading/writing via umya-spreadsheet 2 |
 | `umya3` | No | Opt-in umya-spreadsheet 3 backend sharing the same adapter algorithms |
 | `js-runtime` | No | Browser/wasm-bindgen runtime hooks (`web-time`, JS-backed entropy); only for browser targets |

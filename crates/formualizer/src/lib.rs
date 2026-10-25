@@ -72,8 +72,8 @@ pub use formualizer_workbook::{recalculate_file, recalculate_file_with_limit};
 pub use formualizer_workbook::recalculate_xlsx_file;
 #[cfg(all(feature = "workbook", feature = "xlsx-recalc"))]
 pub use formualizer_workbook::{
-    ExternalLinkPolicy, XlsxRecalculateLimits, XlsxRecalculateOptions, XlsxRecalculateResult,
-    recalculate_xlsx_bytes,
+    ExternalLinkPolicy, XlsxLoadLimits, XlsxRecalculateLimits, XlsxRecalculateOptions,
+    XlsxRecalculateResult, recalculate_xlsx_bytes,
 };
 
 #[cfg(feature = "eval")]

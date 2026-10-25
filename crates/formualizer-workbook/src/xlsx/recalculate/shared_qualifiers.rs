@@ -15,7 +15,7 @@ use super::{IoError, unsupported};
 pub(in crate::xlsx) fn shifted_by_shared_expansion(qualifier: &str) -> bool {
     qualifier.contains('"')
         || [(1, 0), (0, 1)].into_iter().any(|end| {
-            calamine::expand_shared_formula(qualifier, (0, 0), end)
+            crate::xlsx::types::expand_shared_formula(qualifier, (0, 0), end)
                 .map_or(true, |expanded| expanded != qualifier)
         })
 }

@@ -1,4 +1,4 @@
-#![cfg(feature = "calamine")]
+#![cfg(feature = "xlsx-recalc")]
 
 use formualizer_workbook::{
     CalamineAdapter, LiteralValue, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,

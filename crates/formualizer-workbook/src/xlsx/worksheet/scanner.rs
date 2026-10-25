@@ -301,7 +301,12 @@ fn scan_inner<const COUNT_PATHS: bool, const STRICT: bool>(
                 bytes,
             )?;
         }
-        let tag = Tag::of(&element);
+        let mut tag = Tag::of(&element);
+        if !STRICT {
+            // Ordinary loading recognizes structural local names. Namespace
+            // binding/well-formedness was still checked by the tokenizer.
+            tag.main = true;
+        }
         if matches!(boundary, Boundary::Open { .. }) {
             cursor.open(tag, element.local, lexical.depth);
         }

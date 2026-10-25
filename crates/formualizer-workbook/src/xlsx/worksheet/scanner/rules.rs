@@ -373,11 +373,27 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
             let next_row = if STRICT {
                 integer(attrs.required("r")?)?
             } else {
-                attrs
-                    .value("r")
-                    .map(integer)
-                    .transpose()?
-                    .unwrap_or(self.row.saturating_add(1))
+                match attrs.attribute("", "r") {
+                    Some(attribute) => {
+                        let raw = raw_attribute_span(context.bytes, &attribute.span)?;
+                        let raw = &context.bytes[raw];
+                        if let Some(byte) = raw.iter().find(|byte| !byte.is_ascii_alphanumeric()) {
+                            return Err(IoError::XlsxRead(
+                                crate::xlsx::types::XlsxReadError::Xlsx(
+                                    crate::xlsx::types::XlsxError::Alphanumeric(*byte),
+                                ),
+                            ));
+                        }
+                        // Ordinary readers accept an A1-shaped row address too.
+                        // Its row component remains subject to the same grid bound.
+                        integer(
+                            attribute
+                                .value
+                                .trim_start_matches(|c: char| c.is_ascii_alphabetic()),
+                        )?
+                    }
+                    None => self.row.saturating_add(1),
+                }
             };
             if STRICT && self.raw_row_refusal_span.is_none() {
                 let raw = raw_attribute_span(context.bytes, &attrs.required_attribute("r")?.span)?;
@@ -613,7 +629,7 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                 });
                 index.rows.last_mut().expect("open row").cells.end = index.cells.len();
             }
-            if empty && context.request.retention.values {
+            if empty && context.request.retention.values && (STRICT || self.sheet_data_count == 1) {
                 emit.literal(emission::Literal {
                     row: r,
                     col: c,
@@ -828,6 +844,31 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                 .as_mut()
                 .ok_or_else(|| unsupported("unbalanced cell", "worksheet"))?;
             cell.span.end = span.end;
+            if !STRICT
+                && cell.has_formula
+                && self.sheet_data_count == 1
+                && context.request.retention.values
+                && emit.retain_formula_cache()
+            {
+                let cache_text = cell
+                    .value
+                    .as_ref()
+                    .map(|v| v.text.clone())
+                    .unwrap_or_default();
+                let value =
+                    cell.decode(cache_text, std::mem::take(&mut self.open_cell.inline_text));
+                emit.formula_cache(emission::Literal {
+                    row: cell.row,
+                    col: cell.col,
+                    generated_child_hint: false,
+                    style: self.open_cell.style.clone(),
+                    raw_coordinate_span: self.open_cell.raw_coordinate.clone(),
+                    raw_type_span: self.open_cell.raw_type.clone(),
+                    raw_style_span: self.open_cell.raw_style.clone(),
+                    raw_value_span: cell.value.as_ref().map(|v| v.open_end..v.close_start),
+                    value,
+                })?;
+            }
             let emitted_value = (!cell.has_formula).then(|| {
                 cell.decode(
                     std::mem::take(&mut self.open_cell.literal_text),
@@ -876,7 +917,7 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                 return Err(unsupported(refusal, "worksheet"));
             }
             if let Some(value) = emitted_value {
-                if context.request.retention.values {
+                if context.request.retention.values && (STRICT || self.sheet_data_count == 1) {
                     emit.literal(emission::Literal {
                         row: cell.row,
                         col: cell.col,
@@ -902,7 +943,9 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                     return Err(unsupported("missing formula boundary", "worksheet"));
                 }
                 if !STRICT && !context.request.retention.marks {
-                    if context.request.retention.formula_events {
+                    if context.request.retention.formula_events
+                        && (STRICT || self.sheet_data_count == 1)
+                    {
                         emit.formula(self.open_cell.source(self.formulas as u64)?)?;
                     }
                     self.open_cell.cell = None;
@@ -935,7 +978,9 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                     } else {
                         None
                     };
-                    if context.request.retention.formula_events {
+                    if context.request.retention.formula_events
+                        && (STRICT || self.sheet_data_count == 1)
+                    {
                         emit.formula(source)?;
                     }
                     mark.compatibility = evidence;

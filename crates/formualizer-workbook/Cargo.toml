@@ -24,7 +24,11 @@ chrono = { workspace = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
 zip = { version = "7.2", default-features = false, features = ["deflate"], optional = true }
+atoi_simd = "0.18"
+fast-float2 = "0.2"
 quick-xml = { version = "0.39", features = ["encoding"], optional = true }
+# Pinned XLSX cell reader uses the same XML API as its upstream implementation.
+quick-xml-cells = { package = "quick-xml", version = "0.41", features = ["encoding"], optional = true }
 
 [features]
 # system-clock: forwards eval's ambient-time feature (Local::now/Utc::now).
@@ -36,13 +40,10 @@ system-clock = ["formualizer-eval/system-clock", "chrono/clock"]
 js-runtime = ["formualizer-eval/js-runtime", "getrandom04?/wasm_js"]
 json = ["dep:serde_json", "formualizer-common/serde"]
 csv = ["dep:csv"]
-# `memmap2` is unconditional here on purpose: `XlsxPathSource::DirectMmap` is a
-# runtime choice on a public enum, so gating the dependency behind `mmap` would
-# make that variant fail with ErrorKind::Unsupported in every default calamine
-# build (including the Python extension, which enables calamine but not mmap).
-calamine = ["dep:calamine", "dep:zip", "dep:quick-xml", "dep:memmap2"]
-# Package-preserving XLSX formula-cache recalculation through Calamine and ZIP.
-xlsx-recalc = ["calamine"]
+# Legacy feature alias: XLSX reads use the native Compatible reader.
+calamine = ["xlsx-recalc"]
+# Native Compatible loading and source-preserving XLSX formula-cache recalculation.
+xlsx-recalc = ["dep:zip", "dep:quick-xml", "dep:quick-xml-cells", "dep:memmap2"]
 umya = ["dep:umya-spreadsheet", "dep:zip", "dep:quick-xml"]
 umya3 = ["dep:umya-spreadsheet3", "dep:zip", "dep:quick-xml", "dep:getrandom04"]
 # No-op compatibility alias, retained only so existing `features = ["mmap"]`
@@ -62,10 +63,6 @@ calamine_integration = ["calamine"]
 umya_integration = ["umya"]
 wasm_plugins = ["dep:wasmparser", "dep:serde_json", "formualizer-common/serde"]
 wasm_runtime_wasmtime = ["wasm_plugins", "dep:wasmtime"]
-
-[dependencies.calamine]
-version = "0.36"
-optional = true
 
 [dependencies.reqwest]
 version = "0.11"
@@ -104,7 +101,7 @@ required-features = ["xlsx-recalc"]
 [[test]]
 name = "calamine"
 path = "tests/calamine/mod.rs"
-required-features = ["calamine"]
+required-features = ["xlsx-recalc"]
 
 [[test]]
 name = "umya3_export"

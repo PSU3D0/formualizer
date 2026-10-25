@@ -1,4 +1,6 @@
-use js_sys::{Object, Reflect, Uint8Array};
+use js_sys::Uint8Array;
+#[cfg(feature = "xlsx-recalc")]
+use js_sys::{Object, Reflect};
 use wasm_bindgen::prelude::*;
 
 mod ast;
@@ -38,6 +40,7 @@ pub fn parse(formula: &str, dialect: Option<FormulaDialect>) -> Result<ASTNode, 
     parser::parse_formula(formula, dialect)
 }
 
+#[cfg(feature = "xlsx-recalc")]
 fn xlsx_summary_to_js(
     summary: formualizer::workbook::RecalculateSummary,
 ) -> Result<JsValue, JsValue> {
@@ -141,6 +144,7 @@ fn xlsx_summary_to_js(
 /// Apply `{ rngSeed, deterministicTimestampUtc, deterministicTimezone }`,
 /// spelled as in `SheetPortSession.evaluateOnce`. `rngSeed` may also be a
 /// `bigint`, so the echoed 64-bit `seed` can be passed back.
+#[cfg(feature = "xlsx-recalc")]
 fn apply_reproducibility_options(
     config: &mut formualizer::eval::engine::EvalConfig,
     options: &JsValue,
@@ -195,6 +199,7 @@ fn apply_reproducibility_options(
 }
 
 /// Apply `externalLinks` (`'cached'`, the default, or `'refuse'`).
+#[cfg(feature = "xlsx-recalc")]
 fn apply_external_links_option(
     recalc: &mut formualizer::workbook::XlsxRecalculateOptions,
     options: &JsValue,
@@ -220,6 +225,7 @@ fn apply_external_links_option(
 /// `{ now, timezone, fixed }`, as in the CLI's JSON report: `now` is an
 /// RFC 3339 string in the offset that was applied (for `Local`, the host
 /// offset at that instant), or null without a clock.
+#[cfg(feature = "xlsx-recalc")]
 fn clock_to_js(
     config: &formualizer::eval::engine::EvalConfig,
     clock_now_utc: Option<chrono::DateTime<chrono::Utc>>,
@@ -274,71 +280,81 @@ pub fn recalculate_xlsx_bytes(
     error_location_limit: Option<u32>,
     options: JsValue,
 ) -> Result<JsValue, JsValue> {
-    let mut recalc_options = formualizer::workbook::XlsxRecalculateOptions::default();
-    if let Some(limit) = error_location_limit {
-        recalc_options.error_location_limit = limit as usize;
+    #[cfg(not(feature = "xlsx-recalc"))]
+    {
+        let _ = (bytes, error_location_limit, options);
+        Err(utils::js_error(
+            "native XLSX recalculation requires the xlsx-recalc feature",
+        ))
     }
-    apply_reproducibility_options(&mut recalc_options.eval_config, &options)?;
-    apply_external_links_option(&mut recalc_options, &options)?;
-    let options = recalc_options;
-    let config = options.eval_config.clone();
-    // This admission check happens before copying the JS typed array into Rust memory.
-    if bytes.length() as usize > options.limits.max_input_bytes {
-        return Err(JsValue::from(js_sys::Error::new(
-            "recalculate XLSX failed: input size limit exceeded",
-        )));
-    }
-    let input = bytes.to_vec();
-    let result = formualizer::workbook::recalculate_xlsx_bytes(&input, options)
-        .map_err(errors::workbook_error_to_js)?;
-    let out = Object::new();
-    let output = Uint8Array::from(result.bytes.as_slice());
-    Reflect::set(&out, &JsValue::from_str("bytes"), &output)?;
-    Reflect::set(
-        &out,
-        &JsValue::from_str("summary"),
-        &xlsx_summary_to_js(result.summary)?,
-    )?;
-    Reflect::set(
-        &out,
-        &JsValue::from_str("formula_cells"),
-        &JsValue::from_f64(result.formula_cells as f64),
-    )?;
-    Reflect::set(
-        &out,
-        &JsValue::from_str("cache_cells_changed"),
-        &JsValue::from_f64(result.cache_cells_changed as f64),
-    )?;
-    Reflect::set(
-        &out,
-        &JsValue::from_str("worksheet_parts_changed"),
-        &JsValue::from_f64(result.worksheet_parts_changed as f64),
-    )?;
-    if result.external_links_used > 0 {
-        let links = js_sys::Object::new();
+    #[cfg(feature = "xlsx-recalc")]
+    {
+        let mut recalc_options = formualizer::workbook::XlsxRecalculateOptions::default();
+        if let Some(limit) = error_location_limit {
+            recalc_options.error_location_limit = limit as usize;
+        }
+        apply_reproducibility_options(&mut recalc_options.eval_config, &options)?;
+        apply_external_links_option(&mut recalc_options, &options)?;
+        let options = recalc_options;
+        let config = options.eval_config.clone();
+        // This admission check happens before copying the JS typed array into Rust memory.
+        if bytes.length() as usize > options.limits.max_input_bytes {
+            return Err(JsValue::from(js_sys::Error::new(
+                "recalculate XLSX failed: input size limit exceeded",
+            )));
+        }
+        let input = bytes.to_vec();
+        let result = formualizer::workbook::recalculate_xlsx_bytes(&input, options)
+            .map_err(errors::workbook_error_to_js)?;
+        let out = Object::new();
+        let output = Uint8Array::from(result.bytes.as_slice());
+        Reflect::set(&out, &JsValue::from_str("bytes"), &output)?;
         Reflect::set(
-            &links,
-            &JsValue::from_str("links_used"),
-            &JsValue::from_f64(result.external_links_used as f64),
+            &out,
+            &JsValue::from_str("summary"),
+            &xlsx_summary_to_js(result.summary)?,
         )?;
-        Reflect::set(&links, &JsValue::from_str("refreshed"), &JsValue::FALSE)?;
-        // `refuse` refuses instead of reading link values.
         Reflect::set(
-            &links,
-            &JsValue::from_str("policy"),
-            &JsValue::from_str("cached"),
+            &out,
+            &JsValue::from_str("formula_cells"),
+            &JsValue::from_f64(result.formula_cells as f64),
         )?;
-        Reflect::set(&out, &JsValue::from_str("external_links"), &links)?;
+        Reflect::set(
+            &out,
+            &JsValue::from_str("cache_cells_changed"),
+            &JsValue::from_f64(result.cache_cells_changed as f64),
+        )?;
+        Reflect::set(
+            &out,
+            &JsValue::from_str("worksheet_parts_changed"),
+            &JsValue::from_f64(result.worksheet_parts_changed as f64),
+        )?;
+        if result.external_links_used > 0 {
+            let links = js_sys::Object::new();
+            Reflect::set(
+                &links,
+                &JsValue::from_str("links_used"),
+                &JsValue::from_f64(result.external_links_used as f64),
+            )?;
+            Reflect::set(&links, &JsValue::from_str("refreshed"), &JsValue::FALSE)?;
+            // `refuse` refuses instead of reading link values.
+            Reflect::set(
+                &links,
+                &JsValue::from_str("policy"),
+                &JsValue::from_str("cached"),
+            )?;
+            Reflect::set(&out, &JsValue::from_str("external_links"), &links)?;
+        }
+        Reflect::set(
+            &out,
+            &JsValue::from_str("clock"),
+            &clock_to_js(&config, result.clock_now_utc)?,
+        )?;
+        Reflect::set(
+            &out,
+            &JsValue::from_str("seed"),
+            &js_sys::BigInt::from(config.workbook_seed).into(),
+        )?;
+        Ok(out.into())
     }
-    Reflect::set(
-        &out,
-        &JsValue::from_str("clock"),
-        &clock_to_js(&config, result.clock_now_utc)?,
-    )?;
-    Reflect::set(
-        &out,
-        &JsValue::from_str("seed"),
-        &js_sys::BigInt::from(config.workbook_seed).into(),
-    )?;
-    Ok(out.into())
 }

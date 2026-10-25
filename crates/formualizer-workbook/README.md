@@ -21,7 +21,7 @@ Use [`formualizer-eval`](https://crates.io/crates/formualizer-eval) instead if y
 
 ## Cache-only XLSX recalculation
 
-The default-enabled `xlsx-recalc` feature provides `recalculate_xlsx_bytes`; minimal builds can omit it with `default-features = false`. It uses Calamine and the existing evaluator, then surgically patches formula caches and the corresponding ZIP32 metadata without importing an Umya document. Untouched XML, metadata and compressed payloads are retained; a cache no-op returns the original bytes exactly. Native `recalculate_xlsx_file` adds bounded snapshots and same-directory atomic replacement, not source compare-and-swap.
+The default-enabled `xlsx-recalc` feature provides `recalculate_xlsx_bytes`; minimal builds can omit it with `default-features = false`. It uses the native reader and existing evaluator, then surgically patches formula caches and the corresponding ZIP32 metadata without importing an Umya document. Untouched XML, metadata and compressed payloads are retained; a cache no-op returns the original bytes exactly. Native `recalculate_xlsx_file` adds bounded snapshots and same-directory atomic replacement, not source compare-and-swap.
 
 This is a strict opt-in subset: tables, legacy array/data-table formulas, rich or unknown metadata, unsupported spill shapes, unsupported ZIP/XML representations and nonrepresentable results fail without publishing partial output. Dynamic arrays are supported within a documented subset. Source epochs, typed caches, cooperative cancellation and configurable bounds are covered by the shared core. See [cache-only XLSX](../../docs/cache-only-xlsx.md) for exact eligibility, defaults and error policy.
 
@@ -97,7 +97,7 @@ cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example was
 - **400+ Excel functions** — all built-ins from `formualizer-eval` are available through the workbook surface.
 - **Changelog + undo/redo** — opt into change logging with automatic action grouping. Single edits are individually undoable; batch operations group as one step.
 - **I/O backends** — pluggable readers/writers behind feature flags:
-  - `calamine` — XLSX/ODS reading. XLSX paths default to the safe `XlsxPathSource::SharedFile`; use `CalamineAdapter::open_path_with_source(..., XlsxPathSource::DirectMmap)` for an explicit native read-only mapping. Direct mmap never falls back and requires the underlying file/inode not be destructively modified or truncated for the adapter lifetime (violations can terminate a Unix process with `SIGBUS`). The legacy `mmap` feature no longer selects behavior.
+  - `xlsx-recalc` — native Compatible XLSX reading and source-preserving recalculation (`calamine` is a compatibility feature alias; no Calamine dependency). XLSX paths default to the safe `XlsxPathSource::SharedFile`; use `NativeXlsxAdapter::open_path_with_source(..., XlsxPathSource::DirectMmap)` for an explicit native read-only mapping. Direct mmap never falls back and requires the underlying file/inode not be destructively modified or truncated for the adapter lifetime (violations can terminate a Unix process with `SIGBUS`). The legacy `mmap` feature no longer selects behavior.
   - `umya` — existing Umya 2 XLSX backend
   - `umya3` — opt-in Umya 3 backend sharing the same adapter algorithms. Includes paired cold import/export repair for border-colour loss and colour-selector hash collisions, retaining theme/indexed/RGB identity. See [Umya 3 import compatibility](../../docs/umya3-import.md).
   - `json` — structured JSON serialization
@@ -105,9 +105,9 @@ cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example was
 - **Batch transactions** — atomic multi-cell operations with rollback.
 - **Evaluation planning** — inspect the dependency schedule before computing.
 
-## Ordinary Calamine loading and non-calculating sheets
+## Ordinary native loading and non-calculating sheets
 
-Ordinary Calamine loads omit chartsheets, dialogsheets and module sheets with an empty `r:id`. They are not engine sheets: direct cell/range reads and `INDIRECT` reads resolve as unknown sheets (`#REF!`), including formulas added after loading. `Workbook::sheet_import_diagnostics` (Python: `sheet_import_diagnostics`) reports each omitted sheet's name and kind. Defined names retain the original `localSheetId` ordering across all source sheet entries; names scoped to omitted sheets are dropped with a name-import diagnostic.
+Ordinary native loads omit chartsheets, dialogsheets and module sheets with an empty `r:id`. They are not engine sheets: direct cell/range reads and `INDIRECT` reads resolve as unknown sheets (`#REF!`), including formulas added after loading. `Workbook::sheet_import_diagnostics` (Python: `sheet_import_diagnostics`) reports each omitted sheet's name and kind. Defined names retain the original `localSheetId` ordering across all source sheet entries; names scoped to omitted sheets are dropped with a name-import diagnostic.
 
 This is intentionally not a preservation-oriented document model. `SHEET()`/`SHEETS()` do not count omitted sheets. Positional functions such as `ROW(Chart1!A5)` behave as for any unknown sheet (returning 5); a 3-D span with an omitted endpoint also behaves as for an unknown sheet. `add_sheet("Chart1")` can create a new ordinary, editable worksheet under an omitted sheet's name.
 
@@ -120,3 +120,5 @@ Both Umya adapters expose `into_document(self)`. After `EngineLoadStream::stream
 ## License
 
 Dual-licensed under MIT or Apache-2.0, at your option.
+
+See [native XLSX migration](../../docs/native-xlsx-migration.md) for the intentional 0.13 Rust error/adapter API changes.

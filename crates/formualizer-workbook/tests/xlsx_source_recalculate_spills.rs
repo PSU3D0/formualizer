@@ -1,18 +1,18 @@
 //! Public source-preserving dynamic-array recalculation (FORM211): every
 //! case goes through `recalculate_xlsx_bytes` / `recalculate_xlsx_file`.
-//! Outputs are reopened with independent readers: Calamine for cached data
-//! (it cannot read `#SPILL!` caches, so blocked outputs are checked through
-//! XML only), quick-xml for raw cells/rows/attributes and a namespace-aware
+//! Outputs are reopened with independent ZIP/quick-xml cached-cell checks
+//! (blocked `#SPILL!` outputs are checked through raw XML), raw
+//! cell/row/attribute inspection and a namespace-aware
 //! reader for the dynamic-array metadata chain.
 #![cfg(feature = "xlsx-recalc")]
 mod support {
     pub mod source_xlsx;
 }
-use calamine::Data;
 use formualizer_eval::engine::CancelToken;
 use formualizer_workbook::{
     IoError, XlsxRecalculateOptions, XlsxRecalculateResult, recalculate_xlsx_bytes,
 };
+use support::source_xlsx::cached_reader::Data;
 use support::source_xlsx::*;
 
 fn run(bytes: &[u8]) -> XlsxRecalculateResult {
@@ -42,7 +42,7 @@ fn sized(p: Parts, from: u32, n: u32) -> Parts {
 fn assert_numbers(bytes: &[u8], expected: &[(&str, f64)]) {
     let x = parse_sheet(&sheet_xml(bytes));
     for (cell, n) in expected {
-        assert_eq!(data(bytes, cell), Data::Float(*n), "calamine {cell}");
+        assert_eq!(data(bytes, cell), Data::Float(*n), "cached XML {cell}");
         let c = x.cell(cell);
         assert_eq!(c.v.as_deref(), Some(n.to_string().as_str()), "xml {cell}");
         assert!(c.attrs.get("t").is_none_or(|t| t == "n"), "xml {cell} type");
@@ -552,7 +552,7 @@ fn assert_main_namespace_cells(source: &[u8], cells: &[(&str, f64)]) -> String {
             "{cell} children {:?}: {xml}",
             c.children
         );
-        assert_eq!(data(&out.bytes, cell), Data::Float(*n), "calamine {cell}");
+        assert_eq!(data(&out.bytes, cell), Data::Float(*n), "cached XML {cell}");
     }
     assert_rerun_is_noop(&out);
     xml

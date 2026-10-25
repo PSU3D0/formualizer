@@ -2,6 +2,8 @@
 //! column (the decay schedule `B3=0.2`, `B4=+B3/12`, `B8=18000`,
 //! `B9=+B8-(B8*$B$4)` filled down) must read that cell at every size, as
 //! Excel does: 17700, 17405, ...
+#[path = "support/cached_reader.rs"]
+mod cached_reader;
 use formualizer_common::LiteralValue;
 use formualizer_workbook::Workbook;
 
@@ -87,7 +89,7 @@ fn workbook_decay_schedule_reads_same_column_anchor() {
 #[cfg(feature = "xlsx-recalc")]
 mod xlsx {
     use super::{SIZES, expected};
-    use calamine::{Data, Reader, Xlsx};
+    use crate::cached_reader::{Data, Xlsx};
     use formualizer_workbook::{XlsxRecalculateOptions, recalculate_xlsx_bytes};
     use std::io::{Cursor, Write};
     use zip::ZipWriter;
@@ -161,7 +163,6 @@ mod xlsx {
         (0..n)
             .map(|i| match range.get_value((8 + i, 1)) {
                 Some(Data::Float(v)) => *v,
-                Some(Data::Int(v)) => *v as f64,
                 other => panic!("B{}: {other:?}", 9 + i),
             })
             .collect()

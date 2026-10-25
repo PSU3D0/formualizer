@@ -1,10 +1,13 @@
 //! Bounded package admission and relationship-aware workbook discovery.
 //! Verified source members remain authoritative and unchanged during discovery.
+mod consumption;
+#[cfg(test)]
+mod consumption_tests;
 mod content_types;
 pub(super) use crate::xlsx::metadata::read_source as read_workbook;
 use crate::xlsx::options::{ReadOptions, ReadPolicy};
+pub(crate) use consumption::{ConsumptionBudget, read_selected};
 mod ownership;
-mod physical;
 mod rewrite;
 use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, checkpoint, unsupported, xml};
 pub(super) use content_types::add_override;
@@ -18,7 +21,8 @@ use zip::ZipArchive;
 pub(crate) struct Archive<'a> {
     zip: ZipArchive<Cursor<&'a [u8]>>,
     parts: BTreeMap<String, VerifiedPart>,
-    provisional: Option<XlsxRecalculateOptions>,
+    provisional: Option<ReadOptions>,
+    ordinary: Option<(ReadOptions, ConsumptionBudget)>,
 }
 struct VerifiedPart {
     bytes: Vec<u8>,
@@ -451,7 +455,13 @@ fn open<'a, const STRICT: bool>(
         zip: archive,
         parts: BTreeMap::new(),
         provisional: None,
+        ordinary: None,
     })
+}
+impl Archive<'_> {
+    pub(crate) fn take_consumption_budget(&mut self) -> ConsumptionBudget {
+        self.ordinary.take().expect("ordinary archive budget").1
+    }
 }
 /// Sum of the members' declared expanded sizes (the audit bounds each to
 /// ZIP32; admission verified them against the decoded bytes).
@@ -480,7 +490,8 @@ pub(super) fn admit<'a>(
 
 /// Parse bounded package structure independently of publication admission.
 /// Strict binding is injected at this boundary so clock/name/output options
-/// never enter the common read rules. Compatible performs only the payload audit.
+/// never enter the common read rules. Compatible keeps structural/index checks
+/// but decodes only selected parts, under its persistent actual-output budget.
 pub(super) fn admit_with<'a>(
     bytes: &'a [u8],
     options: &ReadOptions,
@@ -497,12 +508,28 @@ pub(super) fn admit_with<'a>(
         }
         ReadPolicy::Compatible => {
             let directory = audit_directory_with::<false>(bytes, options)?;
-            // Audit physical central-directory entries before aggregate ZIP
-            // name resolution can discard shadowed duplicate members.
-            physical::audit(bytes, &directory, options)?;
-            open::<false>(bytes, &directory)
+            let mut archive = open::<false>(bytes, &directory)?;
+            archive.ordinary = Some((options.clone(), ConsumptionBudget::default()));
+            Ok(archive)
         }
     }
+}
+
+/// Open ordinary metadata without auditing unused or shadowed payloads.
+/// The existing discovery handoff is retained, but no speculative part cache is
+/// built: selected worksheet buffers move directly into their consumer.
+pub(super) fn admit_retaining<'a, T>(
+    bytes: &'a [u8],
+    options: &ReadOptions,
+    discover: impl FnOnce(&mut Archive<'a>) -> Result<(T, HashSet<String>), IoError>,
+) -> Result<(Archive<'a>, T), IoError> {
+    checkpoint(&options.cancel)?;
+    if bytes.len() > options.limits.max_input_bytes {
+        return Err(unsupported("input byte limit", "XLSX package"));
+    }
+    let mut archive = admit_with(bytes, options, |_| unreachable!("ordinary admission"))?;
+    let (metadata, _) = discover(&mut archive)?;
+    Ok((archive, metadata))
 }
 
 pub(crate) fn read_part(
@@ -510,6 +537,11 @@ pub(crate) fn read_part(
     name: &str,
     limit: usize,
 ) -> Result<Vec<u8>, IoError> {
+    if let Some((options, budget)) = &mut archive.ordinary {
+        let mut options = options.clone();
+        options.limits.max_worksheet_bytes = options.limits.max_worksheet_bytes.min(limit);
+        return read_selected(&mut archive.zip, name, &options, budget);
+    }
     if let Some(options) = archive.provisional.clone() {
         return ownership::bootstrap_read(archive, name, limit, &options);
     }

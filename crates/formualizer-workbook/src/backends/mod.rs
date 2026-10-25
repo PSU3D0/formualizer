@@ -1,7 +1,9 @@
-#[cfg(feature = "calamine")]
+#[cfg(feature = "xlsx-recalc")]
 pub mod calamine;
 
-#[cfg(feature = "calamine")]
+#[cfg(feature = "xlsx-recalc")]
+pub use crate::xlsx::{loader::NativeXlsxAdapter, options::XlsxLoadLimits};
+#[cfg(feature = "xlsx-recalc")]
 pub use calamine::{CalamineAdapter, XlsxPathSource};
 
 #[cfg(feature = "json")]
@@ -37,7 +39,7 @@ pub mod csv;
 
 /// Whether a defined-name reference is a union (`A1:A5,C1:C5`): a comma
 /// outside quoted sheet names. `'Sheet (A, B)'!$1:$3` is a single range.
-#[cfg(any(feature = "calamine", feature = "umya", feature = "umya3"))]
+#[cfg(any(feature = "xlsx-recalc", feature = "umya", feature = "umya3"))]
 pub(crate) fn has_union_comma(reference: &str) -> bool {
     let mut quoted = false;
     for c in reference.chars() {

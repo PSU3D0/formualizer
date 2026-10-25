@@ -35,7 +35,7 @@ pub(in crate::xlsx) fn readable_scalar_cache(cell: &Cell, bytes: &[u8]) -> bool 
         None | Some("n") => v.text.parse::<f64>().is_ok_and(f64::is_finite),
         Some("s") => v.text.parse::<u32>().is_ok(),
         Some("b") => matches!(v.text.as_str(), "0" | "1"),
-        Some("e") => v.text.parse::<calamine::CellErrorType>().is_ok(),
+        Some("e") => v.text.parse::<crate::xlsx::types::CellErrorType>().is_ok(),
         _ => true,
     }
 }
@@ -72,7 +72,7 @@ fn literal_refusal(cell: &Cell, bytes: &[u8]) -> Option<&'static str> {
         && cell
             .value
             .as_ref()
-            .is_none_or(|v| v.text.parse::<calamine::CellErrorType>().is_err())
+            .is_none_or(|v| v.text.parse::<crate::xlsx::types::CellErrorType>().is_err())
     {
         return Some("literal error value unsupported by Calamine");
     }

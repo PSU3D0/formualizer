@@ -50,14 +50,14 @@ chrono = { workspace = true, features = ["clock"] }
 # it the engine falls back to the FixedClock at the UTC epoch and every
 # volatile date/time builtin answers 1970-01-01. The emscripten target below is
 # left as-is: ambient wall-clock time is not part of the portable wasm profile.
-formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc", "system-clock"] }
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "system-clock"] }
 pyo3-stub-gen = "0.23.0"
 
 # Pyodide 314 builds with Rust 1.93, so Calamine and source recalculation are
 # available there. There is no system clock: TODAY()/NOW() workbooks are
 # refused unless a fixed timestamp is supplied.
 [target.'cfg(target_os = "emscripten")'.dependencies]
-formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "calamine", "umya", "xlsx-recalc"] }
+formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc"] }
 
 # Optional jemalloc global allocator (see `allocator-jemalloc` feature).
 # The crate itself builds unconditionally on any platform, but we only

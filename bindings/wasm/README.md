@@ -77,6 +77,21 @@ console.log(wb.sheet('Summary').getValue(5, 2)); // B5
 
 For Node.js, read the bytes with `readFile` from `node:fs/promises` instead of `fetch`. Initialization and WASM asset loading depend on your runtime and bundler; see the [JS quickstart](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart). Calculation methods are synchronous: use a Web Worker for large browser workloads to keep the UI responsive.
 
+Native is the default XLSX reader. `backend: 'calamine'` remains a native compatibility alias. The raw WASM API accepts the same options through `Workbook.fromXlsxBytesWithOptions`. Native reading requires `xlsx-recalc` (included in default builds); it does not enable XLSX writing.
+
+```ts
+const wb = Workbook.fromXlsxBytes(bytes, {
+  loadLimits: {
+    maxInputBytes: 16 * 1024 * 1024,
+    maxPartBytes: 32 * 1024 * 1024,
+  },
+});
+```
+
+`loadLimits` has exactly five optional numeric fields: `maxInputBytes`, `maxEntries`, `maxExpandedBytes`, `maxPartBytes`, and `maxXmlDepth`. Omitted fields inherit Rust defaults: **127 MiB** compressed input (133,169,152 bytes), 10,000 ZIP entries, 256 MiB aggregate actual consumed output, 128 MiB per consumed part, and XML depth 128. Zero means zero allowance. Unknown nested keys and values other than non-negative safe integers within the host allocation width are rejected (on wasm32, at most 2,147,483,647). Explicit `loadLimits`, including `{}`, is unsupported for JSON loading and empty Workbook construction.
+
+Ordinary loading selectively reads required parts: an unread image/attachment is not decompressed or CRC-validated; corrupt required parts still fail. This is not whole-file integrity validation. Raising a limit is an explicit resource opt-in, not a guarantee that a workbook fits browser memory. These limits do not replace engine/model/host memory bounds and cannot avoid the inbound JS-to-WASM byte transfer allocation. Strict XLSX recalculation keeps its separate limits and integrity rules.
+
 ### Cache-only XLSX recalculation
 
 ```typescript
@@ -288,7 +303,7 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 | `unregisterFunction(name)` | Remove a previously registered custom function |
 | `listFunctions()` | List registered custom function metadata |
 | `static fromJson(json)` | Load workbook from JSON string |
-| `static fromXlsxBytes(bytes)` | Load workbook from XLSX bytes via the Calamine read path |
+| `static fromXlsxBytes(bytes, options?)` | Load XLSX bytes; `backend: 'native'` (default) or `'calamine'` (native alias) |
 | `static fromXlsxBytesWithOptions(bytes, options)` / `static fromJsonWithOptions(json, options)` | Same loaders with `WorkbookLoadOptions` |
 | `inspectCell(cell, options?)` / `precedents(...)` / `dependents(...)` / `trace(...)` / `rangePage(...)` | Inspection and dependency tracing |
 | `getEvalPlan(targets)` | Inspect the evaluation schedule before computing |

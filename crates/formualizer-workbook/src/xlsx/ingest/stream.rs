@@ -117,7 +117,7 @@ impl FormulaBatches {
     pub(crate) fn install_replay<C: EvaluationContext>(
         &mut self,
         engine: &mut Engine<C>,
-    ) -> Result<(), calamine::Error> {
+    ) -> Result<(), crate::xlsx::types::XlsxReadError> {
         engine
             .source_formula_ingress()
             .ingest_replay_batches(std::mem::take(&mut self.replay))
@@ -128,7 +128,7 @@ impl FormulaBatches {
     pub(crate) fn install_direct<C: EvaluationContext>(
         &mut self,
         engine: &mut Engine<C>,
-    ) -> Result<(), calamine::Error> {
+    ) -> Result<(), crate::xlsx::types::XlsxReadError> {
         engine
             .source_formula_ingress()
             .finish_prepared(std::mem::take(&mut self.direct))

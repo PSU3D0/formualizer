@@ -40,24 +40,16 @@ pub(super) mod xml;
 #[cfg(test)]
 use crate::cache_recalculate::XlsxRecalculateLimits;
 use crate::recalculate::{RecalculateStatus, RecalculateSummary};
-#[cfg(test)]
-use crate::{CalamineAdapter, SpreadsheetReader};
 pub(super) use crate::{IoError, workbook::WBResolver};
 use chrono::{DateTime, Utc};
 use clock::{PhaseClock, clock_instant};
 use formualizer_common::{CellAddress, DateSystem, LiteralValue};
 use formualizer_eval::engine::DeterministicMode;
-#[cfg(test)]
-use formualizer_eval::engine::EvalConfig;
-#[cfg(test)]
-use formualizer_eval::engine::ingest::EngineLoadStream;
 use formualizer_eval::engine::inspect::{SnapshotOptions, Staleness};
 use formualizer_eval::engine::{
     CancelToken, Engine, FormulaParsePolicy, SpillBoundsPolicy, SpillConfig, SpillConflictPolicy,
 };
 use ingestion::ingest_source;
-#[cfg(test)]
-use std::collections::BTreeMap;
 use std::collections::{HashMap, HashSet};
 #[cfg(test)]
 use std::io::Cursor;
@@ -237,23 +229,12 @@ pub(crate) fn display_equal(old: f64, new: f64) -> bool {
     (old - new).abs() <= bound
 }
 /// Evaluation text, separate from the immutable source formula and its marks.
-/// Legacy ingestion serializes this only at its compatibility boundary; the
-/// native sink consumes the text directly without constructing patched XML.
+/// The native sink consumes this text without constructing patched XML.
 pub(super) struct FormulaTextTransform {
     pub(super) span: Range<usize>,
     pub(super) text: String,
 }
-impl FormulaTextTransform {
-    #[cfg(test)]
-    fn into_patch(self) -> Patch {
-        Patch {
-            span: self.span,
-            replacement: quick_xml::escape::escape(&self.text)
-                .replace('\r', "&#13;")
-                .into_bytes(),
-        }
-    }
-}
+
 /// Worksheet source, formula cells and prior-footprint dynamic-array
 /// ownership. The per-cell source index exists only for worksheets with
 /// admitted anchors; a sheet with a new spill builds it after evaluation.
@@ -708,12 +689,6 @@ mod name_prefilter_tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(3));
     }
 }
-
-/// Build the transient ingestion view, replay it through Calamine into a new
-/// engine, validate calculation names and declare every
-/// admitted dynamic-array anchor. Nothing is evaluated or published.
-#[cfg(test)]
-use tests::oracles::legacy_ingestion::ingest_source as legacy_ingest_source;
 
 /// Give every admitted anchor its source spill identity, so a current
 /// scalar (1x1) result still resolves `A1#`/`ANCHORARRAY(A1)`. A formula

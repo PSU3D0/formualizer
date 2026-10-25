@@ -131,12 +131,13 @@ impl PySheetPortSession {
     }
 
     #[classmethod]
-    #[pyo3(signature = (manifest_path, workbook_path, backend=None))]
+    #[pyo3(signature = (manifest_path, workbook_path, backend=None, *, load_limits=None))]
     pub fn from_manifest_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         manifest_path: &str,
         workbook_path: &str,
         backend: Option<&str>,
+        load_limits: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let py = _cls.py();
         let manifest_path_ref = Path::new(manifest_path);
@@ -156,6 +157,7 @@ impl PySheetPortSession {
             None,
             None,
             None,
+            load_limits,
         )?;
         Self::from_components(py, workbook, manifest)
     }

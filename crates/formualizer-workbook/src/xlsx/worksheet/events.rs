@@ -4,22 +4,22 @@
 use super::*;
 
 /// Dependency-owned until the common reader's error vocabulary is extracted.
-pub(in crate::xlsx) type ErrorToken = calamine::CellErrorType;
+pub(in crate::xlsx) type ErrorToken = crate::xlsx::types::CellErrorType;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::xlsx) enum Value<'a> {
     Empty,
     Number(f64),
     Boolean(bool),
     Error(ErrorToken),
     Text(Cow<'a, str>),
-    Shared(u32),
+    Shared(usize),
     /// Bad scalar caches can occur in generated children and are masked by
     /// ownership before ingestion. Keep the refusal as an event, not a new
     /// earlier admission error.
     Unreadable,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::xlsx) struct Literal<'a> {
     pub row: u32,
     pub col: u32,
@@ -99,6 +99,13 @@ pub(in crate::xlsx) struct Formula<'a> {
 
 /// Ephemeral callbacks cannot retain borrowed formula scratch across cells.
 pub(in crate::xlsx) trait Sink {
+    /// Ordinary readers may retain formula caches independently of engine values.
+    fn retain_formula_cache(&self) -> bool {
+        false
+    }
+    fn formula_cache(&mut self, _literal: Literal<'_>) -> Result<(), IoError> {
+        Ok(())
+    }
     fn literal(&mut self, _literal: Literal<'_>) -> Result<(), IoError> {
         Ok(())
     }
@@ -107,6 +114,12 @@ pub(in crate::xlsx) trait Sink {
     }
 }
 impl<S: Sink + ?Sized> Sink for &mut S {
+    fn retain_formula_cache(&self) -> bool {
+        (**self).retain_formula_cache()
+    }
+    fn formula_cache(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
+        (**self).formula_cache(literal)
+    }
     fn literal(&mut self, literal: Literal<'_>) -> Result<(), IoError> {
         (**self).literal(literal)
     }
@@ -123,7 +136,7 @@ impl<F: FnMut(Literal<'_>) -> Result<(), IoError>> Sink for Literals<F> {
 
 /// XML 1.0 text for ingestion. Admission's XML 1.1 normalization is retained
 /// separately in the marks oracle; U+0085/U+2028 must not change literal data.
-pub(super) fn text<'a>(
+pub(in crate::xlsx) fn text<'a>(
     bytes: &'a [u8],
     node: &xml::Node<'_, 'a>,
     decoded: Cow<'a, str>,

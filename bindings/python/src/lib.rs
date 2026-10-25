@@ -115,12 +115,17 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 ///
 /// Args:
 ///     path: Path to an `.xlsx` file.
-///     strategy: Currently accepted for backward compatibility.
-///         (The backend/strategy is currently fixed to `calamine` + eager load.)
+///     strategy: Currently accepted for backward compatibility; loading is eager.
+///     backend: `native` (default), `calamine` (native alias), or `umya`.
 ///     path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
 ///         `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
 ///         mapping; the underlying file must not be destructively modified or
 ///         truncated while the workbook loads.
+///     load_limits: Optional native XLSX dictionary with integer fields
+///         `max_input_bytes`, `max_entries`, `max_expanded_bytes`,
+///         `max_part_bytes`, `max_xml_depth`. Omitted fields use Rust defaults;
+///         zero allows nothing. Unknown keys, bools and non-integers are errors.
+///         These package limits do not replace engine ingest/spool limits.
 ///
 /// Example:
 /// ```python
@@ -137,44 +142,49 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (path, strategy=None, *, path_source=None, span_evaluation=None))]
+#[pyo3(signature = (path, strategy=None, *, backend=None, path_source=None, span_evaluation=None, load_limits=None))]
 fn load_workbook(
     py: Python,
     path: &str,
     strategy: Option<&str>,
+    backend: Option<&str>,
     path_source: Option<PyXlsxPathSource>,
     span_evaluation: Option<bool>,
+    load_limits: Option<&Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<workbook::PyWorkbook> {
     // Backward-compat convenience
-    let _ = strategy; // placeholder, backend currently fixed to calamine
+    let _ = strategy; // placeholder, loading remains eager
     workbook::PyWorkbook::from_path(
         &py.get_type::<workbook::PyWorkbook>(),
         path,
-        Some("calamine"),
+        backend,
         path_source,
         None,
         None,
         span_evaluation,
+        load_limits,
     )
 }
 
 /// Load an XLSX workbook from in-memory bytes.
 ///
-/// This is the byte-oriented counterpart to `load_workbook(...)`. Native Python
-/// builds default to `calamine`; Pyodide defaults to `umya` (pass
-/// `backend="calamine"` to use Calamine there).
+/// This is the byte-oriented counterpart to `load_workbook(...)`. All hosts,
+/// including Pyodide, default to `native`. `backend="calamine"` is a native
+/// compatibility alias; explicit `umya` rich reading remains available.
+/// `load_limits` has the same native-only dictionary semantics as `load_workbook`.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (data, strategy=None, backend=None, *, span_evaluation=None))]
+#[pyo3(signature = (data, strategy=None, backend=None, *, span_evaluation=None, load_limits=None))]
 fn load_workbook_bytes<'py>(
     py: Python<'py>,
     data: &Bound<'py, PyBytes>,
     strategy: Option<&str>,
     backend: Option<&str>,
     span_evaluation: Option<bool>,
+    load_limits: Option<&Bound<'py, pyo3::types::PyDict>>,
 ) -> PyResult<workbook::PyWorkbook> {
     let _ = strategy; // placeholder, backend currently fixed to eager load
     workbook::PyWorkbook::from_bytes(
@@ -184,6 +194,7 @@ fn load_workbook_bytes<'py>(
         None,
         None,
         span_evaluation,
+        load_limits,
     )
 }
 

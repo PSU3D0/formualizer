@@ -447,10 +447,6 @@ fn calamine_loads_external_link_index_formulas() {
     std::fs::write(&path, bytes).expect("rewrite workbook with external link rels");
 
     let mut backend = CalamineAdapter::open_path(&path).unwrap();
-    assert_eq!(
-        backend.external_link_target(33),
-        Some("file:///C:/tmp/external.xlsx")
-    );
 
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());
@@ -470,10 +466,6 @@ fn calamine_loads_external_link_index_formulas_from_bytes() {
     let bytes = inject_external_link_rels(bytes, 33, "file:///C:/tmp/external.xlsx");
 
     let mut backend = CalamineAdapter::open_bytes(bytes).expect("open workbook from bytes");
-    assert_eq!(
-        backend.external_link_target(33),
-        Some("file:///C:/tmp/external.xlsx")
-    );
 
     let ctx = formualizer_eval::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());

@@ -2,7 +2,9 @@
 //! Source recalculation of the ZIP containers real producers write (see
 //! `tests/fixtures/zip_containers/generate.py`). Untouched members keep
 //! every byte; rewritten members take one simple, consistent form.
-use calamine::{Data, Reader, Xlsx};
+#[path = "support/cached_reader.rs"]
+mod cached_reader;
+use crate::cached_reader::{Data, Xlsx};
 use formualizer_workbook::recalculate_xlsx_bytes;
 use std::{
     collections::BTreeMap,

@@ -40,6 +40,10 @@ pub(in crate::xlsx) struct NameImportPolicy {
     strict_validation: bool,
 }
 impl NameImportPolicy {
+    pub(in crate::xlsx) const COMPATIBLE_REFERENCED: Self = Self {
+        referenced_only: true,
+        strict_validation: false,
+    };
     pub(in crate::xlsx) const STRICT_REFERENCED: Self = Self {
         referenced_only: true,
         strict_validation: true,
@@ -50,6 +54,7 @@ pub(in crate::xlsx) struct CalculationNames {
     raw: Vec<(String, String, Option<usize>)>,
     calamine_defined_names: Vec<(String, String)>,
     sheet_names: Vec<String>,
+    inert_sheet_names: HashSet<String>,
     defined_names: OnceLock<Vec<DefinedName>>,
     name_index: OnceLock<CalculationNameIndex>,
     name_analysis: OnceLock<CalculationNameAnalysis>,
@@ -85,6 +90,15 @@ impl CalculationNames {
             raw,
             calamine_defined_names,
             sheet_names: sheets.iter().map(|s| s.name.clone()).collect(),
+            inert_sheet_names: if policy.strict_validation {
+                HashSet::new()
+            } else {
+                sheets
+                    .iter()
+                    .filter(|sheet| sheet.inert)
+                    .map(|sheet| sheet.name.to_lowercase())
+                    .collect()
+            },
             defined_names: OnceLock::new(),
             name_index: OnceLock::new(),
             name_analysis: OnceLock::new(),
@@ -108,7 +122,14 @@ impl CalculationNames {
         self.name_analysis.take();
         self.grounded_names.take();
     }
-    fn raw_calculation_names(&self) -> &Vec<(String, String, Option<usize>)> {
+    pub(in crate::xlsx) fn admit_external_snapshot(
+        &mut self,
+        snapshot: &crate::CachedExternalLinkValues,
+    ) {
+        self.admit_external(snapshot.values.clone(), snapshot.skipped_names.clone());
+        self.refused_external_names = snapshot.refused_names.clone();
+    }
+    pub(in crate::xlsx) fn raw_calculation_names(&self) -> &Vec<(String, String, Option<usize>)> {
         &self.raw
     }
     fn lazy_defined_names(&self) -> &Vec<DefinedName> {
@@ -129,7 +150,9 @@ impl CalculationNames {
             }
         })
     }
-    fn defined_names(&self) -> Result<Vec<DefinedName>, calamine::Error> {
+    pub(in crate::xlsx) fn defined_names(
+        &self,
+    ) -> Result<Vec<DefinedName>, crate::xlsx::types::XlsxReadError> {
         Ok(self.lazy_defined_names().clone())
     }
     fn scan_names(bytes: &[u8], scoped: bool) -> Vec<(String, String, Option<usize>)> {
@@ -196,7 +219,19 @@ impl CalculationNames {
             .is_some_and(|values| values.contains(raw))
     }
 
+    fn is_inert_sheet(&self, name: &str) -> bool {
+        !self.policy.strict_validation && self.inert_sheet_names.contains(&name.to_lowercase())
+    }
+    fn inert_scope(&self, scope: Option<usize>) -> bool {
+        !self.policy.strict_validation
+            && scope
+                .and_then(|id| self.sheet_names.get(id))
+                .is_some_and(|name| self.is_inert_sheet(name))
+    }
     fn grounded_calculation_name(&self, i: usize) -> Option<ASTNode> {
+        if self.inert_scope(self.raw_calculation_names()[i].2) {
+            return None;
+        }
         let name = &self.raw_calculation_names()[i].0;
         if self.policy.referenced_only
             && !self.legacy_calculation_name(name)
@@ -518,7 +553,11 @@ impl CalculationNames {
         legacy || self.skipped_external_names.contains(&name)
     }
 
-    fn skippable_name_registration_error(&self, name: &str, error: &ExcelError) -> bool {
+    pub(in crate::xlsx) fn skippable_name_registration_error(
+        &self,
+        name: &str,
+        error: &ExcelError,
+    ) -> bool {
         self.policy.referenced_only
             && !self.legacy_calculation_name(name)
             && error.kind == ExcelErrorKind::Name
@@ -598,7 +637,7 @@ impl CalculationNames {
         let mut nonliteral = false;
         for (sheet, f) in formulas {
             Self::cancellation_checkpoint(self.cancel.as_ref())
-                .map_err(crate::IoError::Calamine)?;
+                .map_err(crate::IoError::XlsxRead)?;
             if let Ok(ast) = formualizer_parse::parser::parse(format!(
                 "={}",
                 f.trim().strip_prefix('=').unwrap_or(f.trim())
@@ -617,7 +656,7 @@ impl CalculationNames {
         {
             for (_, text, _) in raw {
                 Self::cancellation_checkpoint(self.cancel.as_ref())
-                    .map_err(crate::IoError::Calamine)?;
+                    .map_err(crate::IoError::XlsxRead)?;
                 if let Ok(ast) = formualizer_parse::parser::parse(format!(
                     "={}",
                     text.trim().trim_start_matches('=')
@@ -628,7 +667,7 @@ impl CalculationNames {
         }
         for (i, (_, _, scope)) in raw.iter().enumerate() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
-                .map_err(crate::IoError::Calamine)?;
+                .map_err(crate::IoError::XlsxRead)?;
             if !cyclic.contains(&i)
                 && let Some(ast) = self.grounded_calculation_name(i)
             {
@@ -637,7 +676,7 @@ impl CalculationNames {
         }
         for (i, (name, _, scope)) in raw.iter().enumerate() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
-                .map_err(crate::IoError::Calamine)?;
+                .map_err(crate::IoError::XlsxRead)?;
             let grounded = self.grounded_calculation_name(i).is_some();
             let legacy = self.legacy_calculation_name(name);
             if newly_admitted
@@ -703,7 +742,7 @@ impl CalculationNames {
         let mut readers = vec![Vec::new(); raw.len()];
         for (i, _) in raw.iter().enumerate() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
-                .map_err(crate::IoError::Calamine)?;
+                .map_err(crate::IoError::XlsxRead)?;
             if (self.policy.referenced_only && cyclic.contains(&i))
                 || self.grounded_calculation_name(i).is_none()
             {
@@ -726,7 +765,7 @@ impl CalculationNames {
         let mut order = Vec::with_capacity(raw.len());
         while let Some(i) = ready.pop_front() {
             Self::cancellation_checkpoint(self.cancel.as_ref())
-                .map_err(crate::IoError::Calamine)?;
+                .map_err(crate::IoError::XlsxRead)?;
             order.push(i);
             for &reader in &readers[i] {
                 pending[reader] -= 1;
@@ -775,19 +814,50 @@ impl CalculationNames {
         NameParsing::fallback_defined_names(calamine_defined_names, sheet_names)
     }
 
-    fn cancellation_checkpoint(cancel: Option<&CancelToken>) -> Result<(), calamine::Error> {
+    fn cancellation_checkpoint(
+        cancel: Option<&CancelToken>,
+    ) -> Result<(), crate::xlsx::types::XlsxReadError> {
         if cancel.is_some_and(CancelToken::is_cancelled) {
-            return Err(calamine::Error::Io(std::io::Error::other(
-                "calamine load cancelled",
-            )));
+            return Err(crate::xlsx::types::XlsxReadError::Io(
+                std::io::Error::other("calamine load cancelled"),
+            ));
         }
         Ok(())
     }
 
-    pub(in crate::xlsx) fn register(
+    pub(in crate::xlsx) fn import_diagnostics(
+        &self,
+    ) -> Result<Vec<crate::traits::NameImportDiagnostic>, crate::IoError> {
+        let imported: HashSet<_> = self.calculation_name_order()?.into_iter().collect();
+        Ok(self
+            .raw_calculation_names()
+            .iter()
+            .enumerate()
+            .filter(|(index, (name, _, scope))| {
+                self.inert_scope(*scope)
+                    || (!self.legacy_calculation_name(name) && !imported.contains(index))
+            })
+            .map(
+                |(_, (name, definition, local))| crate::traits::NameImportDiagnostic {
+                    name: name.clone(),
+                    definition: definition.clone(),
+                    scope_sheet: local.and_then(|index| self.sheet_names.get(index).cloned()),
+                    local_sheet_id: *local,
+                    message: if self.inert_scope(*local) {
+                        "Defined name scoped to an omitted non-worksheet sheet"
+                    } else {
+                        "Unevaluable or cyclic defined name omitted from calculation"
+                    }
+                    .into(),
+                },
+            )
+            .collect())
+    }
+
+    pub(in crate::xlsx) fn register<C: formualizer_eval::traits::EvaluationContext>(
         &mut self,
-        engine: &mut Engine<crate::xlsx::recalculate::WBResolver>,
-    ) -> Result<(), calamine::Error> {
+        engine: &mut Engine<C>,
+    ) -> Result<(), crate::xlsx::types::XlsxReadError> {
         let cancel = self.cancel.clone();
         let scope_names = self.sheet_names.clone();
         {
@@ -798,7 +868,9 @@ impl CalculationNames {
                 self.defined_names()?
             } else {
                 self.calculation_name_order()
-                    .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?
+                    .map_err(|e| {
+                        crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(e.to_string()))
+                    })?
                     .into_iter()
                     .filter_map(|i| {
                         let (name, text, scope) = &self.raw_calculation_names()[i];
@@ -819,6 +891,18 @@ impl CalculationNames {
                 FxHashSet::default();
 
             for dn in defined {
+                if dn
+                    .scope_sheet
+                    .as_deref()
+                    .is_some_and(|name| self.is_inert_sheet(name))
+                {
+                    continue;
+                }
+                if let DefinedNameDefinition::Range { address } = &dn.definition
+                    && self.is_inert_sheet(&address.sheet)
+                {
+                    continue;
+                }
                 Self::cancellation_checkpoint(cancel.as_ref())?;
                 let key = (dn.scope.clone(), dn.scope_sheet.clone(), dn.name.clone());
                 if !seen.insert(key) {
@@ -829,13 +913,13 @@ impl CalculationNames {
                     DefinedNameScope::Workbook => NameScope::Workbook,
                     DefinedNameScope::Sheet => {
                         let sheet_name = dn.scope_sheet.as_deref().ok_or_else(|| {
-                            calamine::Error::Io(std::io::Error::other(format!(
+                            crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(format!(
                                 "sheet-scoped defined name `{}` missing scope_sheet",
                                 dn.name
                             )))
                         })?;
                         let sid = engine.sheet_id(sheet_name).ok_or_else(|| {
-                            calamine::Error::Io(std::io::Error::other(format!(
+                            crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(format!(
                                 "scope sheet not found: {sheet_name}"
                             )))
                         })?;
@@ -849,10 +933,9 @@ impl CalculationNames {
                             .sheet_id(&address.sheet)
                             .or_else(|| engine.add_sheet(&address.sheet).ok())
                             .ok_or_else(|| {
-                                calamine::Error::Io(std::io::Error::other(format!(
-                                    "sheet not found: {}",
-                                    address.sheet
-                                )))
+                                crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(
+                                    format!("sheet not found: {}", address.sheet),
+                                ))
                             })?;
 
                         let sr0 = address.start_row.saturating_sub(1);
@@ -887,9 +970,9 @@ impl CalculationNames {
                     if self.skippable_name_registration_error(&dn.name, &error) {
                         self.unregistrable_names.insert(dn.name.to_lowercase());
                     } else {
-                        return Err(calamine::Error::Io(std::io::Error::other(
-                            error.to_string(),
-                        )));
+                        return Err(crate::xlsx::types::XlsxReadError::Io(
+                            std::io::Error::other(error.to_string()),
+                        ));
                     }
                 }
             }
@@ -898,10 +981,9 @@ impl CalculationNames {
         // Formula-valued names remain private to Calamine calculation import;
         // Engine::define_name owns cell/range/name dependency registration and
         // rebinds formulas that were ingested before these definitions.
-        for index in self
-            .calculation_name_order()
-            .map_err(|e| calamine::Error::Io(std::io::Error::other(e.to_string())))?
-        {
+        for index in self.calculation_name_order().map_err(|e| {
+            crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(e.to_string()))
+        })? {
             let (name, text, local) = &self.raw_calculation_names()[index];
             Self::cancellation_checkpoint(cancel.as_ref())?;
             if Self::convert_defined_name(name, text, *local, &scope_names).is_some() {
@@ -918,7 +1000,9 @@ impl CalculationNames {
             let scope = match local {
                 Some(id) => {
                     NameScope::Sheet(engine.sheet_id(&scope_names[*id]).ok_or_else(|| {
-                        calamine::Error::Io(std::io::Error::other("name scope sheet missing"))
+                        crate::xlsx::types::XlsxReadError::Io(std::io::Error::other(
+                            "name scope sheet missing",
+                        ))
                     })?)
                 }
                 None => NameScope::Workbook,
@@ -936,9 +1020,9 @@ impl CalculationNames {
                     let name = name.to_lowercase();
                     self.unregistrable_names.insert(name);
                 } else {
-                    return Err(calamine::Error::Io(std::io::Error::other(
-                        error.to_string(),
-                    )));
+                    return Err(crate::xlsx::types::XlsxReadError::Io(
+                        std::io::Error::other(error.to_string()),
+                    ));
                 }
             }
         }

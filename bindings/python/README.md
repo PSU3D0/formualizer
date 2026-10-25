@@ -146,7 +146,14 @@ print(wb.evaluate_cell("Summary", 1, 2))
 out = wb.to_xlsx_bytes()
 ```
 
-Native Python builds use `calamine` by default for both path-based and byte-oriented XLSX loading. Pyodide defaults to `umya` for byte loading and accepts `backend="calamine"` explicitly; `umya` also remains available explicitly on native builds. XLSX byte export uses `umya` because Calamine is read-only.
+All Python hosts, including Pyodide, use `native` by default for path-based and byte-oriented XLSX loading. `backend="calamine"` is a compatibility alias to native. Explicit `umya` rich reading and XLSX byte export remain available; native is read-only.
+
+The native XLSX reader is the default for `load_workbook`, `load_workbook_bytes`, `Workbook.from_path`, `Workbook.load_path`, and `Workbook.from_bytes`. Filesystem loading supports the same `SHARED_FILE` and host-only `DIRECT_MMAP` path sources; the native backend is read-only.
+
+```python
+wb = fz.load_workbook("financial_model.xlsx", backend="native")
+wb_from_bytes = fz.Workbook.from_bytes(payload, backend="native")
+```
 
 ### Recalculate XLSX cached values (writeback)
 
@@ -485,7 +492,7 @@ To ship the manifest as a file instead, write it once with `manifest.to_yaml()` 
 ```python
 tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
 parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
-load_workbook(path: str, strategy: str = None, *, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
+load_workbook(path: str, strategy: str = None, *, backend: str | None = None, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
 load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None, *, span_evaluation: bool | None = None) -> Workbook
 recalculate_file(path: str, output: str | None = None) -> dict
 recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None, external_links: str = "cached") -> dict
@@ -552,7 +559,7 @@ wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
 
 **Pyodide-specific behavior:**
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"` (Pyodide has no threads). You can still opt in, but it falls back to single-threaded execution.
-- Native XLSX byte loading (`Workbook.from_bytes`, `load_workbook_bytes`) defaults to `calamine`; Pyodide defaults to `umya` and accepts `backend="calamine"`. XLSX byte export uses `umya` on all platforms.
+- XLSX byte loading defaults to `native` on every host, including Pyodide; `calamine` is a compatibility alias. XLSX byte export uses `umya` on all platforms.
 - Source-preserving recalculation is available as `recalculate_xlsx_bytes` (the CLI and `recalculate_xlsx_file` are not). There is no system clock: workbooks using `TODAY`/`NOW` are refused unless `deterministic_timestamp_utc` is passed, and `result["clock"]["now"]` is `None` otherwise.
 - Python UDFs registered via `Workbook.register_function` work identically to native; single-cell refs arrive as scalars (Excel-native semantics).
 

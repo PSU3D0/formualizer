@@ -80,11 +80,6 @@ impl EvaluationTexts {
 fn xml_error(error: impl std::error::Error) -> IoError {
     IoError::from_backend("xlsx-formula", error)
 }
-#[cfg(test)]
-fn reader_error(error: calamine::XlsxError) -> IoError {
-    IoError::Calamine(calamine::Error::Xlsx(error))
-}
-
 /// Convert the scanner's source event using its already-validated raw envelope.
 /// Transformed evaluation text stays separate from immutable source text/marks.
 fn source_record(
@@ -112,9 +107,9 @@ fn source_record(
             .text(cell, &plan.data, text)
             .map(Cow::into_owned)
             .map_err(|error| {
-                IoError::Calamine(calamine::Error::Xlsx(calamine::XlsxError::Io(
-                    std::io::Error::other(error.to_string()),
-                )))
+                IoError::XlsxRead(crate::xlsx::types::XlsxReadError::Xlsx(
+                    crate::xlsx::types::XlsxError::Io(std::io::Error::other(error.to_string())),
+                ))
             })
     };
     if !raw_shared {
@@ -192,8 +187,8 @@ use formualizer_eval::engine::{
     SourceFamilyId, SourceFormulaFamily, SourceFormulaOrder,
 };
 use formula_replay::{
-    CalamineDeferredFormulaReplay as SourceDeferredFormulaReplay, FormulaReplaySpool,
-    FormulaReplayState, FormulaSpoolLimits, HybridFormulaReplaySpool,
+    FormulaReplaySpool, FormulaReplayState, FormulaSpoolLimits, HybridFormulaReplaySpool,
+    NativeDeferredFormulaReplay as SourceDeferredFormulaReplay,
     replay_spool_per_cell_filtered_with_family,
 };
 
@@ -224,7 +219,62 @@ pub(in crate::xlsx) fn stage(
     usage: WorkbookSpoolUsage,
     options: &XlsxRecalculateOptions,
 ) -> Result<StagedFormulas, IoError> {
-    checkpoint(&options.cancel)?;
+    let records = plan
+        .cells
+        .iter()
+        .enumerate()
+        .map(|(sequence, cell)| source_record(plan, cell, texts, sequence as u64));
+    stage_records(
+        engine,
+        sheet,
+        sheet_instance,
+        records,
+        usage,
+        &options.cancel,
+    )
+}
+
+/// Stage source records independently of retained publication marks.
+/// Both readers select the same eager, bounded replay and deferred modes here.
+pub(in crate::xlsx) fn stage_records<C: formualizer_eval::traits::EvaluationContext>(
+    engine: &mut Engine<C>,
+    sheet: &str,
+    sheet_instance: u32,
+    records: impl IntoIterator<Item = Result<OwnedSpoolFormulaRecord, IoError>>,
+    usage: WorkbookSpoolUsage,
+    cancel: &Option<formualizer_eval::engine::CancelToken>,
+) -> Result<StagedFormulas, IoError> {
+    stage_records_produced::<C, false>(
+        engine,
+        sheet,
+        sheet_instance,
+        |emit| {
+            for record in records {
+                emit(record?)?;
+            }
+            Ok(())
+        },
+        usage,
+        cancel,
+        &Default::default(),
+    )
+}
+
+pub(in crate::xlsx) fn stage_records_produced<
+    C: formualizer_eval::traits::EvaluationContext,
+    const FILTER: bool,
+>(
+    engine: &mut Engine<C>,
+    sheet: &str,
+    sheet_instance: u32,
+    produce: impl FnOnce(
+        &mut dyn FnMut(OwnedSpoolFormulaRecord) -> Result<(), IoError>,
+    ) -> Result<(), IoError>,
+    usage: WorkbookSpoolUsage,
+    cancel: &Option<formualizer_eval::engine::CancelToken>,
+    refused: &std::collections::HashSet<(u32, u32)>,
+) -> Result<StagedFormulas, IoError> {
+    checkpoint(cancel)?;
     let deferred = engine.config.defer_graph_building;
     let eager = !deferred && engine.config.formula_plane_mode == FormulaPlaneMode::Off;
     let mut replay = eager.then(FormulaReplayState::default);
@@ -250,12 +300,13 @@ pub(in crate::xlsx) fn stage(
     let mut coordinates = Vec::new();
     let mut count = 0usize;
     let mut shared_tags = 0;
-    for cell in &plan.cells {
-        checkpoint(&options.cancel)?;
-        let record = source_record(plan, cell, texts, count as u64)?;
-        let coord0 = SourceCoord {
-            row: cell.row - 1,
-            col: cell.col - 1,
+    produce(&mut |record| {
+        checkpoint(cancel)?;
+        let coord0 = match &record {
+            OwnedSpoolFormulaRecord::Ordinary { coord0, .. }
+            | OwnedSpoolFormulaRecord::SharedAnchor { coord0, .. }
+            | OwnedSpoolFormulaRecord::SharedDescendant { coord0, .. }
+            | OwnedSpoolFormulaRecord::Unsupported { coord0, .. } => *coord0,
         };
         let observation = match &record {
             OwnedSpoolFormulaRecord::Ordinary { .. } => EvidenceRecord::Ordinary,
@@ -293,7 +344,7 @@ pub(in crate::xlsx) fn stage(
         if let Some(spool) = spool.as_mut() {
             spool
                 .append(record.as_borrowed())
-                .map_err(|error| IoError::Calamine(engine_error(error)))?;
+                .map_err(|error| IoError::XlsxRead(engine_error(error)))?;
         } else if let Some(replay) = replay.as_mut() {
             replay
                 .emit_record(
@@ -301,14 +352,26 @@ pub(in crate::xlsx) fn stage(
                     sheet,
                     |_, _| true,
                     |_, coord, text, shared| {
-                        checkpoint(&options.cancel).map_err(engine_error)?;
-                        staging.stage(engine, sheet, (coord.row, coord.col), text, shared, false)
+                        checkpoint(cancel).map_err(engine_error)?;
+                        staging.stage(
+                            engine,
+                            sheet,
+                            (coord.row, coord.col),
+                            if FILTER && refused.contains(&(coord.row, coord.col)) {
+                                "#REF!"
+                            } else {
+                                text
+                            },
+                            shared,
+                            false,
+                        )
                     },
                 )
-                .map_err(IoError::Calamine)?;
+                .map_err(IoError::XlsxRead)?;
         }
         count += 1;
-    }
+        Ok(())
+    })?;
     let output = evidence.finish();
     let mut report = output.report;
     let families = output.families;
@@ -317,7 +380,7 @@ pub(in crate::xlsx) fn stage(
         .into_iter()
         .map(|proposal| {
             crate::xlsx::ingest::partition::convert(proposal)
-                .map_err(|error| IoError::Calamine(engine_error(error)))
+                .map_err(|error| IoError::XlsxRead(engine_error(error)))
         })
         .collect::<Result<Vec<_>, IoError>>()?;
     let spool_bytes = if count == 0 {
@@ -340,7 +403,7 @@ pub(in crate::xlsx) fn stage(
     report.source_spool_peak_memory_bytes = spool.as_ref().map_or(0, |s| s.peak_memory_bytes());
     report.source_spool_spilled_bytes = if spool_spilled { spool_bytes } else { 0 };
     report.source_spool_spill_files = u64::from(spool_spilled);
-    checkpoint(&options.cancel)?;
+    checkpoint(cancel)?;
     let preparation = if engine.config.formula_plane_mode
         == FormulaPlaneMode::AuthoritativeExperimental
         && !deferred
@@ -359,7 +422,7 @@ pub(in crate::xlsx) fn stage(
                         sheet_instance,
                     )),
                 )
-                .map_err(|error| IoError::Calamine(engine_error(error)))?,
+                .map_err(|error| IoError::XlsxRead(engine_error(error)))?,
         )
     } else {
         None
@@ -371,11 +434,22 @@ pub(in crate::xlsx) fn stage(
             sheet,
             |_| false,
             |coord, text, shared| {
-                checkpoint(&options.cancel).map_err(engine_error)?;
-                staging.stage(engine, sheet, (coord.row, coord.col), text, shared, false)
+                checkpoint(cancel).map_err(engine_error)?;
+                staging.stage(
+                    engine,
+                    sheet,
+                    (coord.row, coord.col),
+                    if FILTER && refused.contains(&(coord.row, coord.col)) {
+                        "#REF!"
+                    } else {
+                        text
+                    },
+                    shared,
+                    false,
+                )
             },
         )
-        .map_err(IoError::Calamine)?;
+        .map_err(IoError::XlsxRead)?;
     }
     engine.finish_family_grouper(&mut staging.grouper);
     let package = deferred.then(|| {

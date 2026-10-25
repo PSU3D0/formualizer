@@ -579,11 +579,18 @@ export interface SheetPortEvaluateOptions {
   deterministicTimezone?: DeterministicTimezone;
 }
 
-/**
- * Options accepted by the `Workbook` constructor and the
- * `fromJsonWithOptions` / `fromXlsxBytesWithOptions` loaders.
- */
+/** Ordinary XLSX admission/consumption limits; independent of evaluation limits. */
+export type XlsxLoadLimits = wasm.XlsxLoadLimits;
+
+/** Options for the Workbook constructor and JSON/XLSX loaders. */
 export interface WorkbookLoadOptions {
+  /** XLSX only. Partial limits inherit Rust defaults; zero means zero.
+   * Values must be non-negative safe integers within the host allocation width.
+   * Unknown nested keys are rejected. Does not bound JS-to-WASM transfer memory.
+   */
+  loadLimits?: XlsxLoadLimits;
+  /** XLSX reader only: native is the default; calamine is a native compatibility alias. */
+  backend?: 'calamine' | 'native';
   /** Opt into experimental FormulaPlane span evaluation. */
   spanEvaluation?: boolean;
   /** Cycle detection mode (spec §2). */
@@ -771,7 +778,7 @@ export async function recalculateXlsxBytes(
 export type WorkbookConstructor = {
   new (options?: WorkbookLoadOptions): WorkbookApi;
   fromJson(json: string): WorkbookApi;
-  fromXlsxBytes(bytes: XlsxBytesSource): WorkbookApi;
+  fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi;
   prototype: WorkbookApi;
 };
 
@@ -792,15 +799,18 @@ const rawWorkbookCtor = wasm.Workbook as unknown as {
   new (options?: WorkbookLoadOptions): WorkbookApi;
   fromJson(json: string): WorkbookApi;
   fromXlsxBytes(bytes: Uint8Array): WorkbookApi;
+  fromXlsxBytesWithOptions(bytes: Uint8Array, options?: WorkbookLoadOptions): WorkbookApi;
   prototype: WorkbookApi;
 };
 const rawWorkbookFromXlsxBytes = rawWorkbookCtor.fromXlsxBytes.bind(rawWorkbookCtor);
+const rawWorkbookFromXlsxBytesWithOptions = rawWorkbookCtor.fromXlsxBytesWithOptions.bind(rawWorkbookCtor);
 
 export const Workbook = Object.assign(rawWorkbookCtor, {
-  fromXlsxBytes(bytes: XlsxBytesSource): WorkbookApi {
-    return rawWorkbookFromXlsxBytes(
-      bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes),
-    );
+  fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi {
+    const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    return options === undefined
+      ? rawWorkbookFromXlsxBytes(input)
+      : rawWorkbookFromXlsxBytesWithOptions(input, options);
   },
 }) as WorkbookConstructor;
 export const SheetPortSession = wasm.SheetPortSession as unknown as SheetPortSessionConstructor;

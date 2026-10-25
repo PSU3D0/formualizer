@@ -49,9 +49,9 @@ pub enum IoError {
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[cfg(feature = "calamine")]
+    #[cfg(feature = "xlsx-recalc")]
     #[error("Calamine error: {0}")]
-    Calamine(#[from] calamine::Error),
+    XlsxRead(#[from] crate::xlsx::types::XlsxReadError),
 }
 
 impl IoError {
