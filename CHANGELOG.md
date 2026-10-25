@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-25
+
 XLSX reading moves in-house: Rust, Python and JavaScript now use Formualizer's native reader by default, without a second production parser underneath it. Ordinary loading reads the workbook data it needs rather than decompressing every picture and attachment along the way. Source-preserving recalculation keeps its stricter whole-package integrity contract, and Umya remains available for rich document editing and export.
 
 ### Breaking changes and upgrading
@@ -15,6 +17,7 @@ XLSX reading moves in-house: Rust, Python and JavaScript now use Formualizer's n
 
 ### Highlights
 
+- **Added explicit broader template recognition in parser SDK 4.1.0.** `template_lex::lex_template_for_certified_ast` recognises invariant sheet qualifiers, names, whitespace, `@` and general functions for callers that independently certify the parsed AST. It is not proof of purity or non-volatility. The existing `lex_template` retains its published 4.0 conservative subset; native source-family ingestion uses the new opt-in path without narrowing its existing recognition.
 - **Selected the native XLSX reader by default** across Rust and the Python/JavaScript bindings, including the Python API used by Pyodide. It preserves loaded values/formulas, names and calculation settings, date/time behavior, cached external references and inert-sheet diagnostics. Cached links remain read-only: linked files are never refreshed or opened.
 - **Added configurable ordinary XLSX limits before admission.** Rust exposes `XlsxLoadLimits` and additive native constructors; Python accepts keyword-only `load_limits`, including through the SheetPort path helper; JavaScript accepts nested `loadLimits`. Native and legacy backend aliases use the same options and checks.
 - **Raised the ordinary compressed-input default to 127 MiB** (133,169,152 bytes). Expanded data has independent defaults: 128 MiB per consumed part and 256 MiB aggregate actual output. Callers can raise or lower these separately; a compressed-size allowance is not a guarantee that the expanded workbook, formulas or engine state fit in memory.
@@ -31,13 +34,18 @@ XLSX reading moves in-house: Rust, Python and JavaScript now use Formualizer's n
 
 - **Reduced recalculation ingestion overhead** by removing redundant formula payload staging/publication work, streamlining worksheet scanning, and loading native values/formulas without another general-reader pass. These changes build on the recalculation work in 0.12.0. (#537–#539)
 - **Removed decompression and CRC CPU work for unused ordinary-load parts.** The benefit depends on workbook contents; attachment-heavy examples are not representative of every formula/data-heavy workbook. Opaque payloads were already streamed through bounded scratch memory, so skipped expanded bytes must not be described as an equal reduction in peak RSS.
-- **Kept benchmark comparisons distinct.** Reader-transition measurements against an already optimized Calamine control are neither an isolated default-switch speedup nor a total 0.12.0-to-next-release improvement. Stage percentages are not additive. No universal speedup, wheel/WASM-size reduction or peak-memory saving is promised here.
+- **Kept benchmark comparisons distinct.** Reader-transition measurements against an already optimized Calamine control are neither an isolated default-switch speedup nor a total 0.12.0-to-0.13.0 improvement. Stage percentages are not additive. No universal speedup, wheel/WASM-size reduction or peak-memory saving is promised here.
 
 ### Compatibility and validation
 
 - **Added boundary coverage** for selected versus unread corruption, Stored/Deflated decoded-size mismatches, exact/overflow output budgets, duplicate and Unicode member names, lazy-cache retries, retained source handles and current-position readers. Required-part checks do not depend on auditing unread content first.
 - **Expanded binding coverage** for configuration validation, native aliases, Python forwarding/stubs and actual WASM/TypeScript loading. Native-versus-legacy-alias tests check API compatibility, not independent parser equivalence. Pre-retirement differential evidence used the real Calamine implementation; Pyodide wheel/SDK execution remains a separate CI gate.
 - **Retained attribution** for the small shared-formula/error routines adapted from Calamine under its MIT license.
+
+### Maintenance and versions
+
+- **Patched documentation-site and comparative-harness dependencies**, including Next.js, PostCSS and transitive dependencies with known security advisories. The documentation site remains a static export. These updates do not change the spreadsheet evaluator's numerical behavior.
+- **The Rust product crates, native CLI, Python and npm packages are 0.13.0.** `formualizer-common` and `formualizer-parse` move together to 4.1.0; publish that SDK track before the product track. `sheetport-spec` remains 0.3.3.
 
 ## [0.12.0] - 2026-10-19
 
