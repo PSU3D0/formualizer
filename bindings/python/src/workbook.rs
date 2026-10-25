@@ -25,19 +25,12 @@ pub(crate) const DEFAULT_XLSX_BYTE_BACKEND: &str = "native";
 fn xlsx_load_limits(
     overrides: Option<&Bound<'_, PyDict>>,
     backend: &str,
-    path: Option<&str>,
 ) -> PyResult<formualizer::workbook::XlsxLoadLimits> {
     let mut limits = formualizer::workbook::XlsxLoadLimits::default();
     let Some(overrides) = overrides else {
         return Ok(limits);
     };
-    if !matches!(backend, "native" | "calamine")
-        || path.is_some_and(|path| {
-            !std::path::Path::new(path)
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("xlsx"))
-        })
-    {
+    if !matches!(backend, "native" | "calamine") {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "load_limits requires a native XLSX source (backend='native' or 'calamine')",
         ));
@@ -423,7 +416,7 @@ impl PyWorkbook {
         load_limits: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         let backend = backend.unwrap_or(DEFAULT_XLSX_BYTE_BACKEND);
-        let limits = xlsx_load_limits(load_limits, backend, Some(path))?;
+        let limits = xlsx_load_limits(load_limits, backend)?;
         let path_source = path_source.unwrap_or_default();
         if path_source == PyXlsxPathSource::DirectMmap && !matches!(backend, "calamine" | "native")
         {
@@ -521,7 +514,7 @@ impl PyWorkbook {
         load_limits: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<Self> {
         let backend = backend.unwrap_or(DEFAULT_XLSX_BYTE_BACKEND);
-        let limits = xlsx_load_limits(load_limits, backend, None)?;
+        let limits = xlsx_load_limits(load_limits, backend)?;
         // Reject before the avoidable Python bytes -> Vec copy.
         if matches!(backend, "native" | "calamine")
             && data.as_bytes().len() > limits.max_input_bytes

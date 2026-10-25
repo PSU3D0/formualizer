@@ -109,10 +109,36 @@ def test_unsupported_backend_before_source_access(tmp_path, backend):
 
 
 @pytest.mark.parametrize("suffix", [".json", ".csv", ".xls", ""])
-def test_non_xlsx_override_before_source_access(tmp_path, suffix):
+def test_non_xlsx_content_is_refused_by_native_admission(tmp_path, suffix):
+    path = tmp_path / f"not-a-workbook{suffix}"
+    path.write_bytes(b'{"not": "an XLSX package"}')
     for loader in PATH_LOADERS:
-        with pytest.raises(ValueError, match="load_limits"):
-            loader(str(tmp_path / f"missing{suffix}"), load_limits={})
+        with pytest.raises(OSError):
+            loader(str(path), load_limits={})
+
+
+@pytest.mark.parametrize("suffix", [".bin", ""])
+@pytest.mark.parametrize("backend", [None, "native", "calamine"])
+def test_content_based_shared_file_limits(package, tmp_path, suffix, backend):
+    path = tmp_path / f"renamed{suffix}"
+    data = package.read_bytes()
+    path.write_bytes(data)
+    for loader in PATH_LOADERS:
+        kwargs = {"backend": backend, "path_source": fz.XlsxPathSource.SHARED_FILE}
+        assert_loaded(loader(str(path), **kwargs))
+        assert_loaded(loader(str(path), load_limits={}, **kwargs))
+        with pytest.raises(OSError):
+            loader(str(path), load_limits={"max_input_bytes": len(data) - 1}, **kwargs)
+        assert_loaded(
+            loader(str(path), load_limits={"max_input_bytes": len(data)}, **kwargs)
+        )
+        with pytest.raises(ValueError, match="DIRECT_MMAP"):
+            loader(
+                str(path),
+                backend=backend,
+                path_source=fz.XlsxPathSource.DIRECT_MMAP,
+                load_limits={},
+            )
 
 
 @pytest.mark.parametrize("backend", [None, "native", "calamine"])
@@ -202,7 +228,11 @@ def test_selected_corruption_vs_unread_large_payload(package, selected):
             assert_loaded(loader(arg, **kwargs))
 
 
-def test_sheetport_forwarding(package, tmp_path):
+@pytest.mark.parametrize("suffix", [".xlsx", ".bin", ""])
+@pytest.mark.parametrize("backend", ["native", "calamine"])
+def test_sheetport_forwarding(package, tmp_path, suffix, backend):
+    path = tmp_path / f"sheetport-source{suffix}"
+    path.write_bytes(package.read_bytes())
     manifest = tmp_path / "manifest.yaml"
     manifest.write_text("""spec: fio
 spec_version: "0.3.0"
@@ -222,11 +252,23 @@ ports:
     schema:
       type: number
 """)
-    fz.SheetPortSession.from_manifest_path(str(manifest), str(package), load_limits={})
+    fz.SheetPortSession.from_manifest_path(str(manifest), str(path), backend=backend)
+    fz.SheetPortSession.from_manifest_path(
+        str(manifest), str(path), backend=backend, load_limits={}
+    )
     with pytest.raises(OSError):
         fz.SheetPortSession.from_manifest_path(
-            str(manifest), str(package), load_limits={"max_input_bytes": 0}
+            str(manifest),
+            str(path),
+            backend=backend,
+            load_limits={"max_input_bytes": 0},
         )
+    fz.SheetPortSession.from_manifest_path(
+        str(manifest),
+        str(path),
+        backend=backend,
+        load_limits={"max_input_bytes": path.stat().st_size},
+    )
 
 
 def test_load_limits_keyword_only(package):
