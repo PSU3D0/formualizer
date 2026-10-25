@@ -242,7 +242,7 @@ impl<R: EvaluationContext> Engine<R> {
         ast: &ASTNode,
         template: crate::engine::arena::AstNodeId,
     ) -> Option<LexicalTemplate> {
-        let lexeme = formualizer_parse::template_lex::lex_template(text)?;
+        let lexeme = formualizer_parse::template_lex::lex_template_for_certified_ast(text)?;
         let mut leaves = Vec::with_capacity(lexeme.slots().len());
         reference_leaves(ast, &mut leaves)?;
         if leaves.len() != lexeme.slots().len() {

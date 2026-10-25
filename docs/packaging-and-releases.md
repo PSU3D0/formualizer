@@ -88,14 +88,14 @@ Multiple tags can point at the same commit if we want “synced” releases with
 ### Cross-track compatibility
 
 - Product crates should depend on parser/SDK crates with semver ranges (not exact pins) once `parse/common` reach stability.
-  - Current 3.0 track: product crates depend on `formualizer-parse = "^3.0"` and `formualizer-common = "^3.0"`.
+  - The 0.13 product track requires `formualizer-parse = "^4.1.0"` and `formualizer-common = "^4.1.0"`. The SDK crates move together, even when only one has source changes.
 - While `0.x`, treat “minor” bumps as breaking; avoid frequent cross-track churn.
 
 ### Feature forwarding
 
 `crates/formualizer` is the binding-facing surface. To let bindings depend only on `formualizer`, it must forward required features:
 
-- Workbook backends (`calamine`, `umya`, `json`, etc.)
+- Workbook loading/export (`xlsx-recalc` for native XLSX, `umya`, `json`, etc.; `calamine` is a native compatibility alias, not a parser dependency)
 - Optional engine behavior toggles
 - SheetPort integration toggles
 
@@ -115,7 +115,7 @@ Use only the track being released. `--allow-dirty` exists for development checks
 
 Every track first asserts the parser/SDK lockstep rule: `formualizer-common` and `formualizer-parse` must carry the same manifest version, and the product track additionally requires that version to already exist on crates.io. A product release that pins an unpublished parser-track version fails here rather than at `cargo publish`.
 
-A parser source change cannot reuse a published parser-track version. In particular, landing the parser hardening from #408 changes the payload already published as `formualizer-parse` 3.1.0. Before the next product release, bump both `formualizer-common` and `formualizer-parse` to 3.1.1, publish the paired `parse-v3.1.1` track, and only then run the final product preflight. The same-version source-drift and published-parser gates are intentional and must not be bypassed. Publication remains a separate, explicitly authorized operation.
+A parser source change cannot reuse a published parser-track version. For product 0.13.0, both `formualizer-common` and `formualizer-parse` are 4.1.0: the parser adds the opt-in `lex_template_for_certified_ast` recognizer while preserving the existing `lex_template` contract. Publish the paired `parse-v4.1.0` track first, then run the final product preflight and publish `v0.13.0`. `sheetport-spec` remains at the already published 0.3.3. The same-version source-drift and published-parser gates are intentional and must not be bypassed. A release-preparation PR can pass source CI before the new SDK version is published, but that is not a successful final product package preflight. Publication remains a separate, explicitly authorized operation.
 
 Product preflight also checks binding feature semantics before any registry query, tool installation, or package build. `crates/formualizer/Cargo.toml` declares value-affecting features in `[package.metadata.formualizer-release]`; adding a feature there immediately requires every shipped binding profile to activate it. Exceptions require an independently reviewed checker-policy update as well as a substantive manifest rationale; adding opt-out metadata cannot authorize a new exception by itself.
 
@@ -200,7 +200,7 @@ Pieces:
 
 Linux glibc builds use cargo-zigbuild's `.2.17` target suffix rather than a manylinux container. The glibc floor is then explicit in the target name, independent of the runner image, and one pinned zig toolchain also links musl statically on both architectures. The pins are `CARGO_ZIGBUILD_VERSION`, `ZIG_VERSION` and `MAX_GLIBC` in `cli-build.yml`; bump them together.
 
-Dry run without publishing: dispatch the **CLI binaries** workflow (Actions → CLI binaries → Run workflow) on any branch. It also runs on pull requests that touch `npm/formualizer-cli/**` or the workflow. Download the artifacts to inspect the tarballs and archives. Locally:
+Dry run without publishing: dispatch the **CLI binaries** workflow (Actions → CLI binaries → Run workflow) on the final candidate commit or branch. Ordinary main-push CI does not run this seven-target packaging matrix. Do not use **Release** workflow dispatch as a dry run: it resumes publication for an existing CLI release tag. It also runs on pull requests that touch `npm/formualizer-cli/**` or the workflow. Download the artifacts to inspect the tarballs and archives. Locally:
 
 ```bash
 node --test npm/formualizer-cli/test/*.test.js

@@ -11,6 +11,7 @@ on:
   pull_request:
     paths:
       - docs-site/**
+      - benchmarks/harness/**
       - docs/cli.md
       - docs/agents.md
       - docs/cache-only-xlsx.md
@@ -20,6 +21,7 @@ on:
     branches: [ main ]
     paths:
       - docs-site/**
+      - benchmarks/harness/**
       - docs/cli.md
       - docs/agents.md
       - docs/cache-only-xlsx.md
@@ -36,6 +38,28 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  harness-dependencies:
+    name: Harness dependency compatibility
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: benchmarks/harness
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Audit all dependencies
+        run: npm audit --audit-level=low
+      - name: Test patched dependency compatibility
+        run: npm test
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -64,6 +88,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Audit all dependencies (including development dependencies)
+        run: pnpm audit --audit-level=low
+
+      - name: Check TypeScript
+        run: pnpm types:check
 
       - name: Build static export
         run: pnpm build
