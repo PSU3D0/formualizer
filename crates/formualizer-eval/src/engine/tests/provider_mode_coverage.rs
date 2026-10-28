@@ -627,3 +627,190 @@ fn provider_mode_prefix_and_local_override_follow_provider() {
         );
     }
 }
+
+#[test]
+fn provider_mode_review_groupby_selected_modes() {
+    let mut failures = Vec::new();
+    for (formula, modes) in [
+        (
+            "=GROUPBY(A1:A3,C1:C3,LAMBDA(x,SUM(x)),0,0,0)",
+            vec![unknown("GROUPBY", "callable_aggregation")],
+        ),
+        (
+            "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,{TRUE;FALSE;TRUE})",
+            vec![unknown("GROUPBY", "filter_array")],
+        ),
+        (
+            "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,{1;1})",
+            vec![unknown("GROUPBY", "sort_vector")],
+        ),
+        (
+            "=GROUPBY({\"a\";\"b\"},{10;5},\"SUM\")",
+            vec![
+                unknown("GROUPBY", "automatic_headers"),
+                unknown("GROUPBY", "automatic_totals"),
+            ],
+        ),
+        (
+            "=GROUPBY({\"a\";\"b\"},{10;5},\"SUM\",,0,0)",
+            vec![unknown("GROUPBY", "automatic_headers")],
+        ),
+        (
+            "=GROUPBY(A1:A3,C1:C3,\"SUM\",1,0,0)",
+            vec![unknown("GROUPBY", "header_display")],
+        ),
+        (
+            "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,-1,0)",
+            vec![unknown("GROUPBY", "negative_total_depth")],
+        ),
+        (
+            "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,2,0)",
+            vec![
+                unknown("GROUPBY", "row_hierarchy"),
+                unknown("GROUPBY", "subtotals"),
+            ],
+        ),
+        (
+            "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,0,2)",
+            vec![
+                unknown("GROUPBY", "row_hierarchy"),
+                unknown("GROUPBY", "field_sort"),
+            ],
+        ),
+    ] {
+        if std::panic::catch_unwind(|| exercised(formula, &modes)).is_err() {
+            failures.push(formula);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "GROUPBY selections without expected receipts: {failures:?}"
+    );
+}
+
+#[test]
+fn provider_mode_review_groupby_controls() {
+    for formula in [
+        "=GROUPBY(A1:A3,C1:D3,\"SUM\",0,0,0)",
+        "=GROUPBY(A1:A3,C1:C3,\"BAD\",0,0,0)",
+        "=GROUPBY(A1:A3,C1:C3,1/0,0,0,0)",
+        "=GROUPBY(A1:A3,C1:C3,LAMBDA(x,y,SUM(x)),0,0,0)",
+        "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,99,0)",
+        "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,99)",
+        "=GROUPBY(A1:A2,C1:C3,\"SUM\",0,0,0,{TRUE;FALSE;TRUE})",
+        "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,{TRUE;FALSE})",
+        "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,{TRUE;FALSE;1/0})",
+        "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,{1;99})",
+        "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,,1)",
+    ] {
+        check(formula, &[]);
+    }
+    let (e, _) = evaluate("=GROUPBY(A1:A3,C1:D3,\"SUM\",0,0,0)");
+    assert_eq!(
+        e.get_cell_value("Sheet1", 1, 9),
+        Some(LiteralValue::Number(60.0))
+    );
+    assert_eq!(
+        e.get_cell_value("Sheet1", 1, 10),
+        Some(LiteralValue::Number(600.0))
+    );
+}
+
+#[test]
+fn provider_mode_review_aggregate_domains_and_errors() {
+    let mut failures = Vec::new();
+    for formula in [
+        "=AGGREGATE(14,0,C2:C3,0)",
+        "=AGGREGATE(14,0,C2:C3,-1)",
+        "=AGGREGATE(14,0,C2:C3,3)",
+        "=AGGREGATE(14,0,C2:C3,1/0)",
+        "=AGGREGATE(14,0,C2:C3,\"bad\")",
+        "=AGGREGATE(15,0,C2:C3,3)",
+        "=AGGREGATE(16,0,C2:C3,2)",
+        "=AGGREGATE(16,0,C2:C3,-0.1)",
+        "=AGGREGATE(17,0,C2:C3,5)",
+        "=AGGREGATE(18,0,C2:C3,0)",
+        "=AGGREGATE(18,0,C2:C3,1)",
+        "=AGGREGATE(18,0,C2:C3,0.1)",
+        "=AGGREGATE(19,0,C2:C3,5)",
+        "=AGGREGATE(19,0,C2:C3,0)",
+        "=AGGREGATE(19,0,C2:C3,1)",
+        "=AGGREGATE(12,0,1/0)",
+        "=AGGREGATE(13,0,1/0)",
+        "=AGGREGATE(14,0,{1;1/0},1)",
+        "=AGGREGATE(14,0,C2:C3,1,2)",
+    ] {
+        if std::panic::catch_unwind(|| exercised(formula, &[])).is_err() {
+            failures.push(formula);
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+    for formula in [
+        "=AGGREGATE(14,0,C2:C3,1)",
+        "=AGGREGATE(16,0,C2:C3,0.5)",
+        "=AGGREGATE(17,0,C2:C3,1)",
+        "=AGGREGATE(18,0,C2:C3,0.5)",
+        "=AGGREGATE(19,0,C1:C3,2)",
+        "=AGGREGATE(14,6,{1;1/0;2},1)",
+    ] {
+        exercised(
+            formula,
+            &[Op::UnimplementedFunction {
+                name: "AGGREGATE".into(),
+            }],
+        );
+    }
+}
+
+#[test]
+fn provider_mode_review_indirect_reference_arity() {
+    for formula in [
+        "=INDIRECT(\"R1C1\",FALSE,1)",
+        "=SUM(INDIRECT(\"R1C1\",FALSE,1))",
+        "=ISREF(INDIRECT(\"R1C1\",FALSE,1))",
+        "=SUM(INDIRECT())",
+    ] {
+        exercised(formula, &[]);
+    }
+}
+
+#[test]
+fn provider_mode_review_aggregate_uncertainty_and_error_kinds() {
+    for formula in ["=AGGREGATE(12,0,\"5\")", "=AGGREGATE(14,0,C1:C3,{1,2})"] {
+        exercised(formula, &[unknown("AGGREGATE", "data_or_k_domain")]);
+    }
+    for (formula, kind) in [
+        (
+            "=AGGREGATE(12,0,1/0)",
+            formualizer_common::ExcelErrorKind::Div,
+        ),
+        (
+            "=AGGREGATE(14,0,C1:C3,1/0)",
+            formualizer_common::ExcelErrorKind::Div,
+        ),
+        (
+            "=AGGREGATE(14,0,{1;1/0},1)",
+            formualizer_common::ExcelErrorKind::Div,
+        ),
+        (
+            "=AGGREGATE(14,0,C2:C3,3)",
+            formualizer_common::ExcelErrorKind::Num,
+        ),
+        (
+            "=AGGREGATE(14,0,C2:C3,\"bad\")",
+            formualizer_common::ExcelErrorKind::Value,
+        ),
+        (
+            "=GROUPBY(A1:A3,C1:C3,1/0,0,0,0)",
+            formualizer_common::ExcelErrorKind::Div,
+        ),
+    ] {
+        let (e, r) = evaluate(formula);
+        assert_eq!(r.logical_cell_reason_count, 0, "{formula}: {r:?}");
+        assert!(
+            matches!(e.get_cell_value("Sheet1",1,8),Some(LiteralValue::Error(error)) if error.kind==kind),
+            "{formula}: {:?}",
+            e.get_cell_value("Sheet1", 1, 8)
+        );
+    }
+}
