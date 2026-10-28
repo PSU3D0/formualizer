@@ -78,11 +78,28 @@ impl Token {
 ///
 /// Returns [`Fallback::Unsupported`] when the selected section holds no date
 /// or time code, so the caller can try its other renderers.
+#[cfg(test)]
 pub(super) fn format_datetime(
     system: DateSystem,
     value: f64,
     code: &str,
 ) -> Result<String, Fallback> {
+    format_datetime_outcome(system, value, code).map(|outcome| match outcome {
+        DateFormatOutcome::Covered(text) | DateFormatOutcome::UnverifiedLocale(text) => text,
+    })
+}
+
+/// Rendering success does not establish semantics for an ignored locale directive.
+pub(super) enum DateFormatOutcome {
+    Covered(String),
+    UnverifiedLocale(String),
+}
+
+pub(super) fn format_datetime_outcome(
+    system: DateSystem,
+    value: f64,
+    code: &str,
+) -> Result<DateFormatOutcome, Fallback> {
     if !value.is_finite() {
         return Err(Fallback::Unsupported);
     }
@@ -97,7 +114,7 @@ pub(super) fn format_datetime(
     } else {
         (sections[0], value.abs(), value < 0.0)
     };
-    let tokens = tokenize(section)?;
+    let (tokens, unverified_locale) = tokenize(section)?;
     if !tokens.iter().any(Token::is_code) {
         return Err(Fallback::Unsupported);
     }
@@ -106,12 +123,18 @@ pub(super) fn format_datetime(
     if automatic_minus {
         return Err(Fallback::Invalid);
     }
-    render(system, magnitude, &tokens)
+    let text = render(system, magnitude, &tokens)?;
+    Ok(if unverified_locale {
+        DateFormatOutcome::UnverifiedLocale(text)
+    } else {
+        DateFormatOutcome::Covered(text)
+    })
 }
 
-fn tokenize(section: &str) -> Result<Vec<Token>, Fallback> {
+fn tokenize(section: &str) -> Result<(Vec<Token>, bool), Fallback> {
     let chars: Vec<char> = section.chars().collect();
     let mut tokens = Vec::new();
+    let mut unverified_locale = false;
     let mut literal = String::new();
     let mut i = 0;
     let flush = |literal: &mut String, tokens: &mut Vec<Token>| {
@@ -169,6 +192,9 @@ fn tokenize(section: &str) -> Result<Vec<Token>, Fallback> {
                     if id.to_ascii_lowercase().starts_with("f") && id.len() >= 4 {
                         return Err(Fallback::Unsupported);
                     }
+                    // The tag is admitted here, but its locale is not interpreted.
+                    // Preserve the rendering without certifying that directive.
+                    unverified_locale = true;
                     literal.push_str(symbol);
                 } else {
                     match colour_tag(&tag) {
@@ -226,7 +252,7 @@ fn tokenize(section: &str) -> Result<Vec<Token>, Fallback> {
     }
     flush(&mut literal, &mut tokens);
     resolve_minutes(&mut tokens);
-    Ok(tokens)
+    Ok((tokens, unverified_locale))
 }
 
 /// Fractional-second digits (`.0` to `.000`) straight after a seconds code
