@@ -188,6 +188,7 @@ mod info_reference_context;
 mod inspect;
 mod invariant_calls;
 mod operation_diagnostics;
+mod provider_mode_coverage;
 mod diagnostics_corrections;
 mod operation_diagnostics_optimized;
 mod let_lambda;
