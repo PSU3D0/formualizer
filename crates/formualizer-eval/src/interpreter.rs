@@ -112,6 +112,21 @@ impl LocalEnv {
         name.to_ascii_uppercase()
     }
 
+    pub(crate) fn contains_name(&self, name: &str) -> bool {
+        if self.head.is_none() {
+            return false;
+        }
+        let key = Self::norm(name);
+        let mut current = self.head.as_deref();
+        while let Some(frame) = current {
+            if frame.bindings.contains_key(&key) {
+                return true;
+            }
+            current = frame.parent.as_deref();
+        }
+        false
+    }
+
     pub fn lookup(&self, name: &str) -> Option<LocalBinding> {
         self.head.as_ref()?;
         let key = Self::norm(name);
@@ -542,7 +557,7 @@ impl<'a> Interpreter<'a> {
         self.context.function_capabilities("", name)
     }
 
-    fn ast_function_arc(
+    pub(crate) fn ast_function_arc(
         &self,
         ns: &str,
         name: &str,
@@ -695,6 +710,10 @@ impl<'a> Interpreter<'a> {
             LocalBinding::Callable(c) => Some(c),
             LocalBinding::Value(_) | LocalBinding::ValueWithReference { .. } => None,
         }
+    }
+
+    pub(crate) fn has_local_name(&self, name: &str) -> bool {
+        self.local_env.contains_name(name)
     }
 
     pub fn resolve_local_name(&self, name: &str) -> Option<LocalBinding> {

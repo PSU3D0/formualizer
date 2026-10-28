@@ -18601,6 +18601,14 @@ impl<R> crate::traits::EvaluationContext for Engine<R>
 where
     R: EvaluationContext,
 {
+    fn named_binding_presence(&self, name: &str, current_sheet: &str) -> Option<bool> {
+        let sheet = self.graph.sheet_id(current_sheet)?;
+        if self.graph.resolve_name_entry(name, sheet).is_some() {
+            Some(true)
+        } else {
+            self.resolver.named_binding_presence(name, current_sheet)
+        }
+    }
     fn operation_diagnostic_collector(
         &self,
     ) -> Option<&crate::operation_diagnostics::OperationDiagnosticCollector> {

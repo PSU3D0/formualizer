@@ -443,6 +443,9 @@ impl<'a, R: EvaluationContext, S: ReadSink> FunctionProvider for RecordingContex
 }
 
 impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingContext<'a, R, S> {
+    fn named_binding_presence(&self, name: &str, current_sheet: &str) -> Option<bool> {
+        self.engine.named_binding_presence(name, current_sheet)
+    }
     fn operation_diagnostic_collector(
         &self,
     ) -> Option<&crate::operation_diagnostics::OperationDiagnosticCollector> {

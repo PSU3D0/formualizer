@@ -15,6 +15,14 @@ use std::sync::Arc;
 
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType, TableSpecifier};
 
+/// Actual provider object behind a potential function-as-value reference.
+/// Unknown name-binding metadata remains explicit; no callback is invoked.
+#[derive(Clone)]
+pub(crate) struct FunctionValueReferenceIntent {
+    pub function: Arc<dyn Function>,
+    pub binding_absent: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReferenceInfo {
     /// Excel-style 1-based index of the first sheet covered by the reference.
@@ -447,6 +455,48 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             return None;
         }
         self.as_reference_or_eval().ok()
+    }
+
+    /// Inspect an actual registered function reference in a higher-order value
+    /// position. Ordinary argument evaluation and errors remain unchanged.
+    pub(crate) fn function_value_reference_intent(&self) -> Option<FunctionValueReferenceIntent> {
+        let name = match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference {
+                    reference: ReferenceType::NamedRange(name),
+                    ..
+                } => name.as_str(),
+                _ => return None,
+            },
+            ArgumentExpr::Arena { id, data_store, .. } => {
+                let crate::engine::arena::AstNodeData::Reference { ref_type, .. } =
+                    data_store.get_node(*id)?
+                else {
+                    return None;
+                };
+                let crate::engine::arena::CompactRefType::NamedRange(name) =
+                    data_store.compact_ref(*ref_type)
+                else {
+                    return None;
+                };
+                data_store.resolve_ast_string(*name)
+            }
+        };
+        if self.interp.has_local_name(name) {
+            return None;
+        }
+        let presence = self
+            .interp
+            .context
+            .named_binding_presence(name, self.interp.current_sheet());
+        if presence == Some(true) {
+            return None;
+        }
+        let function = self.interp.ast_function_arc("", name)?;
+        Some(FunctionValueReferenceIntent {
+            function,
+            binding_absent: presence == Some(false),
+        })
     }
 
     /// The spill rectangle of the anchor this argument names, as `ANCHORARRAY`
@@ -2164,6 +2214,12 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
     /// Locale provider: invariant by default
     fn locale(&self) -> crate::locale::Locale {
         crate::locale::Locale::invariant()
+    }
+
+    /// Metadata-only binding presence in the current sheet scope. None means
+    /// the resolver cannot attest presence or absence; values are never read.
+    fn named_binding_presence(&self, _name: &str, _current_sheet: &str) -> Option<bool> {
+        None
     }
 
     /// Number of active sheets in the workbook, if known.

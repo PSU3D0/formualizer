@@ -9,6 +9,7 @@ mod change_log;
 mod changelog_replay;
 mod clock_snapshot;
 mod common;
+mod callable_intent;
 mod unverified_providers;
 mod provider_optimized_evidence;
 mod cross_sheet_named_range_first_cell;

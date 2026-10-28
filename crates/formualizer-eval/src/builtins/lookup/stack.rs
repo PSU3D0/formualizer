@@ -139,6 +139,14 @@ impl Function for HStackFn {
         let mut total_cols = 0usize;
 
         for a in args {
+            if a.function_value_reference_intent().is_some() {
+                ctx.report_unavailable_operation(
+                    crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                        name: self.name().into(),
+                        mode: "function_reference_array",
+                    },
+                );
+            }
             if let Ok(v) = a.range_view() {
                 let (rows, cols) = v.dims();
                 if rows == 0 || cols == 0 {
@@ -150,7 +158,13 @@ impl Function for HStackFn {
                     .ok_or_else(crate::engine::resource_ledger::materialization_budget_error)?;
                 entries.push(HStackEntry::View(v));
             } else {
-                let v = a.value()?.into_literal();
+                let value = a.value()?;
+                if value.as_callable().is_some() {
+                    ctx.report_unavailable_operation(crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                        name: self.name().into(), mode: "callable_array_materialization",
+                    });
+                }
+                let v = value.into_literal();
                 target_rows = target_rows.max(1);
                 total_cols = total_cols
                     .checked_add(1)
@@ -302,6 +316,14 @@ impl Function for VStackFn {
         let mut entries = Vec::with_capacity(args.len());
 
         for a in args {
+            if a.function_value_reference_intent().is_some() {
+                ctx.report_unavailable_operation(
+                    crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                        name: self.name().into(),
+                        mode: "function_reference_array",
+                    },
+                );
+            }
             if let Ok(v) = a.range_view() {
                 let (rows, cols) = v.dims();
                 if rows == 0 || cols == 0 {
@@ -313,7 +335,13 @@ impl Function for VStackFn {
                     .ok_or_else(crate::engine::resource_ledger::materialization_budget_error)?;
                 entries.push(VStackEntry::View(v));
             } else {
-                let v = a.value()?.into_literal();
+                let value = a.value()?;
+                if value.as_callable().is_some() {
+                    ctx.report_unavailable_operation(crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                        name: self.name().into(), mode: "callable_array_materialization",
+                    });
+                }
+                let v = value.into_literal();
                 target_width = target_width.max(1);
                 total_rows = total_rows
                     .checked_add(1)
