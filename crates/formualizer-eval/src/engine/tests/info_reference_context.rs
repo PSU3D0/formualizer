@@ -141,6 +141,203 @@ fn error_consumers_inline_reference_tree_arena() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+#[test]
+fn registered_info_type_error_codes_tree_arena_family() {
+    let mut failures = Vec::new();
+    for family in [false, true] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: family,
+                enable_parallel: false,
+                ..super::common::arrow_eval_config()
+            },
+        );
+        for row in 1..=24 {
+            for (col, arg) in ["MISSING_NAME", "1/0", "NA()", "#VALUE!"]
+                .iter()
+                .enumerate()
+            {
+                engine
+                    .set_cell_formula(
+                        "Sheet1",
+                        row,
+                        col as u32 + 1,
+                        parse(&format!("={arg}")).unwrap(),
+                    )
+                    .unwrap();
+                engine
+                    .set_cell_formula(
+                        "Sheet1",
+                        row,
+                        col as u32 + 5,
+                        parse(&format!("=TYPE({arg})")).unwrap(),
+                    )
+                    .unwrap();
+                let letter = (b'A' + col as u8) as char;
+                engine
+                    .set_cell_formula(
+                        "Sheet1",
+                        row,
+                        col as u32 + 9,
+                        parse(&format!("=TYPE({letter}{row})")).unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+        engine.evaluate_all().unwrap();
+        for row in 1..=24 {
+            for col in 5..=12 {
+                if engine.get_cell_value("Sheet1", row, col) != num(16.0) {
+                    failures.push(format!(
+                        "arena/family={family} row={row} col={col}: {:?}",
+                        engine.get_cell_value("Sheet1", row, col)
+                    ));
+                }
+            }
+        }
+        let tree = crate::interpreter::Interpreter::new(&engine, "Sheet1");
+        for arg in [
+            "MISSING_NAME",
+            "1/0",
+            "NA()",
+            "#VALUE!",
+            "A1",
+            "B1",
+            "C1",
+            "D1",
+        ] {
+            let result = tree
+                .evaluate_ast(&parse(&format!("=TYPE({arg})")).unwrap())
+                .map(|v| v.into_literal());
+            if result != Ok(LiteralValue::Int(16)) {
+                failures.push(format!("tree TYPE({arg}): {result:?}"));
+            }
+        }
+        if family {
+            assert!(engine.family_members_for_test() > 0);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn registered_info_isformula_metadata_edits() {
+    for family in [false, true] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: family,
+                enable_parallel: false,
+                ..super::common::arrow_eval_config()
+            },
+        );
+        let sheet = engine.graph.sheet_id("Sheet1").unwrap();
+        engine
+            .define_name(
+                "FormulaCell",
+                NamedDefinition::Cell(abs_cell_ref(sheet, 1, 1)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine
+            .define_name(
+                "ConstantName",
+                NamedDefinition::Literal(LiteralValue::Int(2)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine.add_sheet("Data").unwrap();
+        engine
+            .set_cell_formula("Data", 1, 1, parse("=1/0").unwrap())
+            .unwrap();
+        for row in 1..=24 {
+            engine
+                .set_cell_formula("Sheet1", row, 1, parse("=1+1").unwrap())
+                .unwrap();
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    row,
+                    2,
+                    parse(&format!("=ISFORMULA(A{row})")).unwrap(),
+                )
+                .unwrap();
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    row,
+                    3,
+                    parse(&format!("=ISFORMULA(A{row}:A{row})")).unwrap(),
+                )
+                .unwrap();
+        }
+        let extras = [
+            ("ISFORMULA(FormulaCell)", true),
+            ("ISFORMULA(ConstantName)", false),
+            ("ISFORMULA(1+1)", false),
+            ("ISFORMULA(Z99)", false),
+            ("ISFORMULA(Data!A1)", true),
+            ("ISFORMULA(INDEX(A1:A2,1))", true),
+        ];
+        for (i, (formula, _)) in extras.iter().enumerate() {
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    1,
+                    i as u32 + 4,
+                    parse(&format!("={formula}")).unwrap(),
+                )
+                .unwrap();
+        }
+        for phase in 0..3 {
+            if phase > 0 {
+                for row in 1..=24 {
+                    if phase == 1 {
+                        engine
+                            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(2.0))
+                            .unwrap();
+                    } else {
+                        engine
+                            .set_cell_formula("Sheet1", row, 1, parse("=1+1").unwrap())
+                            .unwrap();
+                    }
+                }
+            }
+            engine.evaluate_all().unwrap();
+            let expected = phase != 1;
+            for row in 1..=24 {
+                for col in [2, 3] {
+                    assert_eq!(
+                        engine.get_cell_value("Sheet1", row, col),
+                        Some(LiteralValue::Boolean(expected)),
+                        "metadata-only same-value edit phase={phase}, family={family}, row={row}, col={col}"
+                    );
+                }
+            }
+            for (i, (formula, base)) in extras.iter().enumerate() {
+                let expected = if i == 0 || i == 5 { expected } else { *base };
+                assert_eq!(
+                    engine.get_cell_value("Sheet1", 1, i as u32 + 4),
+                    Some(LiteralValue::Boolean(expected)),
+                    "{formula} phase={phase}, family={family}"
+                );
+                let tree = crate::interpreter::Interpreter::new(&engine, "Sheet1");
+                assert_eq!(
+                    tree.evaluate_ast(&parse(&format!("={formula}")).unwrap())
+                        .unwrap()
+                        .into_literal(),
+                    LiteralValue::Boolean(expected),
+                    "tree {formula} phase={phase}"
+                );
+            }
+        }
+        // Workbook metadata is ineligible for elementwise lifting; use its
+        // ordinary reference-aware walk rather than broadening eligibility.
+        assert_eq!(engine.lifted_members_for_test(), 0);
+    }
+}
+
 fn num(value: f64) -> Option<LiteralValue> {
     Some(LiteralValue::Number(value))
 }

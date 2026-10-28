@@ -584,14 +584,12 @@ impl Function for IsNaFn {
 }
 
 #[derive(Debug)]
-pub struct IsFormulaFn; // Requires provenance tracking (not yet) => always FALSE.
-/// Returns whether a value originates from a formula.
-///
-/// Current engine metadata does not track formula provenance at this call site.
+pub struct IsFormulaFn;
+/// Returns whether the referenced cell contains a formula.
 ///
 /// # Remarks
-/// - This implementation currently returns FALSE for all inputs.
-/// - Errors are not raised solely due to provenance unavailability.
+/// - Inspects the first cell of a reference, including named references.
+/// - Non-reference values return FALSE; the referenced value need not be evaluated.
 /// - Arity mismatch returns `#VALUE!`.
 ///
 /// # Examples
@@ -614,8 +612,8 @@ pub struct IsFormulaFn; // Requires provenance tracking (not yet) => always FALS
 ///   - ISNUMBER
 ///   - ISTEXT
 /// faq:
-///   - q: "Can ISFORMULA currently detect formula provenance?"
-///     a: "Not yet. This implementation always returns FALSE because provenance metadata is not tracked here."
+///   - q: "Does a formula that returns an error count as a formula?"
+///     a: "Yes. ISFORMULA inspects the cell definition rather than its calculated value."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: ISFORMULA
@@ -631,6 +629,15 @@ impl Function for IsFormulaFn {
     func_caps!(PURE);
     fn name(&self) -> &'static str {
         "ISFORMULA"
+    }
+
+    // Inspect the reference without eagerly evaluating its value.
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
     }
 
     fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
@@ -652,10 +659,24 @@ impl Function for IsFormulaFn {
                 ExcelError::new_value(),
             )));
         }
-        // Formula provenance metadata is not tracked yet, so ISFORMULA currently returns FALSE.
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            false,
-        )))
+        let reference = match args[0].as_reference_or_eval() {
+            Ok(reference) => reference,
+            Err(error)
+                if error.kind == ExcelErrorKind::Ref
+                    && matches!(error.extra(), formualizer_common::ExcelErrorExtra::None) =>
+            {
+                return Ok(scalar(LiteralValue::Boolean(false)));
+            }
+            Err(error) => return Err(error),
+        };
+        let Some(info) = _ctx.inspect_reference(&reference)? else {
+            return Ok(scalar(LiteralValue::Boolean(false)));
+        };
+        let is_formula = match info.first_cell {
+            Some(cell) => _ctx.formula_text_at_cell(cell)?.is_some(),
+            None => false,
+        };
+        Ok(scalar(LiteralValue::Boolean(is_formula)))
     }
 }
 
@@ -1026,8 +1047,8 @@ pub struct TypeFn;
 /// Returns an Excel TYPE code describing the value category.
 ///
 /// # Remarks
-/// - Codes: `1` number, `2` text, `4` logical, `64` array.
-/// - Errors are propagated unchanged instead of returning `16`.
+/// - Codes: `1` number, `2` text, `4` logical, `16` error, `64` array.
+/// - Spreadsheet errors return `16`; operation failures still propagate.
 /// - Blank values map to numeric code `1` in this implementation.
 ///
 /// # Examples
@@ -1051,7 +1072,7 @@ pub struct TypeFn;
 ///   - ISLOGICAL
 /// faq:
 ///   - q: "How are errors handled by TYPE?"
-///     a: "Errors are propagated unchanged instead of returning Excel's error type code 16."
+///     a: "Spreadsheet errors return Excel's error type code 16."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: TYPE
@@ -1084,10 +1105,7 @@ impl Function for TypeFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal(); // Propagate errors directly
-        if let LiteralValue::Error(e) = v {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-        }
+        let v = args[0].value_for_error_inspection()?;
         let code = match v {
             LiteralValue::Int(_)
             | LiteralValue::Number(_)
@@ -1099,7 +1117,7 @@ impl Function for TypeFn {
             LiteralValue::Text(_) => 2,
             LiteralValue::Boolean(_) => 4,
             LiteralValue::Array(_) => 64,
-            LiteralValue::Error(_) => unreachable!(),
+            LiteralValue::Error(_) => 16,
             LiteralValue::Pending => 1, // treat as blank/zero numeric; may change
         };
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(code)))
@@ -2037,6 +2055,7 @@ mod tests {
                 "ISLOGICAL",
                 "ISBLANK",
                 "ISNONTEXT",
+                "TYPE",
             ] {
                 let value_ast = ASTNode::new(
                     ASTNodeType::Literal(LiteralValue::Error(error.clone())),
@@ -2229,14 +2248,12 @@ mod tests {
                 .into_literal(),
             LiteralValue::Int(4)
         );
-        match f
-            .dispatch(&a_err, &ctx.function_context(None))
-            .unwrap()
-            .into_literal()
-        {
-            LiteralValue::Error(e) => assert_eq!(e, "#VALUE!"),
-            _ => panic!(),
-        }
+        assert_eq!(
+            f.dispatch(&a_err, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Int(16)
+        );
         assert_eq!(
             f.dispatch(&a_arr, &ctx.function_context(None))
                 .unwrap()
