@@ -463,6 +463,60 @@ fn inspect_reference_covers_cells_ranges_names_tables_and_3d_without_materializi
 }
 
 #[test]
+fn formula_metadata_predicate_tracks_staged_compressed_and_edited_cells() {
+    use crate::traits::{DefaultFunctionContext, FunctionContext};
+
+    let mut engine = Engine::new(TestWorkbook::new(), super::common::arrow_eval_config());
+    let sheet = engine.sheet_id("Sheet1").unwrap();
+    let cell = abs_cell_ref(sheet, 1, 1);
+    assert!(!engine.has_formula_at_cell(cell).unwrap());
+    let staged = abs_cell_ref(sheet, 99, 2);
+    engine.stage_formula_text("Sheet1", 99, 2, "1+1".into());
+    assert!(engine.has_formula_at_cell(staged).unwrap());
+    assert_eq!(
+        engine.has_formula_at_cell(staged).unwrap(),
+        engine.formula_text_at_cell(staged).unwrap().is_some()
+    );
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    assert!(!engine.has_formula_at_cell(cell).unwrap());
+    for row in 1..=24 {
+        engine
+            .set_cell_formula("Sheet1", row, 1, parse("=1+1").unwrap())
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    let ctx = DefaultFunctionContext::new(&engine, None, "Sheet1");
+    for row in 1..=24 {
+        let cell = abs_cell_ref(sheet, row, 1);
+        assert!(engine.has_formula_at_cell(cell).unwrap());
+        assert!(ctx.has_formula_at_cell(cell).unwrap());
+        assert_eq!(
+            engine.has_formula_at_cell(cell).unwrap(),
+            engine.formula_text_at_cell(cell).unwrap().is_some()
+        );
+    }
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    assert!(!engine.has_formula_at_cell(cell).unwrap());
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=1/0").unwrap())
+        .unwrap();
+    assert!(engine.has_formula_at_cell(cell).unwrap());
+    let removed = engine.add_sheet("Removed").unwrap();
+    engine.remove_sheet(removed).unwrap();
+    assert_eq!(
+        engine
+            .has_formula_at_cell(abs_cell_ref(removed, 1, 1))
+            .unwrap_err()
+            .kind,
+        ExcelErrorKind::Ref
+    );
+}
+
+#[test]
 fn formula_text_context_uses_staged_text_then_canonical_ast_and_tracks_edits() {
     let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
     let data = engine.add_sheet("Data").unwrap();

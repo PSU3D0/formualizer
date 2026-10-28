@@ -673,7 +673,7 @@ impl Function for IsFormulaFn {
             return Ok(scalar(LiteralValue::Boolean(false)));
         };
         let is_formula = match info.first_cell {
-            Some(cell) => _ctx.formula_text_at_cell(cell)?.is_some(),
+            Some(cell) => _ctx.has_formula_at_cell(cell)?,
             None => false,
         };
         Ok(scalar(LiteralValue::Boolean(is_formula)))

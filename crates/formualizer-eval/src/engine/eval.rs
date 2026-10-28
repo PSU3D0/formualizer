@@ -18816,6 +18816,24 @@ where
         })
     }
 
+    fn has_formula_at_cell(&self, cell: CellRef) -> Result<bool, ExcelError> {
+        let sheet_name = self.graph.sheet_name(cell.sheet_id);
+        if sheet_name.is_empty() {
+            return Err(ExcelError::new(ExcelErrorKind::Ref));
+        }
+        if self.staged_formulas.get(sheet_name).is_some_and(|entries| {
+            entries
+                .get(cell.coord.row() + 1, cell.coord.col() + 1)
+                .is_some()
+        }) {
+            return Ok(true);
+        }
+        Ok(self
+            .graph
+            .get_vertex_for_cell(&cell)
+            .is_some_and(|vertex| self.graph.is_live_formula_vertex(vertex)))
+    }
+
     fn formula_text_at_cell(&self, cell: CellRef) -> Result<Option<String>, ExcelError> {
         let sheet_name = self.graph.sheet_name(cell.sheet_id);
         if sheet_name.is_empty() {

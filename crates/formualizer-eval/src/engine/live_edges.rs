@@ -536,6 +536,9 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
     ) -> Result<Option<ReferenceInfo>, ExcelError> {
         self.engine.inspect_reference(reference, current_sheet)
     }
+    fn has_formula_at_cell(&self, cell: CellRef) -> Result<bool, ExcelError> {
+        self.engine.has_formula_at_cell(cell)
+    }
     fn formula_text_at_cell(&self, cell: CellRef) -> Result<Option<String>, ExcelError> {
         self.engine.formula_text_at_cell(cell)
     }

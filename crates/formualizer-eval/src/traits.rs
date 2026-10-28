@@ -2150,6 +2150,12 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         Ok(None)
     }
 
+    /// Whether a concrete cell stores a formula, without requiring its text.
+    /// Existing contexts can keep supplying formula text via the fallback.
+    fn has_formula_at_cell(&self, cell: CellRef) -> Result<bool, ExcelError> {
+        self.formula_text_at_cell(cell).map(|text| text.is_some())
+    }
+
     /// Retrieve formula text for a concrete cell, if that cell stores a formula.
     fn formula_text_at_cell(&self, _cell: CellRef) -> Result<Option<String>, ExcelError> {
         Ok(None)
@@ -2391,6 +2397,12 @@ pub trait FunctionContext<'ctx> {
         Ok(None)
     }
 
+    /// Whether a concrete cell stores a formula. The default preserves
+    /// contexts that provide only formula text.
+    fn has_formula_at_cell(&self, cell: CellRef) -> Result<bool, ExcelError> {
+        self.formula_text_at_cell(cell).map(|text| text.is_some())
+    }
+
     fn formula_text_at_cell(&self, _cell: CellRef) -> Result<Option<String>, ExcelError> {
         Ok(None)
     }
@@ -2527,6 +2539,10 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
         reference: &ReferenceType,
     ) -> Result<Option<ReferenceInfo>, ExcelError> {
         self.base.inspect_reference(reference, self.current_sheet)
+    }
+
+    fn has_formula_at_cell(&self, cell: CellRef) -> Result<bool, ExcelError> {
+        self.base.has_formula_at_cell(cell)
     }
 
     fn formula_text_at_cell(&self, cell: CellRef) -> Result<Option<String>, ExcelError> {
