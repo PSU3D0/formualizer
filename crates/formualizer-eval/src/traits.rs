@@ -535,11 +535,16 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     pub fn value(&self) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        self.cached_value
+        let result = self
+            .cached_value
             .get_or_init(|| self.compute_value().map(MemoizedValue::new))
             .as_ref()
             .map(MemoizedValue::value)
-            .map_err(Clone::clone)
+            .map_err(Clone::clone);
+        if let Some(collector) = self.interp.diagnostics {
+            collector.input(&result);
+        }
+        result
     }
 
     /// Inspect a spreadsheet error regardless of whether evaluation returned it
@@ -642,7 +647,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         env: crate::interpreter::LocalEnv,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let scoped = self.interp.with_local_env(env);
-        match &self.expr {
+        let result = match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Literal(v) => Ok(crate::traits::CalcValue::Scalar(v.clone())),
                 ASTNodeType::Omitted => {
@@ -664,7 +669,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     scoped.evaluate_arena_ast(*id, data_store, sheet_registry)
                 }
             }
+        };
+        if let Some(collector) = self.interp.diagnostics {
+            collector.input(&result);
         }
+        result
     }
 
     pub fn current_env(&self) -> crate::interpreter::LocalEnv {
@@ -1114,10 +1123,19 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     /// with `RETURNS_REFERENCE` first attempt reference evaluation, but fall back
     /// to their cached value when `eval_reference` returns `None`.
     pub(crate) fn resolve_once(&self) -> Result<ResolvedArgument<'b>, ExcelError> {
-        self.caches()
+        let result = self
+            .caches()
             .cached_resolved
             .get_or_init(|| self.compute_resolved_argument())
-            .clone()
+            .clone();
+        if let Some(collector) = self.interp.diagnostics {
+            match &result {
+                Ok(ResolvedArgument::Range(_)) => collector.ambiguous_input(),
+                Ok(ResolvedArgument::Value(value)) => collector.input_value(value),
+                Ok(ResolvedArgument::ReferenceError(e)) | Err(e) => collector.input_error(e),
+            }
+        }
+        result
     }
 
     /// Attaches the context's cancellation token and materialisation budget.
@@ -1196,6 +1214,9 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     }
 
     pub fn range(&self) -> Result<Box<dyn Range>, ExcelError> {
+        if let Some(collector) = self.interp.diagnostics {
+            collector.ambiguous_input();
+        }
         match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference { reference, .. } => {
@@ -2012,6 +2033,13 @@ pub trait FunctionProvider: Send + Sync {
 }
 
 pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
+    /// Optional request-event collector; does not certify retained-result coverage.
+    fn operation_diagnostic_collector(
+        &self,
+    ) -> Option<&crate::operation_diagnostics::OperationDiagnosticCollector> {
+        None
+    }
+
     /// Get access to the shared thread pool for parallel evaluation
     /// Returns None if parallel evaluation is disabled or unavailable
     fn thread_pool(&self) -> Option<&Arc<rayon::ThreadPool>> {
@@ -2356,6 +2384,14 @@ pub enum VolatileLevel {
 
 /// Minimal context exposed to functions (no engine/graph APIs)
 pub trait FunctionContext<'ctx> {
+    /// Emit typed evidence on an executed unsupported path. Do not report a
+    /// propagated input error as a new operation. No effect unless enabled.
+    fn report_unavailable_operation(
+        &self,
+        _operation: crate::operation_diagnostics::UnavailableOperation,
+    ) {
+    }
+
     fn locale(&self) -> crate::locale::Locale;
     fn timezone(&self) -> &crate::timezone::TimeZoneSpec;
     fn clock(&self) -> &dyn crate::timezone::ClockProvider;
@@ -2514,6 +2550,15 @@ impl<'a> DefaultFunctionContext<'a> {
 }
 
 impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
+    fn report_unavailable_operation(
+        &self,
+        operation: crate::operation_diagnostics::UnavailableOperation,
+    ) {
+        if let Some(collector) = self.base.operation_diagnostic_collector() {
+            collector.record(self.current, operation);
+        }
+    }
+
     fn locale(&self) -> crate::locale::Locale {
         self.base.locale()
     }

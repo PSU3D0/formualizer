@@ -86,6 +86,16 @@ fn invariant_column(ds: &DataStore, arg: AstNodeId) -> bool {
 }
 
 impl CriteriaPlan {
+    /// Diagnostic fallback may repeat only pure criterion expressions.
+    pub(super) fn diagnostic_replay_safe(
+        &self,
+        functions: &crate::interpreter::ResolvedFunctions,
+        ds: &DataStore,
+    ) -> bool {
+        self.criteria
+            .iter()
+            .all(|&(_, arg)| super::memo::MemoPlan::pure_key_arg(functions, ds, arg))
+    }
     pub(super) fn plan(
         functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,

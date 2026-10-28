@@ -79,7 +79,7 @@ impl MemoPlan {
         Some(Self { key_args })
     }
 
-    fn pure_key_arg(
+    pub(super) fn pure_key_arg(
         functions: &crate::interpreter::ResolvedFunctions,
         ds: &DataStore,
         id: AstNodeId,

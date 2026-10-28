@@ -998,6 +998,8 @@ pub struct Engine<R> {
     pub(crate) graph: DependencyGraph,
     resolver: R,
     pub(super) resolved_functions: crate::interpreter::ResolvedFunctions,
+    pub(super) operation_diagnostic_collector:
+        Option<crate::operation_diagnostics::OperationDiagnosticCollector>,
     resolved_sheet_names:
         FxHashMap<crate::engine::arena::StringId, (crate::SheetId, Option<usize>)>,
     resolution_sheet_revision: Option<(u64, u64, usize)>,
@@ -2897,6 +2899,7 @@ where
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             resolved_functions: Default::default(),
+            operation_diagnostic_collector: None,
             resolved_sheet_names: FxHashMap::default(),
             resolution_sheet_revision: None,
             resolution_arrow_sheet_names: Vec::new(),
@@ -3072,6 +3075,7 @@ where
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
             resolved_functions: Default::default(),
+            operation_diagnostic_collector: None,
             resolved_sheet_names: FxHashMap::default(),
             resolution_sheet_revision: None,
             resolution_arrow_sheet_names: Vec::new(),
@@ -3831,7 +3835,29 @@ where
         self.resolution_sheet_revision = Some(revision);
     }
 
+    /// Enable request-operation evidence before ingestion/evaluation.
+    /// Each evaluation request resets events; this is not retained-result coverage.
+    pub fn enable_operation_diagnostics(&mut self, sample_limit: usize) {
+        self.operation_diagnostic_collector =
+            Some(crate::operation_diagnostics::OperationDiagnosticCollector::new(sample_limit));
+    }
+
+    pub fn disable_operation_diagnostics(&mut self) {
+        self.operation_diagnostic_collector = None;
+    }
+
+    pub fn operation_diagnostics(
+        &self,
+    ) -> Option<crate::operation_diagnostics::OperationDiagnostics> {
+        self.operation_diagnostic_collector
+            .as_ref()
+            .map(|collector| collector.snapshot())
+    }
+
     fn begin_evaluation_request(&mut self) {
+        if let Some(collector) = &self.operation_diagnostic_collector {
+            collector.reset();
+        }
         self.refresh_resolution_snapshots();
         self.freshness_begin_request();
         #[cfg(test)]
@@ -14715,6 +14741,10 @@ where
                 Ok(out)
             }
             NamedDefinition::Formula { ast, .. } => {
+                let _origin = self
+                    .operation_diagnostic_collector
+                    .as_ref()
+                    .map(|c| c.named_scope(vertex_id));
                 let context_sheet = match named_range.scope {
                     NameScope::Sheet(id) => id,
                     NameScope::Workbook => sheet_id,
@@ -14816,6 +14846,10 @@ where
             }
             NamedDefinition::Literal(v) => LiteralValue::Array(vec![vec![v.clone()]]),
             NamedDefinition::Formula { ast, .. } => {
+                let _origin = self
+                    .operation_diagnostic_collector
+                    .as_ref()
+                    .map(|c| c.named_scope(vertex_id));
                 let context_sheet = match named_range.scope {
                     NameScope::Sheet(id) => id,
                     NameScope::Workbook => sheet_id,
@@ -17521,6 +17555,10 @@ where
                     }
                     NamedDefinition::Literal(v) => Ok(v.clone()),
                     NamedDefinition::Formula { ast, .. } => {
+                        let _origin = self
+                            .operation_diagnostic_collector
+                            .as_ref()
+                            .map(|c| c.named_scope(vertex_id));
                         let context_sheet = match named_range.scope {
                             NameScope::Sheet(id) => id,
                             NameScope::Workbook => sheet_id,
@@ -17602,6 +17640,10 @@ where
                     }
                     NamedDefinition::Literal(v) => Ok(LiteralValue::Array(vec![vec![v.clone()]])),
                     NamedDefinition::Formula { ast, .. } => {
+                        let _origin = self
+                            .operation_diagnostic_collector
+                            .as_ref()
+                            .map(|c| c.named_scope(vertex_id));
                         let context_sheet = match named_range.scope {
                             NameScope::Sheet(id) => id,
                             NameScope::Workbook => sheet_id,
@@ -18525,6 +18567,12 @@ impl<R> crate::traits::EvaluationContext for Engine<R>
 where
     R: EvaluationContext,
 {
+    fn operation_diagnostic_collector(
+        &self,
+    ) -> Option<&crate::operation_diagnostics::OperationDiagnosticCollector> {
+        self.operation_diagnostic_collector.as_ref()
+    }
+
     fn clock(&self) -> &dyn crate::timezone::ClockProvider {
         &self.clock
     }
@@ -20342,6 +20390,10 @@ where
 
                 match &named_range.definition {
                     NamedDefinition::Formula { ast, .. } => {
+                        let _origin = self
+                            .operation_diagnostic_collector
+                            .as_ref()
+                            .map(|c| c.named_scope(vertex_id));
                         let context_sheet = match named_range.scope {
                             NameScope::Sheet(id) => id,
                             NameScope::Workbook => sheet_id,

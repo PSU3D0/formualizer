@@ -443,6 +443,12 @@ impl<'a, R: EvaluationContext, S: ReadSink> FunctionProvider for RecordingContex
 }
 
 impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingContext<'a, R, S> {
+    fn operation_diagnostic_collector(
+        &self,
+    ) -> Option<&crate::operation_diagnostics::OperationDiagnosticCollector> {
+        self.engine.operation_diagnostic_collector()
+    }
+
     /* ── intercept-and-record ── */
 
     fn resolve_range_view<'c>(

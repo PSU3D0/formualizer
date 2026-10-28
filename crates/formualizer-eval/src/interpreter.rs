@@ -347,6 +347,7 @@ impl std::ops::Deref for ResolvedFunction<'_> {
 
 pub struct Interpreter<'a> {
     pub context: &'a dyn EvaluationContext,
+    pub(crate) diagnostics: Option<&'a crate::operation_diagnostics::OperationDiagnosticCollector>,
     resolved_functions: Option<&'a ResolvedFunctions>,
     arena_cells: Option<&'a dyn ArenaCellResolver>,
     current_sheet: &'a str,
@@ -359,9 +360,54 @@ pub struct Interpreter<'a> {
 }
 
 impl<'a> Interpreter<'a> {
+    fn unavailable(&self, operation: crate::operation_diagnostics::UnavailableOperation) {
+        if let Some(collector) = self.diagnostics {
+            collector.record(self.current_cell, operation);
+        }
+    }
+
+    fn unknown_function(&self, name: &str) {
+        self.unavailable(
+            crate::operation_diagnostics::UnavailableOperation::UnknownFunction {
+                name: name.to_ascii_uppercase(),
+            },
+        );
+    }
+
+    fn unsupported_call(&self) -> ExcelError {
+        self.unavailable(crate::operation_diagnostics::UnavailableOperation::PostfixInvocation);
+        call_expression_error()
+    }
+
+    fn diagnostic_dispatch<T>(
+        &self,
+        name: &str,
+        run: impl FnOnce() -> Result<T, ExcelError>,
+        unimplemented: impl FnOnce(&Result<T, ExcelError>) -> bool,
+    ) -> Result<T, ExcelError> {
+        let collector = self.diagnostics;
+        if let Some(collector) = collector {
+            collector.dispatch_started();
+        }
+        let scope = collector.map(|c| c.scope(crate::operation_diagnostics::Mode::Inherit));
+        let result = run();
+        if let Some(scope) = scope
+            && !scope.tainted()
+            && unimplemented(&result)
+        {
+            self.unavailable(
+                crate::operation_diagnostics::UnavailableOperation::UnimplementedFunction {
+                    name: name.to_ascii_uppercase(),
+                },
+            );
+        }
+        result
+    }
+
     pub fn new(context: &'a dyn EvaluationContext, current_sheet: &'a str) -> Self {
         Self {
             context,
+            diagnostics: context.operation_diagnostic_collector(),
             resolved_functions: None,
             arena_cells: None,
             current_sheet,
@@ -381,6 +427,7 @@ impl<'a> Interpreter<'a> {
     ) -> Self {
         Self {
             context,
+            diagnostics: context.operation_diagnostic_collector(),
             resolved_functions: None,
             arena_cells: None,
             current_sheet,
@@ -483,6 +530,7 @@ impl<'a> Interpreter<'a> {
     pub(crate) fn with_current_cell(&self, cell: crate::CellRef) -> Self {
         Self {
             context: self.context,
+            diagnostics: self.diagnostics,
             resolved_functions: self.resolved_functions,
             arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
@@ -498,6 +546,7 @@ impl<'a> Interpreter<'a> {
     pub fn with_local_env(&self, env: LocalEnv) -> Self {
         Self {
             context: self.context,
+            diagnostics: self.diagnostics,
             resolved_functions: self.resolved_functions,
             arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
@@ -516,6 +565,7 @@ impl<'a> Interpreter<'a> {
     ) -> Self {
         Self {
             context: self.context,
+            diagnostics: self.diagnostics,
             resolved_functions: self.resolved_functions,
             arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
@@ -625,6 +675,7 @@ impl<'a> Interpreter<'a> {
                             .with_message("Function does not return a reference"))
                     }
                 } else {
+                    self.unknown_function(name);
                     Err(ExcelError::new(ExcelErrorKind::Name)
                         .with_message(format!("Unknown function: {name}")))
                 }
@@ -657,6 +708,7 @@ impl<'a> Interpreter<'a> {
         let fun = match self.ast_function(name) {
             Some(fun) => fun,
             None => {
+                self.unknown_function(name);
                 return Some(Err(ExcelError::new(ExcelErrorKind::Name)
                     .with_message(format!("Unknown function: {name}"))));
             }
@@ -690,8 +742,9 @@ impl<'a> Interpreter<'a> {
                 let fun = self.arena_function(*name_id, data_store).ok_or_else(|| {
                     let name = data_store.resolve_ast_string(*name_id);
                     if name == CALL_NODE_NAME {
-                        call_expression_error()
+                        self.unsupported_call()
                     } else {
+                        self.unknown_function(name);
                         ExcelError::new(ExcelErrorKind::Name)
                             .with_message(format!("Unknown function: {name}"))
                     }
@@ -820,8 +873,9 @@ impl<'a> Interpreter<'a> {
             None => {
                 let name = data_store.resolve_ast_string(*name_id);
                 if name == CALL_NODE_NAME {
-                    return Some(Err(call_expression_error()));
+                    return Some(Err(self.unsupported_call()));
                 }
+                self.unknown_function(name);
                 return Some(Err(ExcelError::new(ExcelErrorKind::Name)
                     .with_message(format!("Unknown function: {name}"))));
             }
@@ -856,6 +910,7 @@ impl<'a> Interpreter<'a> {
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         let offset = Self {
             context: self.context,
+            diagnostics: self.diagnostics,
             resolved_functions: self.resolved_functions,
             arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
@@ -908,6 +963,7 @@ impl<'a> Interpreter<'a> {
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         let offset = Self {
             context: self.context,
+            diagnostics: self.diagnostics,
             resolved_functions: self.resolved_functions,
             arena_cells: self.arena_cells,
             current_sheet: self.current_sheet,
@@ -1315,7 +1371,7 @@ impl<'a> Interpreter<'a> {
                 }
                 let function = self.arena_function(*name_id, data_store);
                 if function.is_none() && data_store.resolve_ast_string(*name_id) == CALL_NODE_NAME {
-                    return Err(call_expression_error());
+                    return Err(self.unsupported_call());
                 }
                 let args = data_store.get_args(node_id).ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Value).with_message("Missing function args")
@@ -1336,7 +1392,11 @@ impl<'a> Interpreter<'a> {
                         self.current_sheet,
                     );
 
-                    return fun.dispatch(&handles, &fctx);
+                    return self.diagnostic_dispatch(
+                        data_store.resolve_ast_string(*name_id),
+                        || fun.dispatch(&handles, &fctx),
+                        crate::operation_diagnostics::is_unimplemented,
+                    );
                 }
 
                 let name = data_store.resolve_ast_string(*name_id);
@@ -1357,6 +1417,7 @@ impl<'a> Interpreter<'a> {
                     return callable.invoke_with_references(self, &eval_args, &arg_references);
                 }
 
+                self.unknown_function(name);
                 Err(ExcelError::new(ExcelErrorKind::Name)
                     .with_message(format!("Unknown function: {name}")))
             }
@@ -1403,7 +1464,7 @@ impl<'a> Interpreter<'a> {
                 .map(crate::traits::CalcValue::Scalar),
             ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(*op, left, right),
             ASTNodeType::Function { name, args } => self.eval_function_to_calc(name, args),
-            ASTNodeType::Call { .. } => Err(call_expression_error()),
+            ASTNodeType::Call { .. } => Err(self.unsupported_call()),
             ASTNodeType::Array(rows) => self.eval_array_literal_to_calc(rows),
         }
     }
@@ -1468,7 +1529,7 @@ impl<'a> Interpreter<'a> {
                 }
                 self.eval_function_to_calc(name, args)
             }
-            ASTNodeType::Call { .. } => Err(call_expression_error()),
+            ASTNodeType::Call { .. } => Err(self.unsupported_call()),
             ASTNodeType::Array(rows) => self.eval_array_literal_to_calc(rows),
         }
     }
@@ -1842,7 +1903,11 @@ impl<'a> Interpreter<'a> {
                 self.current_cell,
                 self.current_sheet,
             );
-            return fun.dispatch(&handles, &fctx);
+            return self.diagnostic_dispatch(
+                name,
+                || fun.dispatch(&handles, &fctx),
+                crate::operation_diagnostics::is_unimplemented,
+            );
         }
 
         if let Some(callable) = self.resolve_local_callable(name) {
@@ -1859,6 +1924,7 @@ impl<'a> Interpreter<'a> {
             return callable.invoke_with_references(self, &eval_args, &arg_references);
         }
 
+        self.unknown_function(name);
         // Include the function name in the error message for better debugging
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
             ExcelError::new(ExcelErrorKind::Name).with_message(format!("Unknown function: {name}")),

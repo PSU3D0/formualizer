@@ -216,6 +216,12 @@ impl<'a, R: EvaluationContext> FunctionProvider for DynamicRefCollector<'a, R> {
 }
 
 impl<'a, R: EvaluationContext> EvaluationContext for DynamicRefCollector<'a, R> {
+    fn operation_diagnostic_collector(
+        &self,
+    ) -> Option<&crate::operation_diagnostics::OperationDiagnosticCollector> {
+        self.engine.operation_diagnostic_collector()
+    }
+
     fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
         self.engine.cancellation_token()
     }

@@ -8,6 +8,7 @@ pub mod function_contract;
 pub mod function_registry;
 pub mod instant;
 pub mod interpreter;
+pub mod operation_diagnostics;
 pub mod locale;
 pub mod rng;
 pub mod stripes;

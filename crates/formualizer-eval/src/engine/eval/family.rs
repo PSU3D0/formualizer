@@ -267,6 +267,10 @@ where
             && (members.len() > 1 || shared_memo.is_some()))
         .then(|| super::criteria::CriteriaPlan::plan(&self.resolved_functions, ds, template))
         .flatten()
+        .filter(|plan| {
+            self.operation_diagnostic_collector.is_none()
+                || plan.diagnostic_replay_safe(&self.resolved_functions, ds)
+        })
         .filter(|_| !members.iter().any(|&v| self.graph.is_volatile(v)));
         let local_index;
         let criteria_index = match &criteria_plan {
@@ -370,8 +374,12 @@ where
             #[cfg(test)]
             self.family_members_for_test
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if let (Some(plan), Some(index)) = (&criteria_plan, criteria_index)
-                && let Some(value) = self.criteria_member(
+            let criteria_probe = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
+            let criteria_value = match (&criteria_plan, criteria_index) {
+                (Some(plan), Some(index)) => self.criteria_member(
                     plan,
                     index,
                     &interpreter,
@@ -379,11 +387,23 @@ where
                     sheet_name,
                     row_delta,
                     col_delta,
-                )
-            {
+                ),
+                _ => None,
+            };
+            let criteria_value = if criteria_probe.as_ref().is_some_and(|p| p.encountered()) {
+                None
+            } else {
+                criteria_value
+            };
+            drop(criteria_probe);
+            if let Some(value) = criteria_value {
                 // Debug builds: the kernel's result is the walk's.
                 #[cfg(debug_assertions)]
                 {
+                    let _silence = self
+                        .operation_diagnostic_collector
+                        .as_ref()
+                        .map(|c| c.scope(crate::operation_diagnostics::Mode::Suppressed));
                     let walked = interpreter
                         .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
                         .map(|cv| {
@@ -415,6 +435,10 @@ where
                 ));
                 continue;
             }
+            let key_probe = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
             let key = match &memo_plan {
                 Some(plan) if memo.active() => plan
                     .key_args
@@ -429,11 +453,25 @@ where
                     .collect::<Option<super::memo::MemoKey>>(),
                 _ => None,
             };
+            let key = if key_probe.as_ref().is_some_and(|p| p.encountered()) {
+                None
+            } else {
+                key
+            };
+            drop(key_probe);
+            let result_probe = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Inherit));
             let result = match key.as_ref().and_then(|key| memo.get(key)) {
                 Some(hit) => {
                     // Debug builds: a reused result is the walk's result.
                     #[cfg(debug_assertions)]
                     {
+                        let _silence = self
+                            .operation_diagnostic_collector
+                            .as_ref()
+                            .map(|c| c.scope(crate::operation_diagnostics::Mode::Suppressed));
                         let walked = interpreter
                             .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
                             .map(|cv| {
@@ -471,12 +509,15 @@ where
                             cv,
                             self.config.spill.max_spill_cells,
                         );
-                        if let Some(key) = key {
+                        if let Some(key) = key
+                            && !result_probe.as_ref().is_some_and(|p| p.encountered())
+                        {
                             memo.insert(key, (value.clone(), format));
                         }
                         (value, format)
                     }),
             };
+            drop(result_probe);
             let value = result
                 .map(|(value, format)| {
                     self.record_derived_format_at(cell_ref, format);
@@ -521,7 +562,18 @@ where
             }
             cells.push(cell_ref);
         }
+        // Lift speculates pure branches. If an unavailable operation was
+        // encountered, leave this exceptional run to logical per-member walks.
+        let probe = self
+            .operation_diagnostic_collector
+            .as_ref()
+            .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
         let lifted = self.evaluate_run_lifted(&program, run, anchor, members.len())?;
+        let unavailable = probe.as_ref().is_some_and(|p| p.encountered());
+        drop(probe);
+        if unavailable {
+            return None;
+        }
         #[cfg(test)]
         {
             self.family_members_for_test
@@ -570,6 +622,10 @@ where
         #[cfg(debug_assertions)]
         for ((&v, value), &cell) in members.iter().zip(&values).zip(&cells) {
             let lifted_format = self.derived_formats.get(&cell);
+            let _silence = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Suppressed));
             let oracle = self
                 .evaluate_vertex_immutable(v)
                 .unwrap_or_else(LiteralValue::Error);
@@ -630,7 +686,16 @@ where
                 }
             }
         }
+        let probe = self
+            .operation_diagnostic_collector
+            .as_ref()
+            .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
         let lifted = self.evaluate_chain_lifted(&program, run, anchor, members.len())?;
+        let unavailable = probe.as_ref().is_some_and(|p| p.encountered());
+        drop(probe);
+        if unavailable {
+            return None;
+        }
         #[cfg(test)]
         self.chained_members_for_test
             .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
@@ -656,8 +721,17 @@ where
         let reg = self.graph.sheet_reg();
         let mut out = crate::interpreter::InvariantValues::default();
         for &node in nodes {
+            let probe = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
             let value =
                 interpreter.evaluate_arena_ast_with_offset(node, row_delta, col_delta, ds, reg);
+            let unavailable = probe.as_ref().is_some_and(|p| p.encountered());
+            drop(probe);
+            if unavailable {
+                continue;
+            }
             let entry = match value {
                 Ok(crate::traits::CalcValue::Scalar(v)) => (v, None),
                 Ok(crate::traits::CalcValue::AnnotatedScalar(v, f)) => (v, Some(f)),
@@ -711,6 +785,10 @@ where
             self.record_derived_format_at(cell, None);
             #[cfg(debug_assertions)]
             {
+                let _silence = self
+                    .operation_diagnostic_collector
+                    .as_ref()
+                    .map(|c| c.scope(crate::operation_diagnostics::Mode::Suppressed));
                 let oracle = self
                     .evaluate_vertex_immutable(v)
                     .unwrap_or_else(LiteralValue::Error);

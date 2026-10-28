@@ -184,6 +184,8 @@ mod indirect;
 mod info_reference_context;
 mod inspect;
 mod invariant_calls;
+mod operation_diagnostics;
+mod operation_diagnostics_optimized;
 mod let_lambda;
 mod lookup_blank_results;
 mod npv_variadic;
