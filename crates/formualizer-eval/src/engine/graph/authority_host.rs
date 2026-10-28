@@ -1809,6 +1809,15 @@ impl DependencyGraph {
             for key in self.authority_binding_keys(v) {
                 if let Some(waiting) = self.authority.unbound.remove(&key) {
                     work += waiting.len() as u64;
+                    // Rebuilding a healed name's facts does not invalidate its
+                    // cached value or its consumers. Mark the root now and
+                    // propagate through the authority after the new rows exist.
+                    for &reader in &waiting {
+                        if self.authority_symbol_live(reader) {
+                            self.mark_vertex_dirty(reader);
+                            self.authority_queue_dirty(reader);
+                        }
+                    }
                     nodes.extend(waiting);
                 }
             }

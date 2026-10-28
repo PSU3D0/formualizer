@@ -1122,6 +1122,22 @@ mixed_grid_binding_tests!(
         true
     ),
     (
+        mixed_grid_binding_name_grid_missing_full,
+        2,
+        2,
+        true,
+        true,
+        false
+    ),
+    (
+        mixed_grid_binding_name_grid_missing_targeted,
+        2,
+        2,
+        true,
+        true,
+        true
+    ),
+    (
         mixed_grid_binding_grid_name_grid_update_full,
         3,
         5,
