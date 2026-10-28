@@ -1847,6 +1847,20 @@ pub struct GroupByFn;
 /// [formualizer-docgen:schema:end]
 impl Function for GroupByFn {
     func_caps!(PURE, MAY_SPILL);
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        // The documented seventh filter slot and vector/callable selections
+        // belong to this provider, not the scalar six-slot generic schema.
+        if !(3..=7).contains(&args.len()) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        self.eval(args, ctx)
+    }
     fn name(&self) -> &'static str {
         "GROUPBY"
     }
@@ -1952,84 +1966,86 @@ impl Function for GroupByFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
-        // Parse aggregation function
-        let agg_val = args[2].value()?.into_literal();
-        let aggregation = match GroupAggregation::from_literal(&agg_val) {
-            Some(a) => a,
-            None => {
+        // Preserve the actual callable before literal conversion; a callback
+        // refusal is distinct from an invalid legacy aggregation selector.
+        let agg_value = args[2].value()?;
+        let callable_arity = agg_value.as_callable().map(|f| f.arity());
+        if callable_arity.is_some_and(|arity| arity != 1) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let agg_val = agg_value.into_literal();
+        if let LiteralValue::Error(error) = &agg_val
+            && callable_arity.is_none()
+        {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                error.clone(),
+            )));
+        }
+        let aggregation_vector = if let LiteralValue::Array(rows) = &agg_val {
+            if rows.is_empty()
+                || rows[0].is_empty()
+                || !(rows.len() == 1 || rows.iter().all(|row| row.len() == 1))
+            {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Value)
-                        .with_message("Invalid aggregation function"),
+                    ExcelError::new_value(),
                 )));
             }
-        };
-
-        // Parse optional parameters
-        let field_headers = if args.len() >= 4 {
-            match args[3].value()?.into_literal() {
-                LiteralValue::Int(i) => saturating_i32(i),
-                LiteralValue::Number(n) => n as i32,
-                _ => 1,
+            if let Some(error) = rows.iter().flatten().find_map(|value| match value {
+                LiteralValue::Error(error) => Some(error.clone()),
+                _ => None,
+            }) {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
             }
+            true
         } else {
-            1
+            false
         };
-
-        let total_depth = if args.len() >= 5 {
-            match args[4].value()?.into_literal() {
-                LiteralValue::Int(i) => saturating_i32(i),
-                LiteralValue::Number(n) => n as i32,
-                _ => 0,
-            }
-        } else {
-            0
-        };
-
-        let sort_order = if args.len() >= 6 {
-            match args[5].value()?.into_literal() {
-                LiteralValue::Int(i) => saturating_i32(i),
-                LiteralValue::Number(n) => n as i32,
-                _ => 0,
-            }
-        } else {
-            0
-        };
+        let aggregation = GroupAggregation::from_literal(&agg_val);
+        if aggregation.is_none() && callable_arity.is_none() && !aggregation_vector {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value().with_message("Invalid aggregation function"),
+            )));
+        }
 
         let (rf_rows, rf_cols) = row_fields_view.dims();
         let (val_rows, val_cols) = values_view.dims();
-
-        for arg in args.iter().skip(3) {
-            if arg.is_omitted() {
-                continue;
-            }
-            match arg.value()?.into_literal() {
-                LiteralValue::Int(_) | LiteralValue::Empty => {}
-                LiteralValue::Number(n)
-                    if n.is_finite()
-                        && n.fract() == 0.0
-                        && n >= i32::MIN as f64
-                        && n <= i32::MAX as f64 => {}
-                LiteralValue::Error(e) => {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
-                }
-                _ => {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new_value(),
-                    )));
-                }
-            }
-        }
-        if !(0..=3).contains(&field_headers) {
+        // Reuse the provider-owned integer/vector option admission; explicit
+        // omission retains its legacy numeric zero separately from auto intent.
+        let (field_headers, automatic_headers) = PivotByFn::option(args, 3, 1)?;
+        let (total_depth, automatic_totals) = PivotByFn::option(args, 4, 0)?;
+        let (sort_order, sort_vector) = PivotByFn::sort_option(args, 5, rf_cols, val_cols)?;
+        if !(0..=3).contains(&field_headers) || total_depth.unsigned_abs() as usize > rf_cols {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
         }
-        // The implemented comparator sorts keys by sign only. Validate the
-        // documented field/value index before reporting the selected value sort.
-        if sort_order.unsigned_abs() as usize > rf_cols + val_cols {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_value(),
-            )));
+        let mut filter_selected = false;
+        if let Some(arg) = args.get(6)
+            && !arg.is_omitted()
+            && !matches!(arg.value()?.into_literal(), LiteralValue::Empty)
+        {
+            let filter = arg.range_view_or_scalar()?;
+            if filter.dims() != (rf_rows, 1) {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            for row in 0..rf_rows {
+                match filter.get_cell(row, 0) {
+                    LiteralValue::Boolean(_) => {}
+                    LiteralValue::Error(error) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                    }
+                    _ => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new_value(),
+                        )));
+                    }
+                }
+            }
+            filter_selected = true;
         }
 
         // Determine if we have headers
@@ -2049,6 +2065,52 @@ impl Function for GroupByFn {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
             ));
+        }
+
+        let unverified = |mode| {
+            _ctx.report_unavailable_operation(
+                crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                    name: self.name().into(),
+                    mode,
+                },
+            )
+        };
+        // These branches refuse before grouping: do not attribute later,
+        // unexecuted defaults/hierarchy/sorts to a callback/filter refusal.
+        if callable_arity.is_some() || aggregation_vector || filter_selected || sort_vector {
+            if callable_arity.is_some() {
+                unverified("callable_aggregation");
+            } else if aggregation_vector {
+                unverified("aggregation_vector");
+            } else if filter_selected {
+                unverified("filter_array");
+            } else {
+                unverified("sort_vector");
+            }
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        let aggregation = aggregation.expect("validated legacy aggregation selector");
+        if automatic_headers {
+            unverified("automatic_headers");
+        } else if field_headers == 1 {
+            unverified("header_display");
+        }
+        if automatic_totals {
+            unverified("automatic_totals");
+        }
+        if total_depth < 0 {
+            unverified("negative_total_depth");
+        }
+        if total_depth.unsigned_abs() > 1 {
+            unverified("subtotals");
+        }
+        if rf_cols > 1 {
+            unverified("row_hierarchy");
+        }
+        if sort_order.unsigned_abs() > 1 && sort_order.unsigned_abs() as usize <= rf_cols {
+            unverified("field_sort");
         }
 
         if sort_order.unsigned_abs() as usize > rf_cols {
