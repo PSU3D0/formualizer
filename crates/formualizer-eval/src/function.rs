@@ -198,6 +198,16 @@ pub trait Function: Send + Sync + 'static {
         None
     }
 
+    /// Promise to report every known unavailable or unverified executed mode
+    /// through FunctionContext. This is independent of PURE/optimization flags
+    /// and does not certify numerical equivalence. The promise must remain
+    /// side-effect free and stable for this provider instance's lifetime.
+    /// Unattested providers default
+    /// to unknown coverage; crate-owned registrations have a sealed obligation.
+    fn reports_known_limitations(&self) -> bool {
+        false
+    }
+
     /// Explicit semantic classification for this call arity.
     ///
     /// The public default is intentionally untrusted. The registry supplies a

@@ -1202,6 +1202,24 @@ impl crate::traits::FunctionProvider for RegistryPlanningSnapshot {
     }
 }
 
+/// Inspect once when capturing the executing callable, never from its spelling
+/// or optimization flags. A local override cannot inherit builtin obligations.
+pub(crate) fn reports_known_limitations(
+    ns: &str,
+    name: &str,
+    function: &Arc<dyn Function>,
+) -> bool {
+    if function.reports_known_limitations() {
+        return true;
+    }
+    let state = REGISTRY
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    resolve_key_read_only(&state, &(norm(ns), norm(name))).is_some_and(|(_, registered)| {
+        registered.trusted_builtin && Arc::ptr_eq(function, &registered.function)
+    })
+}
+
 pub fn resolve(ns: &str, name: &str) -> Option<ResolvedFunction> {
     resolve_entry(ns, name).map(to_resolved)
 }

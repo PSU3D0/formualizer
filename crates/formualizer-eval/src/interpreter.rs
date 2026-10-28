@@ -171,6 +171,7 @@ pub(crate) trait ArenaCellResolver {
 type ResolvedCallable = (
     Option<std::sync::Arc<dyn crate::function::Function>>,
     Option<crate::function::FnCaps>,
+    bool,
 );
 
 /// Immutable function snapshot shared by every interpreter in one evaluation request.
@@ -182,6 +183,7 @@ pub(crate) struct ResolvedFunctions {
     ast_revision: Option<(u64, Option<u64>, u64, usize, u64)>,
     ast_functions: rustc_hash::FxHashMap<Box<str>, ResolvedCallable>,
     capabilities: Vec<Option<crate::function::FnCaps>>,
+    reporting: Vec<bool>,
 }
 
 impl ResolvedFunctions {
@@ -198,6 +200,7 @@ impl ResolvedFunctions {
         if self.revision != Some(revision) || revision.1.is_none() {
             self.functions.clear();
             self.capabilities.clear();
+            self.reporting.clear();
             self.slots.clear();
             self.ast_revision = None;
         }
@@ -214,6 +217,10 @@ impl ResolvedFunctions {
                 provider.get_function("", name)
             };
             let caps = function.as_ref().map(|function| function.caps());
+            let reporting = function.as_ref().is_some_and(|function| {
+                crate::function_registry::reports_known_limitations("", name, function)
+            });
+            self.reporting.push(reporting);
             self.slots.insert(id, self.functions.len());
             self.functions.push(function);
             self.capabilities.push(caps);
@@ -301,7 +308,8 @@ impl ResolvedFunctions {
             }
             let function = self.functions.get(*slot).cloned().flatten();
             let caps = self.capabilities.get(*slot).copied().flatten();
-            self.ast_functions.insert(name.into(), (function, caps));
+            self.ast_functions
+                .insert(name.into(), (function, caps, self.reporting[*slot]));
         }
         for name in names {
             self.ast_functions
@@ -309,7 +317,10 @@ impl ResolvedFunctions {
                 .or_insert_with_key(|name| {
                     let function = provider.get_function("", name);
                     let caps = function.as_ref().map(|function| function.caps());
-                    (function, caps)
+                    let reporting = function.as_ref().is_some_and(|function| {
+                        crate::function_registry::reports_known_limitations("", name, function)
+                    });
+                    (function, caps, reporting)
                 });
         }
         self.ast_revision = Some(revision);
@@ -325,22 +336,39 @@ impl ResolvedFunctions {
         &self,
         id: crate::engine::arena::StringId,
     ) -> Option<&dyn crate::function::Function> {
-        self.functions
-            .get(*self.slots.get(&id)?)
-            .and_then(|f| f.as_deref())
+        self.get_with_reporting(id).map(|(function, _)| function)
+    }
+
+    fn get_with_reporting(
+        &self,
+        id: crate::engine::arena::StringId,
+    ) -> Option<(&dyn crate::function::Function, bool)> {
+        let slot = *self.slots.get(&id)?;
+        Some((self.functions.get(slot)?.as_deref()?, self.reporting[slot]))
     }
 }
 
-enum ResolvedFunction<'a> {
-    Borrowed(&'a dyn crate::function::Function),
-    Owned(std::sync::Arc<dyn crate::function::Function>),
+pub(crate) enum ResolvedFunction<'a> {
+    Borrowed(&'a dyn crate::function::Function, bool),
+    Owned(std::sync::Arc<dyn crate::function::Function>, bool),
+}
+impl ResolvedFunction<'_> {
+    pub(crate) fn reports_known_limitations(&self) -> bool {
+        match self {
+            Self::Borrowed(_, reporting) | Self::Owned(_, reporting) => *reporting,
+        }
+    }
+    fn owned(name: &str, function: std::sync::Arc<dyn crate::function::Function>) -> Self {
+        let reporting = crate::function_registry::reports_known_limitations("", name, &function);
+        Self::Owned(function, reporting)
+    }
 }
 impl std::ops::Deref for ResolvedFunction<'_> {
     type Target = dyn crate::function::Function;
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::Borrowed(f) => *f,
-            Self::Owned(f) => f.as_ref(),
+            Self::Borrowed(f, _) => *f,
+            Self::Owned(f, _) => f.as_ref(),
         }
     }
 }
@@ -386,27 +414,36 @@ impl<'a> Interpreter<'a> {
         call_expression_error()
     }
 
-    fn diagnostic_dispatch<T>(
+    pub(crate) fn diagnostic_dispatch<T>(
         &self,
         name: &str,
-        run: impl FnOnce() -> Result<T, ExcelError>,
-        unimplemented: impl FnOnce(&Result<T, ExcelError>) -> bool,
-    ) -> Result<T, ExcelError> {
+        reporting: bool,
+        run: impl FnOnce() -> T,
+        unimplemented: impl FnOnce(&T) -> bool,
+    ) -> T {
         let collector = self.diagnostics;
         if let Some(collector) = collector {
             collector.dispatch_started();
         }
         let scope = collector.map(|c| c.scope(crate::operation_diagnostics::Mode::Inherit));
         let result = run();
-        if let Some(scope) = scope
-            && !scope.tainted()
-            && unimplemented(&result)
-        {
-            self.unavailable(
-                crate::operation_diagnostics::UnavailableOperation::UnimplementedFunction {
-                    name: name.to_ascii_uppercase(),
-                },
-            );
+        if let Some(scope) = scope {
+            if !scope.tainted() && unimplemented(&result) {
+                self.unavailable(
+                    crate::operation_diagnostics::UnavailableOperation::UnimplementedFunction {
+                        name: name.to_ascii_uppercase(),
+                    },
+                );
+            } else if !reporting
+                && collector.is_some_and(|collector| collector.tracks_unverified_providers())
+                && !scope.encountered()
+            {
+                self.unavailable(
+                    crate::operation_diagnostics::UnavailableOperation::UnverifiedProvider {
+                        name: name.to_ascii_uppercase(),
+                    },
+                );
+            }
         }
         result
     }
@@ -457,15 +494,18 @@ impl<'a> Interpreter<'a> {
         self
     }
 
-    fn ast_function(&self, name: &str) -> Option<ResolvedFunction<'_>> {
+    pub(crate) fn ast_function(&self, name: &str) -> Option<ResolvedFunction<'_>> {
         if let Some(table) = self.resolved_functions
             && let Some(function) = table.ast_functions.get(name)
         {
-            return function.0.as_deref().map(ResolvedFunction::Borrowed);
+            return function
+                .0
+                .as_deref()
+                .map(|f| ResolvedFunction::Borrowed(f, function.2));
         }
         self.context
             .get_function("", name)
-            .map(ResolvedFunction::Owned)
+            .map(|function| ResolvedFunction::owned(name, function))
     }
 
     pub(crate) fn ast_function_capabilities(&self, name: &str) -> Option<crate::function::FnCaps> {
@@ -497,7 +537,9 @@ impl<'a> Interpreter<'a> {
         store: &DataStore,
     ) -> Option<ResolvedFunction<'_>> {
         if let Some(table) = self.resolved_functions {
-            table.get(id).map(ResolvedFunction::Borrowed)
+            table
+                .get_with_reporting(id)
+                .map(|(f, reporting)| ResolvedFunction::Borrowed(f, reporting))
         } else {
             let name = store.resolve_ast_string(id);
             if name == CALL_NODE_NAME {
@@ -505,7 +547,7 @@ impl<'a> Interpreter<'a> {
             }
             self.context
                 .get_function("", name)
-                .map(ResolvedFunction::Owned)
+                .map(|function| ResolvedFunction::owned(name, function))
         }
     }
 
@@ -676,7 +718,12 @@ impl<'a> Interpreter<'a> {
                         self.current_sheet,
                     );
                     let _origin = self.reference_diagnostic_scope();
-                    if let Some(res) = fun.eval_reference(&handles, &fctx) {
+                    if let Some(res) = self.diagnostic_dispatch(
+                        name,
+                        fun.reports_known_limitations(),
+                        || fun.eval_reference(&handles, &fctx),
+                        crate::operation_diagnostics::is_unimplemented_reference,
+                    ) {
                         res
                     } else {
                         Err(ExcelError::new(ExcelErrorKind::Ref)
@@ -727,7 +774,12 @@ impl<'a> Interpreter<'a> {
             .collect();
         let fctx = DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
         let _origin = self.reference_diagnostic_scope();
-        fun.eval_reference(&handles, &fctx)
+        self.diagnostic_dispatch(
+            name,
+            fun.reports_known_limitations(),
+            || fun.eval_reference(&handles, &fctx),
+            crate::operation_diagnostics::is_unimplemented_reference,
+        )
     }
 
     pub(crate) fn evaluate_arena_ast_as_reference(
@@ -775,7 +827,13 @@ impl<'a> Interpreter<'a> {
                     DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
 
                 let _origin = self.reference_diagnostic_scope();
-                fun.eval_reference(&handles, &fctx).ok_or_else(|| {
+                self.diagnostic_dispatch(
+                    data_store.resolve_ast_string(*name_id),
+                    fun.reports_known_limitations(),
+                    || fun.eval_reference(&handles, &fctx),
+                    crate::operation_diagnostics::is_unimplemented_reference,
+                )
+                .ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Function does not return a reference")
                 })?
@@ -905,7 +963,12 @@ impl<'a> Interpreter<'a> {
             .collect();
         let fctx = DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
         let _origin = self.reference_diagnostic_scope();
-        fun.eval_reference(&handles, &fctx)
+        self.diagnostic_dispatch(
+            data_store.resolve_ast_string(*name_id),
+            fun.reports_known_limitations(),
+            || fun.eval_reference(&handles, &fctx),
+            crate::operation_diagnostics::is_unimplemented_reference,
+        )
     }
 
     /* ===================  public  =================== */
@@ -1405,6 +1468,7 @@ impl<'a> Interpreter<'a> {
 
                     return self.diagnostic_dispatch(
                         data_store.resolve_ast_string(*name_id),
+                        fun.reports_known_limitations(),
                         || fun.dispatch(&handles, &fctx),
                         crate::operation_diagnostics::is_unimplemented,
                     );
@@ -1916,6 +1980,7 @@ impl<'a> Interpreter<'a> {
             );
             return self.diagnostic_dispatch(
                 name,
+                fun.reports_known_limitations(),
                 || fun.dispatch(&handles, &fctx),
                 crate::operation_diagnostics::is_unimplemented,
             );

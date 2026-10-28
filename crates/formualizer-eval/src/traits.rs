@@ -909,7 +909,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 {
                     return None;
                 }
-                let fun = match self.interp.context.get_function("", name) {
+                let fun = match self.interp.ast_function(name) {
                     Some(fun) => fun,
                     None => {
                         return Some(Err(ExcelError::new(ExcelErrorKind::Name)
@@ -926,7 +926,12 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     self.interp.current_sheet(),
                 );
                 let _origin = self.interp.reference_diagnostic_scope();
-                Some(fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()))
+                Some(self.interp.diagnostic_dispatch(
+                    name,
+                    fun.reports_known_limitations(),
+                    || fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()),
+                    crate::operation_diagnostics::is_unimplemented_resolution,
+                ))
             }
             ArgumentExpr::Arena {
                 id,
@@ -952,7 +957,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 {
                     return None;
                 }
-                let fun = match self.interp.context.get_function("", name) {
+                let fun = match self.interp.ast_function(name) {
                     Some(fun) => fun,
                     None => {
                         return Some(Err(ExcelError::new(ExcelErrorKind::Name)
@@ -979,7 +984,12 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     self.interp.current_sheet(),
                 );
                 let _origin = self.interp.reference_diagnostic_scope();
-                Some(fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()))
+                Some(self.interp.diagnostic_dispatch(
+                    name,
+                    fun.reports_known_limitations(),
+                    || fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()),
+                    crate::operation_diagnostics::is_unimplemented_resolution,
+                ))
             }
         }
     }

@@ -75,10 +75,16 @@ pub struct OperationDiagnostics {
     pub roots: Vec<OperationRoot>,
     pub samples: Vec<OperationRoot>,
 }
+/// Configured root/text admission limits and fallible collection reservations
+/// return sticky typed resource errors. This is not universal OOM recovery:
+/// String/Arc, TLS and error construction retain Rust's process-fatal allocator
+/// failure behavior. These limits do not promise a total RSS budget.
 #[derive(Clone, Copy, Debug)]
 pub struct OperationDiagnosticOptions {
     pub sample_limit: usize,
     pub physical_telemetry: bool,
+    /// Include uncertainty when the executing provider has no reporting contract.
+    pub track_unverified_providers: bool,
     pub max_roots: Option<usize>,
     /// Owned String capacity, counted once per distinct operation.
     /// This is not a total RSS budget.
@@ -89,6 +95,7 @@ impl Default for OperationDiagnosticOptions {
         Self {
             sample_limit: 16,
             physical_telemetry: false,
+            track_unverified_providers: false,
             max_roots: None,
             max_operation_text_bytes: None,
         }
@@ -197,6 +204,9 @@ impl OperationDiagnosticCollector {
         self.dispatches
             .store(0, std::sync::atomic::Ordering::Relaxed);
     }
+    pub(crate) fn tracks_unverified_providers(&self) -> bool {
+        self.options.track_unverified_providers
+    }
     pub(crate) fn dispatch_started(&self) {
         if !self.options.physical_telemetry {
             return;
@@ -223,7 +233,9 @@ impl OperationDiagnosticCollector {
         let cell = if named_vertex.is_some() {
             None
         } else {
-            cell.or(origin.reference_cell)
+            cell.or(origin.reference_cell).map(|cell| {
+                CellRef::new_absolute(cell.sheet_id, cell.coord.row(), cell.coord.col())
+            })
         };
         let existing = state.operations.get(&operation).cloned();
         if let Some(operation) = &existing {
@@ -432,6 +444,33 @@ pub(crate) fn is_unimplemented(value: &Result<CalcValue<'_>, ExcelError>) -> boo
     })
 }
 
+pub(crate) fn is_unimplemented_reference(
+    result: &Option<Result<formualizer_parse::parser::ReferenceType, ExcelError>>,
+) -> bool {
+    result.as_ref().is_some_and(|result| {
+        result.as_ref().is_err_and(|error| {
+            error.kind == ExcelErrorKind::NImpl && matches!(error.extra(), ExcelErrorExtra::None)
+        })
+    })
+}
+
+pub(crate) fn is_unimplemented_resolution(
+    result: &Result<crate::function::FunctionResolution<'_>, ExcelError>,
+) -> bool {
+    use crate::function::FunctionResolution;
+    let error = match result {
+        Err(error) | Ok(FunctionResolution::ReferenceError(error)) => Some(error),
+        Ok(FunctionResolution::Value(
+            CalcValue::Scalar(LiteralValue::Error(error))
+            | CalcValue::AnnotatedScalar(LiteralValue::Error(error), _),
+        )) => Some(error),
+        _ => None,
+    };
+    error.is_some_and(|error| {
+        error.kind == ExcelErrorKind::NImpl && matches!(error.extra(), ExcelErrorExtra::None)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,6 +486,27 @@ mod tests {
             ExcelErrorExtra::Resource { detail } => detail.reason,
             _ => panic!("expected typed resource failure: {error:?}"),
         }
+    }
+
+    #[test]
+    fn collector_cell_anchoring_flags_do_not_duplicate_logical_identity() {
+        let collector = OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
+            max_roots: Some(1),
+            ..Default::default()
+        });
+        collector.record(Some(cell(0)), gap("GAP"));
+        collector.record(
+            Some(CellRef::new(0, Coord::new(0, 0, false, false))),
+            gap("GAP"),
+        );
+        let report = collector.snapshot().unwrap();
+        assert_eq!(report.logical_root_cell_count, 1);
+        assert_eq!(report.logical_cell_reason_count, 1);
+        assert_eq!(report.roots.len(), 1);
+        assert_eq!(
+            report.roots[0].cell.unwrap().coord,
+            Coord::new(0, 0, true, true)
+        );
     }
 
     #[test]
