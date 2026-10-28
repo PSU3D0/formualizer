@@ -1130,8 +1130,8 @@ pub struct SortByFn;
 /// `SORTBY` separates what is returned (`array`) from what determines ordering (`by_array`).
 ///
 /// # Remarks
-/// - Requires at least one `by_array` aligned to the row count of `array`.
-/// - `sort_order` defaults to ascending when omitted.
+/// - Column criteria sort rows; row criteria sort columns. All criteria must use the same axis.
+/// - `sort_order` must be `1` or `-1` and defaults to ascending when omitted.
 /// - Additional `by_array`/`sort_order` criteria are processed left-to-right.
 /// - Shape mismatches or invalid criteria return `#VALUE!`.
 /// - Returns a spilled sorted array.
@@ -1172,7 +1172,7 @@ pub struct SortByFn;
 ///   - q: "How are multiple sort criteria applied?"
 ///     a: "SORTBY evaluates criteria left-to-right, using later by_array values only when earlier criteria compare equal."
 ///   - q: "Why do I get #VALUE! with SORTBY?"
-///     a: "Each by_array must be one-dimensional and aligned to the primary array row count; mismatched shapes return #VALUE!."
+///     a: "Each by_array must be one-dimensional and aligned to the same row or column axis; mismatched shapes return #VALUE!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: SORTBY
@@ -1237,6 +1237,40 @@ impl Function for SortByFn {
         });
         &SCHEMA
     }
+    // The shared validator has a homogeneous repeating tail. SORTBY owns
+    // its alternating range/scalar schema, including a final omitted order.
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        let base = self.arg_schema();
+        let schema: Vec<ArgSchema> = (0..args.len())
+            .map(|i| {
+                base[if i == 0 {
+                    0
+                } else if i % 2 == 1 {
+                    1
+                } else {
+                    2
+                }]
+                .clone()
+            })
+            .collect();
+        if let Err(e) = crate::args::validate_and_prepare(
+            args,
+            &schema,
+            crate::args::ValidationOptions {
+                warn_only: false,
+                min_args: 2,
+            },
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
+        self.eval(args, ctx)
+            .map(|value| self.apply_format_propagation(value))
+    }
+
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
@@ -1264,7 +1298,8 @@ impl Function for SortByFn {
 
         // Parse sort criteria: pairs of (by_array, sort_order)
         // Arguments after array: by_array1, [sort_order1], [by_array2], [sort_order2], ...
-        let mut sort_criteria: Vec<(Vec<LiteralValue>, bool)> = Vec::new();
+        let mut sort_criteria: Vec<(Vec<SortKey>, bool)> = Vec::new();
+        let mut vertical_axis = None;
         let mut arg_idx = 1;
 
         while arg_idx < args.len() {
@@ -1278,100 +1313,84 @@ impl Function for SortByFn {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
             }
 
-            // The by_array should be 1-D and match the number of rows in the main array
-            let by_values: Vec<LiteralValue> = if by_cols == 1 {
-                if by_rows != rows {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new(ExcelErrorKind::Value),
-                    )));
-                }
-                (0..by_rows).map(|r| by_view.get_cell(r, 0)).collect()
-            } else if by_rows == 1 {
-                if by_cols != rows {
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                        ExcelError::new(ExcelErrorKind::Value),
-                    )));
-                }
-                (0..by_cols).map(|c| by_view.get_cell(0, c)).collect()
+            // A column criterion orders rows; a row criterion orders columns.
+            // A singleton criterion uses the matching singleton axis.
+            let vertical = if by_rows == 1 && by_cols == 1 {
+                vertical_axis.unwrap_or(rows == 1)
             } else {
+                by_cols == 1
+            };
+            let axis_len = if vertical { rows } else { cols };
+            let compatible = if vertical {
+                by_cols == 1 && by_rows == axis_len
+            } else {
+                by_rows == 1 && by_cols == axis_len
+            };
+            if !compatible || vertical_axis.is_some_and(|axis| axis != vertical) {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(ExcelErrorKind::Value),
                 )));
-            };
-
+            }
+            vertical_axis = Some(vertical);
             arg_idx += 1;
 
-            // sort_order (optional)
+            // Slots alternate unconditionally: scalar references are orders,
+            // while a scalar in a by_array slot remains a criterion.
             let ascending = if arg_idx < args.len() {
-                // TODO(phase6): SORTBY parsing can mis-handle multi-criteria sort_order.
-                // Check if next arg is a number (sort_order) or a range (next by_array)
-                match args[arg_idx].value() {
-                    Ok(v) => {
-                        let lit = v.into_literal();
-                        match lit {
-                            LiteralValue::Int(i) => {
-                                arg_idx += 1;
-                                i >= 0
-                            }
-                            LiteralValue::Number(n) => {
-                                arg_idx += 1;
-                                n >= 0.0
-                            }
-                            _ => true, // Next arg is likely a range, use default ascending
-                        }
-                    }
-                    Err(_) => true,
+                let order = if args[arg_idx].is_omitted() {
+                    1.0
+                } else {
+                    let value = args[arg_idx].range_view_or_scalar()?.get_cell(0, 0);
+                    crate::coercion::to_number_lenient(&value)?
+                };
+                arg_idx += 1;
+                match order {
+                    1.0 => true,
+                    -1.0 => false,
+                    _ => return Err(ExcelError::new(ExcelErrorKind::Value)),
                 }
             } else {
                 true
             };
-
-            sort_criteria.push((by_values, ascending));
+            let keys = (0..axis_len)
+                .map(|i| {
+                    let value = if vertical {
+                        by_view.get_cell(i, 0)
+                    } else {
+                        by_view.get_cell(0, i)
+                    };
+                    SortKey::new(&value, _ctx.date_system())
+                })
+                .collect();
+            sort_criteria.push((keys, ascending));
         }
 
-        if sort_criteria.is_empty() {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new(ExcelErrorKind::Value),
-            )));
-        }
-
-        // Extract rows with their indices
-        let mut indexed_rows: Vec<(usize, Vec<LiteralValue>)> = Vec::with_capacity(rows);
-        for r in 0..rows {
-            let mut row_vals: Vec<LiteralValue> = Vec::with_capacity(cols);
-            for c in 0..cols {
-                row_vals.push(view.get_cell(r, c));
-            }
-            indexed_rows.push((r, row_vals));
-        }
-
-        // Sort using all criteria, in Excel's total order (`sort_by` is
-        // stable, so rows tied on every criterion keep their input order).
-        let date_system = _ctx.date_system();
-        let sort_keys: Vec<(Vec<SortKey>, bool)> = sort_criteria
-            .iter()
-            .map(|(by_values, ascending)| {
-                (
-                    by_values
-                        .iter()
-                        .map(|v| SortKey::new(v, date_system))
-                        .collect(),
-                    *ascending,
-                )
-            })
-            .collect();
-        indexed_rows.sort_by(|a, b| {
-            for (keys, ascending) in &sort_keys {
-                let ord = keys[a.0].cmp_directed(&keys[b.0], *ascending);
+        // Sort indices, then materialize the result once. All views retain
+        // their shared materialization-budget checks above.
+        let vertical = vertical_axis.unwrap_or(true);
+        let mut indices: Vec<usize> = (0..if vertical { rows } else { cols }).collect();
+        indices.sort_by(|a, b| {
+            for (keys, ascending) in &sort_criteria {
+                let ord = keys[*a].cmp_directed(&keys[*b], *ascending);
                 if ord != std::cmp::Ordering::Equal {
                     return ord;
                 }
             }
             std::cmp::Ordering::Equal
         });
-
-        // Extract sorted rows
-        let out: Vec<Vec<LiteralValue>> = indexed_rows.into_iter().map(|(_, row)| row).collect();
+        let out: Vec<Vec<LiteralValue>> = (0..rows)
+            .map(|r| {
+                (0..cols)
+                    .map(|c| {
+                        if vertical {
+                            view.get_cell(indices[r], c)
+                        } else {
+                            view.get_cell(r, indices[c])
+                        }
+                    })
+                    .collect()
+            })
+            .collect();
 
         Ok(collapse_if_scalar(out, _ctx.date_system()))
     }
