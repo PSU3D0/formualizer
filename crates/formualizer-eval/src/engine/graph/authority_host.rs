@@ -1874,6 +1874,15 @@ impl DependencyGraph {
     /// Set the symbol nodes of live names `names` from their definitions,
     /// recording the bindings each still waits on.
     fn authority_set_symbol_nodes(&mut self, names: &[VertexId]) -> Result<(), AuthorityError> {
+        // A rebound name can feed a dynamic reader through any number of
+        // aliases (or grid formulas). Retire observations over the existing
+        // authority's transitive consumer closure before replacing any rows:
+        // the old bindings are no longer evidence for the next plan.
+        if self.authority.has_observed() {
+            for consumer in self.authority_closure_vertices(names) {
+                self.authority.forget_observed(consumer);
+            }
+        }
         for &v in names {
             let Some(slot) = self.authority.symbols.slot(v) else {
                 continue;

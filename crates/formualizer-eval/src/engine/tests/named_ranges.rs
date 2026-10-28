@@ -756,6 +756,193 @@ fn dynamic_name_binding_change_retires_observations() {
     assert!(e.graph.authority_host().rev_dyn() > revision);
 }
 
+fn transitive_name_observation_case(hops: usize, delete_redefine: bool, targeted: bool) {
+    use crate::engine::EvaluationTarget;
+
+    let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+    for (row, value) in [(1, 10.0), (2, 20.0), (3, 30.0)] {
+        e.set_cell_value("Sheet1", row, 1, lit_num(value)).unwrap();
+    }
+    e.define_name(
+        "Target",
+        NamedDefinition::Literal(LiteralValue::Text("A1".into())),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    let mut previous = "Target".to_owned();
+    for i in 0..hops {
+        let alias = format!("AliasTarget{i}");
+        e.define_name(
+            &alias,
+            named_formula_definition(&format!("={previous}")),
+            NameScope::Workbook,
+        )
+        .unwrap();
+        previous = alias;
+    }
+    for (name, formula, col) in [
+        ("DynamicName", format!("=INDIRECT({previous})"), 2),
+        ("OtherName", "=INDIRECT(\"A3\")".into(), 4),
+    ] {
+        e.define_name(
+            name,
+            named_formula_definition(&formula),
+            NameScope::Workbook,
+        )
+        .unwrap();
+        e.set_cell_formula("Sheet1", 1, col, parse(&format!("={name}")).unwrap())
+            .unwrap();
+    }
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(10.0)));
+    let vertex = e
+        .graph
+        .resolve_name_entry_in_scope("DynamicName", NameScope::Workbook)
+        .unwrap()
+        .vertex;
+    let other = e
+        .graph
+        .resolve_name_entry_in_scope("OtherName", NameScope::Workbook)
+        .unwrap()
+        .vertex;
+    assert!(e.graph.authority_host().observed(vertex).is_some());
+    let other_reads = e.graph.authority_host().observed(other).unwrap().to_vec();
+    let revision = e.graph.authority_host().rev_dyn();
+    let replacement = NamedDefinition::Literal(LiteralValue::Text("A2".into()));
+    if delete_redefine {
+        e.delete_name("Target", NameScope::Workbook).unwrap();
+        e.define_name("Target", replacement, NameScope::Workbook)
+            .unwrap();
+    } else {
+        e.update_name("Target", replacement, NameScope::Workbook)
+            .unwrap();
+    }
+    let retired_before_plan = e.graph.authority_host().observed(vertex).is_none();
+    let revision_after_change = e.graph.authority_host().rev_dyn();
+    assert_eq!(
+        e.graph.authority_host().observed(other),
+        Some(other_reads.as_slice())
+    );
+    e.set_cell_formula("Sheet1", 1, 1, parse("=DynamicName").unwrap())
+        .unwrap();
+    let mut failures = Vec::new();
+    for request in 0..3 {
+        let stats = if targeted {
+            e.evaluate_targets(&[EvaluationTarget::Cell {
+                sheet: "Sheet1".into(),
+                row: 1,
+                col: 2,
+            }])
+        } else {
+            e.evaluate_all()
+        }
+        .unwrap();
+        let b1 = e.get_cell_value("Sheet1", 1, 2);
+        if b1 != Some(lit_num(20.0)) || stats.cycle_errors != 0 {
+            failures.push(format!(
+                "request={request}, B1={b1:?}, cycles={}",
+                stats.cycle_errors
+            ));
+        }
+        // B1-only demand leaves the independent A1 reader for a full request.
+        let stats = e.evaluate_all().unwrap();
+        for col in [1, 2] {
+            let actual = e.get_cell_value("Sheet1", 1, col);
+            if actual != Some(lit_num(20.0)) || stats.cycle_errors != 0 {
+                failures.push(format!(
+                    "retry={request}, col={col}, actual={actual:?}, cycles={}",
+                    stats.cycle_errors
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "hops={hops}, delete_redefine={delete_redefine}, targeted={targeted}; expected 20 without cycles:\n{}",
+        failures.join("\n")
+    );
+    assert!(
+        retired_before_plan,
+        "transitive binding consumer retained obsolete reads"
+    );
+    assert!(
+        revision_after_change > revision,
+        "dynamic schedule revision did not advance"
+    );
+    assert_eq!(
+        e.graph.authority_host().observed(other),
+        Some(other_reads.as_slice())
+    );
+}
+
+macro_rules! transitive_name_observation_tests {
+    ($(($name:ident, $hops:expr, $delete:expr, $targeted:expr)),* $(,)?) => {
+        $(#[test]
+        fn $name() {
+            transitive_name_observation_case($hops, $delete, $targeted);
+        })*
+    };
+}
+
+transitive_name_observation_tests!(
+    (transitive_name_observations_0_update_full, 0, false, false),
+    (
+        transitive_name_observations_0_update_targeted,
+        0,
+        false,
+        true
+    ),
+    (transitive_name_observations_0_redefine_full, 0, true, false),
+    (
+        transitive_name_observations_0_redefine_targeted,
+        0,
+        true,
+        true
+    ),
+    (transitive_name_observations_1_update_full, 1, false, false),
+    (
+        transitive_name_observations_1_update_targeted,
+        1,
+        false,
+        true
+    ),
+    (transitive_name_observations_1_redefine_full, 1, true, false),
+    (
+        transitive_name_observations_1_redefine_targeted,
+        1,
+        true,
+        true
+    ),
+    (transitive_name_observations_2_update_full, 2, false, false),
+    (
+        transitive_name_observations_2_update_targeted,
+        2,
+        false,
+        true
+    ),
+    (transitive_name_observations_2_redefine_full, 2, true, false),
+    (
+        transitive_name_observations_2_redefine_targeted,
+        2,
+        true,
+        true
+    ),
+    (transitive_name_observations_3_update_full, 3, false, false),
+    (
+        transitive_name_observations_3_update_targeted,
+        3,
+        false,
+        true
+    ),
+    (transitive_name_observations_3_redefine_full, 3, true, false),
+    (
+        transitive_name_observations_3_redefine_targeted,
+        3,
+        true,
+        true
+    ),
+);
+
 #[test]
 fn dynamic_name_removal_retires_observations() {
     for sheet_scoped in [false, true] {
