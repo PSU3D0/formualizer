@@ -85,6 +85,66 @@ fn text_coverage_conditional() {
     );
 }
 #[test]
+fn text_coverage_conditional_routing_negative() {
+    check(
+        r#"=TEXT(-45306,"[<0]""negative"";dddd")"#,
+        text("Monday"),
+        Some("conditional_routing"),
+    );
+}
+
+#[test]
+fn text_coverage_conditional_routing_zero() {
+    check(
+        r#"=TEXT(0,"[=0]""zero"";dddd;yyyy")"#,
+        text("1900"),
+        Some("conditional_routing"),
+    );
+}
+
+#[test]
+fn text_coverage_conditional_routing_controls() {
+    for (formula, expected) in [
+        (r#"=TEXT(45306,"dddd")"#, "Monday"),
+        (r#"=TEXT(-45306,"yyyy;dddd")"#, "Monday"),
+        (r#"=TEXT(0,"dddd;dddd;yyyy")"#, "1900"),
+        (r#"=TEXT(-45306,"""[<0]negative"";dddd")"#, "Monday"),
+        (r#"=TEXT(-45306,"\[<0]""negative"";dddd")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;""[=0]zero""")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;\[=0]""zero""")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;[$-407]dddd")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;[Color0]0")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;*x0")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;_x0")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;e")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;dddd;dddd;@")"#, "Monday"),
+        (r#"=TEXT(45306,"dddd;dddd;dddd;[=0]@")"#, "Monday"),
+    ] {
+        check(formula, text(expected), None);
+    }
+    check(
+        r#"=IF(FALSE,TEXT(-45306,"[<0]""negative"";dddd"),7)"#,
+        LiteralValue::Number(7.0),
+        None,
+    );
+    check(
+        r#"=IFERROR(TEXT(-45306,"[<0]""negative"";dddd"),7)"#,
+        text("Monday"),
+        Some("conditional_routing"),
+    );
+    check(
+        r#"=TEXT(45306,"dddd;[>0]""positive""")"#,
+        text("Monday"),
+        Some("conditional_routing"),
+    );
+    check(
+        r#"=IFERROR(TEXT(0,"[=0]""zero"";dddd;yyyy"),7)"#,
+        text("1900"),
+        Some("conditional_routing"),
+    );
+}
+
+#[test]
 fn text_coverage_final_heuristics() {
     for (formula, expected) in [
         (r#"=TEXT(5,"0;0;0;@")"#, "5"),

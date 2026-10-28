@@ -438,6 +438,12 @@ fn format_text_number(system: crate::engine::DateSystem, num: f64, fmt: &str) ->
         Ok(super::date_format::DateFormatOutcome::Covered(text)) => {
             return TextOutcome::Covered(LiteralValue::Text(text));
         }
+        Ok(super::date_format::DateFormatOutcome::UnverifiedConditionalRouting(text)) => {
+            return TextOutcome::Unverified {
+                value: LiteralValue::Text(text),
+                mode: "conditional_routing",
+            };
+        }
         Ok(super::date_format::DateFormatOutcome::UnverifiedLocale(text)) => {
             return TextOutcome::Unverified {
                 value: LiteralValue::Text(text),

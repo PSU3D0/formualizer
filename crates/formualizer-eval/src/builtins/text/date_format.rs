@@ -16,7 +16,7 @@
 //! placeholders other than fractional seconds, fill and padding, conditions
 //! and the system date tags) return [`Fallback::Unsupported`].
 
-use super::number_format::{Fallback, colour_tag, split_sections};
+use super::number_format::{Fallback, colour_tag, split_sections_with_routing};
 use formualizer_common::{DateSystem, try_serial_to_display_date_parts_for};
 
 const SECONDS_PER_DAY: u64 = 86_400;
@@ -85,7 +85,9 @@ pub(super) fn format_datetime(
     code: &str,
 ) -> Result<String, Fallback> {
     format_datetime_outcome(system, value, code).map(|outcome| match outcome {
-        DateFormatOutcome::Covered(text) | DateFormatOutcome::UnverifiedLocale(text) => text,
+        DateFormatOutcome::Covered(text)
+        | DateFormatOutcome::UnverifiedLocale(text)
+        | DateFormatOutcome::UnverifiedConditionalRouting(text) => text,
     })
 }
 
@@ -93,6 +95,7 @@ pub(super) fn format_datetime(
 pub(super) enum DateFormatOutcome {
     Covered(String),
     UnverifiedLocale(String),
+    UnverifiedConditionalRouting(String),
 }
 
 pub(super) fn format_datetime_outcome(
@@ -103,7 +106,8 @@ pub(super) fn format_datetime_outcome(
     if !value.is_finite() {
         return Err(Fallback::Unsupported);
     }
-    let sections = split_sections(code)?;
+    let parsed = split_sections_with_routing(code)?;
+    let sections = parsed.sections;
     if sections.len() > 4 {
         return Err(Fallback::Invalid);
     }
@@ -124,7 +128,11 @@ pub(super) fn format_datetime_outcome(
         return Err(Fallback::Invalid);
     }
     let text = render(system, magnitude, &tokens)?;
-    Ok(if unverified_locale {
+    Ok(if parsed.conditional_routing {
+        // A condition in another numeric section may supersede the positional
+        // section rendered above. Keep that value without certifying routing.
+        DateFormatOutcome::UnverifiedConditionalRouting(text)
+    } else if unverified_locale {
         DateFormatOutcome::UnverifiedLocale(text)
     } else {
         DateFormatOutcome::Covered(text)

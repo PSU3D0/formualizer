@@ -99,7 +99,21 @@ pub(super) fn format_number(value: f64, code: &str) -> Result<String, Fallback> 
 
 /// Splits on `;` outside quotes, escapes and brackets.
 pub(super) fn split_sections(code: &str) -> Result<Vec<&str>, Fallback> {
+    Ok(split_sections_with_routing(code)?.sections)
+}
+
+/// Metadata from the same quote/escape/bracket scanner that owns section
+/// boundaries. Conditions in numeric sections can change section selection;
+/// local presentation directives and the fourth text section cannot.
+pub(super) struct ParsedSections<'a> {
+    pub sections: Vec<&'a str>,
+    pub conditional_routing: bool,
+}
+
+pub(super) fn split_sections_with_routing(code: &str) -> Result<ParsedSections<'_>, Fallback> {
     let mut sections = Vec::new();
+    let mut conditional_routing = false;
+    let mut bracket_start = 0;
     let mut start = 0;
     let mut quoted = false;
     let mut escaped = false;
@@ -117,6 +131,13 @@ pub(super) fn split_sections(code: &str) -> Result<Vec<&str>, Fallback> {
         }
         if bracketed {
             if ch == ']' {
+                // A comparator-led bracket tag is outside positional routing.
+                // This records uncertainty, not validation of its condition.
+                if sections.len() < 3
+                    && matches!(code.as_bytes().get(bracket_start), Some(b'<' | b'>' | b'='))
+                {
+                    conditional_routing = true;
+                }
                 bracketed = false;
             }
             continue;
@@ -124,7 +145,10 @@ pub(super) fn split_sections(code: &str) -> Result<Vec<&str>, Fallback> {
         match ch {
             '\\' => escaped = true,
             '"' => quoted = true,
-            '[' => bracketed = true,
+            '[' => {
+                bracketed = true;
+                bracket_start = index + ch.len_utf8();
+            }
             ';' => {
                 sections.push(&code[start..index]);
                 start = index + ch.len_utf8();
@@ -140,7 +164,10 @@ pub(super) fn split_sections(code: &str) -> Result<Vec<&str>, Fallback> {
         return Err(Fallback::Unsupported);
     }
     sections.push(&code[start..]);
-    Ok(sections)
+    Ok(ParsedSections {
+        sections,
+        conditional_routing,
+    })
 }
 
 /// Letters that are date, time or exponent codes. Unquoted beside a digit
