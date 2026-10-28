@@ -92,3 +92,34 @@ fn sortby_supported_scalar_reference_and_errors() {
     assert_grid("=SORTBY(7,1)", &[&[7.]]);
     assert_error("=SORTBY({1;2},{1;2},1/0)", ExcelErrorKind::Div);
 }
+
+#[test]
+fn ceiling_both_negative_rounds_away_from_zero() {
+    assert_grid("=CEILING(-2.5,-2)", &[&[-4.]]);
+    assert_grid("=CEILING(-0.6,-0.25)", &[&[-0.75]]);
+    assert_grid("=CEILING(-4,-2)", &[&[-4.]]);
+}
+
+#[test]
+fn ceiling_supported_sign_fraction_zero_and_error_controls() {
+    for (formula, expected) in [
+        ("=CEILING(-2.5,2)", -2.),
+        ("=CEILING(2.5,2)", 4.),
+        ("=CEILING(-4,2)", -4.),
+        ("=CEILING(0.6,0.25)", 0.75),
+        ("=CEILING(-0.6,0.25)", -0.5),
+        ("=CEILING(0,-2)", 0.),
+        ("=CEILING(-0.0,2)", -0.0),
+        ("=CEILING(-0.0,-2)", -0.0),
+        // Retain the existing positive-number/negative-significance behavior.
+        ("=CEILING(2.5,-2)", 4.),
+    ] {
+        assert_grid(formula, &[&[expected]]);
+    }
+    assert_error("=CEILING(2,0)", ExcelErrorKind::Div);
+    assert_error("=CEILING(2,-0.0)", ExcelErrorKind::Div);
+    assert_error("=CEILING(\"bad\",2)", ExcelErrorKind::Value);
+    assert_error("=CEILING(2,\"bad\")", ExcelErrorKind::Value);
+    assert_error("=CEILING(1/0,-2)", ExcelErrorKind::Div);
+    assert_error("=CEILING(-2,1/0)", ExcelErrorKind::Div);
+}

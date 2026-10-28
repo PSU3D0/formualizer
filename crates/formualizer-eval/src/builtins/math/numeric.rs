@@ -922,15 +922,15 @@ impl Function for ModFn {
 /* ───────────────────── Additional Math / Rounding ───────────────────── */
 
 #[derive(Debug)]
-pub struct CeilingFn; // CEILING(number, [significance]) legacy semantics simplified
+pub struct CeilingFn; // CEILING(number, [significance]) legacy rounding
 /// Rounds a number up to the nearest multiple of a significance.
 ///
-/// This implementation defaults significance to `1` and normalizes negative significance to positive.
+/// This implementation defaults significance to `1`.
 ///
 /// # Remarks
 /// - If `significance` is omitted, `1` is used.
 /// - `significance = 0` returns `#DIV/0!`.
-/// - Negative significance is treated as its absolute value in this fallback behavior.
+/// - When both arguments are negative, rounds away from zero; positive significance rounds toward positive infinity.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -1009,10 +1009,14 @@ impl Function for CeilingFn {
                 ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        if sig < 0.0 {
-            sig = sig.abs(); /* Excel nuances: #NUM! when sign mismatch; simplified TODO */
-        }
-        let k = (n / sig).ceil();
+        let away_from_zero = n < 0.0 && sig < 0.0;
+        sig = sig.abs();
+        let quotient = n / sig;
+        let k = if away_from_zero {
+            quotient.floor()
+        } else {
+            quotient.ceil()
+        };
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             k * sig,
         )))
