@@ -1,4 +1,5 @@
 mod active_span_gate_audit;
+mod audit_array_shapes;
 mod adopt_file_sheets;
 mod arena_debug;
 mod ast_edge_invariant;

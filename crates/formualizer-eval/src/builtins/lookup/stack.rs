@@ -2,8 +2,8 @@
 //!
 //! Excel semantics (baseline subset):
 //! - Each function accepts 1..N arrays/ranges; scalars treated as 1x1.
-//! - HSTACK: concatenate arrays horizontally (columns) aligning rows; differing row counts -> #VALUE!.
-//! - VSTACK: concatenate arrays vertically (rows) aligning columns; differing column counts -> #VALUE!.
+//! - HSTACK: concatenate arrays horizontally, padding shorter inputs with #N/A.
+//! - VSTACK: concatenate arrays vertically, padding narrower inputs with #N/A.
 //! - Empty arguments (zero-sized ranges) are skipped; if all skipped -> empty spill.
 //! - Result collapses to scalar if 1x1 after stacking (consistent with existing dynamic functions here).
 //!
@@ -50,9 +50,9 @@ fn materialize_arg<'b>(
 /// `HSTACK` appends columns from each argument left-to-right.
 ///
 /// # Remarks
-/// - All non-empty range arguments must have the same row count.
+/// - The output has the maximum input row count.
 /// - Scalar arguments are treated as 1x1 values.
-/// - Mismatched row counts return `#VALUE!`.
+/// - Missing rows in shorter inputs are padded with `#N/A`.
 /// - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
 ///
 /// # Examples
@@ -81,10 +81,10 @@ fn materialize_arg<'b>(
 ///   - CHOOSECOLS
 ///   - TAKE
 /// faq:
-///   - q: "Why does HSTACK return #VALUE! when combining ranges?"
-///     a: "All non-empty inputs must have identical row counts; mismatched heights produce #VALUE!."
+///   - q: "How does HSTACK combine ranges of different heights?"
+///     a: "The output uses the tallest input and pads shorter inputs with #N/A."
 ///   - q: "How are scalar arguments treated in HSTACK?"
-///     a: "Each scalar is treated as a 1x1 block, so it only aligns with other arguments when the target row count is 1."
+///     a: "Each scalar is treated as a 1x1 block, with #N/A below it when other inputs are taller."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: HSTACK
@@ -135,8 +135,8 @@ impl Function for HStackFn {
         }
 
         let mut entries = Vec::with_capacity(args.len());
-        let mut target_rows: Option<usize> = None;
-        let mut total_cols = 0;
+        let mut target_rows = 0;
+        let mut total_cols = 0usize;
 
         for a in args {
             if let Ok(v) = a.range_view() {
@@ -144,29 +144,17 @@ impl Function for HStackFn {
                 if rows == 0 || cols == 0 {
                     continue;
                 }
-                if let Some(tr) = target_rows {
-                    if rows != tr {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                            ExcelError::new(ExcelErrorKind::Value),
-                        )));
-                    }
-                } else {
-                    target_rows = Some(rows);
-                }
-                total_cols += cols;
+                target_rows = target_rows.max(rows);
+                total_cols = total_cols
+                    .checked_add(cols)
+                    .ok_or_else(crate::engine::resource_ledger::materialization_budget_error)?;
                 entries.push(HStackEntry::View(v));
             } else {
                 let v = a.value()?.into_literal();
-                if let Some(tr) = target_rows {
-                    if tr != 1 {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                            ExcelError::new(ExcelErrorKind::Value),
-                        )));
-                    }
-                } else {
-                    target_rows = Some(1);
-                }
-                total_cols += 1;
+                target_rows = target_rows.max(1);
+                total_cols = total_cols
+                    .checked_add(1)
+                    .ok_or_else(crate::engine::resource_ledger::materialization_budget_error)?;
                 entries.push(HStackEntry::Scalar(v));
             }
         }
@@ -177,7 +165,7 @@ impl Function for HStackFn {
             ));
         }
 
-        let row_count = target_rows.unwrap();
+        let row_count = target_rows;
         if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
             row_count,
             total_cols,
@@ -194,14 +182,21 @@ impl Function for HStackFn {
             match entry {
                 HStackEntry::View(v) => {
                     let (v_rows, v_cols) = v.dims();
-                    for (r, row) in result.iter_mut().enumerate().take(v_rows) {
+                    for (r, row) in result.iter_mut().enumerate() {
                         for c in 0..v_cols {
-                            row.push(v.get_cell(r, c));
+                            row.push(if r < v_rows {
+                                v.get_cell(r, c)
+                            } else {
+                                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))
+                            });
                         }
                     }
                 }
                 HStackEntry::Scalar(s) => {
                     result[0].push(s);
+                    for row in result.iter_mut().skip(1) {
+                        row.push(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)));
+                    }
                 }
             }
         }
@@ -220,9 +215,9 @@ enum HStackEntry<'a> {
 /// `VSTACK` appends rows from each argument top-to-bottom.
 ///
 /// # Remarks
-/// - All non-empty range arguments must have the same column count.
+/// - The output has the maximum input column count.
 /// - Scalar arguments are treated as 1x1 values.
-/// - Mismatched column counts return `#VALUE!`.
+/// - Missing columns in narrower inputs are padded with `#N/A`.
 /// - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
 ///
 /// # Examples
@@ -249,8 +244,8 @@ enum HStackEntry<'a> {
 ///   - CHOOSEROWS
 ///   - DROP
 /// faq:
-///   - q: "When does VSTACK return #VALUE!?"
-///     a: "VSTACK requires matching column counts across non-empty range arguments; differing widths return #VALUE!."
+///   - q: "How does VSTACK combine ranges of different widths?"
+///     a: "The output uses the widest input and pads narrower inputs with #N/A."
 ///   - q: "What happens if all VSTACK inputs are empty ranges?"
 ///     a: "Empty inputs are skipped, and if every argument is empty the function returns an empty spill."
 /// ```
@@ -302,8 +297,8 @@ impl Function for VStackFn {
             ));
         }
 
-        let mut target_width: Option<usize> = None;
-        let mut total_rows = 0;
+        let mut target_width = 0;
+        let mut total_rows = 0usize;
         let mut entries = Vec::with_capacity(args.len());
 
         for a in args {
@@ -312,29 +307,17 @@ impl Function for VStackFn {
                 if rows == 0 || cols == 0 {
                     continue;
                 }
-                if let Some(tw) = target_width {
-                    if cols != tw {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                            ExcelError::new(ExcelErrorKind::Value),
-                        )));
-                    }
-                } else {
-                    target_width = Some(cols);
-                }
-                total_rows += rows;
+                target_width = target_width.max(cols);
+                total_rows = total_rows
+                    .checked_add(rows)
+                    .ok_or_else(crate::engine::resource_ledger::materialization_budget_error)?;
                 entries.push(VStackEntry::View(v));
             } else {
                 let v = a.value()?.into_literal();
-                if let Some(tw) = target_width {
-                    if tw != 1 {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                            ExcelError::new(ExcelErrorKind::Value),
-                        )));
-                    }
-                } else {
-                    target_width = Some(1);
-                }
-                total_rows += 1;
+                target_width = target_width.max(1);
+                total_rows = total_rows
+                    .checked_add(1)
+                    .ok_or_else(crate::engine::resource_ledger::materialization_budget_error)?;
                 entries.push(VStackEntry::Scalar(v));
             }
         }
@@ -347,7 +330,7 @@ impl Function for VStackFn {
 
         if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
             total_rows,
-            target_width.unwrap_or(1),
+            target_width,
             ctx.materialized_array_cells(),
         ) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
@@ -356,13 +339,23 @@ impl Function for VStackFn {
         for entry in entries {
             match entry {
                 VStackEntry::View(v) => {
-                    let _ = v.for_each_row(&mut |row| {
-                        result.push(row.to_vec());
+                    v.for_each_row(&mut |row| {
+                        let mut out = Vec::with_capacity(target_width);
+                        out.extend_from_slice(row);
+                        out.resize_with(target_width, || {
+                            LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))
+                        });
+                        result.push(out);
                         Ok(())
-                    });
+                    })?;
                 }
                 VStackEntry::Scalar(s) => {
-                    result.push(vec![s]);
+                    let mut row = Vec::with_capacity(target_width);
+                    row.push(s);
+                    row.resize_with(target_width, || {
+                        LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))
+                    });
+                    result.push(row);
                 }
             }
         }
@@ -453,10 +446,16 @@ mod tests {
             .dispatch(&args_bad, &ctx.function_context(None))
             .unwrap()
             .into_literal();
-        match v_bad {
-            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
-            other => panic!("expected #VALUE! got {other:?}"),
-        }
+        assert_eq!(
+            v_bad,
+            LiteralValue::Array(vec![
+                vec![LiteralValue::Number(1.0), LiteralValue::Number(100.0)],
+                vec![
+                    LiteralValue::Number(2.0),
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))
+                ],
+            ])
+        );
     }
 
     #[test]
@@ -501,10 +500,21 @@ mod tests {
             .dispatch(&args_bad, &ctx.function_context(None))
             .unwrap()
             .into_literal();
-        match v_bad {
-            LiteralValue::Error(e) => assert_eq!(e.kind, ExcelErrorKind::Value),
-            other => panic!("expected #VALUE! got {other:?}"),
-        }
+        assert_eq!(
+            v_bad,
+            LiteralValue::Array(vec![
+                vec![
+                    LiteralValue::Number(1.0),
+                    LiteralValue::Number(10.0),
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))
+                ],
+                vec![
+                    LiteralValue::Number(1.0),
+                    LiteralValue::Number(10.0),
+                    LiteralValue::Number(100.0)
+                ],
+            ])
+        );
     }
 
     #[test]
