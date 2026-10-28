@@ -834,6 +834,14 @@ impl DependencyGraph {
             None
         };
 
+        let (volatile, dynamic) = match definition {
+            NamedDefinition::Formula { ast, .. } => {
+                (self.is_ast_volatile(ast), self.is_ast_dynamic(ast))
+            }
+            _ => (false, false),
+        };
+        self.mark_volatile(vertex, volatile);
+        self.store.set_dynamic(vertex, dynamic);
         self.remove_dependent_edges(vertex);
         self.unregister_name_cell_dependencies(vertex);
 

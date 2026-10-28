@@ -37,9 +37,9 @@
 //! Every pass of the replan loops is armed under the authority. Commit
 //! granularity is legacy's (a cell in sequential layers, a phase group in
 //! parallel layers); cycle units evaluate on their own recorded path and
-//! are cleared at pass end as before. A self read (`A1 = INDIRECT("A1")`)
-//! is not stale: legacy evaluates it to a value, and legacy is the spec
-//! (design §8.2 case 2 plans a Δ here; not adopted).
+//! are cleared at pass end as before. A dynamic self read is stale too:
+//! its dependency becomes a replan hint so the existing cycle policy runs
+//! before a first-request numeric value can be committed.
 
 use super::Engine;
 use crate::engine::authority::geom::SYMBOL_SHEET;
@@ -587,8 +587,36 @@ impl<R: EvaluationContext> Engine<R> {
                 })
                 .or_else(|error| self.fit_formula_error(vertex, error))
         };
-        let reads = log.take();
-        let dirty = self.freshness_dirty_reads(vertex, &reads);
+        self.freshness_record_reads(vertex, log.take());
+        Some(result)
+    }
+
+    /// Formula-backed symbols need the same runtime read tracking as grid
+    /// formulas; their dependency flags alone do not describe text targets.
+    pub(super) fn freshness_evaluate_name_recorded(
+        &self,
+        vertex: VertexId,
+        sheet_name: &str,
+        cell_ref: crate::reference::CellRef,
+        ast: &formualizer_parse::parser::ASTNode,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        if !self.freshness.armed || !self.graph.is_dynamic(vertex) {
+            return None;
+        }
+        let log = ReadLog::default();
+        let result = {
+            let ctx = RecordingContext::new(self, &log);
+            Interpreter::new_with_cell(&ctx, sheet_name, cell_ref)
+                .with_resolved_functions(&self.resolved_functions)
+                .evaluate_ast(ast)
+                .map(|value| value.into_literal())
+        };
+        self.freshness_record_reads(vertex, log.take());
+        Some(result)
+    }
+
+    fn freshness_record_reads(&self, vertex: VertexId, reads: Vec<ReadRect>) {
+        let dirty = self.freshness_dirty_reads(&reads);
         if dirty.is_empty() {
             self.freshness
                 .fresh_reads
@@ -598,17 +626,12 @@ impl<R: EvaluationContext> Engine<R> {
         } else {
             self.freshness.stale.lock().unwrap().insert(vertex, dirty);
         }
-        Some(result)
     }
 
-    /// Formula vertices other than `reader` that are dirty (or committed
+    /// Formula vertices, including `reader`, that are dirty (or committed
     /// with their value still buffered) and covered by `reads`, plus dirty
     /// spill anchors whose extent meets a read.
-    fn freshness_dirty_reads(
-        &self,
-        reader: VertexId,
-        reads: &[(u16, u32, u32, u32, u32)],
-    ) -> Vec<VertexId> {
+    fn freshness_dirty_reads(&self, reads: &[(u16, u32, u32, u32, u32)]) -> Vec<VertexId> {
         let mut out = Vec::new();
         let Ok(store) = self.graph.authority_plan_store() else {
             return out;
@@ -628,7 +651,6 @@ impl<R: EvaluationContext> Engine<R> {
                         if let Some(v) = self
                             .graph
                             .authority_vertex_of_formula(id, (sheet, row, col))
-                            && v != reader
                             && (self.graph.is_dirty(v) || self.freshness.unflushed.contains(&v))
                         {
                             out.push(v);
@@ -637,7 +659,7 @@ impl<R: EvaluationContext> Engine<R> {
                 });
             }
             for anchor in self.graph.spill_anchors_in_region(sheet, r0, c0, r1, c1) {
-                if anchor != reader && self.graph.is_dirty(anchor) {
+                if self.graph.is_dirty(anchor) {
                     out.push(anchor);
                 }
             }

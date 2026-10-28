@@ -17515,6 +17515,11 @@ where
                             .graph
                             .get_cell_ref(vertex_id)
                             .unwrap_or_else(|| self.graph.make_cell_ref(sheet_name, 0, 0));
+                        if let Some(result) = self
+                            .freshness_evaluate_name_recorded(vertex_id, sheet_name, cell_ref, ast)
+                        {
+                            return result;
+                        }
                         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
                             .with_resolved_functions(&self.resolved_functions)
                             .with_arena_cells(self);
@@ -17594,14 +17599,16 @@ where
                         let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
                             .with_resolved_functions(&self.resolved_functions)
                             .with_arena_cells(self);
-                        match interpreter.evaluate_ast(ast) {
-                            Ok(cv) => {
-                                let v = cv.into_literal();
-                                match v {
-                                    LiteralValue::Array(_) => Ok(v),
-                                    other => Ok(LiteralValue::Array(vec![vec![other]])),
-                                }
-                            }
+                        let result = self
+                            .freshness_evaluate_name_recorded(vertex_id, sheet_name, cell_ref, ast)
+                            .unwrap_or_else(|| {
+                                interpreter.evaluate_ast(ast).map(|cv| cv.into_literal())
+                            });
+                        match result {
+                            Ok(v) => match v {
+                                LiteralValue::Array(_) => Ok(v),
+                                other => Ok(LiteralValue::Array(vec![vec![other]])),
+                            },
                             Err(err) => Ok(LiteralValue::Error(err)),
                         }
                     }

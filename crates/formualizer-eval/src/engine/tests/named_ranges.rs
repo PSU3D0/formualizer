@@ -562,6 +562,85 @@ fn named_formula_reacts_to_cell_precedent_edits() {
     );
 }
 
+fn named_formula_definition(expression: &str) -> NamedDefinition {
+    NamedDefinition::Formula {
+        ast: parse(expression).unwrap(),
+        dependencies: Vec::new(),
+        range_deps: Vec::new(),
+    }
+}
+
+#[test]
+fn dynamic_formula_name_tracks_runtime_target_edits() {
+    let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+    e.set_cell_value("Sheet1", 1, 1, lit_num(1.0)).unwrap();
+    e.set_cell_value("Sheet1", 2, 1, lit_num(3.0)).unwrap();
+    e.set_cell_value("Sheet1", 1, 3, LiteralValue::Text("A1".into()))
+        .unwrap();
+    e.define_name(
+        "DynamicName",
+        named_formula_definition("=INDIRECT(C1)"),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.set_cell_formula("Sheet1", 1, 2, parse("=DynamicName").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(1.0)));
+    e.set_cell_value("Sheet1", 1, 1, lit_num(7.0)).unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(7.0)));
+    e.set_cell_value("Sheet1", 1, 3, LiteralValue::Text("A2".into()))
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(3.0)));
+    e.set_cell_value("Sheet1", 2, 1, lit_num(9.0)).unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(9.0)));
+}
+
+#[test]
+fn volatile_formula_name_recalculates_and_updates_classification() {
+    let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+    e.define_name(
+        "RandomName",
+        named_formula_definition("=RAND()"),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.set_cell_formula("Sheet1", 1, 2, parse("=RandomName").unwrap())
+        .unwrap();
+    e.set_workbook_seed(10);
+    e.evaluate_all().unwrap();
+    let first = e.get_cell_value("Sheet1", 1, 2);
+    e.set_workbook_seed(11);
+    e.evaluate_all().unwrap();
+    assert_ne!(e.get_cell_value("Sheet1", 1, 2), first);
+    e.update_name(
+        "RandomName",
+        NamedDefinition::Literal(lit_num(42.0)),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(42.0)));
+    let vertex = e
+        .graph
+        .resolve_name_entry("RandomName", e.sheet_id("Sheet1").unwrap())
+        .unwrap()
+        .vertex;
+    assert!(!e.graph.is_volatile(vertex));
+    assert!(!e.graph.is_dynamic(vertex));
+    e.update_name(
+        "RandomName",
+        named_formula_definition("=RAND()"),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.evaluate_all().unwrap();
+    assert!(e.graph.is_volatile(vertex));
+}
+
 #[test]
 fn named_formula_definition_change_invalidates_dependents() {
     let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());

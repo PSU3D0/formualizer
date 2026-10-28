@@ -6,10 +6,8 @@
 //! a stale value behind, and cycles first discovered through a dynamic read
 //! must be reported as cycles.
 //!
-//! Not here: a self read first discovered through INDIRECT (`A1 =
-//! INDIRECT("A1")+1`) evaluates to 1 in legacy and under the authority,
-//! where design §8.2 case 2 expects #CIRC; that is a planned Δ of the
-//! freshness recorder, not current behavior.
+//! A first-request dynamic self read is included: its numeric probe result
+//! must not be committed before the existing cycle policy has run.
 
 use crate::engine::{Engine, EvalConfig, EvaluationTarget};
 use crate::test_workbook::TestWorkbook;
@@ -97,6 +95,62 @@ fn dynamic_to_static_chain_no_stale_clean() {
     assert_eq!(num(&e, 5, 1), Some(105.0));
     assert_eq!(num(&e, 1, 2), Some(210.0));
     assert_eq!(num(&e, 1, 3), Some(211.0));
+}
+
+#[test]
+fn first_discovered_dynamic_self_cycle_is_not_published() {
+    use crate::engine::{CycleConfig, CycleDetection, CyclePolicy};
+    for detection in [CycleDetection::Static, CycleDetection::Runtime] {
+        for targeted in [false, true] {
+            let mut e = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig::default().with_cycle(CycleConfig {
+                    detection,
+                    policy: CyclePolicy::Error,
+                }),
+            );
+            formula(&mut e, 1, 1, "=INDIRECT(\"A1\")+1");
+            if targeted {
+                e.evaluate_targets(&[EvaluationTarget::Cell {
+                    sheet: "Sheet1".into(),
+                    row: 1,
+                    col: 1,
+                }])
+                .unwrap();
+            } else {
+                e.evaluate_all().unwrap();
+            }
+            assert!(
+                is_circ(&e, 1, 1),
+                "first request: {detection:?}, targeted={targeted}"
+            );
+            e.evaluate_all().unwrap();
+            assert!(is_circ(&e, 1, 1));
+        }
+    }
+}
+
+#[test]
+fn inactive_dynamic_self_read_is_not_a_cycle() {
+    let mut e = engine();
+    formula(&mut e, 1, 1, "=IF(TRUE,7,INDIRECT(\"A1\"))");
+    e.evaluate_all().unwrap();
+    assert_eq!(num(&e, 1, 1), Some(7.0));
+}
+
+#[test]
+fn edit_creating_dynamic_self_cycle_is_detected_in_same_request() {
+    let mut e = engine();
+    set(&mut e, 2, 1, 4.0);
+    e.set_cell_value("Sheet1", 1, 2, LiteralValue::Text("A2".into()))
+        .unwrap();
+    formula(&mut e, 1, 1, "=INDIRECT(B1)+1");
+    e.evaluate_all().unwrap();
+    assert_eq!(num(&e, 1, 1), Some(5.0));
+    e.set_cell_value("Sheet1", 1, 2, LiteralValue::Text("A1".into()))
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert!(is_circ(&e, 1, 1));
 }
 
 /// §8.5(11c): a two-cycle first discovered through a dynamic read, with no
