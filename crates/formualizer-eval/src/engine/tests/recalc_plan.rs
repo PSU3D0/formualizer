@@ -11,6 +11,12 @@ fn make_engine() -> Engine<TestWorkbook> {
 
 #[test]
 fn recalc_plan_matches_evaluate_all() -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::recalc_plan_matches_evaluate_all",
+        "FZ_RECALC_MATCH_ALL_CHILD",
+    ) {
+        return Ok(());
+    }
     let mut engine = make_engine();
 
     engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(10))?;
@@ -56,6 +62,12 @@ fn recalc_plan_matches_evaluate_all() -> Result<(), ExcelError> {
 #[test]
 fn target_plan_reuses_recipe_across_value_edits_and_leaves_unrelated_dirty()
 -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::target_plan_reuses_recipe_across_value_edits_and_leaves_unrelated_dirty",
+        "FZ_RECALC_VALUE_EDITS_CHILD",
+    ) {
+        return Ok(());
+    }
     let mut engine = make_engine();
     engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(2))?;
     engine.set_cell_value("Sheet1", 1, 2, LiteralValue::Int(10))?;
@@ -114,6 +126,12 @@ fn target_plan_reuses_recipe_across_value_edits_and_leaves_unrelated_dirty()
 
 #[test]
 fn plan_rejects_cross_engine_and_graph_changes_with_typed_reasons() -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::plan_rejects_cross_engine_and_graph_changes_with_typed_reasons",
+        "FZ_RECALC_TYPED_REASONS_CHILD",
+    ) {
+        return Ok(());
+    }
     let mut first = make_engine();
     first.set_cell_formula("Sheet1", 1, 1, create_cell_ref_ast(None, 1, 2))?;
     let plan = first.build_recalc_plan()?;
@@ -139,6 +157,12 @@ fn plan_rejects_cross_engine_and_graph_changes_with_typed_reasons() -> Result<()
 
 #[test]
 fn recalc_plan_no_dirty_is_noop() -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::recalc_plan_no_dirty_is_noop",
+        "FZ_RECALC_NOOP_CHILD",
+    ) {
+        return Ok(());
+    }
     let mut engine = make_engine();
     engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(5))?;
     engine.evaluate_all()?;
@@ -151,6 +175,12 @@ fn recalc_plan_no_dirty_is_noop() -> Result<(), ExcelError> {
 
 #[test]
 fn plan_stale_reason_matrix_and_precedence_are_deterministic() -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::plan_stale_reason_matrix_and_precedence_are_deterministic",
+        "FZ_RECALC_REASON_MATRIX_CHILD",
+    ) {
+        return Ok(());
+    }
     let reasons = [
         PlanStaleReason::Provider,
         PlanStaleReason::Semantic,
@@ -185,6 +215,12 @@ fn plan_stale_reason_matrix_and_precedence_are_deterministic() -> Result<(), Exc
 
 #[test]
 fn source_versions_do_not_stale_plans_but_source_bindings_do() -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::source_versions_do_not_stale_plans_but_source_bindings_do",
+        "FZ_RECALC_SOURCE_VERSIONS_CHILD",
+    ) {
+        return Ok(());
+    }
     let mut engine = make_engine();
     engine.define_source_scalar("Scalar", Some(1))?;
     engine.define_source_table("Table", Some(1))?;
@@ -442,6 +478,12 @@ fn retained_plan_unrelated_registration_stales_atomically() -> Result<(), ExcelE
 #[test]
 fn retained_target_plan_tracks_spill_growth_shrink_and_value_only_to_child()
 -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::retained_target_plan_tracks_spill_growth_shrink_and_value_only_to_child",
+        "FZ_RECALC_SPILL_CHILD",
+    ) {
+        return Ok(());
+    }
     let mut engine = make_engine();
     engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))?;
     engine.set_cell_formula("Sheet1", 1, 2, parse("=SEQUENCE(A1)").unwrap())?;
@@ -471,6 +513,12 @@ fn retained_target_plan_tracks_spill_growth_shrink_and_value_only_to_child()
 
 #[test]
 fn cancelled_or_expired_plan_acknowledges_nothing_and_retry_converges() -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::cancelled_or_expired_plan_acknowledges_nothing_and_retry_converges",
+        "FZ_RECALC_CONTROL_FAILURES_CHILD",
+    ) {
+        return Ok(());
+    }
     let mut engine = make_engine();
     engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(2))?;
     engine.set_cell_formula("Sheet1", 2, 1, parse("=A1*3").unwrap())?;
@@ -539,6 +587,12 @@ fn target_plan_layer_count_documents_run_local_recipe() -> Result<(), ExcelError
 #[test]
 fn prepared_chain_cells_and_rebuilt_target_plans_have_bounded_exact_index_visits()
 -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::prepared_chain_cells_and_rebuilt_target_plans_have_bounded_exact_index_visits",
+        "FZ_RECALC_PREPARED_CHAIN_CHILD",
+    ) {
+        return Ok(());
+    }
     const FORMULAS: u32 = 256;
     const REPEATS: usize = 3;
 
@@ -632,6 +686,12 @@ fn prepared_chain_cells_and_rebuilt_target_plans_have_bounded_exact_index_visits
 
 #[test]
 fn recalc_plan_reused_for_multiple_runs() -> Result<(), ExcelError> {
+    if run_recalc_plan_test_in_child(
+        "engine::tests::recalc_plan::recalc_plan_reused_for_multiple_runs",
+        "FZ_RECALC_MULTIPLE_RUNS_CHILD",
+    ) {
+        return Ok(());
+    }
     let mut engine = make_engine();
     engine.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))?;
 
