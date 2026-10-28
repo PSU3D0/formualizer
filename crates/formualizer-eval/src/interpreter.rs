@@ -17,6 +17,7 @@ use crate::engine::template::canonical::LiteralSlotId;
 use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
+use crate::function_registry::ProviderReporting;
 
 /// A spill reference whose operand is not a single-cell reference or name.
 fn spill_operand_error() -> ExcelError {
@@ -171,7 +172,7 @@ pub(crate) trait ArenaCellResolver {
 type ResolvedCallable = (
     Option<std::sync::Arc<dyn crate::function::Function>>,
     Option<crate::function::FnCaps>,
-    bool,
+    ProviderReporting,
 );
 
 /// Immutable function snapshot shared by every interpreter in one evaluation request.
@@ -183,7 +184,7 @@ pub(crate) struct ResolvedFunctions {
     ast_revision: Option<(u64, Option<u64>, u64, usize, u64)>,
     ast_functions: rustc_hash::FxHashMap<Box<str>, ResolvedCallable>,
     capabilities: Vec<Option<crate::function::FnCaps>>,
-    reporting: Vec<bool>,
+    reporting: Vec<ProviderReporting>,
 }
 
 impl ResolvedFunctions {
@@ -217,9 +218,11 @@ impl ResolvedFunctions {
                 provider.get_function("", name)
             };
             let caps = function.as_ref().map(|function| function.caps());
-            let reporting = function.as_ref().is_some_and(|function| {
-                crate::function_registry::reports_known_limitations("", name, function)
-            });
+            let reporting = function
+                .as_ref()
+                .map_or(ProviderReporting::Unverified, |function| {
+                    crate::function_registry::operation_reporting_contract("", name, function)
+                });
             self.reporting.push(reporting);
             self.slots.insert(id, self.functions.len());
             self.functions.push(function);
@@ -317,9 +320,14 @@ impl ResolvedFunctions {
                 .or_insert_with_key(|name| {
                     let function = provider.get_function("", name);
                     let caps = function.as_ref().map(|function| function.caps());
-                    let reporting = function.as_ref().is_some_and(|function| {
-                        crate::function_registry::reports_known_limitations("", name, function)
-                    });
+                    let reporting =
+                        function
+                            .as_ref()
+                            .map_or(ProviderReporting::Unverified, |function| {
+                                crate::function_registry::operation_reporting_contract(
+                                    "", name, function,
+                                )
+                            });
                     (function, caps, reporting)
                 });
         }
@@ -339,27 +347,44 @@ impl ResolvedFunctions {
         self.get_with_reporting(id).map(|(function, _)| function)
     }
 
+    /// Specialized kernels bypass FunctionContext reports. While evidence is
+    /// active, only the sealed builtin instance can inherit their reporting
+    /// obligation; arbitrary providers execute through observable dispatch.
+    pub(crate) fn get_for_optimized_call(
+        &self,
+        id: crate::engine::arena::StringId,
+        evidence: bool,
+    ) -> Option<&dyn crate::function::Function> {
+        let (function, reporting) = self.get_with_reporting(id)?;
+        (!evidence || reporting == ProviderReporting::SealedBuiltin).then_some(function)
+    }
+
     fn get_with_reporting(
         &self,
         id: crate::engine::arena::StringId,
-    ) -> Option<(&dyn crate::function::Function, bool)> {
+    ) -> Option<(&dyn crate::function::Function, ProviderReporting)> {
         let slot = *self.slots.get(&id)?;
         Some((self.functions.get(slot)?.as_deref()?, self.reporting[slot]))
     }
 }
 
 pub(crate) enum ResolvedFunction<'a> {
-    Borrowed(&'a dyn crate::function::Function, bool),
-    Owned(std::sync::Arc<dyn crate::function::Function>, bool),
+    Borrowed(&'a dyn crate::function::Function, ProviderReporting),
+    Owned(
+        std::sync::Arc<dyn crate::function::Function>,
+        ProviderReporting,
+    ),
 }
 impl ResolvedFunction<'_> {
     pub(crate) fn reports_known_limitations(&self) -> bool {
         match self {
-            Self::Borrowed(_, reporting) | Self::Owned(_, reporting) => *reporting,
+            Self::Borrowed(_, reporting) | Self::Owned(_, reporting) => {
+                *reporting != ProviderReporting::Unverified
+            }
         }
     }
     fn owned(name: &str, function: std::sync::Arc<dyn crate::function::Function>) -> Self {
-        let reporting = crate::function_registry::reports_known_limitations("", name, &function);
+        let reporting = crate::function_registry::operation_reporting_contract("", name, &function);
         Self::Owned(function, reporting)
     }
 }
@@ -434,9 +459,9 @@ impl<'a> Interpreter<'a> {
                         name: name.to_ascii_uppercase(),
                     },
                 );
-            } else if !reporting
+            }
+            if !reporting
                 && collector.is_some_and(|collector| collector.tracks_unverified_providers())
-                && !scope.encountered()
             {
                 self.unavailable(
                     crate::operation_diagnostics::UnavailableOperation::UnverifiedProvider {

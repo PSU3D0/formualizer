@@ -265,7 +265,14 @@ where
         // parallel chunks); see `criteria.rs`.
         let criteria_plan = (self.config.family_kernels
             && (members.len() > 1 || shared_memo.is_some()))
-        .then(|| super::criteria::CriteriaPlan::plan(&self.resolved_functions, ds, template))
+        .then(|| {
+            super::criteria::CriteriaPlan::plan(
+                &self.resolved_functions,
+                self.operation_diagnostic_collector.is_some(),
+                ds,
+                template,
+            )
+        })
         .flatten()
         .filter(|plan| {
             self.operation_diagnostic_collector.is_none()
@@ -548,8 +555,13 @@ where
         }
         let names =
             |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
-        let program =
-            super::lift::LiftProgram::compile(&self.resolved_functions, ds, template, &names)?;
+        let program = super::lift::LiftProgram::compile(
+            &self.resolved_functions,
+            self.operation_diagnostic_collector.is_some(),
+            ds,
+            template,
+            &names,
+        )?;
         let mut bound = Vec::new();
         let mut cells = Vec::with_capacity(members.len());
         for (i, &v) in members.iter().enumerate() {
@@ -661,8 +673,13 @@ where
         let literals = LiteralPlan::new(ds, template, anchor);
         let names =
             |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
-        let program =
-            super::lift::LiftProgram::compile(&self.resolved_functions, ds, template, &names)?;
+        let program = super::lift::LiftProgram::compile(
+            &self.resolved_functions,
+            self.operation_diagnostic_collector.is_some(),
+            ds,
+            template,
+            &names,
+        )?;
         // Every member has the template's literal row (a formula cell's
         // authority id is its vertex id).
         #[cfg(debug_assertions)]

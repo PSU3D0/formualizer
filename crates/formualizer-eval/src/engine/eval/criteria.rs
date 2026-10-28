@@ -98,13 +98,14 @@ impl CriteriaPlan {
     }
     pub(super) fn plan(
         functions: &crate::interpreter::ResolvedFunctions,
+        evidence: bool,
         ds: &DataStore,
         template: AstNodeId,
     ) -> Option<Self> {
         let AstNodeData::Function { name_id, .. } = ds.get_node(template)? else {
             return None;
         };
-        let fun = functions.get(*name_id)?;
+        let fun = functions.get_for_optimized_call(*name_id, evidence)?;
         if fun.family_kernel() != Some(FamilyKernel::CriteriaAggregate) {
             return None;
         }

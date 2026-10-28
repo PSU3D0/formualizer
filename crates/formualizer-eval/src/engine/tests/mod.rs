@@ -10,6 +10,7 @@ mod changelog_replay;
 mod clock_snapshot;
 mod common;
 mod unverified_providers;
+mod provider_optimized_evidence;
 mod cross_sheet_named_range_first_cell;
 mod cycle_detection;
 mod database_blank_semantics;
