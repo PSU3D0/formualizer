@@ -111,7 +111,7 @@ fn cancellation_does_not_leave_snapshot_mode_active() {
     );
 }
 #[test]
-fn iterative_scc_redirty_is_not_suppressed_by_snapshot_evaluation() {
+fn iterative_snapshot_defers_redirty_until_the_next_request() {
     let mut e = Engine::new(
         TestWorkbook::new(),
         EvalConfig::default().with_cycle(CycleConfig::iterate(3, 0.001)),
@@ -127,12 +127,124 @@ fn iterative_scc_redirty_is_not_suppressed_by_snapshot_evaluation() {
         e.inspect_cell_result(&CellAddress::new("Sheet1", 1, 1).unwrap())
             .unwrap()
             .staleness,
-        Staleness::Dirty
+        Staleness::Current
     );
     e.evaluate_all().unwrap();
     assert_eq!(
         e.get_cell_value("Sheet1", 1, 1),
         Some(LiteralValue::Number(6.0))
+    );
+}
+
+#[test]
+fn iterative_snapshot_followup_entrypoints_restore_pending_work() {
+    for route in 0..4 {
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_cycle(CycleConfig::iterate(1, 0.0)),
+        );
+        e.set_cell_formula("Sheet1", 1, 1, parse("=A1+1").unwrap())
+            .unwrap();
+        e.set_cell_formula("Sheet1", 1, 2, parse("=A1*2").unwrap())
+            .unwrap();
+        e.evaluate_all_for_snapshot(None).unwrap();
+        assert_eq!(
+            e.get_cell_value("Sheet1", 1, 1),
+            Some(LiteralValue::Number(1.0))
+        );
+        assert_eq!(
+            e.get_cell_value("Sheet1", 1, 2),
+            Some(LiteralValue::Number(2.0))
+        );
+        match route {
+            0 => {
+                e.evaluate_until(&[("Sheet1", 1, 2)]).unwrap();
+            }
+            1 => {
+                e.evaluate_cell("Sheet1", 1, 2).unwrap();
+            }
+            2 => {
+                e.evaluate_all_with_delta().unwrap();
+            }
+            _ => {
+                e.evaluate_all_for_snapshot(None).unwrap();
+            }
+        }
+        assert_eq!(
+            e.get_cell_value("Sheet1", 1, 1),
+            Some(LiteralValue::Number(2.0)),
+            "route={route}"
+        );
+        assert_eq!(
+            e.get_cell_value("Sheet1", 1, 2),
+            Some(LiteralValue::Number(4.0)),
+            "route={route}"
+        );
+        e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(9.0))
+            .unwrap();
+        e.evaluate_all_for_snapshot(None).unwrap();
+        assert_eq!(
+            e.get_cell_value("Sheet1", 1, 2),
+            Some(LiteralValue::Number(18.0))
+        );
+    }
+}
+
+struct CancelAfterScc(std::sync::atomic::AtomicBool);
+impl crate::function::Function for CancelAfterScc {
+    fn name(&self) -> &'static str {
+        "SNAPSHOT_CANCEL_AFTER_SCC"
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+        ctx: &dyn crate::traits::FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+        let value = args[0].value()?;
+        if self.0.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            ctx.cancellation_token().unwrap().cancel();
+            return Err(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Cancelled,
+            ));
+        }
+        Ok(value)
+    }
+}
+
+#[test]
+fn snapshot_cancel_after_scc_progress_keeps_retry_work() {
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CancelAfterScc(
+        std::sync::atomic::AtomicBool::new(true),
+    )));
+    let mut e = Engine::new(
+        wb,
+        EvalConfig::default().with_cycle(CycleConfig::iterate(1, 0.0)),
+    );
+    e.set_cell_formula("Sheet1", 1, 1, parse("=A1+1").unwrap())
+        .unwrap();
+    e.set_cell_formula(
+        "Sheet1",
+        1,
+        2,
+        parse("=SNAPSHOT_CANCEL_AFTER_SCC(A1)").unwrap(),
+    )
+    .unwrap();
+    assert!(
+        e.evaluate_all_for_snapshot(Some(CancelToken::new()))
+            .is_err()
+    );
+    assert_eq!(
+        e.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(1.0))
+    );
+    e.evaluate_all_for_snapshot(None).unwrap();
+    assert_eq!(
+        e.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        e.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(2.0))
     );
 }
 

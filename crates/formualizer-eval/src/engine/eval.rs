@@ -1162,6 +1162,8 @@ pub struct Engine<R> {
     /// Opt-in snapshot request: defer only next-cycle volatile redirty.
     snapshot_evaluation_active: bool,
     snapshot_volatile_redirty_pending: bool,
+    /// Completed snapshot SCCs stay Current until the next request chooses work.
+    snapshot_iterative_redirty_pending: Vec<VertexId>,
     /// Members of iterating SCCs retained across recalcs (#368), keyed to the
     /// id of the retained SCC they belong to (ids come from
     /// `next_retained_scc_id`; grouping is only used for telemetry).
@@ -2983,6 +2985,7 @@ where
             pending_iterative_redirty: Vec::new(),
             snapshot_evaluation_active: false,
             snapshot_volatile_redirty_pending: false,
+            snapshot_iterative_redirty_pending: Vec::new(),
             retained_scc_members: FxHashMap::default(),
             next_retained_scc_id: 0,
             retained_scc_config_fingerprint: 0,
@@ -3157,6 +3160,7 @@ where
             pending_iterative_redirty: Vec::new(),
             snapshot_evaluation_active: false,
             snapshot_volatile_redirty_pending: false,
+            snapshot_iterative_redirty_pending: Vec::new(),
             retained_scc_members: FxHashMap::default(),
             next_retained_scc_id: 0,
             retained_scc_config_fingerprint: 0,
@@ -3302,6 +3306,12 @@ where
         evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
     ) -> Result<T, ExcelError> {
         let outermost = self.evaluation_resource_request_depth == 0;
+        if outermost {
+            let pending = std::mem::take(&mut self.snapshot_iterative_redirty_pending);
+            if !pending.is_empty() {
+                self.graph.redirty_iterative_members(&pending);
+            }
+        }
         if outermost && self.snapshot_volatile_redirty_pending {
             self.snapshot_volatile_redirty_pending = false;
             self.graph.redirty_volatiles();
@@ -3899,7 +3909,11 @@ where
             }
         }
         if !pending.is_empty() {
-            self.graph.redirty_iterative_members(&pending);
+            if self.snapshot_evaluation_active {
+                self.snapshot_iterative_redirty_pending.extend(pending);
+            } else {
+                self.graph.redirty_iterative_members(&pending);
+            }
         }
     }
 
@@ -15401,8 +15415,9 @@ where
     /// Callers retaining the engine must start another evaluation request
     /// (`evaluate_all`, `evaluate_until`, `evaluate_cell`, or equivalent) to
     /// refresh volatile values. That request restores the deferred volatile
-    /// redirty before selecting its work. Errors and cancellation never leave
-    /// the snapshot mode active.
+    /// redirty before selecting its work. Iterative SCC invalidation is deferred
+    /// on the same boundary, preserving completed snapshot values as Current.
+    /// Errors and cancellation never leave the snapshot mode active.
     pub fn evaluate_all_for_snapshot(
         &mut self,
         cancel: Option<crate::engine::CancelToken>,
