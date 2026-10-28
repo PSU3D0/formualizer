@@ -101,6 +101,52 @@ fn ceiling_both_negative_rounds_away_from_zero() {
 }
 
 #[test]
+fn ceiling_both_negative_decimal_exact_multiples() {
+    // Decimal exact multiples must retain the original value, even when
+    // binary division lands just beyond the integral quotient.
+    let mut failures = Vec::new();
+    for (number, significance, expected) in [
+        ("-0.07", "-0.01", -0.07_f64),
+        ("-0.14", "-0.01", -0.14),
+        ("-0.28", "-0.01", -0.28),
+        ("-0.7", "-0.01", -0.7),
+        ("-0.9", "-0.3", -0.9),
+        ("-0.21", "-0.03", -0.21),
+        ("-7e-20", "-1e-20", -7e-20),
+    ] {
+        let formula = format!("=CEILING({number},{significance})");
+        let actual = evaluate(&formula).get_cell_value("Sheet1", 1, 1).unwrap();
+        if !matches!(actual, LiteralValue::Number(n) if n.to_bits() == expected.to_bits()) {
+            failures.push(format!("{formula}: expected {expected}, got {actual:?}"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn ceiling_both_negative_decimal_nearby_nonmultiples() {
+    // Distinct values on either side remain distinct at the engine's
+    // 15-significant-digit decimal precision; do not snap their quotients.
+    for (number, significance, expected) in [
+        ("-0.0699999999999999", "-0.01", -0.07),
+        ("-0.0700000000000001", "-0.01", -0.08),
+        ("-0.139999999999999", "-0.01", -0.14),
+        ("-0.140000000000001", "-0.01", -0.15),
+        ("-0.279999999999999", "-0.01", -0.28),
+        ("-0.280000000000001", "-0.01", -0.29),
+        ("-0.899999999999999", "-0.3", -3.0 * 0.3),
+        ("-0.900000000000001", "-0.3", -1.2),
+    ] {
+        // Preserve the existing binary multiplication for nonmultiples;
+        // the -0.3 control expects exactly the product of -3 and 0.3.
+        assert_grid(
+            &format!("=CEILING({number},{significance})"),
+            &[&[expected]],
+        );
+    }
+}
+
+#[test]
 fn ceiling_supported_sign_fraction_zero_and_error_controls() {
     for (formula, expected) in [
         ("=CEILING(-2.5,2)", -2.),
