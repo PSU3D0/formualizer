@@ -106,7 +106,7 @@ impl Function for IsNumberFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         let is_num = matches!(
             v,
             LiteralValue::Int(_)
@@ -191,7 +191,7 @@ impl Function for IsTextFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
             matches!(v, LiteralValue::Text(_)),
         )))
@@ -267,7 +267,7 @@ impl Function for IsLogicalFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
             matches!(v, LiteralValue::Boolean(_)),
         )))
@@ -343,7 +343,7 @@ impl Function for IsBlankFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
             matches!(v, LiteralValue::Empty),
         )))
@@ -419,7 +419,7 @@ impl Function for IsErrorFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
             matches!(v, LiteralValue::Error(_)),
         )))
@@ -495,7 +495,7 @@ impl Function for IsErrFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         let is_err = match v {
             LiteralValue::Error(e) => e.kind != ExcelErrorKind::Na,
             _ => false,
@@ -575,7 +575,7 @@ impl Function for IsNaFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         let is_na = matches!(v, LiteralValue::Error(e) if e.kind==ExcelErrorKind::Na);
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
             is_na,
@@ -1639,7 +1639,7 @@ impl Function for ErrorTypeFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         match v {
             LiteralValue::Error(e) => {
                 let code = error_type_code(e.kind);
@@ -1731,7 +1731,7 @@ impl Function for IsNonTextFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
+        let v = args[0].value_for_error_inspection()?;
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
             !matches!(v, LiteralValue::Text(_)),
         )))
@@ -1978,6 +1978,93 @@ mod tests {
     use formualizer_parse::parser::{ASTNode, ASTNodeType};
     fn interp(wb: &TestWorkbook) -> crate::interpreter::Interpreter<'_> {
         wb.interpreter()
+    }
+
+    #[derive(Debug)]
+    struct FailingArgument(ExcelError);
+    impl Function for FailingArgument {
+        fn name(&self) -> &'static str {
+            "FAILARG"
+        }
+        fn min_args(&self) -> usize {
+            0
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _: &'c [ArgumentHandle<'a, 'b>],
+            _: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, ExcelError> {
+            Err(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn error_consumers_preserve_typed_control_failures() {
+        crate::builtins::register_all_builtins();
+        use formualizer_common::{
+            ExcelErrorExtra, PlanStaleReason, PreparationStaleReason, ResourceExhaustionDetail,
+            ResourceExhaustionReason,
+        };
+        let failures = [
+            ExcelError::new(ExcelErrorKind::Cancelled),
+            ExcelError::new(ExcelErrorKind::Calc).with_extra(ExcelErrorExtra::Resource {
+                detail: Box::new(ResourceExhaustionDetail {
+                    reason: ResourceExhaustionReason::WorkUnits,
+                    limit: 1,
+                    observed: 2,
+                    request_id: Some(9),
+                }),
+            }),
+            ExcelError::new(ExcelErrorKind::Calc).with_extra(ExcelErrorExtra::PreparationStale {
+                reason: PreparationStaleReason::Authority,
+            }),
+            ExcelError::new(ExcelErrorKind::Calc).with_extra(ExcelErrorExtra::PlanStale {
+                reason: PlanStaleReason::Engine,
+            }),
+        ];
+        for error in failures {
+            let wb = TestWorkbook::new()
+                .with_function(std::sync::Arc::new(FailingArgument(error.clone())))
+                .with_cell("Sheet1", 1, 1, LiteralValue::Error(error.clone()));
+            let ctx = interp(&wb);
+            for name in [
+                "ISERROR",
+                "ISERR",
+                "ISNA",
+                "ERROR.TYPE",
+                "ISNUMBER",
+                "ISTEXT",
+                "ISLOGICAL",
+                "ISBLANK",
+                "ISNONTEXT",
+            ] {
+                let value_ast = ASTNode::new(
+                    ASTNodeType::Literal(LiteralValue::Error(error.clone())),
+                    None,
+                );
+                let args = [ArgumentHandle::new(&value_ast, &ctx)];
+                let f = ctx.context.get_function("", name).unwrap();
+                let result = f.dispatch(&args, &ctx.function_context(None));
+                assert!(
+                    matches!(result, Err(ref actual) if actual == &error),
+                    "{name}: direct value must preserve {error:?}, got {result:?}"
+                );
+                // The reference backend's compact lanes retain error kinds but
+                // not arbitrary payloads; cancellation remains identifiable.
+                for arg in if error.kind == ExcelErrorKind::Cancelled {
+                    vec!["FAILARG()", "A1"]
+                } else {
+                    vec!["FAILARG()"]
+                } {
+                    let ast = formualizer_parse::parser::parse(&format!("={name}({arg})")).unwrap();
+                    let result = ctx.evaluate_ast(&ast);
+                    assert!(
+                        matches!(result, Err(ref actual) if actual == &error),
+                        "{name}({arg}): {result:?}, expected unchanged operation failure {error:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

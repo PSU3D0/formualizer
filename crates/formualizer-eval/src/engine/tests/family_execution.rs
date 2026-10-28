@@ -83,6 +83,107 @@ fn mixed_value(r: u32) -> LiteralValue {
     }
 }
 
+#[test]
+fn family_error_consumers_match_scalar() {
+    let names = [
+        "ISERROR",
+        "ISERR",
+        "ISNA",
+        "ERROR.TYPE",
+        "ISNUMBER",
+        "ISTEXT",
+        "ISLOGICAL",
+        "ISBLANK",
+        "ISNONTEXT",
+        "N",
+        "T",
+    ];
+    let mut values = Vec::new();
+    let mut formulas = Vec::new();
+    for r in 1..=N {
+        values.push((("Sheet1", r, 1), mixed_value(r)));
+        for (i, name) in names.iter().enumerate() {
+            formulas.push((("Sheet1", r, i as u32 + 2), format!("={name}(A{r})")));
+        }
+        // Missing names are deliberately ineligible for elementwise kernels.
+        formulas.push((("Sheet1", r, 20), "=ISERROR(MISSING_NAME)".into()));
+    }
+    let case = Case {
+        values,
+        formulas,
+        edits: vec![(
+            ("Sheet1", 7, 1),
+            LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Name,
+            )),
+        )],
+    };
+    for parallel in [false, true] {
+        let base = EvalConfig {
+            enable_parallel: parallel,
+            ..arrow_eval_config()
+        };
+        let oracle = run_with(
+            &case,
+            EvalConfig {
+                family_execution: false,
+                ..base.clone()
+            },
+        );
+        assert_eq!(
+            run_with(
+                &case,
+                EvalConfig {
+                    family_kernels: false,
+                    ..base.clone()
+                }
+            ),
+            oracle
+        );
+        assert_eq!(run_with(&case, base), oracle);
+    }
+    check(&case);
+    check_lift(&case);
+}
+
+#[test]
+#[ignore = "manual repeatable timing probe; no percentage acceptance threshold"]
+fn error_consumer_scalar_family_timing() {
+    for family in [false, true] {
+        let mut e = engine(family, false);
+        for r in 1..=512 {
+            e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64))
+                .unwrap();
+            for (col, name) in [(2, "ISNUMBER"), (3, "ISERROR"), (4, "ISTEXT")] {
+                e.set_cell_formula("Sheet1", r, col, parse(&format!("={name}(A{r})")).unwrap())
+                    .unwrap();
+            }
+        }
+        e.evaluate_all().unwrap();
+        let start = std::time::Instant::now();
+        for round in 0..8 {
+            for r in 1..=512 {
+                e.set_cell_value("Sheet1", r, 1, LiteralValue::Number((r + round + 1) as f64))
+                    .unwrap();
+            }
+            e.evaluate_all().unwrap();
+        }
+        eprintln!(
+            "error-consumer-timing family={family} elapsed_us={} members={} lifted={}",
+            start.elapsed().as_micros(),
+            e.family_members_for_test(),
+            e.lifted_members_for_test()
+        );
+        assert_eq!(
+            e.get_cell_value("Sheet1", 512, 2),
+            Some(LiteralValue::Boolean(true))
+        );
+        if family {
+            assert!(e.lifted_members_for_test() > 0);
+        }
+    }
+}
+
 const N: u32 = 120;
 
 #[test]

@@ -542,6 +542,47 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             .map_err(Clone::clone)
     }
 
+    /// Inspect a spreadsheet error regardless of whether evaluation returned it
+    /// as a value or as an error. Operation failures must remain failures.
+    ///
+    /// This boundary is opt-in: ordinary value consumers (including N/T) retain
+    /// their existing propagation behavior.
+    pub(crate) fn value_for_error_inspection(&self) -> Result<LiteralValue, ExcelError> {
+        fn is_spreadsheet_error(error: &ExcelError) -> bool {
+            matches!(
+                error.kind,
+                ExcelErrorKind::Null
+                    | ExcelErrorKind::Ref
+                    | ExcelErrorKind::Name
+                    | ExcelErrorKind::Value
+                    | ExcelErrorKind::Div
+                    | ExcelErrorKind::Na
+                    | ExcelErrorKind::Num
+                    | ExcelErrorKind::Error
+                    | ExcelErrorKind::NImpl
+                    | ExcelErrorKind::Spill
+                    | ExcelErrorKind::Calc
+                    | ExcelErrorKind::Circ
+            ) && matches!(
+                error.extra(),
+                formualizer_common::ExcelErrorExtra::None
+                    | formualizer_common::ExcelErrorExtra::Spill { .. }
+            )
+        }
+
+        let value = match self.value() {
+            Ok(value) => value.into_literal(),
+            Err(error) if is_spreadsheet_error(&error) => LiteralValue::Error(error),
+            Err(error) => return Err(error),
+        };
+        if let LiteralValue::Error(error) = &value
+            && !is_spreadsheet_error(error)
+        {
+            return Err(error.clone());
+        }
+        Ok(value)
+    }
+
     /// Resolves a scalar that is about to be coerced to text.
     ///
     /// Omitted arguments materialize as numeric zero through `value()`, which is
