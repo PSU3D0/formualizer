@@ -9,7 +9,7 @@
 //!   * include may be vertical column vector OR same sized 2D; we reduce any non-zero truthy cell to include row.
 //!   * if_empty omitted -> #CALC! per Excel when no matches.
 //! - UNIQUE supports: array, [by_col], [exactly_once]
-//!   * by_col TRUE -> operate column-wise returning unique columns (NYI -> returns #N/IMPL! if TRUE)
+//!   * by_col TRUE -> operate column-wise, preserving the input row axis
 //!   * exactly_once TRUE returns only values with count == 1 (supported in row-wise primitive set)
 //! - All functions return Array literal values (spills) – engine handles spill placement later.
 //!
@@ -2916,29 +2916,40 @@ impl Function for UniqueFn {
         };
 
         if by_col {
-            #[derive(Hash, Eq, PartialEq, Clone)]
+            #[derive(Hash, Eq, PartialEq)]
             struct ColKey(Vec<LiteralValue>);
 
-            let mut order: Vec<ColKey> = Vec::new();
-            let mut counts: HashMap<ColKey, usize> = HashMap::new();
-
+            // The input materialization check above bounds both the keys and
+            // the output (which cannot have more columns than the input).
+            // Keep first-occurrence indices instead of a second copy of keys.
+            let mut counts: HashMap<ColKey, (usize, usize)> = HashMap::new();
             for c in 0..cols {
                 let mut col_vals: Vec<LiteralValue> = Vec::with_capacity(rows);
                 for r in 0..rows {
                     col_vals.push(view.get_cell(r, c));
                 }
-                let key = ColKey(col_vals);
-                if !counts.contains_key(&key) {
-                    order.push(key.clone());
-                }
-                *counts.entry(key).or_insert(0) += 1;
+                let entry = counts.entry(ColKey(col_vals)).or_insert((0, c));
+                entry.0 += 1;
             }
 
-            let mut out: Vec<Vec<LiteralValue>> = Vec::new();
-            for k in order {
-                if !exactly_once || counts.get(&k) == Some(&1) {
-                    out.push(k.0);
+            // Consume the map so full-column keys are freed before output
+            // allocation. Sorting indices restores first-occurrence order.
+            let mut selected: Vec<usize> = counts
+                .into_values()
+                .filter_map(|(count, first)| (!exactly_once || count == 1).then_some(first))
+                .collect();
+            selected.sort_unstable();
+            if selected.is_empty() {
+                return Ok(collapse_if_scalar(vec![], _ctx.date_system()));
+            }
+
+            let mut out = Vec::with_capacity(rows);
+            for r in 0..rows {
+                let mut row = Vec::with_capacity(selected.len());
+                for &c in &selected {
+                    row.push(view.get_cell(r, c));
                 }
+                out.push(row);
             }
             return Ok(collapse_if_scalar(out, _ctx.date_system()));
         }
