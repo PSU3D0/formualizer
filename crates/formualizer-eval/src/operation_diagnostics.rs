@@ -72,6 +72,7 @@ struct Frame {
     events: u64,
     tainted: bool,
     named_vertex: Option<crate::engine::VertexId>,
+    reference_cell: Option<CellRef>,
 }
 thread_local! { static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) }; }
 
@@ -125,6 +126,7 @@ impl OperationDiagnosticCollector {
                 events: 0,
                 tainted: false,
                 named_vertex: None,
+                reference_cell: None,
             });
             index
         });
@@ -139,6 +141,14 @@ impl OperationDiagnosticCollector {
         FRAMES.with(|frames| frames.borrow_mut()[scope.index].named_vertex = Some(vertex));
         scope
     }
+    /// Reporting origin only: reference providers retain their existing
+    /// FunctionContext::current_cell() semantics.
+    pub(crate) fn reference_scope(&self, cell: Option<CellRef>) -> Scope<'_> {
+        let scope = self.scope(Mode::Inherit);
+        FRAMES.with(|frames| frames.borrow_mut()[scope.index].reference_cell = cell);
+        scope
+    }
+
     pub(crate) fn reset(&self) {
         *self.state.lock().unwrap() = State::default();
         self.dispatches
@@ -193,6 +203,16 @@ impl OperationDiagnosticCollector {
                     .rev()
                     .filter(|f| f.sink == self.key())
                     .find_map(|f| f.named_vertex)
+            });
+            let cell = cell.or_else(|| {
+                FRAMES.with(|frames| {
+                    frames
+                        .borrow()
+                        .iter()
+                        .rev()
+                        .filter(|f| f.sink == self.key())
+                        .find_map(|f| f.reference_cell)
+                })
             });
             state.roots.insert(OperationRoot {
                 cell: if named_vertex.is_some() { None } else { cell },

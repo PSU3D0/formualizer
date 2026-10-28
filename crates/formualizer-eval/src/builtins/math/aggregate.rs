@@ -1928,6 +1928,11 @@ impl Function for AggregateFn {
             aggregate_op_from_function_num(function_num)
                 .expect("validated AGGREGATE function_num maps to operation")
         } else if (12..=19).contains(&function_num) {
+            ctx.report_unavailable_operation(
+                crate::operation_diagnostics::UnavailableOperation::UnimplementedFunction {
+                    name: "AGGREGATE".into(),
+                },
+            );
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::NImpl),
             )));

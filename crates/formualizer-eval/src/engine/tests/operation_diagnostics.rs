@@ -72,6 +72,27 @@ fn recalc_contract_diagnostics_callable_and_postfix() {
 }
 
 #[test]
+fn recalc_contract_diagnostics_registered_partial_modes_report_at_leaf() {
+    let mut e = engine(&[
+        "=IFERROR(AGGREGATE(12,6,A1:A2),7)",
+        "=IFERROR(SUM(INDIRECT(\"R1C1:R2C1\",FALSE)),7)",
+        "=IFERROR(ISREF(INDIRECT(\"R1C1:R2C1\",FALSE)),7)",
+        "=AGGREGATE(9,6,A1:A2)",
+    ]);
+    e.evaluate_all().unwrap();
+    let report = e.operation_diagnostics().unwrap();
+    assert_eq!(report.logical_cell_reason_count, 3, "{report:?}");
+    for root in &report.roots {
+        assert!(
+            matches!(&root.operation,
+            crate::operation_diagnostics::UnavailableOperation::UnimplementedFunction { name }
+            if name == "AGGREGATE" || name == "INDIRECT"),
+            "{root:?}"
+        );
+    }
+}
+
+#[test]
 fn recalc_contract_diagnostics_inherited_error_not_new_root() {
     let mut e = engine(&[
         "=IFERROR(SUM(A1),7)",

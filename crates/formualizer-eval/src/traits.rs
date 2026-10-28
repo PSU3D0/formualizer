@@ -925,6 +925,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     None,
                     self.interp.current_sheet(),
                 );
+                let _origin = self.interp.reference_diagnostic_scope();
                 Some(fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()))
             }
             ArgumentExpr::Arena {
@@ -977,6 +978,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     None,
                     self.interp.current_sheet(),
                 );
+                let _origin = self.interp.reference_diagnostic_scope();
                 Some(fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()))
             }
         }

@@ -360,6 +360,13 @@ pub struct Interpreter<'a> {
 }
 
 impl<'a> Interpreter<'a> {
+    pub(crate) fn reference_diagnostic_scope(
+        &self,
+    ) -> Option<crate::operation_diagnostics::Scope<'a>> {
+        self.diagnostics
+            .map(|collector| collector.reference_scope(self.current_cell))
+    }
+
     fn unavailable(&self, operation: crate::operation_diagnostics::UnavailableOperation) {
         if let Some(collector) = self.diagnostics {
             collector.record(self.current_cell, operation);
@@ -668,6 +675,7 @@ impl<'a> Interpreter<'a> {
                         None,
                         self.current_sheet,
                     );
+                    let _origin = self.reference_diagnostic_scope();
                     if let Some(res) = fun.eval_reference(&handles, &fctx) {
                         res
                     } else {
@@ -718,6 +726,7 @@ impl<'a> Interpreter<'a> {
             .map(|arg| ArgumentHandle::new(arg, self))
             .collect();
         let fctx = DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
+        let _origin = self.reference_diagnostic_scope();
         fun.eval_reference(&handles, &fctx)
     }
 
@@ -765,6 +774,7 @@ impl<'a> Interpreter<'a> {
                 let fctx =
                     DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
 
+                let _origin = self.reference_diagnostic_scope();
                 fun.eval_reference(&handles, &fctx).ok_or_else(|| {
                     ExcelError::new(ExcelErrorKind::Ref)
                         .with_message("Function does not return a reference")
@@ -894,6 +904,7 @@ impl<'a> Interpreter<'a> {
             .map(|arg_id| ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry))
             .collect();
         let fctx = DefaultFunctionContext::new_with_sheet(self.context, None, self.current_sheet);
+        let _origin = self.reference_diagnostic_scope();
         fun.eval_reference(&handles, &fctx)
     }
 

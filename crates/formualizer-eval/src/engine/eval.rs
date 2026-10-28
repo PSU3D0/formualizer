@@ -3310,6 +3310,11 @@ where
         evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
     ) -> Result<T, ExcelError> {
         let outermost = self.evaluation_resource_request_depth == 0;
+        // Request evidence starts here, before cancellation/admission can exit.
+        // Nested entry points and internal replans retain the outer union.
+        if outermost && let Some(collector) = &self.operation_diagnostic_collector {
+            collector.reset();
+        }
         if outermost {
             let pending = std::mem::take(&mut self.snapshot_iterative_redirty_pending);
             if !pending.is_empty() {
@@ -3854,10 +3859,11 @@ where
             .map(|collector| collector.snapshot())
     }
 
+    pub(super) fn diagnostic_request_active(&self) -> bool {
+        self.evaluation_resource_request_depth != 0
+    }
+
     fn begin_evaluation_request(&mut self) {
-        if let Some(collector) = &self.operation_diagnostic_collector {
-            collector.reset();
-        }
         self.refresh_resolution_snapshots();
         self.freshness_begin_request();
         #[cfg(test)]

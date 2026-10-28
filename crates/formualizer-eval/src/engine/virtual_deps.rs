@@ -515,6 +515,16 @@ impl DynamicRefVirtualDepProvider {
         };
         let sheet_id = engine.graph.get_vertex_sheet_id(v);
         let sheet_name = engine.graph.sheet_name(sheet_id);
+        // Discovery can select branches from retained, dirty precedent values.
+        // Count that physical work as speculative inside a request; public
+        // dependency queries outside a request must not mutate its last report.
+        let _diagnostics = engine.operation_diagnostic_collector().map(|collector| {
+            collector.scope(if engine.diagnostic_request_active() {
+                crate::operation_diagnostics::Mode::Speculative
+            } else {
+                crate::operation_diagnostics::Mode::Suppressed
+            })
+        });
         let collector = DynamicRefCollector::new(engine, sheet_name);
         let cell_ref = engine
             .graph

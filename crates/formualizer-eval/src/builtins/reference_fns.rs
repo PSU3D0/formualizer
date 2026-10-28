@@ -983,9 +983,16 @@ impl Function for IndirectFn {
             return match formualizer_parse::parser::ReferenceType::from_string(&ref_text) {
                 Ok(ReferenceType::NamedRange(name)) => Some(Ok(ReferenceType::NamedRange(name))),
                 Ok(ReferenceType::Table(tref)) => Some(Ok(ReferenceType::Table(tref))),
-                _ => Some(Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                    "INDIRECT with R1C1 style (second argument FALSE) is not yet supported",
-                ))),
+                _ => {
+                    _ctx.report_unavailable_operation(
+                        crate::operation_diagnostics::UnavailableOperation::UnimplementedFunction {
+                            name: "INDIRECT".into(),
+                        },
+                    );
+                    Some(Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                        "INDIRECT with R1C1 style (second argument FALSE) is not yet supported",
+                    )))
+                }
             };
         }
 
