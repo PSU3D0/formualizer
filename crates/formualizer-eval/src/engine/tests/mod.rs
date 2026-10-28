@@ -79,6 +79,7 @@ mod target_preparation;
 mod tarjan_differential;
 mod tarjan_scc;
 mod text_number_formats;
+mod text_coverage;
 mod topo_layers;
 mod transactions;
 mod vertex_lifecycle;
