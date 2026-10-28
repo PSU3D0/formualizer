@@ -4800,10 +4800,20 @@ impl DependencyGraph {
         self.spill_anchor_to_cells.contains_key(&vertex)
     }
 
+    /// Generic result replacement withdraws current-value attestation. Last-known
+    /// routing reads remain stable; the evaluated effects path reattests after write.
+    #[inline]
+    fn invalidate_observed_value_for_write(&mut self, vertex: VertexId) {
+        if self.authority_host().has_observed() {
+            self.authority_host_mut().invalidate_observed_value(vertex);
+        }
+    }
+
     /// [`Self::update_vertex_value`] that clones the value only when the
     /// graph keeps it (canonical mode keeps none for grid cells).
     pub(crate) fn update_vertex_value_ref(&mut self, vertex_id: VertexId, value: &LiteralValue) {
         if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
+            self.invalidate_observed_value_for_write(vertex_id);
             if !self.vertex_values.is_empty() {
                 self.vertex_values.remove(&vertex_id);
             }
@@ -4813,6 +4823,7 @@ impl DependencyGraph {
     }
 
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
+        self.invalidate_observed_value_for_write(vertex_id);
         if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
             // Canonical mode: grid-backed vertices must not store values in the graph.
             // Symbols (e.g. named-range formulas) may still cache theirs.

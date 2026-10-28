@@ -22,6 +22,12 @@ use rustc_hash::FxHashMap;
 /// An observed read `(sheet, r0, c0, r1, c1)`, 0-based inclusive.
 pub type ObservedRect = (u16, u32, u32, u32, u32);
 
+#[derive(Debug)]
+pub(crate) struct ObservedReadRecord {
+    reads: Vec<ObservedRect>,
+    value_committed: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum HostState {
     /// Not built yet (a load is in progress or nothing was queried).
@@ -82,11 +88,11 @@ pub struct AuthorityHost {
     /// the authority reads the formula. (With a thread pool the check runs
     /// in compression's parallel decision instead: off the load path.)
     pub(crate) texts_unrendered: std::sync::Mutex<rustc_hash::FxHashSet<VertexId>>,
-    /// `rdi_dyn` (design §8.2, OR1): for each dynamic reader with a
-    /// published, fresh value, the rectangles its last evaluation read,
-    /// `(sheet, r0, c0, r1, c1)`. Plans order it after them; demand walks
-    /// them. Dropped when the formula changes and on every rebuild.
-    pub(crate) observed: FxHashMap<VertexId, Vec<ObservedRect>>,
+    /// Last-known `rdi_dyn` routing rectangles. Plans and demand walks use
+    /// these hints; current-value attestation is a separate bit in each
+    /// existing sparse record. Formula/binding edits and rebuilds drop both.
+    pub(crate) observed: FxHashMap<VertexId, ObservedReadRecord>,
+    pub(crate) rev_observed_value: u64,
     /// Bumped whenever some reader's observed set changes: the schedule
     /// cache key's `rev.dyn` (design §8.4).
     pub(crate) rev_dyn: u64,
@@ -254,23 +260,64 @@ impl AuthorityHost {
         !self.observed.is_empty()
     }
 
+    /// Last-known scheduling reads; this accessor does not attest a current value.
     pub fn observed(&self, reader: VertexId) -> Option<&[ObservedRect]> {
-        self.observed.get(&reader).map(Vec::as_slice)
+        self.observed
+            .get(&reader)
+            .map(|record| record.reads.as_slice())
+    }
+
+    /// Rectangles bound to the installed value. This attests the write lifetime,
+    /// not completeness of all possible resolver/name/source read kinds.
+    pub fn committed_observed(&self, reader: VertexId) -> Option<&[ObservedRect]> {
+        let record = self.observed.get(&reader)?;
+        record.value_committed.then_some(record.reads.as_slice())
+    }
+
+    pub fn observed_value_revision(&self) -> u64 {
+        self.rev_observed_value
+    }
+
+    pub(crate) fn invalidate_observed_value(&mut self, reader: VertexId) {
+        if let Some(record) = self.observed.get_mut(&reader)
+            && record.value_committed
+        {
+            record.value_committed = false;
+            self.rev_observed_value += 1;
+        }
     }
 
     /// Record `reader`'s reads from a fresh commit (normalized).
     pub(crate) fn set_observed(&mut self, reader: VertexId, mut reads: Vec<ObservedRect>) {
         reads.sort_unstable();
         reads.dedup();
-        if self.observed.get(&reader) != Some(&reads) {
-            self.observed.insert(reader, reads);
+        if let Some(record) = self.observed.get_mut(&reader) {
+            let changed = record.reads != reads;
+            if changed {
+                record.reads = reads;
+                self.rev_dyn += 1;
+            }
+            if changed || !record.value_committed {
+                self.rev_observed_value += 1;
+            }
+            record.value_committed = true;
+        } else {
+            self.observed.insert(
+                reader,
+                ObservedReadRecord {
+                    reads,
+                    value_committed: true,
+                },
+            );
             self.rev_dyn += 1;
+            self.rev_observed_value += 1;
         }
     }
 
     pub(crate) fn forget_observed(&mut self, reader: VertexId) {
         if self.observed.remove(&reader).is_some() {
             self.rev_dyn += 1;
+            self.rev_observed_value += 1;
         }
     }
 
@@ -278,6 +325,7 @@ impl AuthorityHost {
         if !self.observed.is_empty() {
             self.observed.clear();
             self.rev_dyn += 1;
+            self.rev_observed_value += 1;
         }
     }
 

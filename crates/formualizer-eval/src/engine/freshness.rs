@@ -53,6 +53,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Mutex;
 
 #[cfg(test)]
+#[path = "tests/observed_value_binding.rs"]
+mod observed_value_binding;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::engine::EvalConfig;
@@ -435,7 +439,14 @@ impl<R: EvaluationContext> Engine<R> {
     pub(super) fn freshness_mark_committed(&mut self, vertex: VertexId) {
         self.freshness.committed.insert(vertex);
         self.graph.clear_dirty_flags(&[vertex]);
-        // OR1: a published dynamic value's reads become its observed set.
+    }
+
+    /// Install reads only after the actual value and its overlay write succeed.
+    /// Planning-time dirty clearing remains separate (FR2/FR5).
+    pub(super) fn freshness_record_applied(&mut self, vertex: VertexId) {
+        if !self.freshness.armed {
+            return;
+        }
         if let Some(reads) = self
             .freshness
             .fresh_reads
@@ -445,6 +456,13 @@ impl<R: EvaluationContext> Engine<R> {
         {
             self.graph.authority_host_mut().set_observed(vertex, reads);
         }
+    }
+
+    /// Failed outer requests cannot leave scheduling observations attesting
+    /// partially applied values, including a failure in final reconciliation.
+    pub(super) fn freshness_discard_read_evidence(&mut self) {
+        self.freshness.fresh_reads.get_mut().unwrap().clear();
+        self.graph.authority_host_mut().clear_observed();
     }
 
     /// End of a pass. Armed: clear what legacy clears except stale readers,

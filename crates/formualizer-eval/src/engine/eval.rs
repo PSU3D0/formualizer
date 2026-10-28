@@ -3391,6 +3391,10 @@ where
             Ok(())
         };
         let result = result.and_then(|value| reconciliation.map(|()| value));
+        if outermost && result.is_err() {
+            self.freshness_abort_pass();
+            self.freshness_discard_read_evidence();
+        }
         if outermost {
             let total_ns = self
                 .evaluation_resource_request_started_at
@@ -21209,6 +21213,7 @@ where
         }
         self.graph.update_vertex_value_ref(vertex_id, value);
         self.record_vertex_value_to_overlay(vertex_id, value, computed_writes)?;
+        self.freshness_record_applied(vertex_id);
         Ok(())
     }
 
