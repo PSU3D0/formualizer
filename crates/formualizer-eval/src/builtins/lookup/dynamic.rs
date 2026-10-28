@@ -3,7 +3,9 @@
 //! Notes / Simplifications (documented for future refinement):
 //! - XLOOKUP supports: lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode]
 //!   * match_mode: 0 exact (default), -1 exact-or-next-smaller, 1 exact-or-next-larger, 2 wildcard (basic * ?)
-//!   * search_mode: 1 forward (default), -1 reverse; (2 / -2 binary not yet implemented -> treated as 1 / -1)
+//!   * search_mode: 1 forward (default), -1 reverse; 2 / -2 use linear scans.
+//!     Approximate -2 scans in reverse; exact/wildcard ±2 retain forward fallback.
+//!     Approximate mode validates ascending input, or descending input for -2.
 //!   * Wildcard mode (2) is case-insensitive and supports Excel-style escapes (~).
 //! - FILTER supports: array, include, [if_empty]; Shapes must be broadcast-compatible by rows (include is 1-D).
 //!   * include may be vertical column vector OR same sized 2D; we reduce any non-zero truthy cell to include row.
@@ -110,7 +112,9 @@ pub struct XLookupFn;
 /// - In exact and wildcard modes, a blank lookup value selects only a blank candidate; numeric zero and empty text remain distinct.
 /// - `if_not_found` is optional; if omitted and no match exists, returns `#N/A`.
 /// - `match_mode`: `0` exact, `-1` exact-or-next-smaller, `1` exact-or-next-larger, `2` wildcard.
-/// - `search_mode`: `1` forward, `-1` reverse. Other modes are accepted with current fallback behavior.
+/// - `search_mode`: `1` forward, `-1` reverse; approximate `2`/`-2` use linear forward/reverse fallback with ascending/descending sorted input.
+/// - Exact/wildcard `2`/`-2` retain forward fallback. Approximate ties follow scan direction.
+/// - Approximate modes otherwise retain the ascending-input requirement.
 /// - `lookup_array` must be 1D. Invalid shape returns `#VALUE!`.
 /// - If `return_array` is multi-column or multi-row, the matched row/column is returned as a spill.
 ///
@@ -337,24 +341,22 @@ impl Function for XLookupFn {
             )));
         }
 
-        let match_mode = if args.len() >= 5 {
-            match args[4].value()?.into_literal() {
-                LiteralValue::Int(i) => i,
-                LiteralValue::Number(n) => n as i64,
-                _ => 0,
+        let mode = |idx: usize, default: f64, allowed: &[f64]| -> Result<i64, ExcelError> {
+            let number = if idx >= args.len() || args[idx].is_omitted() {
+                default
+            } else {
+                let value = args[idx].range_view_or_scalar()?.get_cell(0, 0);
+                crate::coercion::to_number_lenient(&value)?
+            };
+            if allowed.contains(&number) {
+                Ok(number as i64)
+            } else {
+                Err(ExcelError::new(ExcelErrorKind::Value))
             }
-        } else {
-            0
         };
-        let search_mode = if args.len() >= 6 {
-            match args[5].value()?.into_literal() {
-                LiteralValue::Int(i) => i,
-                LiteralValue::Number(n) => n as i64,
-                _ => 1,
-            }
-        } else {
-            1
-        };
+        let match_mode = mode(4, 0.0, &[-1.0, 0.0, 1.0, 2.0])?;
+        let search_mode = mode(5, 1.0, &[-2.0, -1.0, 1.0, 2.0])?;
+        let reverse = search_mode == -1 || search_mode == -2;
 
         let wildcard = match_mode == 2;
 
@@ -426,6 +428,9 @@ impl Function for XLookupFn {
                 f64::INFINITY
             };
 
+            // Preserve the existing sorted-input requirement for approximate
+            // lookup, with descending order for -2. Validate in physical order
+            // separately from selection so reverse scans use the same contract.
             let mut prev: Option<LiteralValue> = None;
             for i in 0..lookup_len {
                 let cand = if vertical {
@@ -433,17 +438,31 @@ impl Function for XLookupFn {
                 } else {
                     lookup_view.get_cell(0, i)
                 };
-
                 if let Some(p) = prev.as_ref() {
-                    let sorted_ok =
-                        cmp_for_lookup(p, &cand, _ctx.date_system()).is_some_and(|o| o <= 0);
+                    let sorted_ok = cmp_for_lookup(p, &cand, _ctx.date_system())
+                        .is_some_and(|o| if search_mode == -2 { o >= 0 } else { o <= 0 });
                     if !sorted_ok {
                         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                             ExcelError::new(ExcelErrorKind::Na),
                         )));
                     }
                 }
-                prev = Some(cand.clone());
+                prev = Some(cand);
+            }
+
+            // Linear selection deliberately retains the provider's directional
+            // duplicate policy; accepting ±2 does not imply a binary algorithm.
+            for offset in 0..lookup_len {
+                let i = if reverse {
+                    lookup_len - 1 - offset
+                } else {
+                    offset
+                };
+                let cand = if vertical {
+                    lookup_view.get_cell(i, 0)
+                } else {
+                    lookup_view.get_cell(0, i)
+                };
 
                 if cmp_for_lookup(&cand, &needle, _ctx.date_system()).is_some_and(|o| o == 0) {
                     found = Some(i);

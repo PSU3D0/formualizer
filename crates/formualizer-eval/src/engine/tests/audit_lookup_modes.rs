@@ -123,3 +123,63 @@ fn ceiling_supported_sign_fraction_zero_and_error_controls() {
     assert_error("=CEILING(1/0,-2)", ExcelErrorKind::Div);
     assert_error("=CEILING(-2,1/0)", ExcelErrorKind::Div);
 }
+
+#[test]
+fn xlookup_descending_approximate_smaller_larger_and_endpoints() {
+    assert_grid("=XLOOKUP(2.5,{3;2;1},{30;20;10},,-1,-2)", &[&[20.]]);
+    assert_grid("=XLOOKUP(2.5,{3;2;1},{30;20;10},,1,-2)", &[&[30.]]);
+    assert_grid("=XLOOKUP(2.5,{3,2,1},{30,20,10},,-1,-2)", &[&[20.]]);
+    assert_grid("=XLOOKUP(4,{3;2;1},{30;20;10},,-1,-2)", &[&[30.]]);
+    assert_grid("=XLOOKUP(0,{3;2;1},{30;20;10},,1,-2)", &[&[10.]]);
+    assert_error("=XLOOKUP(0,{3;2;1},{30;20;10},,-1,-2)", ExcelErrorKind::Na);
+    assert_error("=XLOOKUP(4,{3;2;1},{30;20;10},,1,-2)", ExcelErrorKind::Na);
+}
+
+#[test]
+fn xlookup_scan_direction_and_duplicates() {
+    // Binary-intent modes retain this provider's linear scan/tie policy;
+    // these assertions establish result semantics, not the search algorithm.
+    for mode in [0, -1, 1] {
+        assert_grid(
+            &format!("=XLOOKUP(2,{{3;2;2;1}},{{30;21;22;10}},,{mode},-2)"),
+            &[&[if mode == 0 { 21. } else { 22. }]],
+        );
+        assert_grid(
+            &format!("=XLOOKUP(2,{{1;2;2;3}},{{10;21;22;30}},,{mode},2)"),
+            &[&[21.]],
+        );
+        assert_grid(
+            &format!("=XLOOKUP(2,{{1;2;2;3}},{{10;21;22;30}},,{mode},1)"),
+            &[&[21.]],
+        );
+        assert_grid(
+            &format!("=XLOOKUP(2,{{1;2;2;3}},{{10;21;22;30}},,{mode},-1)"),
+            &[&[22.]],
+        );
+    }
+    assert_grid("=XLOOKUP(2.5,{3;2;2;1},{30;21;22;10},,-1,-2)", &[&[22.]]);
+    assert_grid("=XLOOKUP(1.5,{3;2;2;1},{30;21;22;10},,1,-2)", &[&[22.]]);
+    assert_grid("=XLOOKUP(2.5,{1;2;2;3},{10;21;22;30},,-1,1)", &[&[21.]]);
+    assert_grid("=XLOOKUP(2.5,{1;2;2;3},{10;21;22;30},,-1,-1)", &[&[22.]]);
+}
+
+#[test]
+fn xlookup_exact_ascending_approximate_and_error_controls() {
+    assert_grid("=XLOOKUP(2,{3;2;1},{30;20;10},,0,-2)", &[&[20.]]);
+    assert_grid("=XLOOKUP(2.5,{1;2;3},{10;20;30},,-1,2)", &[&[20.]]);
+    assert_grid("=XLOOKUP(2.5,{1;2;3},{10;20;30},,1,2)", &[&[30.]]);
+    assert_grid("=XLOOKUP(0,{3;2;1},{30;20;10},99,-1,-2)", &[&[99.]]);
+    assert_error("=XLOOKUP(2,{3;2;1},{30;20},,-1,-2)", ExcelErrorKind::Value);
+    assert_error(
+        "=XLOOKUP(2,{3;2;1},{30;20;10},,3,-2)",
+        ExcelErrorKind::Value,
+    );
+    assert_error(
+        "=XLOOKUP(2,{3;2;1},{30;20;10},,-1,3)",
+        ExcelErrorKind::Value,
+    );
+    assert_error(
+        "=XLOOKUP(1/0,{3;2;1},{30;20;10},,-1,-2)",
+        ExcelErrorKind::Div,
+    );
+}
