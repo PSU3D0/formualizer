@@ -6,12 +6,194 @@
 //! Values must equal an engine without the lift and kernels (every member
 //! walked), through edits.
 use super::common::arrow_eval_config;
+use crate::args::ArgSchema;
 use crate::engine::{Engine, EvalConfig};
+use crate::function::{FnCaps, Function};
 use crate::test_workbook::TestWorkbook;
+use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
+use formualizer_common::ExcelError;
 use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, LazyLock};
 
 const ROWS: u32 = 120;
+
+struct CountedAbs {
+    caps: FnCaps,
+    calls: Arc<AtomicUsize>,
+}
+
+impl Function for CountedAbs {
+    fn name(&self) -> &'static str {
+        "ABS"
+    }
+
+    fn caps(&self) -> FnCaps {
+        self.caps
+    }
+
+    fn min_args(&self) -> usize {
+        1
+    }
+
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| vec![ArgSchema::any()]);
+        &SCHEMA
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        _args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        // Fixed output keeps the PURE control valid; the counter observes
+        // physical execution without using a volatile-result provider.
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(CalcValue::Scalar(LiteralValue::Number(1.0)))
+    }
+}
+
+const ELIGIBILITY_ROWS: u32 = 8;
+
+fn eligibility_engine(
+    formula: &str,
+    caps: FnCaps,
+    lift: bool,
+    kernels: bool,
+) -> (Engine<TestWorkbook>, Arc<AtomicUsize>) {
+    crate::builtins::load_builtins();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let wb = TestWorkbook::new().with_function(Arc::new(CountedAbs {
+        caps,
+        calls: calls.clone(),
+    }));
+    let mut e = Engine::new(
+        wb,
+        EvalConfig {
+            enable_parallel: false,
+            family_lift: lift,
+            family_kernels: kernels,
+            ..arrow_eval_config()
+        },
+    );
+    for row in 1..=ELIGIBILITY_ROWS {
+        e.set_cell_value("Sheet1", row, 1, LiteralValue::Number(1.0))
+            .unwrap();
+        e.set_cell_formula(
+            "Sheet1",
+            row,
+            2,
+            parse(formula.replace('@', &row.to_string())).unwrap(),
+        )
+        .unwrap();
+    }
+    for row in 1..=2 {
+        e.set_cell_value("Sheet1", row, 26, LiteralValue::Number(f64::from(row)))
+            .unwrap();
+    }
+    e.evaluate_all().unwrap();
+    let expected = if formula.starts_with("=IF(A@>0,7,") {
+        7.0
+    } else {
+        1.0
+    };
+    for row in 1..=ELIGIBILITY_ROWS {
+        assert_eq!(
+            e.get_cell_value("Sheet1", row, 2),
+            Some(LiteralValue::Number(expected)),
+            "{formula} at row {row}"
+        );
+    }
+    (e, calls)
+}
+
+#[test]
+fn eligibility_lift_rejects_override_without_pure() {
+    for formula in ["=IF(A@>0,7,ABS($Z$1))", "=IF(A@>0,ABS($Z$1),7)"] {
+        let (e, calls) = eligibility_engine(formula, FnCaps::empty(), true, false);
+        assert_eq!(e.lifted_members_for_test(), 0, "{formula}");
+        assert_eq!(e.invariant_bound_members_for_test(), 0, "{formula}");
+        let expected = if formula.starts_with("=IF(A@>0,7,") {
+            0
+        } else {
+            ELIGIBILITY_ROWS as usize
+        };
+        assert_eq!(calls.load(Ordering::SeqCst), expected, "{formula}");
+    }
+}
+
+#[test]
+fn eligibility_binding_rejects_override_without_pure() {
+    for formula in ["=IF(A@>0,7,ABS($Z$1))", "=IF(A@>0,ABS($Z$1),7)"] {
+        let (e, calls) = eligibility_engine(formula, FnCaps::empty(), false, true);
+        assert_eq!(e.lifted_members_for_test(), 0, "{formula}");
+        assert_eq!(e.invariant_bound_members_for_test(), 0, "{formula}");
+        let expected = if formula.starts_with("=IF(A@>0,7,") {
+            0
+        } else {
+            ELIGIBILITY_ROWS as usize
+        };
+        assert_eq!(calls.load(Ordering::SeqCst), expected, "{formula}");
+    }
+}
+
+#[test]
+fn eligibility_lift_retains_pure_override() {
+    let (e, calls) = eligibility_engine("=IF(A@>0,ABS($Z$1),7)", FnCaps::PURE, true, false);
+    assert!(e.lifted_members_for_test() > 0);
+    assert_eq!(e.invariant_bound_members_for_test(), 0);
+    assert!(calls.load(Ordering::SeqCst) > 0);
+}
+
+#[test]
+fn eligibility_binding_retains_pure_override() {
+    let (e, calls) = eligibility_engine("=IF(A@>0,ABS($Z$1),7)", FnCaps::PURE, false, true);
+    assert_eq!(e.lifted_members_for_test(), 0);
+    assert!(e.invariant_bound_members_for_test() > 0);
+    assert!(calls.load(Ordering::SeqCst) > 0);
+}
+
+#[test]
+fn eligibility_specialized_memo_rejects_nonpure_key_subtrees() {
+    for key in ["ABS(A@)", "ROUND(ABS(A@),0)", "ABS(A@)+0", "-(-ABS(A@))"] {
+        let formula = format!("=MATCH({key},$Z$1:$Z$2,0)");
+        let (e, calls) = eligibility_engine(&formula, FnCaps::empty(), false, true);
+        assert_eq!(e.memo_hits_for_test(), 0, "{formula}");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            ELIGIBILITY_ROWS as usize,
+            "{formula}"
+        );
+    }
+}
+
+#[test]
+fn eligibility_specialized_memo_retains_pure_key_subtrees() {
+    for key in ["ABS(A@)", "ROUND(ABS(A@),0)", "ABS(A@)+0", "-(-ABS(A@))"] {
+        let formula = format!("=MATCH({key},$Z$1:$Z$2,0)");
+        let (e, _) = eligibility_engine(&formula, FnCaps::PURE, false, true);
+        assert!(e.memo_hits_for_test() > 0, "{formula}");
+    }
+}
+
+#[test]
+fn eligibility_general_memo_rejects_override_without_pure() {
+    let (e, calls) = eligibility_engine(
+        "=MATCH(ABS(A@),$Z$1:$Z$2,0)+0",
+        FnCaps::empty(),
+        false,
+        true,
+    );
+    assert_eq!(e.memo_hits_for_test(), 0);
+    assert_eq!(calls.load(Ordering::SeqCst), ELIGIBILITY_ROWS as usize);
+}
+
+#[test]
+fn eligibility_general_memo_retains_pure_override() {
+    let (e, _) = eligibility_engine("=MATCH(ABS(A@),$Z$1:$Z$2,0)+0", FnCaps::PURE, false, true);
+    assert!(e.memo_hits_for_test() > 0);
+}
 
 fn engine(lift: bool, parallel: bool) -> Engine<TestWorkbook> {
     let config = EvalConfig {

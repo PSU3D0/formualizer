@@ -73,12 +73,14 @@ pub(super) fn pure_listed_function(
         .iter()
         .any(|f| f.eq_ignore_ascii_case(name))
         && functions.get_named(name).is_some_and(|fun| {
-            !fun.caps().intersects(
-                FnCaps::VOLATILE
-                    | FnCaps::DYNAMIC_DEPENDENCY
-                    | FnCaps::LOCAL_ENVIRONMENT
-                    | FnCaps::MAY_SPILL,
-            )
+            let caps = fun.caps();
+            caps.contains(FnCaps::PURE)
+                && !caps.intersects(
+                    FnCaps::VOLATILE
+                        | FnCaps::DYNAMIC_DEPENDENCY
+                        | FnCaps::LOCAL_ENVIRONMENT
+                        | FnCaps::MAY_SPILL,
+                )
         })
 }
 

@@ -65,10 +65,54 @@ impl MemoPlan {
                     // the argument itself varies (or may): no memo.
                     _ => return None,
                 },
-                _ => key_args.push(arg),
+                _ => {
+                    // Key expressions are evaluated before the full call,
+                    // including on memo hits. Only pure, context-free calls
+                    // may be evaluated speculatively or skipped by reuse.
+                    if !Self::pure_key_arg(functions, ds, arg) {
+                        return None;
+                    }
+                    key_args.push(arg);
+                }
             }
         }
         Some(Self { key_args })
+    }
+
+    fn pure_key_arg(
+        functions: &crate::interpreter::ResolvedFunctions,
+        ds: &DataStore,
+        id: AstNodeId,
+    ) -> bool {
+        match ds.get_node(id) {
+            Some(AstNodeData::Function { name_id, .. }) => {
+                super::lift::pure_listed_function(functions, ds.resolve_ast_string(*name_id))
+                    && ds.get_args(id).is_some_and(|args| {
+                        args.iter()
+                            .all(|&arg| Self::pure_key_arg(functions, ds, arg))
+                    })
+            }
+            Some(AstNodeData::UnaryOp { expr_id, .. }) => {
+                Self::pure_key_arg(functions, ds, *expr_id)
+            }
+            Some(AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            }) => {
+                Self::pure_key_arg(functions, ds, *left_id)
+                    && Self::pure_key_arg(functions, ds, *right_id)
+            }
+            Some(AstNodeData::Array { .. }) => {
+                ds.get_array_elems(id).is_some_and(|(_, _, elems)| {
+                    elems
+                        .iter()
+                        .all(|&elem| Self::pure_key_arg(functions, ds, elem))
+                })
+            }
+            Some(
+                AstNodeData::Literal(_) | AstNodeData::Omitted | AstNodeData::Reference { .. },
+            ) => true,
+            None => false,
+        }
     }
 
     /// Program 3: any template whose members differ only in the values of
