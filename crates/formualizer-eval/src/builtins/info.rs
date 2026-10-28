@@ -1281,7 +1281,13 @@ impl Function for NFn {
             LiteralValue::Text(_) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
             LiteralValue::Empty => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0))),
             LiteralValue::Array(_) => {
-                // Array-to-scalar implicit intersection is not implemented here; returns 0.
+                // Preserve the legacy scalar result while recording the selected array path.
+                ctx.report_unavailable_operation(
+                    crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode {
+                        name: self.name().into(),
+                        mode: "array_implicit_intersection",
+                    },
+                );
                 Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(0)))
             }
             LiteralValue::Error(e) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
@@ -1844,8 +1850,30 @@ impl Function for CellFn {
             _ => return Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
         };
         if args.len() < 2 {
-            // Without a reference, Excel reports on the last-changed cell, which is
-            // not reproducible here; #VALUE! keeps the result well-defined.
+            // Excel uses selected/active-cell state when the optional reference
+            // is absent. Invalid info types never select that unavailable mode.
+            if matches!(
+                info_type.as_str(),
+                "address"
+                    | "col"
+                    | "row"
+                    | "contents"
+                    | "type"
+                    | "color"
+                    | "filename"
+                    | "format"
+                    | "parentheses"
+                    | "prefix"
+                    | "protect"
+                    | "width"
+            ) {
+                ctx.report_unavailable_operation(
+                    crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode {
+                        name: self.name().into(),
+                        mode: "implicit_active_cell_reference",
+                    },
+                );
+            }
             return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
         }
 

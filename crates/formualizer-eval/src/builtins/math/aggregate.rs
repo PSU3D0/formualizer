@@ -1924,6 +1924,22 @@ impl Function for AggregateFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
+        // Validate options and array-form arity before selecting an unavailable
+        // operation. An invalid call must not acquire an AGGREGATE root.
+        let options = match parse_strict_int_arg(&args[1]) {
+            Ok(v) if (0..=7).contains(&v) => v,
+            Ok(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+        if (14..=19).contains(&function_num) && args.get(3).is_none_or(ArgumentHandle::is_omitted) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
         let op = if (1..=11).contains(&function_num) {
             aggregate_op_from_function_num(function_num)
                 .expect("validated AGGREGATE function_num maps to operation")
@@ -1942,18 +1958,8 @@ impl Function for AggregateFn {
             )));
         };
 
-        let options = match parse_strict_int_arg(&args[1]) {
-            Ok(v) => v,
-            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
-        };
-
         // Options 0-3 skip nested SUBTOTAL and AGGREGATE cells; 4-7 count
         // them. Odd options skip hidden rows, 2-3 and 6-7 skip errors.
-        if !(0..=7).contains(&options) {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_value(),
-            )));
-        }
         let visibility = if options % 2 == 1 {
             VisibilityPolicy::ExcludeManualOrFilterHidden
         } else {
