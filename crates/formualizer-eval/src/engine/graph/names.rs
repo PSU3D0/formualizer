@@ -840,6 +840,10 @@ impl DependencyGraph {
             }
             _ => (false, false),
         };
+        // Observations describe the previous definition/binding, not the
+        // rebuilt name. Retire them before propagation or planning can turn
+        // obsolete reads into dependency hints. This also bumps rev_dyn.
+        self.authority.forget_observed(vertex);
         self.mark_volatile(vertex, volatile);
         self.store.set_dynamic(vertex, dynamic);
         self.remove_dependent_edges(vertex);
@@ -1058,6 +1062,7 @@ impl DependencyGraph {
     }
 
     pub(super) fn mark_named_vertex_deleted(&mut self, named_range: &NamedRange) {
+        self.authority.forget_observed(named_range.vertex);
         self.detach_vertex_from_names(named_range.vertex);
         self.remove_dependent_edges(named_range.vertex);
         self.unregister_name_cell_dependencies(named_range.vertex);

@@ -1882,6 +1882,9 @@ impl DependencyGraph {
                 continue;
             };
             self.authority.note_unbound(v, missing);
+            // Rebinding a symbol can change a dynamic name's runtime reads
+            // even when its AST is unchanged (for example, name shadowing).
+            self.authority.forget_observed(v);
             // A name's node carries the name vertex's id.
             self.authority.store.set_formula_given(cell, &facts, v.0)?;
             self.authority.incremental_mutations += 1;
