@@ -1041,7 +1041,8 @@ impl Function for IndirectFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Option<Result<ReferenceType, ExcelError>> {
-        if args.is_empty() {
+        // Reference callers can bypass dispatch's schema validation.
+        if !(1..=2).contains(&args.len()) {
             return Some(Err(ExcelError::new(ExcelErrorKind::Value)));
         }
 
