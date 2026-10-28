@@ -1889,6 +1889,24 @@ impl Function for CellFn {
         };
         let row = cell.coord.row() + 1;
         let col = cell.coord.col() + 1;
+        let unsupported_mode = match info_type.as_str() {
+            "color" => Some("color"),
+            "filename" => Some("filename"),
+            "format" => Some("format"),
+            "parentheses" => Some("parentheses"),
+            "prefix" => Some("prefix"),
+            "protect" => Some("protect"),
+            "width" => Some("width"),
+            _ => None,
+        };
+        if let Some(mode) = unsupported_mode {
+            ctx.report_unavailable_operation(
+                crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode {
+                    name: self.name().into(),
+                    mode,
+                },
+            );
+        }
 
         match info_type.as_str() {
             "address" => {

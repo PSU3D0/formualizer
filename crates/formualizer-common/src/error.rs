@@ -112,6 +112,8 @@ pub enum ResourceExhaustionReason {
     GraphVertices,
     GraphEdges,
     MaterializationCells,
+    OperationEvidenceRoots,
+    OperationEvidenceTextBytes,
     ArithmeticOverflow,
 }
 
@@ -126,6 +128,8 @@ impl ResourceExhaustionReason {
             Self::GraphVertices => "graph_vertices",
             Self::GraphEdges => "graph_edges",
             Self::MaterializationCells => "materialization_cells",
+            Self::OperationEvidenceRoots => "operation_evidence_roots",
+            Self::OperationEvidenceTextBytes => "operation_evidence_text_bytes",
             Self::ArithmeticOverflow => "arithmetic_overflow",
         }
     }

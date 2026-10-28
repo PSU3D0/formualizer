@@ -1,114 +1,158 @@
-//! Opt-in evidence of unavailable operations encountered in the current request.
+//! Opt-in request evidence of unavailable or unverified executed operations.
 //!
-//! These events do not certify coverage of retained results. Roots describe logical
-//! cell/reason incidence, not affected-output closure or final Excel error cells.
-//! Only exceptional roots are retained; successful cells have no diagnostic payload.
+//! Roots describe logical cell/reason incidence, not retained-result coverage,
+//! affected output closure, or final Excel errors. Display sampling never
+//! truncates the exact sparse evidence. Physical telemetry is independently opt-in.
+mod scopes;
 use crate::{CellRef, traits::CalcValue};
-use formualizer_common::{ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue};
-use std::{cell::RefCell, collections::HashSet, marker::PhantomData, rc::Rc, sync::Mutex};
+use formualizer_common::{
+    ExcelError, ExcelErrorExtra, ExcelErrorKind, LiteralValue, ResourceExhaustionDetail,
+    ResourceExhaustionReason,
+};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum UnavailableOperation {
-    UnknownFunction { name: String },
-    UnimplementedFunction { name: String },
+    UnknownFunction {
+        name: String,
+    },
+    UnimplementedFunction {
+        name: String,
+    },
+    UnimplementedFunctionMode {
+        name: String,
+        mode: &'static str,
+    },
+    /// The executed mode has no established support result. It is not a
+    /// claim that the input is invalid or a known valid unsupported Excel mode.
+    UnverifiedFunctionMode {
+        name: String,
+        mode: &'static str,
+    },
+    UnverifiedProvider {
+        name: String,
+    },
     PostfixInvocation,
 }
-
+impl UnavailableOperation {
+    fn owned_text_bytes(&self) -> usize {
+        match self {
+            Self::UnknownFunction { name }
+            | Self::UnimplementedFunction { name }
+            | Self::UnimplementedFunctionMode { name, .. }
+            | Self::UnverifiedFunctionMode { name, .. }
+            | Self::UnverifiedProvider { name } => name.capacity(),
+            Self::PostfixInvocation => 0,
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OperationRoot {
     pub cell: Option<CellRef>,
-    /// Named-formula roots identify the symbol vertex, never a fabricated grid cell.
+    /// Named-formula roots identify their symbol, never a fabricated grid cell.
     pub named_vertex: Option<crate::engine::VertexId>,
-    pub operation: UnavailableOperation,
+    /// Shared once per distinct operation, including through snapshots/samples.
+    pub operation: Arc<UnavailableOperation>,
 }
 
-/// The report intentionally has no retained-result-coverage variant.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OperationDiagnosticScope {
     #[default]
     RequestEvents,
 }
-
-/// Request-event evidence only. Empty roots say nothing about retained caches.
 #[derive(Clone, Debug, Default)]
 pub struct OperationDiagnostics {
     pub scope: OperationDiagnosticScope,
     pub logical_cell_reason_count: usize,
     pub logical_root_cell_count: usize,
     pub logical_named_reason_count: usize,
-    /// Actual root observations, including optimizer speculation; excludes debug oracles.
-    pub physical_unavailable_observations: u64,
-    /// Interpreter function dispatches, including speculation; excludes debug oracles.
-    /// Unknown-name lookups and unsupported postfix nodes do not dispatch providers.
-    pub physical_function_dispatches: u64,
-    /// Complete sparse roots for conservative source closure. Not sample-limited.
+    /// None means unmeasured; Some(0) means measured zero.
+    pub physical_unavailable_observations: Option<u64>,
+    pub physical_function_dispatches: Option<u64>,
     pub roots: Vec<OperationRoot>,
     pub samples: Vec<OperationRoot>,
 }
-
+#[derive(Clone, Copy, Debug)]
+pub struct OperationDiagnosticOptions {
+    pub sample_limit: usize,
+    pub physical_telemetry: bool,
+    pub max_roots: Option<usize>,
+    /// Owned String capacity, counted once per distinct operation.
+    /// This is not a total RSS budget.
+    pub max_operation_text_bytes: Option<usize>,
+}
+impl Default for OperationDiagnosticOptions {
+    fn default() -> Self {
+        Self {
+            sample_limit: 16,
+            physical_telemetry: false,
+            max_roots: None,
+            max_operation_text_bytes: None,
+        }
+    }
+}
 #[derive(Default)]
 struct State {
     roots: HashSet<OperationRoot>,
+    operations: HashSet<Arc<UnavailableOperation>>,
+    operation_text_bytes: usize,
     physical: u64,
+    exhaustion: Option<ResourceExhaustionDetail>,
+    finalized: bool,
 }
-
-/// Collector shared by interpreters and worker threads in one engine request.
 pub struct OperationDiagnosticCollector {
-    sample_limit: usize,
+    options: OperationDiagnosticOptions,
     state: Mutex<State>,
     dispatches: std::sync::atomic::AtomicU64,
 }
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
     Inherit,
     Speculative,
     Suppressed,
 }
-
-struct Frame {
-    sink: usize,
-    mode: Mode,
-    events: u64,
-    tainted: bool,
-    named_vertex: Option<crate::engine::VertexId>,
-    reference_cell: Option<CellRef>,
-}
-thread_local! { static FRAMES: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) }; }
-
 pub(crate) struct Scope<'a> {
-    collector: &'a OperationDiagnosticCollector,
-    index: usize,
-    _not_send: PhantomData<Rc<()>>,
+    _collector: &'a OperationDiagnosticCollector,
+    guard: scopes::Guard,
 }
-
 impl Scope<'_> {
     pub(crate) fn encountered(&self) -> bool {
-        FRAMES.with(|frames| frames.borrow()[self.index].events != 0)
+        self.guard.encountered()
     }
     pub(crate) fn tainted(&self) -> bool {
-        FRAMES.with(|frames| {
-            let frames = frames.borrow();
-            let frame = &frames[self.index];
-            frame.tainted || frame.events != 0
+        self.guard.tainted()
+    }
+}
+fn resource_error(detail: ResourceExhaustionDetail) -> ExcelError {
+    crate::engine::ResourceLedgerError::Exhausted(detail).into_excel_error()
+}
+fn state_error() -> ExcelError {
+    ExcelError::new(ExcelErrorKind::Calc)
+        .with_message("operation evidence has already been finalized")
+}
+fn allocation_detail(observed: usize) -> ResourceExhaustionDetail {
+    ResourceExhaustionDetail {
+        reason: ResourceExhaustionReason::ScratchMemory,
+        limit: u64::MAX,
+        observed: observed as u64,
+        request_id: None,
+    }
+}
+impl OperationDiagnosticCollector {
+    /// Explicit historical diagnostic callers request physical telemetry.
+    pub fn new(sample_limit: usize) -> Self {
+        Self::with_options(OperationDiagnosticOptions {
+            sample_limit,
+            physical_telemetry: true,
+            ..Default::default()
         })
     }
-}
-impl Drop for Scope<'_> {
-    fn drop(&mut self) {
-        FRAMES.with(|frames| {
-            let mut frames = frames.borrow_mut();
-            debug_assert_eq!(frames.len(), self.index + 1);
-            debug_assert_eq!(frames[self.index].sink, self.collector.key());
-            frames.pop();
-        });
-    }
-}
-
-impl OperationDiagnosticCollector {
-    pub fn new(sample_limit: usize) -> Self {
+    pub fn with_options(options: OperationDiagnosticOptions) -> Self {
         Self {
-            sample_limit,
+            options,
             state: Mutex::new(State::default()),
             dispatches: std::sync::atomic::AtomicU64::new(0),
         }
@@ -117,113 +161,135 @@ impl OperationDiagnosticCollector {
         self as *const Self as usize
     }
     pub(crate) fn scope(&self, mode: Mode) -> Scope<'_> {
-        let index = FRAMES.with(|frames| {
-            let mut frames = frames.borrow_mut();
-            let index = frames.len();
-            frames.push(Frame {
-                sink: self.key(),
-                mode,
-                events: 0,
-                tainted: false,
-                named_vertex: None,
-                reference_cell: None,
-            });
-            index
-        });
         Scope {
-            collector: self,
-            index,
-            _not_send: PhantomData,
+            _collector: self,
+            guard: scopes::enter(self.key(), mode, scopes::Origin::default()),
         }
     }
     pub(crate) fn named_scope(&self, vertex: crate::engine::VertexId) -> Scope<'_> {
-        let scope = self.scope(Mode::Inherit);
-        FRAMES.with(|frames| frames.borrow_mut()[scope.index].named_vertex = Some(vertex));
-        scope
+        Scope {
+            _collector: self,
+            guard: scopes::enter(
+                self.key(),
+                Mode::Inherit,
+                scopes::Origin {
+                    named_vertex: Some(vertex),
+                    reference_cell: None,
+                },
+            ),
+        }
     }
-    /// Reporting origin only: reference providers retain their existing
-    /// FunctionContext::current_cell() semantics.
     pub(crate) fn reference_scope(&self, cell: Option<CellRef>) -> Scope<'_> {
-        let scope = self.scope(Mode::Inherit);
-        FRAMES.with(|frames| frames.borrow_mut()[scope.index].reference_cell = cell);
-        scope
+        Scope {
+            _collector: self,
+            guard: scopes::enter(
+                self.key(),
+                Mode::Inherit,
+                scopes::Origin {
+                    named_vertex: None,
+                    reference_cell: cell,
+                },
+            ),
+        }
     }
-
     pub(crate) fn reset(&self) {
         *self.state.lock().unwrap() = State::default();
         self.dispatches
             .store(0, std::sync::atomic::Ordering::Relaxed);
     }
-
     pub(crate) fn dispatch_started(&self) {
-        let suppressed = FRAMES.with(|frames| {
-            frames
-                .borrow()
-                .iter()
-                .rev()
-                .find(|f| f.sink == self.key() && f.mode != Mode::Inherit)
-                .is_some_and(|f| f.mode == Mode::Suppressed)
-        });
-        if !suppressed {
+        if !self.options.physical_telemetry {
+            return;
+        }
+        if scopes::current(self.key()).0 != Mode::Suppressed {
             self.dispatches
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
-
-    /// Explicit provider seam: call only on the executed unsupported path.
-    /// Propagating an argument's error is not a new unavailable operation.
+    /// Call only at the actually executed limitation. Propagating a spreadsheet
+    /// error is not a new operation. Resource exhaustion remains sticky.
     pub fn record(&self, cell: Option<CellRef>, operation: UnavailableOperation) {
-        let mode = FRAMES.with(|frames| {
-            frames
-                .borrow()
-                .iter()
-                .rev()
-                .find(|f| f.sink == self.key() && f.mode != Mode::Inherit)
-                .map_or(Mode::Inherit, |f| f.mode)
-        });
-        if mode == Mode::Suppressed {
+        let Some((mode, origin)) = scopes::event(self.key()) else {
+            return;
+        };
+        let mut state = self.state.lock().unwrap();
+        if self.options.physical_telemetry {
+            state.physical = state.physical.saturating_add(1);
+        }
+        if mode == Mode::Speculative || state.exhaustion.is_some() || state.finalized {
             return;
         }
-        FRAMES.with(|frames| {
-            for frame in frames
-                .borrow_mut()
-                .iter_mut()
-                .filter(|f| f.sink == self.key())
-            {
-                frame.events += 1;
-            }
-        });
-        let mut state = self.state.lock().unwrap();
-        state.physical += 1;
-        if mode != Mode::Speculative {
-            let named_vertex = FRAMES.with(|frames| {
-                frames
-                    .borrow()
-                    .iter()
-                    .rev()
-                    .filter(|f| f.sink == self.key())
-                    .find_map(|f| f.named_vertex)
-            });
-            let cell = cell.or_else(|| {
-                FRAMES.with(|frames| {
-                    frames
-                        .borrow()
-                        .iter()
-                        .rev()
-                        .filter(|f| f.sink == self.key())
-                        .find_map(|f| f.reference_cell)
-                })
-            });
-            state.roots.insert(OperationRoot {
-                cell: if named_vertex.is_some() { None } else { cell },
+        let named_vertex = origin.named_vertex;
+        let cell = if named_vertex.is_some() {
+            None
+        } else {
+            cell.or(origin.reference_cell)
+        };
+        let existing = state.operations.get(&operation).cloned();
+        if let Some(operation) = &existing {
+            let root = OperationRoot {
+                cell,
                 named_vertex,
-                operation,
-            });
+                operation: Arc::clone(operation),
+            };
+            if state.roots.contains(&root) {
+                return;
+            }
         }
+        if let Some(limit) = self.options.max_roots
+            && state.roots.len() >= limit
+        {
+            state.exhaustion = Some(ResourceExhaustionDetail {
+                reason: ResourceExhaustionReason::OperationEvidenceRoots,
+                limit: limit as u64,
+                observed: state.roots.len().saturating_add(1) as u64,
+                request_id: None,
+            });
+            return;
+        }
+        let added_text = if existing.is_some() {
+            0
+        } else {
+            operation.owned_text_bytes()
+        };
+        let Some(next_text) = state.operation_text_bytes.checked_add(added_text) else {
+            state.exhaustion = Some(ResourceExhaustionDetail {
+                reason: ResourceExhaustionReason::ArithmeticOverflow,
+                limit: usize::MAX as u64,
+                observed: u64::MAX,
+                request_id: None,
+            });
+            return;
+        };
+        if let Some(limit) = self.options.max_operation_text_bytes
+            && next_text > limit
+        {
+            state.exhaustion = Some(ResourceExhaustionDetail {
+                reason: ResourceExhaustionReason::OperationEvidenceTextBytes,
+                limit: limit as u64,
+                observed: next_text as u64,
+                request_id: None,
+            });
+            return;
+        }
+        if state.roots.try_reserve(1).is_err()
+            || (existing.is_none() && state.operations.try_reserve(1).is_err())
+        {
+            state.exhaustion = Some(allocation_detail(state.roots.len().saturating_add(1)));
+            return;
+        }
+        let operation = existing.unwrap_or_else(|| {
+            let operation = Arc::new(operation);
+            state.operations.insert(Arc::clone(&operation));
+            state.operation_text_bytes = next_text;
+            operation
+        });
+        state.roots.insert(OperationRoot {
+            cell,
+            named_vertex,
+            operation,
+        });
     }
-
-    // An unavailable input (or a range with unknown provenance) must not be
-    // relabelled as a new function root when a wrapper propagates #N/IMPL!.
     pub(crate) fn input(&self, value: &Result<CalcValue<'_>, ExcelError>) {
         match value {
             Ok(value) => self.input_value(value),
@@ -232,7 +298,9 @@ impl OperationDiagnosticCollector {
     }
     pub(crate) fn input_value(&self, value: &CalcValue<'_>) {
         let tainted = match value {
-            CalcValue::Scalar(v) | CalcValue::AnnotatedScalar(v, _) => literal_has_nimpl(v),
+            CalcValue::Scalar(value) | CalcValue::AnnotatedScalar(value, _) => {
+                literal_has_nimpl(value)
+            }
             CalcValue::Range(_) => true,
             _ => false,
         };
@@ -246,56 +314,278 @@ impl OperationDiagnosticCollector {
         }
     }
     pub(crate) fn ambiguous_input(&self) {
-        FRAMES.with(|frames| {
-            for frame in frames
-                .borrow_mut()
-                .iter_mut()
-                .filter(|f| f.sink == self.key())
-            {
-                frame.tainted = true;
-            }
-        });
+        scopes::taint(self.key());
     }
-    pub fn snapshot(&self) -> OperationDiagnostics {
-        let state = self.state.lock().unwrap();
-        let mut roots: Vec<_> = state.roots.iter().cloned().collect();
-        roots.sort_unstable();
-        let cells: HashSet<_> = roots.iter().filter_map(|r| r.cell).collect();
-        OperationDiagnostics {
-            scope: OperationDiagnosticScope::RequestEvents,
-            logical_cell_reason_count: roots.iter().filter(|r| r.cell.is_some()).count(),
-            logical_named_reason_count: roots.iter().filter(|r| r.named_vertex.is_some()).count(),
-            logical_root_cell_count: cells.len(),
-            physical_unavailable_observations: state.physical,
-            physical_function_dispatches: self
-                .dispatches
-                .load(std::sync::atomic::Ordering::Relaxed),
-            samples: roots.iter().take(self.sample_limit).cloned().collect(),
-            roots,
+    fn validate_state(state: &State) -> Result<(), ExcelError> {
+        if let Some(detail) = &state.exhaustion {
+            return Err(resource_error(detail.clone()));
         }
+        if state.finalized {
+            return Err(state_error());
+        }
+        Ok(())
+    }
+    fn report(
+        &self,
+        roots: impl Iterator<Item = OperationRoot>,
+        count: usize,
+        physical: u64,
+    ) -> Result<OperationDiagnostics, ExcelError> {
+        let mut roots_vec = Vec::new();
+        roots_vec
+            .try_reserve_exact(count)
+            .map_err(|_| resource_error(allocation_detail(count)))?;
+        roots_vec.extend(roots);
+        roots_vec.sort_unstable();
+        let mut previous = None;
+        let mut cells = 0;
+        let mut cell_reasons = 0;
+        let mut named_reasons = 0;
+        for root in &roots_vec {
+            if let Some(cell) = root.cell {
+                cell_reasons += 1;
+                if previous != Some(cell) {
+                    cells += 1;
+                    previous = Some(cell);
+                }
+            }
+            if root.named_vertex.is_some() {
+                named_reasons += 1;
+            }
+        }
+        let sample_count = self.options.sample_limit.min(roots_vec.len());
+        let mut samples = Vec::new();
+        samples
+            .try_reserve_exact(sample_count)
+            .map_err(|_| resource_error(allocation_detail(sample_count)))?;
+        samples.extend(roots_vec.iter().take(sample_count).cloned());
+        Ok(OperationDiagnostics {
+            scope: OperationDiagnosticScope::RequestEvents,
+            logical_cell_reason_count: cell_reasons,
+            logical_root_cell_count: cells,
+            logical_named_reason_count: named_reasons,
+            physical_unavailable_observations: self.options.physical_telemetry.then_some(physical),
+            physical_function_dispatches: self
+                .options
+                .physical_telemetry
+                .then(|| self.dispatches.load(std::sync::atomic::Ordering::Relaxed)),
+            roots: roots_vec,
+            samples,
+        })
+    }
+    pub fn snapshot(&self) -> Result<OperationDiagnostics, ExcelError> {
+        let mut state = self.state.lock().unwrap();
+        Self::validate_state(&state)?;
+        let report = self.report(
+            state.roots.iter().cloned(),
+            state.roots.len(),
+            state.physical,
+        );
+        if let Err(error) = &report
+            && let ExcelErrorExtra::Resource { detail } = error.extra()
+        {
+            state.exhaustion = Some(detail.as_ref().clone());
+        }
+        report
+    }
+    /// Consume exact roots after the request's scopes/workers have finished.
+    /// A second drain cannot look like clean empty evidence.
+    pub fn take_snapshot(&mut self) -> Result<OperationDiagnostics, ExcelError> {
+        let mut state = self.state.lock().unwrap();
+        Self::validate_state(&state)?;
+        let roots = std::mem::take(&mut state.roots);
+        let report = self.report(roots.iter().cloned(), roots.len(), state.physical);
+        if report.is_ok() {
+            state.operations = HashSet::new();
+            state.operation_text_bytes = 0;
+            state.finalized = true;
+        } else {
+            // Restore exact roots so an allocation failure cannot erase evidence.
+            state.roots = roots;
+            if let Err(error) = &report
+                && let ExcelErrorExtra::Resource { detail } = error.extra()
+            {
+                state.exhaustion = Some(detail.as_ref().clone());
+            }
+        }
+        report
     }
 }
-
 fn literal_has_nimpl(value: &LiteralValue) -> bool {
     match value {
-        LiteralValue::Error(e) => e.kind == ExcelErrorKind::NImpl,
-        // Arrays, like ranges, have opaque provenance. Do not scan a dense
-        // successful payload merely to decide whether an outer error is a root.
+        LiteralValue::Error(error) => error.kind == ExcelErrorKind::NImpl,
         LiteralValue::Array(_) => true,
         _ => false,
     }
 }
-
 pub(crate) fn is_unimplemented(value: &Result<CalcValue<'_>, ExcelError>) -> bool {
     let error = match value {
-        Err(e) => Some(e),
+        Err(error) => Some(error),
         Ok(
-            CalcValue::Scalar(LiteralValue::Error(e))
-            | CalcValue::AnnotatedScalar(LiteralValue::Error(e), _),
-        ) => Some(e),
+            CalcValue::Scalar(LiteralValue::Error(error))
+            | CalcValue::AnnotatedScalar(LiteralValue::Error(error), _),
+        ) => Some(error),
         _ => None,
     };
-    error.is_some_and(|e| {
-        e.kind == ExcelErrorKind::NImpl && matches!(e.extra(), ExcelErrorExtra::None)
+    error.is_some_and(|error| {
+        error.kind == ExcelErrorKind::NImpl && matches!(error.extra(), ExcelErrorExtra::None)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reference::Coord;
+    fn cell(row: u32) -> CellRef {
+        CellRef::new(0, Coord::new(row, 0, true, true))
+    }
+    fn gap(name: &str) -> UnavailableOperation {
+        UnavailableOperation::UnknownFunction { name: name.into() }
+    }
+    fn failure_reason(error: &ExcelError) -> ResourceExhaustionReason {
+        match error.extra() {
+            ExcelErrorExtra::Resource { detail } => detail.reason,
+            _ => panic!("expected typed resource failure: {error:?}"),
+        }
+    }
+
+    #[test]
+    fn collector_interns_operation_identity_across_exact_roots_and_samples() {
+        let collector = OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
+            sample_limit: 1,
+            max_roots: Some(2),
+            ..Default::default()
+        });
+        collector.record(Some(cell(0)), gap("GAP"));
+        collector.record(Some(cell(1)), gap("GAP"));
+        let report = collector.snapshot().unwrap();
+        assert_eq!(report.roots.len(), 2);
+        assert_eq!(report.logical_root_cell_count, 2);
+        assert_eq!(report.samples.len(), 1);
+        assert!(Arc::ptr_eq(
+            &report.roots[0].operation,
+            &report.roots[1].operation
+        ));
+        assert!(Arc::ptr_eq(
+            &report.roots[0].operation,
+            &report.samples[0].operation
+        ));
+        assert_eq!(report.physical_function_dispatches, None);
+        assert_eq!(report.physical_unavailable_observations, None);
+    }
+
+    #[test]
+    fn duplicate_root_at_limit_does_not_exhaust_exact_evidence() {
+        let collector = OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
+            sample_limit: 0,
+            max_roots: Some(1),
+            ..Default::default()
+        });
+        collector.record(Some(cell(0)), gap("GAP"));
+        collector.record(Some(cell(0)), gap("GAP"));
+        let report = collector.snapshot().unwrap();
+        assert_eq!(report.roots.len(), 1);
+        assert!(report.samples.is_empty());
+        assert_eq!(report.logical_cell_reason_count, 1);
+    }
+
+    #[test]
+    fn root_limit_failure_is_typed_and_sticky_until_next_request() {
+        let mut collector =
+            OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
+                sample_limit: 0,
+                max_roots: Some(1),
+                ..Default::default()
+            });
+        collector.record(Some(cell(0)), gap("GAP"));
+        collector.record(Some(cell(1)), gap("GAP"));
+        for error in [
+            collector.snapshot().unwrap_err(),
+            collector.take_snapshot().unwrap_err(),
+        ] {
+            assert_eq!(
+                failure_reason(&error),
+                ResourceExhaustionReason::OperationEvidenceRoots
+            );
+        }
+        collector.reset();
+        assert!(collector.snapshot().unwrap().roots.is_empty());
+    }
+
+    #[test]
+    fn operation_text_budget_counts_owned_capacity_only_once() {
+        let mut collector =
+            OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
+                max_operation_text_bytes: Some(3),
+                ..Default::default()
+            });
+        collector.record(Some(cell(0)), gap("GAP"));
+        collector.record(Some(cell(1)), gap("GAP"));
+        assert_eq!(collector.snapshot().unwrap().roots.len(), 2);
+        collector.record(Some(cell(2)), gap("NEXT"));
+        assert_eq!(
+            failure_reason(&collector.take_snapshot().unwrap_err()),
+            ResourceExhaustionReason::OperationEvidenceTextBytes,
+        );
+    }
+
+    #[test]
+    fn owned_capacity_not_just_string_length_is_bounded() {
+        let collector = OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
+            max_operation_text_bytes: Some(3),
+            ..Default::default()
+        });
+        let mut name = String::with_capacity(100);
+        name.push_str("GAP");
+        collector.record(None, UnavailableOperation::UnknownFunction { name });
+        assert_eq!(
+            failure_reason(&collector.snapshot().unwrap_err()),
+            ResourceExhaustionReason::OperationEvidenceTextBytes,
+        );
+    }
+
+    #[test]
+    fn speculative_and_suppressed_work_do_not_consume_sparse_root_budget() {
+        let collector = OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
+            physical_telemetry: true,
+            max_roots: Some(0),
+            max_operation_text_bytes: Some(0),
+            ..Default::default()
+        });
+        {
+            let _speculation = collector.scope(Mode::Speculative);
+            collector.dispatch_started();
+            collector.record(Some(cell(0)), gap("GAP"));
+        }
+        {
+            let _oracle = collector.scope(Mode::Suppressed);
+            let _nested = collector.scope(Mode::Speculative);
+            collector.dispatch_started();
+            collector.record(Some(cell(1)), gap("IGNORED"));
+        }
+        let report = collector.snapshot().unwrap();
+        assert!(report.roots.is_empty());
+        assert_eq!(report.physical_function_dispatches, Some(1));
+        assert_eq!(report.physical_unavailable_observations, Some(1));
+    }
+
+    #[test]
+    fn finalization_consumes_once_and_reset_preserves_configuration() {
+        let mut collector =
+            OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
+                sample_limit: 0,
+                physical_telemetry: true,
+                ..Default::default()
+            });
+        collector.record(Some(cell(0)), gap("GAP"));
+        let report = collector.take_snapshot().unwrap();
+        assert_eq!(report.roots.len(), 1);
+        assert!(collector.snapshot().is_err());
+        assert!(collector.take_snapshot().is_err());
+        collector.reset();
+        let next = collector.take_snapshot().unwrap();
+        assert!(next.roots.is_empty());
+        assert_eq!(next.physical_function_dispatches, Some(0));
+        assert_eq!(next.physical_unavailable_observations, Some(0));
+    }
 }

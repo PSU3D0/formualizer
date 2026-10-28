@@ -109,7 +109,7 @@ fn recalc_contract_diagnostics_pure_active_inactive_lift_and_binding() {
                         "=IF(A@>0,7,ABS($Z$1))"
                     };
                     let e = repeated(formula, "ABS", true, explicit, lift, kernels, limit, false);
-                    let r = e.operation_diagnostics().unwrap();
+                    let r = e.operation_diagnostics().unwrap().unwrap();
                     assert_eq!(
                         r.logical_cell_reason_count,
                         if active { 8 } else { 0 },
@@ -118,7 +118,8 @@ fn recalc_contract_diagnostics_pure_active_inactive_lift_and_binding() {
                     assert_eq!(r.samples.len(), if active { limit } else { 0 });
                     if lift || kernels {
                         assert!(
-                            r.physical_unavailable_observations > 0,
+                            r.physical_unavailable_observations
+                                .is_some_and(|count| count > 0),
                             "speculation must have occurred"
                         );
                     }
@@ -145,7 +146,7 @@ fn recalc_contract_diagnostics_criteria_exception_and_inactive_control() {
         "=COUNTIF($Z$1:$Z$2,IF(A@>0,1,ABS($Z$1)))",
     ] {
         let e = repeated(formula, "ABS", true, true, false, true, 3, false);
-        let r = e.operation_diagnostics().unwrap();
+        let r = e.operation_diagnostics().unwrap().unwrap();
         assert_eq!(
             r.logical_cell_reason_count,
             if formula.contains(",IF(") { 0 } else { 8 },
@@ -170,8 +171,9 @@ fn recalc_contract_diagnostics_unaffected_optimization_retained() {
     assert_eq!(
         lift.operation_diagnostics()
             .unwrap()
+            .unwrap()
             .physical_unavailable_observations,
-        0
+        Some(0)
     );
     let bound = repeated(
         "=IF(A@>0,ABS($Z$1),7)",
@@ -209,6 +211,7 @@ fn recalc_contract_diagnostics_unaffected_optimization_retained() {
     assert_eq!(
         memo.operation_diagnostics()
             .unwrap()
+            .unwrap()
             .logical_cell_reason_count,
         0
     );
@@ -227,10 +230,11 @@ fn recalc_contract_diagnostics_memo_result_and_key_evidence() {
             3,
             parallel,
         );
-        let r = e.operation_diagnostics().unwrap();
+        let r = e.operation_diagnostics().unwrap().unwrap();
         assert_eq!(r.logical_cell_reason_count, 8, "{r:?}");
         assert_eq!(
-            r.physical_unavailable_observations, 8,
+            r.physical_unavailable_observations,
+            Some(8),
             "debug oracles cannot add observations"
         );
         assert_eq!(
@@ -249,7 +253,10 @@ fn recalc_contract_diagnostics_memo_result_and_key_evidence() {
             parallel,
         );
         assert_eq!(
-            e.operation_diagnostics().unwrap().logical_cell_reason_count,
+            e.operation_diagnostics()
+                .unwrap()
+                .unwrap()
+                .logical_cell_reason_count,
             8
         );
     }

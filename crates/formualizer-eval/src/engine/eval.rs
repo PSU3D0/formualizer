@@ -3843,8 +3843,21 @@ where
     /// Enable request-operation evidence before ingestion/evaluation.
     /// Each evaluation request resets events; this is not retained-result coverage.
     pub fn enable_operation_diagnostics(&mut self, sample_limit: usize) {
+        self.configure_operation_diagnostics(
+            crate::operation_diagnostics::OperationDiagnosticOptions {
+                sample_limit,
+                physical_telemetry: true,
+                ..Default::default()
+            },
+        );
+    }
+
+    pub fn configure_operation_diagnostics(
+        &mut self,
+        options: crate::operation_diagnostics::OperationDiagnosticOptions,
+    ) {
         self.operation_diagnostic_collector =
-            Some(crate::operation_diagnostics::OperationDiagnosticCollector::new(sample_limit));
+            Some(crate::operation_diagnostics::OperationDiagnosticCollector::with_options(options));
     }
 
     pub fn disable_operation_diagnostics(&mut self) {
@@ -3853,10 +3866,21 @@ where
 
     pub fn operation_diagnostics(
         &self,
-    ) -> Option<crate::operation_diagnostics::OperationDiagnostics> {
+    ) -> Result<Option<crate::operation_diagnostics::OperationDiagnostics>, ExcelError> {
         self.operation_diagnostic_collector
             .as_ref()
             .map(|collector| collector.snapshot())
+            .transpose()
+    }
+
+    /// Finalize exact request evidence once, without disabling next-request collection.
+    pub fn take_operation_diagnostics(
+        &mut self,
+    ) -> Result<Option<crate::operation_diagnostics::OperationDiagnostics>, ExcelError> {
+        self.operation_diagnostic_collector
+            .as_mut()
+            .map(|collector| collector.take_snapshot())
+            .transpose()
     }
 
     pub(super) fn diagnostic_request_active(&self) -> bool {

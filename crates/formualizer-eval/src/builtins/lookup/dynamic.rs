@@ -2427,8 +2427,8 @@ impl Function for PivotByFn {
         };
 
         let (rf_rows, rf_cols) = row_fields_view.dims();
-        let (cf_rows, _cf_cols) = col_fields_view.dims();
-        let (val_rows, _val_cols) = values_view.dims();
+        let (cf_rows, cf_cols) = col_fields_view.dims();
+        let (val_rows, val_cols) = values_view.dims();
 
         // Validate dimensions
         if rf_rows != cf_rows || rf_rows != val_rows {
@@ -2445,6 +2445,23 @@ impl Function for PivotByFn {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),
             ));
+        }
+
+        if cf_cols > 1 {
+            _ctx.report_unavailable_operation(
+                crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode {
+                    name: self.name().into(),
+                    mode: "multiple_column_fields",
+                },
+            );
+        }
+        if val_cols > 1 {
+            _ctx.report_unavailable_operation(
+                crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode {
+                    name: self.name().into(),
+                    mode: "multiple_values",
+                },
+            );
         }
 
         // Collect unique row and column keys

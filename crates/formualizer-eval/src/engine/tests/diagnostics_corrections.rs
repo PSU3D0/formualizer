@@ -98,7 +98,7 @@ fn recalc_contract_diagnostics_corrections_reference_origins() {
     )
     .unwrap();
     e.evaluate_all().unwrap();
-    let r = e.operation_diagnostics().unwrap();
+    let r = e.operation_diagnostics().unwrap().unwrap();
     assert_eq!(r.logical_cell_reason_count, 2, "{r:?}");
     assert_eq!(r.logical_named_reason_count, 1, "{r:?}");
     assert!(
@@ -120,7 +120,7 @@ fn recalc_contract_diagnostics_corrections_reference_origins() {
     let i = crate::interpreter::Interpreter::new_with_cell(&e, "Sheet1", cell);
     i.evaluate_ast_as_reference(&parse("=REFGAP_OK()").unwrap())
         .unwrap();
-    let r = e.operation_diagnostics().unwrap();
+    let r = e.operation_diagnostics().unwrap().unwrap();
     assert_eq!(r.roots.len(), 1);
     assert_eq!(r.roots[0].cell, Some(cell));
 }
@@ -140,10 +140,10 @@ fn recalc_contract_diagnostics_corrections_registered_tree_and_inactive() {
             LiteralValue::Number(7.0)
         );
     }
-    let r = e.operation_diagnostics().unwrap();
+    let r = e.operation_diagnostics().unwrap().unwrap();
     assert_eq!(r.logical_cell_reason_count, 1, "{r:?}");
-    assert_eq!(r.roots[0].operation, gap("INDIRECT"));
-    assert_eq!(r.physical_unavailable_observations, 1);
+    assert_eq!(r.roots[0].operation.as_ref(), &gap("INDIRECT"));
+    assert_eq!(r.physical_unavailable_observations, Some(1));
     formula(
         &mut e,
         1,
@@ -151,7 +151,7 @@ fn recalc_contract_diagnostics_corrections_registered_tree_and_inactive() {
         "=IF(FALSE,SUM(INDIRECT(\"R1C1:R2C1\",FALSE)),7)",
     );
     e.evaluate_all().unwrap();
-    assert!(e.operation_diagnostics().unwrap().roots.is_empty());
+    assert!(e.operation_diagnostics().unwrap().unwrap().roots.is_empty());
 }
 
 #[test]
@@ -160,7 +160,10 @@ fn recalc_contract_diagnostics_corrections_early_cancel_and_nonformula_reset() {
     formula(&mut e, 1, 2, "=IFERROR(GAP_PREVIOUS(1),7)");
     e.evaluate_all_for_snapshot(None).unwrap();
     assert_eq!(
-        e.operation_diagnostics().unwrap().logical_cell_reason_count,
+        e.operation_diagnostics()
+            .unwrap()
+            .unwrap()
+            .logical_cell_reason_count,
         1
     );
     let token = CancelToken::new();
@@ -169,10 +172,10 @@ fn recalc_contract_diagnostics_corrections_early_cancel_and_nonformula_reset() {
         e.evaluate_all_for_snapshot(Some(token)).unwrap_err().kind,
         ExcelErrorKind::Cancelled
     );
-    let r = e.operation_diagnostics().unwrap();
+    let r = e.operation_diagnostics().unwrap().unwrap();
     assert!(r.roots.is_empty() && r.samples.is_empty(), "{r:?}");
-    assert_eq!(r.physical_unavailable_observations, 0);
-    assert_eq!(r.physical_function_dispatches, 0);
+    assert_eq!(r.physical_unavailable_observations, Some(0));
+    assert_eq!(r.physical_function_dispatches, Some(0));
     // A literal defined name provides a public non-formula vertex request.
     e.define_name(
         "LITERAL_ONLY",
@@ -182,7 +185,7 @@ fn recalc_contract_diagnostics_corrections_early_cancel_and_nonformula_reset() {
     .unwrap();
     formula(&mut e, 1, 2, "=IFERROR(GAP_AGAIN(1),7)");
     e.evaluate_all().unwrap();
-    assert!(!e.operation_diagnostics().unwrap().roots.is_empty());
+    assert!(!e.operation_diagnostics().unwrap().unwrap().roots.is_empty());
     let vertex = e
         .resolve_name_entry("LITERAL_ONLY", e.sheet_id("Sheet1").unwrap())
         .unwrap()
@@ -191,9 +194,9 @@ fn recalc_contract_diagnostics_corrections_early_cancel_and_nonformula_reset() {
         e.evaluate_vertex(vertex).unwrap(),
         LiteralValue::Number(4.0)
     );
-    assert!(e.operation_diagnostics().unwrap().roots.is_empty());
+    assert!(e.operation_diagnostics().unwrap().unwrap().roots.is_empty());
     e.evaluate_all().unwrap();
-    assert!(e.operation_diagnostics().unwrap().roots.is_empty());
+    assert!(e.operation_diagnostics().unwrap().unwrap().roots.is_empty());
 }
 
 #[test]
@@ -210,13 +213,17 @@ fn recalc_contract_diagnostics_corrections_dirty_branch_probe_is_speculative() {
             "=IF(A1=0,IFERROR(GAP_PROBE(1),7),INDIRECT(\"C1\"))",
         );
         e.evaluate_all_for_snapshot(None).unwrap();
-        let r = e.operation_diagnostics().unwrap();
+        let r = e.operation_diagnostics().unwrap().unwrap();
         assert_eq!(
             r.logical_cell_reason_count,
             if next == 0.0 { 1 } else { 0 },
             "retained={retained} next={next}: {r:?}"
         );
-        assert!(r.physical_unavailable_observations > 0, "{r:?}");
+        assert!(
+            r.physical_unavailable_observations
+                .is_some_and(|count| count > 0),
+            "{r:?}"
+        );
         assert_eq!(
             e.get_cell_value("Sheet1", 1, 2),
             Some(LiteralValue::Number(if next == 0.0 { 7.0 } else { 9.0 }))
@@ -237,9 +244,12 @@ fn recalc_contract_diagnostics_corrections_outside_query_does_not_mutate_report(
     );
     let cell = e.graph.make_cell_ref("Sheet1", 1, 2);
     let vertex = e.graph.get_vertex_for_cell(&cell).unwrap();
-    let before = format!("{:?}", e.operation_diagnostics().unwrap());
+    let before = format!("{:?}", e.operation_diagnostics().unwrap().unwrap());
     crate::engine::virtual_deps::DynamicRefVirtualDepProvider::get_virtual_deps(&e, vertex);
-    assert_eq!(format!("{:?}", e.operation_diagnostics().unwrap()), before);
+    assert_eq!(
+        format!("{:?}", e.operation_diagnostics().unwrap().unwrap()),
+        before
+    );
 }
 
 #[test]
@@ -263,7 +273,7 @@ fn recalc_contract_diagnostics_corrections_snapshot_replan_preserves_union() {
         stale > before.0 && stops > before.1,
         "before={before:?} stale={stale} stops={stops}"
     );
-    let r = e.operation_diagnostics().unwrap();
+    let r = e.operation_diagnostics().unwrap().unwrap();
     assert_eq!(r.logical_cell_reason_count, 2, "{r:?}");
     assert!(format!("{r:?}").contains("GAP_EARLY"));
     assert!(format!("{r:?}").contains("GAP_DYNAMIC"));
@@ -307,7 +317,7 @@ fn recalc_contract_diagnostics_corrections_live_cancellation_parity() {
         assert_eq!(error.kind, ExcelErrorKind::Cancelled);
         assert_eq!(e.get_cell_value("Sheet1", 1, 2), None);
         if enabled {
-            assert!(e.operation_diagnostics().unwrap().roots.is_empty());
+            assert!(e.operation_diagnostics().unwrap().unwrap().roots.is_empty());
         }
     }
 }
