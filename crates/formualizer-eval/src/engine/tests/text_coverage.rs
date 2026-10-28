@@ -145,6 +145,73 @@ fn text_coverage_conditional_routing_controls() {
 }
 
 #[test]
+fn text_coverage_conditional_errors_direct() {
+    check(
+        r#"=TEXT(-2958466,"[<0]""negative"";yyyy")"#,
+        error(ExcelErrorKind::Value),
+        Some("conditional_routing"),
+    );
+}
+
+#[test]
+fn text_coverage_conditional_errors_caught() {
+    check(
+        r#"=IFERROR(TEXT(-2958466,"[<0]""negative"";yyyy"),7)"#,
+        LiteralValue::Number(7.0),
+        Some("conditional_routing"),
+    );
+}
+
+#[test]
+fn text_coverage_conditional_errors_controls() {
+    // A selected section's tokenization failure is provisional too.
+    check(
+        r#"=TEXT(-45306,"[<0]""negative"";[Color0]yyyy")"#,
+        error(ExcelErrorKind::Value),
+        Some("conditional_routing"),
+    );
+    // The rendered-length failure is another selected-section early exit.
+    check(
+        r#"=TEXT(-45306,"[<0]""negative"";"&CHAR(34)&REPT("x",256)&CHAR(34)&"yyyy")"#,
+        error(ExcelErrorKind::Value),
+        Some("conditional_routing"),
+    );
+    for formula in [
+        r#"=TEXT(2958466,"yyyy")"#,
+        r#"=TEXT(-1,"yyyy")"#,
+        r#"=TEXT(-45306,"yyyy;[Color0]yyyy")"#,
+        r#"=TEXT(-2958466,"""[<0]negative"";yyyy")"#,
+        r#"=TEXT(-2958466,"\[<0]""negative"";yyyy")"#,
+        // Whole-format Invalid remains established before section choice.
+        r#"=TEXT(-2958466,"[<0]""negative"";yyyy"&CHAR(34))"#,
+        r#"=TEXT(-2958466,"[<0]""negative"";yyyy"&CHAR(92))"#,
+        r#"=TEXT(-2958466,"[<0]""negative"";yyyy;yyyy;@;0")"#,
+    ] {
+        check(formula, error(ExcelErrorKind::Value), None);
+    }
+    check(
+        r#"=TEXT(-45306,"[<0]""negative"";dddd")"#,
+        text("Monday"),
+        Some("conditional_routing"),
+    );
+    check(
+        r#"=IF(FALSE,TEXT(-2958466,"[<0]""negative"";yyyy"),7)"#,
+        LiteralValue::Number(7.0),
+        None,
+    );
+    check(
+        r#"=IFERROR(TEXT(2958466,"yyyy"),7)"#,
+        LiteralValue::Number(7.0),
+        None,
+    );
+    check(
+        r#"=TEXT(1/0,"[<0]""negative"";yyyy")"#,
+        error(ExcelErrorKind::Div),
+        None,
+    );
+}
+
+#[test]
 fn text_coverage_final_heuristics() {
     for (formula, expected) in [
         (r#"=TEXT(5,"0;0;0;@")"#, "5"),

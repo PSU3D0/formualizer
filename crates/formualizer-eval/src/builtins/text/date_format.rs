@@ -84,18 +84,21 @@ pub(super) fn format_datetime(
     value: f64,
     code: &str,
 ) -> Result<String, Fallback> {
-    format_datetime_outcome(system, value, code).map(|outcome| match outcome {
+    format_datetime_outcome(system, value, code).and_then(|outcome| match outcome {
         DateFormatOutcome::Covered(text)
         | DateFormatOutcome::UnverifiedLocale(text)
-        | DateFormatOutcome::UnverifiedConditionalRouting(text) => text,
+        | DateFormatOutcome::UnverifiedConditionalRouting(text) => Ok(text),
+        DateFormatOutcome::UnverifiedConditionalInvalid => Err(Fallback::Invalid),
     })
 }
 
-/// Rendering success does not establish semantics for an ignored locale directive.
+/// A selected section's rendering result does not establish conditional routing
+/// or the semantics of an ignored locale directive.
 pub(super) enum DateFormatOutcome {
     Covered(String),
     UnverifiedLocale(String),
     UnverifiedConditionalRouting(String),
+    UnverifiedConditionalInvalid,
 }
 
 pub(super) fn format_datetime_outcome(
@@ -118,8 +121,32 @@ pub(super) fn format_datetime_outcome(
     } else {
         (sections[0], value.abs(), value < 0.0)
     };
+    // Every exit after positional selection is provisional when conditional
+    // routing is unresolved. Structural/split errors above are independent.
+    match format_selected_section(system, section, magnitude, automatic_minus) {
+        Err(Fallback::Invalid) if parsed.conditional_routing => {
+            Ok(DateFormatOutcome::UnverifiedConditionalInvalid)
+        }
+        Err(reason) => Err(reason),
+        Ok((text, unverified_locale)) => Ok(if parsed.conditional_routing {
+            DateFormatOutcome::UnverifiedConditionalRouting(text)
+        } else if unverified_locale {
+            DateFormatOutcome::UnverifiedLocale(text)
+        } else {
+            DateFormatOutcome::Covered(text)
+        }),
+    }
+}
+
+fn format_selected_section(
+    system: DateSystem,
+    section: &str,
+    magnitude: f64,
+    automatic_minus: bool,
+) -> Result<(String, bool), Fallback> {
     let (tokens, unverified_locale) = tokenize(section)?;
     if !tokens.iter().any(Token::is_code) {
+        // TEXT continues to its already-unverified final heuristic.
         return Err(Fallback::Unsupported);
     }
     // Excel cannot show a negative date or time (`TEXT(-1,"yyyy")` is
@@ -128,15 +155,7 @@ pub(super) fn format_datetime_outcome(
         return Err(Fallback::Invalid);
     }
     let text = render(system, magnitude, &tokens)?;
-    Ok(if parsed.conditional_routing {
-        // A condition in another numeric section may supersede the positional
-        // section rendered above. Keep that value without certifying routing.
-        DateFormatOutcome::UnverifiedConditionalRouting(text)
-    } else if unverified_locale {
-        DateFormatOutcome::UnverifiedLocale(text)
-    } else {
-        DateFormatOutcome::Covered(text)
-    })
+    Ok((text, unverified_locale))
 }
 
 fn tokenize(section: &str) -> Result<(Vec<Token>, bool), Fallback> {
