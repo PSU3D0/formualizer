@@ -454,7 +454,7 @@ impl DependencyGraph {
             .copied()
             .filter(|&v| self.get_cell_ref(v).is_none() && self.authority.symbols.slot(v).is_some())
             .collect();
-        if let Err(e) = self.authority_set_symbol_nodes(&names) {
+        if let Err(e) = self.authority_set_symbol_nodes(&names, &touched) {
             self.authority.state = HostState::Failed(e);
             return;
         }
@@ -1816,7 +1816,7 @@ impl DependencyGraph {
         nodes.sort_unstable();
         nodes.dedup();
         work += nodes.len() as u64;
-        if let Err(e) = self.authority_set_symbol_nodes(&nodes) {
+        if let Err(e) = self.authority_set_symbol_nodes(&nodes, touched) {
             return Some(Err(e));
         }
         // Binding identities after the nodes' cell ids, as a rebuild
@@ -1872,14 +1872,19 @@ impl DependencyGraph {
     }
 
     /// Set the symbol nodes of live names `names` from their definitions,
-    /// recording the bindings each still waits on.
-    fn authority_set_symbol_nodes(&mut self, names: &[VertexId]) -> Result<(), AuthorityError> {
-        // A rebound name can feed a dynamic reader through any number of
-        // aliases (or grid formulas). Retire observations over the existing
-        // authority's transitive consumer closure before replacing any rows:
-        // the old bindings are no longer evidence for the next plan.
+    /// recording the bindings each still waits on. `touched` also carries
+    /// surviving grid readers collected before a retired symbol lost its row.
+    fn authority_set_symbol_nodes(
+        &mut self,
+        names: &[VertexId],
+        touched: &[VertexId],
+    ) -> Result<(), AuthorityError> {
+        // Preserve both kinds of surviving consumers across symbol retirement.
+        // Their old authority rows still carry the downstream relation until
+        // this name rebuild and the caller's later grid-row rebuild replace it.
         if self.authority.has_observed() {
-            for consumer in self.authority_closure_vertices(names) {
+            let seeds: Vec<_> = names.iter().chain(touched).copied().collect();
+            for consumer in self.authority_closure_vertices(&seeds) {
                 self.authority.forget_observed(consumer);
             }
         }

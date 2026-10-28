@@ -756,7 +756,13 @@ fn dynamic_name_binding_change_retires_observations() {
     assert!(e.graph.authority_host().rev_dyn() > revision);
 }
 
-fn transitive_name_observation_case(hops: usize, delete_redefine: bool, targeted: bool) {
+fn transitive_name_observation_case(
+    hops: usize,
+    delete_redefine: bool,
+    targeted: bool,
+    grid_mask: u32,
+    missing_window: bool,
+) {
     use crate::engine::EvaluationTarget;
 
     let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
@@ -771,14 +777,21 @@ fn transitive_name_observation_case(hops: usize, delete_redefine: bool, targeted
     .unwrap();
     let mut previous = "Target".to_owned();
     for i in 0..hops {
-        let alias = format!("AliasTarget{i}");
-        e.define_name(
-            &alias,
-            named_formula_definition(&format!("={previous}")),
-            NameScope::Workbook,
-        )
-        .unwrap();
-        previous = alias;
+        if grid_mask & (1 << i) != 0 {
+            let row = i as u32 + 1;
+            e.set_cell_formula("Sheet1", row, 3, parse(&format!("={previous}")).unwrap())
+                .unwrap();
+            previous = format!("C{row}");
+        } else {
+            let alias = format!("AliasTarget{i}");
+            e.define_name(
+                &alias,
+                named_formula_definition(&format!("={previous}")),
+                NameScope::Workbook,
+            )
+            .unwrap();
+            previous = alias;
+        }
     }
     for (name, formula, col) in [
         ("DynamicName", format!("=INDIRECT({previous})"), 2),
@@ -809,8 +822,27 @@ fn transitive_name_observation_case(hops: usize, delete_redefine: bool, targeted
     let other_reads = e.graph.authority_host().observed(other).unwrap().to_vec();
     let revision = e.graph.authority_host().rev_dyn();
     let replacement = NamedDefinition::Literal(LiteralValue::Text("A2".into()));
+    let mut retired_in_missing_window = true;
+    let mut revision_advanced_in_missing_window = true;
     if delete_redefine {
         e.delete_name("Target", NameScope::Workbook).unwrap();
+        if missing_window {
+            retired_in_missing_window = e.graph.authority_host().observed(vertex).is_none();
+            revision_advanced_in_missing_window = e.graph.authority_host().rev_dyn() > revision;
+            assert_eq!(
+                e.graph.authority_host().observed(other),
+                Some(other_reads.as_slice())
+            );
+            let stats = e.evaluate_all().unwrap();
+            assert_eq!(stats.cycle_errors, 0);
+            let missing_value = e.get_cell_value("Sheet1", 1, 2);
+            assert!(
+                // INDIRECT receives a stored grid error as a value; its existing
+                // non-text argument contract returns #VALUE!, not #NAME?.
+                matches!(&missing_value, Some(LiteralValue::Error(error)) if error.kind == ExcelErrorKind::Value),
+                "missing binding value: {missing_value:?}"
+            );
+        }
         e.define_name("Target", replacement, NameScope::Workbook)
             .unwrap();
     } else {
@@ -858,8 +890,16 @@ fn transitive_name_observation_case(hops: usize, delete_redefine: bool, targeted
     }
     assert!(
         failures.is_empty(),
-        "hops={hops}, delete_redefine={delete_redefine}, targeted={targeted}; expected 20 without cycles:\n{}",
+        "hops={hops}, grid_mask={grid_mask}, delete_redefine={delete_redefine}, missing_window={missing_window}, targeted={targeted}; expected 20 without cycles:\n{}",
         failures.join("\n")
+    );
+    assert!(
+        retired_in_missing_window,
+        "deleted binding retained old consumer observations before the missing-binding request"
+    );
+    assert!(
+        revision_advanced_in_missing_window,
+        "dynamic revision did not advance before the missing-binding request"
     );
     assert!(
         retired_before_plan,
@@ -879,7 +919,7 @@ macro_rules! transitive_name_observation_tests {
     ($(($name:ident, $hops:expr, $delete:expr, $targeted:expr)),* $(,)?) => {
         $(#[test]
         fn $name() {
-            transitive_name_observation_case($hops, $delete, $targeted);
+            transitive_name_observation_case($hops, $delete, $targeted, 0, false);
         })*
     };
 }
@@ -938,6 +978,194 @@ transitive_name_observation_tests!(
     (
         transitive_name_observations_3_redefine_targeted,
         3,
+        true,
+        true
+    ),
+);
+
+macro_rules! mixed_grid_binding_tests {
+    ($(($name:ident, $hops:expr, $grid:expr, $delete:expr, $missing:expr, $targeted:expr)),* $(,)?) => {
+        $(#[test]
+        fn $name() {
+            transitive_name_observation_case($hops, $delete, $targeted, $grid, $missing);
+        })*
+    };
+}
+
+mixed_grid_binding_tests!(
+    (
+        mixed_grid_binding_grid_update_full,
+        1,
+        1,
+        false,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_update_targeted,
+        1,
+        1,
+        false,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_redefine_full,
+        1,
+        1,
+        true,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_redefine_targeted,
+        1,
+        1,
+        true,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_missing_full,
+        1,
+        1,
+        true,
+        true,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_missing_targeted,
+        1,
+        1,
+        true,
+        true,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_update_full,
+        2,
+        1,
+        false,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_update_targeted,
+        2,
+        1,
+        false,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_redefine_full,
+        2,
+        1,
+        true,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_redefine_targeted,
+        2,
+        1,
+        true,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_missing_full,
+        2,
+        1,
+        true,
+        true,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_missing_targeted,
+        2,
+        1,
+        true,
+        true,
+        true
+    ),
+    (
+        mixed_grid_binding_name_grid_update_full,
+        2,
+        2,
+        false,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_name_grid_update_targeted,
+        2,
+        2,
+        false,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_name_grid_redefine_full,
+        2,
+        2,
+        true,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_name_grid_redefine_targeted,
+        2,
+        2,
+        true,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_update_full,
+        3,
+        5,
+        false,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_update_targeted,
+        3,
+        5,
+        false,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_redefine_full,
+        3,
+        5,
+        true,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_redefine_targeted,
+        3,
+        5,
+        true,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_missing_full,
+        3,
+        5,
+        true,
+        true,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_missing_targeted,
+        3,
+        5,
+        true,
         true,
         true
     ),
