@@ -315,6 +315,7 @@ fn source_policy_boundary_publication_membership_respects_shared_work_limit() {
     );
 }
 
+#[cfg(feature = "json")]
 #[test]
 fn source_policy_boundary_portable_policy_requires_records() {
     use formualizer_workbook::SourceCalculationPolicy;
@@ -421,6 +422,38 @@ fn source_policy_boundary_independent_dynamic_spill_is_published() {
     assert_eq!(range.get_value((2, 4)), Some(&Data::Float(7.0)));
     assert_eq!(range.get_value((3, 4)), Some(&Data::Float(8.0)));
     assert!(result.operation_diagnostics.dependency_evidence.is_some());
+}
+
+#[cfg(not(feature = "system-clock"))]
+#[test]
+fn source_portable_fixed_clock_precedes_ambient_clock_admission() {
+    use formualizer_workbook::{IoError, SourceCalculationCoverage, SourceCalculationPolicy};
+    let input = fixture("NOW()", "99");
+    let fixed = "2024-01-02T03:04:05Z"
+        .parse::<chrono::DateTime<chrono::Utc>>()
+        .unwrap();
+    for mut options in [
+        XlsxRecalculateOptions::default(),
+        XlsxRecalculateOptions::workbook(),
+    ] {
+        options.calculation = Some(SourceCalculationPolicy {
+            fixed_now_utc: Some(fixed),
+            ..Default::default()
+        });
+        options.require_complete = true;
+        let result = recalculate_xlsx_bytes(&input, options).unwrap();
+        assert_eq!(result.coverage, SourceCalculationCoverage::Complete);
+        assert_eq!(result.clock_now_utc, Some(fixed));
+        assert_eq!(result.summary.errors, 0);
+        assert!(
+            matches!(data(&result.bytes,0),Data::Float(value) if value>40_000.0),
+            "fixed instant must not become epoch fallback"
+        );
+    }
+    assert!(
+        matches!(recalculate_xlsx_bytes(&input,XlsxRecalculateOptions::workbook()),
+        Err(IoError::Unsupported{feature,..}) if feature.contains("wall clock"))
+    );
 }
 
 #[test]

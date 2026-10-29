@@ -24,7 +24,15 @@ pub(in crate::xlsx) fn validate(
     options: &XlsxRecalculateOptions,
 ) -> Result<(), IoError> {
     crate::xlsx::recalculate::checkpoint(&options.cancel)?;
-    if options.eval_config.deterministic_mode.is_enabled() {
+    // Portable policy is validated before admission and resolved after source
+    // properties are scanned. Its explicit instant is already sufficient to
+    // prove the calculation does not need an ambient wall clock.
+    if options.eval_config.deterministic_mode.is_enabled()
+        || options
+            .calculation
+            .as_ref()
+            .is_some_and(|policy| policy.fixed_now_utc.is_some())
+    {
         return Ok(());
     }
     let upper = formula.to_ascii_uppercase();
