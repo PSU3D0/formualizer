@@ -2,6 +2,7 @@ mod admission;
 pub(crate) mod alloc;
 mod arc_emit;
 mod arc_sweep;
+mod bounded_queries;
 mod build_oracle;
 mod candidates;
 mod correction;

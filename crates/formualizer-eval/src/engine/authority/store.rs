@@ -1008,6 +1008,22 @@ impl Store {
         Some((o.template, o.anchor, off, self.slots.get(id)))
     }
 
+    /// Visit raw owner slots with admission before inspecting even dead slots.
+    /// No formula reconstruction, identity walk or member expansion occurs here.
+    pub(crate) fn visit_owner_slots_bounded<M: super::level_index::QueryWorkBudget>(
+        &self,
+        meter: &mut M,
+        visit: &mut impl FnMut(u16, Rect, u16, &mut M) -> Result<(), M::Error>,
+    ) -> Result<(), M::Error> {
+        for owner in &self.owners {
+            meter.charge_work(1)?;
+            if owner.group != DEAD {
+                visit(owner.sheet, owner.dom, owner.flags, meter)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Live family owners: `(sheet, domain, flags, template, anchor)`.
     pub fn family_owners(
         &self,
@@ -1111,6 +1127,33 @@ impl Store {
             {
                 out.push((key.dep_sheet, d));
             }
+        })
+    }
+
+    /// Stream all admitted inverse relation pieces without a hit collection.
+    /// Index misses/tombstones and projection candidates are charged before work.
+    pub(crate) fn visit_direct_dependents_bounded<M: super::level_index::QueryWorkBudget>(
+        &self,
+        sheet: u16,
+        q: &Rect,
+        filter: TagFilter,
+        meter: &mut M,
+        visit: &mut impl FnMut(u16, Rect, &mut M) -> Result<(), M::Error>,
+    ) -> Result<(), M::Error> {
+        meter.charge_work(1)?;
+        let Some(index) = self.idx.prec.get(sheet_slot(sheet)) else {
+            return Ok(());
+        };
+        index.query_bounded(&q.as_box(), meter, &mut |id, meter| {
+            meter.charge_work(1)?;
+            let record = &self.recs[id as usize];
+            let key = self.egroups.key(record.group);
+            if filter.admits(key.tag)
+                && let Some(dependent) = key.proj.invert(&record.dep, q)
+            {
+                visit(key.dep_sheet, dependent, meter)?;
+            }
+            Ok(())
         })
     }
 
