@@ -157,6 +157,10 @@ fn build_named_fixture_xlsx_bytes(sheet_name: &str) -> Vec<u8> {
 }
 
 fn build_fixture_with_c1(sheet_name: &str, c1: &str) -> Vec<u8> {
+    build_fixture_with_cells(sheet_name, c1, "A1:C1")
+}
+
+fn build_fixture_with_cells(sheet_name: &str, c1: &str, dimension: &str) -> Vec<u8> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
@@ -218,7 +222,9 @@ fn build_fixture_with_c1(sheet_name: &str, c1: &str) -> Vec<u8> {
         let contents = if path == "xl/workbook.xml" {
             contents.replace("name=\"Sheet1\"", &format!("name=\"{sheet_name}\""))
         } else if path == "xl/worksheets/sheet1.xml" {
-            contents.replace(r#"<c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>"#, c1)
+            contents
+                .replace(r#"<c r="C1" t="str"><f>A1+B1</f><v>stale</v></c>"#, c1)
+                .replace("A1:C1", dimension)
         } else {
             contents.to_owned()
         };
@@ -724,7 +730,18 @@ fn test_recalculate_xlsx_bytes_preserves_prototype_like_sheet_names() {
 
 #[wasm_bindgen_test]
 fn test_recalculate_xlsx_bytes_reports_error_reasons_and_unknown_functions() {
-    let input = build_fixture_with_c1("Sheet1", r#"<c r="C1"><f>_xll.EURO(A1)</f><v>1</v></c>"#);
+    let input = build_fixture_with_cells(
+        "Sheet1",
+        concat!(
+            r#"<c r="C1"><f>_xll.EURO(A1)</f><v>1</v></c>"#,
+            r#"<c r="D1"><f>C1+1</f><v>1</v></c>"#,
+            r#"<c r="E1"><f>IFERROR(SPDVOL(1),7)</f><v>1</v></c>"#,
+            r#"<c r="F1"><f>IF(TRUE,42,INACTIVE(1))</f><v>1</v></c>"#,
+            r#"<c r="G1"><f>IFERROR(SPDVOL(2),NoSuchName)</f><v>1</v></c>"#,
+            r#"<c r="H1"><f>IF(TRUE,NoSuchName,INACTIVE(2))</f><v>1</v></c>"#,
+        ),
+        "A1:H1",
+    );
     let result: Object =
         recalculate_xlsx_bytes(Uint8Array::from(input.as_slice()), None, JsValue::UNDEFINED)
             .unwrap()
@@ -734,16 +751,86 @@ fn test_recalculate_xlsx_bytes_reports_error_reasons_and_unknown_functions() {
     let errors: Object = js_get(&summary, "error_summary").dyn_into().unwrap();
     let name: Object = js_get(&errors, "#NAME?").dyn_into().unwrap();
     let messages: js_sys::Array = js_get(&name, "messages").dyn_into().unwrap();
-    assert_eq!(messages.length(), 1);
+    let locations: js_sys::Array = js_get(&name, "locations").dyn_into().unwrap();
+    assert_eq!(js_get_f64(&summary, "errors"), 4.0);
+    assert_eq!(js_get_f64(&summary, "total_errors"), 4.0);
+    assert_eq!(js_get_f64(&summary, "evaluated"), 6.0);
+    assert_eq!(js_get_f64(&name, "count"), 4.0);
+    assert_eq!(messages.length(), 4);
+    let expected = [
+        ("Sheet1!C1", Some("Unknown function: _xll.EURO")),
+        ("Sheet1!D1", Some("Unknown function: _xll.EURO")),
+        ("Sheet1!G1", Some("Undefined name: NoSuchName")),
+        ("Sheet1!H1", Some("Undefined name: NoSuchName")),
+    ];
+    for (index, (location, reason)) in expected.into_iter().enumerate() {
+        assert_eq!(
+            locations.get(index as u32).as_string().as_deref(),
+            Some(location)
+        );
+        // Actual error payloads may be unavailable; operation evidence must
+        // never be substituted for a final error cause.
+        let message = messages.get(index as u32);
+        if !message.is_null() {
+            assert!(
+                message
+                    .as_string()
+                    .unwrap()
+                    .eq_ignore_ascii_case(reason.unwrap())
+            );
+        }
+    }
+    let unknown: serde_json::Value =
+        serde_wasm_bindgen::from_value(js_get(&summary, "unknown_functions")).unwrap();
     assert_eq!(
-        messages.get(0).as_string().as_deref(),
-        Some("Unknown function: _xll.EURO")
+        unknown,
+        serde_json::json!([
+            {"name": "SPDVOL", "cells": 2}, {"name": "_XLL.EURO", "cells": 1}
+        ])
     );
-    let unknown: js_sys::Array = js_get(&summary, "unknown_functions").dyn_into().unwrap();
-    assert_eq!(unknown.length(), 1);
-    let entry: Object = unknown.get(0).dyn_into().unwrap();
-    assert_eq!(js_get_string(&entry, "name"), "_xll.EURO");
-    assert_eq!(js_get_f64(&entry, "cells"), 1.0);
+    let diagnostics: serde_json::Value =
+        serde_wasm_bindgen::from_value(js_get(&result, "operation_diagnostics")).unwrap();
+    assert_eq!(diagnostics["logicalCellReasonCount"], 3);
+    assert_eq!(diagnostics["logicalRootCellCount"], 3);
+    assert_eq!(
+        diagnostics["unavailableFunctions"],
+        serde_json::json!({
+            "SPDVOL": {"cellReasonCount": 2, "namedReasonCount": 0, "unlocatedReasonCount": 0},
+            "_XLL.EURO": {"cellReasonCount": 1, "namedReasonCount": 0, "unlocatedReasonCount": 0}
+        })
+    );
+    let roots: std::collections::BTreeSet<_> = diagnostics["samples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|sample| {
+            assert_eq!(sample["operation"]["kind"], "unknown_function");
+            (
+                sample["location"].as_str().unwrap(),
+                sample["operation"]["name"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        roots,
+        [
+            ("Sheet1!C1", "_XLL.EURO"),
+            ("Sheet1!E1", "SPDVOL"),
+            ("Sheet1!G1", "SPDVOL")
+        ]
+        .into_iter()
+        .collect()
+    );
+    let bytes: Uint8Array = js_get(&result, "bytes").dyn_into().unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(xml.contains("<c r=\"E1\"><f>IFERROR(SPDVOL(1),7)</f><v>7</v></c>"));
+    assert!(xml.contains("<c r=\"F1\"><f>IF(TRUE,42,INACTIVE(1))</f><v>42</v></c>"));
 }
 
 #[wasm_bindgen_test]

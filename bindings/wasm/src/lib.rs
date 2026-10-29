@@ -10,6 +10,10 @@ mod inspect;
 mod parser;
 mod reference;
 mod sheetport;
+#[cfg(feature = "xlsx-recalc")]
+mod source_calculation;
+#[cfg(all(test, target_arch = "wasm32", feature = "xlsx-recalc"))]
+mod source_calculation_tests;
 mod token;
 mod tokenizer;
 mod utils;
@@ -153,10 +157,8 @@ fn apply_reproducibility_options(
     if options.is_null() || options.is_undefined() {
         return Ok(());
     }
-    let obj = options
-        .clone()
-        .dyn_into::<Object>()
-        .map_err(|_| utils::js_error("recalculateXlsxBytes options must be an object"))?;
+    let obj = Object::try_from(options)
+        .ok_or_else(|| utils::js_error("recalculateXlsxBytes options must be an object"))?;
     if let Some(value) = sheetport::get_optional_value(&obj, "rngSeed")? {
         const MESSAGE: &str = "rngSeed must be a non-negative safe integer or a u64 bigint";
         config.workbook_seed = if value.is_bigint() {
@@ -205,7 +207,7 @@ fn apply_external_links_option(
     options: &JsValue,
 ) -> Result<(), JsValue> {
     use formualizer::workbook::ExternalLinkPolicy;
-    let Some(obj) = options.dyn_ref::<Object>() else {
+    let Some(obj) = Object::try_from(options) else {
         return Ok(());
     };
     if let Some(value) = sheetport::get_optional_value(obj, "externalLinks")? {
@@ -289,14 +291,16 @@ pub fn recalculate_xlsx_bytes(
     }
     #[cfg(feature = "xlsx-recalc")]
     {
-        let mut recalc_options = formualizer::workbook::XlsxRecalculateOptions::default();
+        let request = source_calculation::prepare(&options)?;
+        let mut recalc_options = request.initial_options()?;
         if let Some(limit) = error_location_limit {
             recalc_options.error_location_limit = limit as usize;
         }
-        apply_reproducibility_options(&mut recalc_options.eval_config, &options)?;
-        apply_external_links_option(&mut recalc_options, &options)?;
+        apply_reproducibility_options(&mut recalc_options.eval_config, &request.options)?;
+        apply_external_links_option(&mut recalc_options, &request.options)?;
+        source_calculation::apply(&mut recalc_options, &request)?;
         let options = recalc_options;
-        let config = options.eval_config.clone();
+        let mut config = options.eval_config.clone();
         // This admission check happens before copying the JS typed array into Rust memory.
         if bytes.length() as usize > options.limits.max_input_bytes {
             return Err(JsValue::from(js_sys::Error::new(
@@ -307,6 +311,19 @@ pub fn recalculate_xlsx_bytes(
         let result = formualizer::workbook::recalculate_xlsx_bytes(&input, options)
             .map_err(errors::workbook_error_to_js)?;
         let out = Object::new();
+        source_calculation::receipt(&result, &out)?;
+        if let Some(calculation) = &result.calculation {
+            config.workbook_seed = calculation.workbook_seed;
+            config.deterministic_mode = match calculation.fixed_now_utc {
+                Some(timestamp_utc) => formualizer::eval::engine::DeterministicMode::Enabled {
+                    timestamp_utc,
+                    timezone: calculation.timezone.clone(),
+                },
+                None => formualizer::eval::engine::DeterministicMode::Disabled {
+                    timezone: calculation.timezone.clone(),
+                },
+            };
+        }
         let output = Uint8Array::from(result.bytes.as_slice());
         Reflect::set(&out, &JsValue::from_str("bytes"), &output)?;
         Reflect::set(

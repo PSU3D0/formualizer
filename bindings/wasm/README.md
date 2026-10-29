@@ -153,6 +153,37 @@ limits remain in effect. Fresh unmarked 1x1 results have no spill identity
 (`A1#` returns `#REF!`). No Excel-equivalence claim is made; no Excel execution
 oracle was used. See [the precise eligibility contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md).
 
+### Source-aware calculation policy
+
+Native Formualizer remains strict by default. Pass `{ profile: 'workbook', calculation: {...}, requireComplete: true }` as the third argument to `recalculateXlsxBytes` to select source-aware settings and sparse admission:
+
+```ts
+const result = await recalculateXlsxBytes(input, undefined, {
+  profile: 'workbook',
+  calculation: {
+    workbookSeed: '18446744073709551615',
+    fixedNowUtc: '2024-01-02T03:04:05Z',
+    timezone: 'utc',
+    iterationInitialState: 'require_verified',
+  },
+  requireComplete: true,
+});
+```
+
+`SourceCalculationPolicy` is the shared portable request: `iteration` (`mode: workbook|disabled|iterate`; optional `maxIterations`/`maxChange` only for `iterate`), `cycleDetection` (`runtime|static`), exact decimal-string or JS-safe integer `workbookSeed`, RFC3339 `fixedNowUtc`, `timezone` (`utc|local|{offsetSeconds}`), `maxElapsedMs`, `maxWorkUnits`, and `iterationInitialState` (`require_verified|cold_start`). Unknown options, invalid types and bounds fail before package loading. The source header owns the date system.
+
+Options must be a plain object or null-prototype record with own enumerable string-keyed data properties. Nested `calculation` and `limits` values accept the same records and JSON scalar values; omit optional fields instead of supplying `undefined`. Maps, arrays, custom instances/prototypes, accessors, symbols, nonfinite numbers and cycles are rejected. Portable subrecords are bounded to 32 object ancestors, 4,096 portable nodes per request and 4,096 own properties per record and 65,536 UTF-16 units per string/key. Values are snapshotted once into the exact JSON request decoded upstream. Reflection on proxies may execute traps; a request either rejects or consumes the validated descriptor snapshot. Proxies are not categorically detected. Legacy bigint `rngSeed` and Date `deterministicTimestampUtc` remain supported at their existing top-level fields.
+
+Legacy `rngSeed`, `deterministicTimestampUtc` and `deterministicTimezone` remain available. They fill omitted nested fields; equal explicit values are accepted and conflicts fail. Legacy timezone still requires legacy timestamp. The result's bigint `seed` and `clock` reflect the effective policy.
+
+Results forward `calculation` settings/origins/warnings (or null on the legacy route), `coverage`, `coverage_scope`, `caches_invalidated`, `calculation_flags_changed`, and the full canonical `operation_diagnostics`, including function incidence, unavailable result cells and bounded samples. Complete coverage describes known gaps under declared assumptions, not numerical Excel equivalence. Partial output clears affected caches and retains independent results.
+
+`limits` is an optional partial `SourceRecalculateLimits` object with fourteen fields: `maxInputBytes`, `maxEntries`, `maxExpandedBytes`, `maxWorksheetBytes`, `maxFormulaCells`, `maxOutputBytes`, `maxXmlDepth`, `maxCells`, `maxColumns`, `maxOperationRoots`, `maxOperationTextBytes`, `maxAffectedWork`, `maxAffectedRegions`, and `maxAffectedScratchBytes`. Missing/null limits preserve the selected preset, missing fields preserve that field, and zero is an explicit bound. Supplied fields require nonnegative integers: bytes/counts fit u32, columns do not exceed 16,384, and affected work fits JS safe integers. Null fields, strings, booleans, fractions, negative/unsafe/nonfinite numbers are rejected. Presets are selected before legacy overrides; `requireComplete` does not select a profile.
+
+`physicalTelemetry` is a strict boolean, false by default (undefined is absent). Physical counters are present as null when unmeasured, measured zero as 0, and integers above the JS-safe range as exact decimal strings. Diagnostics retain typed executed function modes and unverified providers independently of bounded display samples. Dependency evidence concerns the `admitted_workbook_and_fixed_cached_sources` source domain; semantic reads remain unattested. Its `work` is `queryWork + publicationMembershipWorkBound`, including the conservative publication membership bound. These budgets do not promise universal CPU time or RSS bounds.
+
+`requireComplete` accepts legitimate Excel errors but rejects known gaps. Rejected promises retain `kind: 'CalculationDeferred'`, `reason`, and `context` for typed source deferral. Live source iteration defers until initial state is verified unless `cold_start` is explicitly selected and recorded. Cancellation, resource exhaustion, corrupt packages and output failures remain errors.
+
 ### SheetPort: a workbook as a typed function
 
 A manifest names the input and output cells with their types and constraints; the session validates inputs, recalculates and returns typed outputs. `defineManifest` fills in the boilerplate (spec version, shapes, `{ a1: ... }` locations) and returns the canonical manifest object, typed as `FioManifest`; `fromManifest` also accepts a hand-written canonical object.

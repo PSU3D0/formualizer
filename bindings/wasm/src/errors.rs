@@ -35,6 +35,15 @@ pub(crate) fn workbook_error_ref_to_js(error: &formualizer::workbook::IoError) -
             set_string(object, "workbook_kind", "Engine");
             js_error.into()
         }
+        formualizer::workbook::IoError::CalculationDeferred { reason, context } => {
+            let js_error = js_sys::Error::new(&error.to_string());
+            let object = js_error.unchecked_ref::<js_sys::Object>();
+            set_string(object, "name", "CalculationDeferred");
+            set_string(object, "kind", "CalculationDeferred");
+            set_string(object, "reason", &format!("{reason:?}"));
+            set_string(object, "context", context);
+            js_error.into()
+        }
         other => JsValue::from(js_sys::Error::new(&other.to_string())),
     }
 }
@@ -46,6 +55,31 @@ mod tests {
         ExcelErrorKind, PreparationStaleReason, ResourceExhaustionDetail, ResourceExhaustionReason,
     };
     use wasm_bindgen_test::wasm_bindgen_test;
+
+    #[wasm_bindgen_test]
+    fn workbook_deferral_is_typed_and_cancel_remains_engine_error() {
+        use formualizer::workbook::{CalculationDeferredReason, IoError};
+        let deferred = workbook_error_to_js(IoError::CalculationDeferred {
+            reason: CalculationDeferredReason::KnownCoverageIncomplete,
+            context: "S!A1".into(),
+        });
+        let field = |value: &JsValue, key: &str| {
+            js_sys::Reflect::get(value, &JsValue::from_str(key))
+                .unwrap()
+                .as_string()
+                .unwrap()
+        };
+        assert_eq!(field(&deferred, "kind"), "CalculationDeferred");
+        assert_eq!(field(&deferred, "reason"), "KnownCoverageIncomplete");
+        assert_eq!(field(&deferred, "context"), "S!A1");
+        let cancelled =
+            workbook_error_to_js(IoError::Engine(ExcelError::new(ExcelErrorKind::Cancelled)));
+        assert_eq!(field(&cancelled, "kind"), "Engine");
+        assert_eq!(
+            field(&cancelled, "excel_kind"),
+            ExcelErrorKind::Cancelled.to_string()
+        );
+    }
 
     #[wasm_bindgen_test]
     fn resource_u64_fields_are_lossless_decimal_strings() {
