@@ -8,6 +8,7 @@ use pyo3::types::PyDict;
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 
 // Create custom exception types
+pyo3::create_exception!(formualizer, CalculationDeferred, PyException);
 pyo3::create_exception!(formualizer, TokenizerError, PyException);
 pyo3::create_exception!(formualizer, ParserError, PyException);
 pyo3::create_exception!(formualizer, FormualizerHostError, PyException);
@@ -118,7 +119,127 @@ pub(crate) fn excel_error_to_pyerr(error: RustExcelError) -> PyErr {
 pub(crate) fn workbook_error_to_pyerr(error: formualizer::workbook::IoError) -> PyErr {
     match error {
         formualizer::workbook::IoError::Engine(error) => excel_error_to_pyerr(error),
+        formualizer::workbook::IoError::CalculationDeferred { reason, context } => {
+            let error =
+                CalculationDeferred::new_err(format!("Calculation deferred: {reason} ({context})"));
+            Python::attach(|py| {
+                let value = error.value(py);
+                let _ = value.setattr("kind", "CalculationDeferred");
+                let _ = value.setattr("reason", format!("{reason:?}"));
+                let _ = value.setattr("context", context);
+            });
+            error
+        }
+        formualizer::workbook::IoError::InvalidOptions { field, message } => {
+            pyo3::exceptions::PyValueError::new_err(format!("{field}: {message}"))
+        }
         other => PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(other.to_string()),
+    }
+}
+
+/// Preserve the source-recalc OSError contract for package/output failures,
+/// while retaining structured engine errors and typed calculation deferral.
+pub(crate) fn recalculate_error_to_pyerr(error: formualizer::workbook::IoError) -> PyErr {
+    use formualizer::workbook::IoError;
+    match error {
+        IoError::Engine(_)
+        | IoError::CalculationDeferred { .. }
+        | IoError::InvalidOptions { .. } => workbook_error_to_pyerr(error),
+        other => pyo3::exceptions::PyIOError::new_err(format!("recalculate XLSX failed: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod source_error_transport_tests {
+    use super::*;
+    use formualizer::workbook::{CalculationDeferredReason, IoError};
+
+    #[test]
+    fn source_deferral_cancel_resource_and_output_remain_distinct() {
+        Python::initialize();
+        Python::attach(|py| {
+            let error = recalculate_error_to_pyerr(IoError::CalculationDeferred {
+                reason: CalculationDeferredReason::KnownCoverageIncomplete,
+                context: "S!A1".into(),
+            });
+            assert!(error.is_instance_of::<CalculationDeferred>(py));
+            assert_eq!(
+                error
+                    .value(py)
+                    .getattr("reason")
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "KnownCoverageIncomplete"
+            );
+            assert_eq!(
+                error
+                    .value(py)
+                    .getattr("context")
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "S!A1"
+            );
+            let cancelled = recalculate_error_to_pyerr(IoError::Engine(RustExcelError::new(
+                ExcelErrorKind::Cancelled,
+            )));
+            assert!(cancelled.is_instance_of::<ExcelEvaluationError>(py));
+            assert_eq!(
+                cancelled
+                    .value(py)
+                    .getattr("kind")
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "Cancelled"
+            );
+            use formualizer::common::error::{ResourceExhaustionDetail, ResourceExhaustionReason};
+            for reason in [
+                ResourceExhaustionReason::OperationEvidenceRoots,
+                ResourceExhaustionReason::OperationEvidenceTextBytes,
+                ResourceExhaustionReason::WorkUnits,
+                ResourceExhaustionReason::DependencyClosureOutputItems,
+                ResourceExhaustionReason::ScratchMemory,
+            ] {
+                let mut resource = RustExcelError::new(ExcelErrorKind::Calc);
+                resource.set_extra(ExcelErrorExtra::Resource {
+                    detail: Box::new(ResourceExhaustionDetail {
+                        reason,
+                        limit: 0,
+                        observed: u64::MAX,
+                        request_id: Some(17),
+                    }),
+                });
+                let resource = recalculate_error_to_pyerr(IoError::Engine(resource));
+                assert!(resource.is_instance_of::<ExcelEvaluationError>(py));
+                let value = resource.value(py);
+                assert_eq!(
+                    value
+                        .getattr("resource_reason")
+                        .unwrap()
+                        .extract::<String>()
+                        .unwrap(),
+                    reason.as_str()
+                );
+                assert_eq!(
+                    value.getattr("observed").unwrap().extract::<u64>().unwrap(),
+                    u64::MAX
+                );
+                assert_eq!(
+                    value
+                        .getattr("request_id")
+                        .unwrap()
+                        .extract::<u64>()
+                        .unwrap(),
+                    17
+                );
+            }
+            let output =
+                recalculate_error_to_pyerr(IoError::Io(std::io::Error::other("output failed")));
+            assert!(output.is_instance_of::<pyo3::exceptions::PyIOError>(py));
+            assert!(!output.is_instance_of::<CalculationDeferred>(py));
+        });
     }
 }
 
@@ -439,6 +560,10 @@ impl From<RustExcelError> for PyExcelError {
 }
 
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add(
+        "CalculationDeferred",
+        m.py().get_type::<CalculationDeferred>(),
+    )?;
     m.add("TokenizerError", m.py().get_type::<TokenizerError>())?;
     m.add("ParserError", m.py().get_type::<ParserError>())?;
     m.add(

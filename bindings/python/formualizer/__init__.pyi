@@ -3,6 +3,7 @@
 
 from . import visitor as visitor
 from ._types import ReferenceLike as ReferenceLike
+from ._source_types import *
 from .formualizer_py import *
 
 __all__ = [
@@ -71,6 +72,7 @@ __all__ = [
     "recalculate_xlsx_bytes",
     "recalculate_xlsx_file",
     "tokenize",
+    "CalculationDeferred",
     "DependencyStateUnavailableError",
     "ExcelEvaluationError",
     "FormualizerHostError",
@@ -95,4 +97,10 @@ __all__ = [
     "TokenizerError",
     "ReferenceLike",
     "visitor",
+    "SourceCalculationPolicy",
+    "SourceRecalculateLimits",
+    "SourceRecalculateResult",
+    "SourceOperationDiagnostics",
+    "SourceUnavailableOperation",
+    "SourceDependencyEvidence",
 ]

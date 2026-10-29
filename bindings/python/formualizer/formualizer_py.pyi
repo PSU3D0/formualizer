@@ -71,6 +71,7 @@ __all__ = [
     "recalculate_xlsx_bytes",
     "recalculate_xlsx_file",
     "tokenize",
+    "CalculationDeferred",
     "DependencyStateUnavailableError",
     "ExcelEvaluationError",
     "FormualizerHostError",
@@ -2201,7 +2202,7 @@ def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] =
         `umya-spreadsheet` implementation.
     """
 
-def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached') -> typing.Any:
+def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached', profile: builtins.str = 'strict', calculation: SourceCalculationPolicy | None = None, require_complete: builtins.bool = False, limits: SourceRecalculateLimits | None = None, physical_telemetry: builtins.bool = False) -> SourceRecalculateResult:
     r"""
     Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
     Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
@@ -2221,7 +2222,7 @@ def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional
     it; ``"refuse"`` raises ``OSError`` instead when any formula reads one.
     """
 
-def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached') -> typing.Any:
+def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached', profile: builtins.str = 'strict', calculation: SourceCalculationPolicy | None = None, require_complete: builtins.bool = False, limits: SourceRecalculateLimits | None = None, physical_telemetry: builtins.bool = False) -> SourceRecalculateResult:
     r"""
     Recalculate XLSX formula caches from a path using atomic output replacement.
     Returns the same dictionary as ``recalculate_xlsx_bytes``.
@@ -2263,10 +2264,25 @@ def tokenize(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = N
 
 # Exceptions created with pyo3::create_exception! are public runtime types but
 # are not currently discovered by pyo3-stub-gen's inventory.
+class CalculationDeferred(Exception):
+    kind: str
+    reason: str
+    context: str
 class TokenizerError(Exception): ...
 class ParserError(Exception): ...
 class FormualizerHostError(Exception): ...
-class ExcelEvaluationError(Exception): ...
+class ExcelEvaluationError(Exception):
+    kind: str
+    excel_kind: str
+    message: str | None
+    excel_message: str | None
+    context: dict[str, typing.Any] | None
+    extra: dict[str, typing.Any] | None
+    # Present on resource failures; cancellation uses kind == "Cancelled".
+    resource_reason: str
+    limit: int
+    observed: int
+    request_id: int | None
 class InspectionError(Exception): ...
 class SheetNotFoundError(InspectionError): ...
 class InvalidInspectionAddressError(InspectionError): ...
@@ -2307,3 +2323,4 @@ if typing.TYPE_CHECKING:
         NameResolutionKind.Cell, NameResolutionKind.Range, NameResolutionKind.Literal, NameResolutionKind.Formula, NameResolutionKind.Unresolved, NameResolutionKind.Unknown,
         TraceLinkKindType.Formula, TraceLinkKindType.SpillAnchor, TraceLinkKindType.SpillReader, TraceLinkKindType.Unknown,
     )
+from ._source_types import SourceCalculationPolicy, SourceRecalculateLimits, SourceRecalculateResult

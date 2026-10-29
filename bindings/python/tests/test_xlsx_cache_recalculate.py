@@ -241,32 +241,91 @@ def test_error_reasons_and_unknown_functions_are_reported():
     openpyxl = pytest.importorskip("openpyxl")
     workbook = openpyxl.Workbook()
     sheet = workbook.active
-    sheet["A1"] = "=SPDVOL(1)"
-    sheet["A2"] = "=SPDVOL(2)"
-    sheet["A3"] = "=_xll.EURO(1)"
-    sheet["A4"] = "=NoSuchName"
-    sheet["A5"] = "=A1+1"
+    formulas = [
+        "=SPDVOL(1)",
+        "=SPDVOL(2)",
+        "=_xll.EURO(1)",
+        "=NoSuchName",
+        "=A1+1",
+        "=IFERROR(SPDVOL(3),7)",
+        "=IF(TRUE,42,INACTIVE(1))",
+        "=IFERROR(SPDVOL(4),NoSuchName)",
+        "=IF(TRUE,NoSuchName,INACTIVE(2))",
+    ]
+    for row, formula in enumerate(formulas, 1):
+        sheet[f"A{row}"] = formula
     buffer = BytesIO()
     workbook.save(buffer)
     result = fz.recalculate_xlsx_bytes(buffer.getvalue(), error_location_limit=10)
     summary = result["summary"]
     name = summary["error_summary"]["#NAME?"]
-    assert dict(zip(name["locations"], name["messages"], strict=True)) == {
+    expected = {
         "Sheet!A1": "Unknown function: SPDVOL",
         "Sheet!A2": "Unknown function: SPDVOL",
         "Sheet!A3": "Unknown function: _xll.EURO",
         "Sheet!A4": "Undefined name: NoSuchName",
-        "Sheet!A5": None,
+        "Sheet!A5": "Unknown function: SPDVOL",
+        "Sheet!A8": "Undefined name: NoSuchName",
+        "Sheet!A9": "Undefined name: NoSuchName",
     }
+    assert summary["errors"] == summary["total_errors"] == name["count"] == 7
+    assert summary["evaluated"] == summary["total_formulas"] == 9
+    messages = dict(zip(name["locations"], name["messages"], strict=True))
+    assert set(messages) == set(expected)
+    # Error storage may discard actual payloads. Never reconstruct final causes
+    # from AST text, an inactive branch, or a separately caught operation.
+    for location, message in messages.items():
+        assert message is None or (
+            expected[location] is not None
+            and message.upper() == expected[location].upper()
+        )
     assert summary["unknown_functions"] == [
-        {"name": "SPDVOL", "cells": 2},
-        {"name": "_xll.EURO", "cells": 1},
+        {"name": "SPDVOL", "cells": 4},
+        {"name": "_XLL.EURO", "cells": 1},
     ]
+    diagnostics = result["operation_diagnostics"]
+    assert diagnostics["logicalCellReasonCount"] == 5
+    assert diagnostics["logicalRootCellCount"] == 5
+    assert diagnostics["unavailableFunctions"] == {
+        "SPDVOL": {
+            "cellReasonCount": 4,
+            "namedReasonCount": 0,
+            "unlocatedReasonCount": 0,
+        },
+        "_XLL.EURO": {
+            "cellReasonCount": 1,
+            "namedReasonCount": 0,
+            "unlocatedReasonCount": 0,
+        },
+    }
+    assert {
+        (sample["location"], sample["operation"]["kind"], sample["operation"]["name"])
+        for sample in diagnostics["samples"]
+    } == {
+        ("Sheet!A1", "unknown_function", "SPDVOL"),
+        ("Sheet!A2", "unknown_function", "SPDVOL"),
+        ("Sheet!A3", "unknown_function", "_XLL.EURO"),
+        ("Sheet!A6", "unknown_function", "SPDVOL"),
+        ("Sheet!A8", "unknown_function", "SPDVOL"),
+    }
+    values = openpyxl.load_workbook(BytesIO(result["bytes"]), data_only=True).active
+    assert values["A6"].value == 7
+    assert values["A7"].value == 42
+    assert all(
+        values[location.split("!")[1]].value == "#NAME?" for location in expected
+    )
     truncated = fz.recalculate_xlsx_bytes(buffer.getvalue(), error_location_limit=1)
     assert truncated["summary"]["unknown_functions"] == summary["unknown_functions"]
-    assert truncated["summary"]["error_summary"]["#NAME?"]["messages"] == [
-        "Unknown function: SPDVOL"
-    ]
+    truncated_name = truncated["summary"]["error_summary"]["#NAME?"]
+    assert truncated_name["count"] == 7
+    assert len(truncated_name["locations"]) == len(truncated_name["messages"]) == 1
+    assert truncated_name["locations_truncated"] == 6
+    assert truncated_name["messages"][0] in (None, "Unknown function: SPDVOL")
+    assert (
+        truncated["operation_diagnostics"]["unavailableFunctions"]
+        == diagnostics["unavailableFunctions"]
+    )
+    assert truncated["operation_diagnostics"]["logicalRootCellCount"] == 5
 
 
 def _add_calc_chain(path: Path, cells: list[str]) -> None:
@@ -408,6 +467,38 @@ def test_recalculate_xlsx_bytes_reads_cached_external_link_values():
             if name.startswith("xl/externalLinks/"):
                 assert after.read(name) == before.read(name)
     assert "external_links" not in fz.recalculate_xlsx_bytes(fixture_xlsx())
+
+
+def external_policy_gap_fixture(kind):
+    source = external_link_fixture()
+    with ZipFile(BytesIO(source)) as archive:
+        members = {name: archive.read(name) for name in archive.namelist()}
+    if kind == "array":
+        members["xl/worksheets/sheet1.xml"] = members[
+            "xl/worksheets/sheet1.xml"
+        ].replace(
+            b'<c r="A1"><v>1</v></c>',
+            b'<c r="A1"><f>IFERROR(GAP_EXTERNAL(1),SEQUENCE(2))</f><v>1</v></c>',
+        )
+    else:
+        members["xl/workbook.xml"] = members["xl/workbook.xml"].replace(
+            b"</workbook>", b'<calcPr fullPrecision="0"/></workbook>'
+        )
+    out = BytesIO()
+    with ZipFile(out, "w", ZIP_DEFLATED) as archive:
+        for name, body in members.items():
+            archive.writestr(name, body)
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("kind", ["array", "global"])
+def test_workbook_external_refusal_precedes_calculation_deferral(kind):
+    source = external_policy_gap_fixture(kind)
+    with pytest.raises(fz.CalculationDeferred):
+        fz.recalculate_xlsx_bytes(source, profile="workbook", external_links="cached")
+    with pytest.raises(OSError, match="external link values") as exc:
+        fz.recalculate_xlsx_bytes(source, profile="workbook", external_links="refuse")
+    assert not isinstance(exc.value, fz.CalculationDeferred)
 
 
 def test_external_links_policy_cached_or_refuse(tmp_path):

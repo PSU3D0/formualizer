@@ -39,6 +39,7 @@ mod parser;
 mod reference;
 mod sheet; // retain for compatibility
 mod sheetport;
+mod source_calculation;
 mod token;
 mod tokenizer;
 mod value;
@@ -286,6 +287,11 @@ fn xlsx_recalc_options(
     deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
     deterministic_timezone: Option<&Bound<'_, PyAny>>,
     external_links: &str,
+    profile: &str,
+    calculation: Option<&Bound<'_, PyAny>>,
+    require_complete: bool,
+    limits: Option<&Bound<'_, PyAny>>,
+    physical_telemetry: bool,
 ) -> PyResult<formualizer::workbook::XlsxRecalculateOptions> {
     use formualizer::eval::{engine::DeterministicMode, timezone::TimeZoneSpec};
     use formualizer::workbook::ExternalLinkPolicy;
@@ -298,10 +304,17 @@ fn xlsx_recalc_options(
             )));
         }
     };
-    let mut options = formualizer::workbook::XlsxRecalculateOptions {
-        external_links,
-        ..Default::default()
+    let mut options = match profile {
+        "strict" => formualizer::workbook::XlsxRecalculateOptions::default(),
+        "workbook" => formualizer::workbook::XlsxRecalculateOptions::workbook(),
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "profile must be strict or workbook",
+            ));
+        }
     };
+    options.external_links = external_links;
+    options.require_complete = require_complete;
     if let Some(limit) = error_location_limit {
         options.error_location_limit = limit;
     }
@@ -331,6 +344,15 @@ fn xlsx_recalc_options(
             "deterministic_timezone requires deterministic_timestamp_utc",
         ));
     }
+    source_calculation::apply(
+        &mut options,
+        calculation,
+        rng_seed.is_some(),
+        deterministic_timestamp_utc.is_some(),
+        deterministic_timezone.is_some(),
+    )?;
+    source_calculation::apply_limits(&mut options, limits)?;
+    options.physical_telemetry = physical_telemetry;
     Ok(options)
 }
 
@@ -384,7 +406,31 @@ fn xlsx_result_to_py(
     config: &formualizer::eval::engine::EvalConfig,
 ) -> PyResult<Py<PyAny>> {
     let out = pyo3::types::PyDict::new(py);
-    set_replay_info(&out, config, result.clock_now_utc)?;
+    let mut config = config.clone();
+    if let Some(calculation) = &result.calculation {
+        config.workbook_seed = calculation.workbook_seed;
+        config.deterministic_mode = match calculation.fixed_now_utc {
+            Some(timestamp_utc) => formualizer::eval::engine::DeterministicMode::Enabled {
+                timestamp_utc,
+                timezone: calculation.timezone.clone(),
+            },
+            None => formualizer::eval::engine::DeterministicMode::Disabled {
+                timezone: calculation.timezone.clone(),
+            },
+        };
+    }
+    set_replay_info(&out, &config, result.clock_now_utc)?;
+    let receipt = serde_json::json!({
+        "calculation": result.calculation,
+        "coverage": result.coverage,
+        "coverage_scope": result.coverage_scope,
+        "caches_invalidated": result.caches_invalidated,
+        "calculation_flags_changed": result.calculation_flags_changed,
+        "operation_diagnostics": result.operation_diagnostics,
+    });
+    for (key, value) in receipt.as_object().unwrap() {
+        out.set_item(key, source_calculation::from_json(py, value)?)?;
+    }
     out.set_item("bytes", PyBytes::new(py, &result.bytes))?;
     let summary = pyo3::types::PyDict::new(py);
     summary.set_item("status", result.summary.status.as_str())?;
@@ -454,7 +500,7 @@ fn xlsx_result_to_py(
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (data, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None, external_links="cached"))]
+#[pyo3(signature = (data, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None, external_links="cached", profile="strict", calculation=None, require_complete=false, limits=None, physical_telemetry=false))]
 fn recalculate_xlsx_bytes(
     py: Python<'_>,
     data: &Bound<'_, PyBytes>,
@@ -463,6 +509,11 @@ fn recalculate_xlsx_bytes(
     deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
     deterministic_timezone: Option<&Bound<'_, PyAny>>,
     external_links: &str,
+    profile: &str,
+    calculation: Option<&Bound<'_, PyAny>>,
+    require_complete: bool,
+    limits: Option<&Bound<'_, PyAny>>,
+    physical_telemetry: bool,
 ) -> PyResult<Py<PyAny>> {
     let options = xlsx_recalc_options(
         error_location_limit,
@@ -470,6 +521,11 @@ fn recalculate_xlsx_bytes(
         deterministic_timestamp_utc,
         deterministic_timezone,
         external_links,
+        profile,
+        calculation,
+        require_complete,
+        limits,
+        physical_telemetry,
     )?;
     let config = options.eval_config.clone();
     // Reject above the core's safe default before copying Python-owned bytes.
@@ -481,9 +537,7 @@ fn recalculate_xlsx_bytes(
     let input = data.as_bytes().to_vec();
     let result = py
         .detach(move || formualizer::workbook::recalculate_xlsx_bytes(&input, options))
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate XLSX failed: {e}"))
-        })?;
+        .map_err(errors::recalculate_error_to_pyerr)?;
     xlsx_result_to_py(py, result, &config)
 }
 
@@ -502,7 +556,7 @@ fn recalculate_xlsx_bytes(
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (path, output=None, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None, external_links="cached"))]
+#[pyo3(signature = (path, output=None, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None, external_links="cached", profile="strict", calculation=None, require_complete=false, limits=None, physical_telemetry=false))]
 #[allow(clippy::too_many_arguments)]
 fn recalculate_xlsx_file(
     py: Python<'_>,
@@ -513,6 +567,11 @@ fn recalculate_xlsx_file(
     deterministic_timestamp_utc: Option<chrono::DateTime<chrono::FixedOffset>>,
     deterministic_timezone: Option<&Bound<'_, PyAny>>,
     external_links: &str,
+    profile: &str,
+    calculation: Option<&Bound<'_, PyAny>>,
+    require_complete: bool,
+    limits: Option<&Bound<'_, PyAny>>,
+    physical_telemetry: bool,
 ) -> PyResult<Py<PyAny>> {
     let options = xlsx_recalc_options(
         error_location_limit,
@@ -520,6 +579,11 @@ fn recalculate_xlsx_file(
         deterministic_timestamp_utc,
         deterministic_timezone,
         external_links,
+        profile,
+        calculation,
+        require_complete,
+        limits,
+        physical_telemetry,
     )?;
     let config = options.eval_config.clone();
     let input = std::path::PathBuf::from(path);
@@ -528,9 +592,7 @@ fn recalculate_xlsx_file(
         .detach(move || {
             formualizer::workbook::recalculate_xlsx_file(&input, output.as_deref(), options)
         })
-        .map_err(|e| {
-            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate XLSX failed: {e}"))
-        })?;
+        .map_err(errors::recalculate_error_to_pyerr)?;
     xlsx_result_to_py(py, result, &config)
 }
 

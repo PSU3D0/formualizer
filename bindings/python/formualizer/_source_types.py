@@ -1,0 +1,226 @@
+"""Portable source-recalculation records; validation and semantics live in Rust.
+
+Limits are partial integer maps (u32 counts/bytes; JS-safe affected work).
+PhysicalCounter None means unmeasured; decimal strings preserve large exact counts.
+"""
+
+from datetime import datetime
+from typing import Literal, TypedDict, Union
+
+__all__ = [
+    "SourceRecalculateLimits",
+    "SourceCalculationPolicy",
+    "SourceRecalculateResult",
+    "SourceOperationDiagnostics",
+    "SourceUnavailableOperation",
+    "SourceDependencyEvidence",
+]
+
+PhysicalCounter = Union[int, str, None]
+SettingOrigin = Literal["caller", "workbook", "excel_default"]
+
+
+class SourceRecalculateLimits(TypedDict, total=False):
+    maxInputBytes: int
+    maxEntries: int
+    maxExpandedBytes: int
+    maxWorksheetBytes: int
+    maxFormulaCells: int
+    maxOutputBytes: int
+    maxXmlDepth: int
+    maxCells: int
+    maxColumns: int
+    maxOperationRoots: int
+    maxOperationTextBytes: int
+    maxAffectedWork: int
+    maxAffectedRegions: int
+    maxAffectedScratchBytes: int
+
+
+class SourceIterationPolicy(TypedDict, total=False):
+    mode: Literal["workbook", "disabled", "iterate"]
+    maxIterations: int
+    maxChange: float
+
+
+class SourceTimezoneOffset(TypedDict):
+    offsetSeconds: int
+
+
+SourceTimezone = Union[Literal["utc", "local"], SourceTimezoneOffset]
+
+
+class SourceCalculationPolicy(TypedDict, total=False):
+    iteration: SourceIterationPolicy
+    iterationInitialState: Literal["require_verified", "cold_start"]
+    cycleDetection: Literal["runtime", "static"]
+    workbookSeed: Union[int, str]
+    fixedNowUtc: str
+    timezone: SourceTimezone
+    maxElapsedMs: int
+    maxWorkUnits: int
+
+
+class SourceFunctionOperation(TypedDict):
+    kind: Literal[
+        "unknown_function",
+        "unimplemented_function",
+        "unverified_provider",
+        "source_feature",
+    ]
+    name: str
+
+
+class SourceModeOperation(TypedDict):
+    kind: Literal["unimplemented_function_mode", "unverified_function_mode"]
+    name: str
+    mode: str
+
+
+class SourcePostfixOperation(TypedDict):
+    kind: Literal["postfix_invocation"]
+
+
+class SourceInternalOperation(TypedDict):
+    kind: Literal["internal_result"]
+    token: str
+
+
+SourceUnavailableOperation = Union[
+    SourceFunctionOperation,
+    SourceModeOperation,
+    SourcePostfixOperation,
+    SourceInternalOperation,
+]
+
+
+class SourceOperationSample(TypedDict):
+    operation: SourceUnavailableOperation
+    location: Union[str, None]
+
+
+class SourceFunctionIncidence(TypedDict):
+    cellReasonCount: int
+    namedReasonCount: int
+    unlocatedReasonCount: int
+
+
+class SourceFunctionModeIncidence(TypedDict):
+    name: str
+    mode: str
+    verification: Literal["unavailable", "unverified"]
+    incidence: SourceFunctionIncidence
+
+
+class SourceDependencyEvidence(TypedDict):
+    relation: Literal["static_authority_and_committed_grid_rectangles"]
+    sourceDomain: Literal["admitted_workbook_and_fixed_cached_sources"]
+    semanticReadsUnattested: bool
+    conservativeUnknownDynamic: bool
+    unknownReasons: dict[str, int]
+    unknownFacts: int
+    witnessedRegions: int
+    uncertainRegions: int
+    work: int
+    queryWork: int
+    publicationMembershipWorkBound: int
+    requestedCapacityPeakBytes: int
+
+
+class SourceOperationDiagnostics(TypedDict):
+    unavailableFunctions: dict[str, SourceFunctionIncidence]
+    functionModes: list[SourceFunctionModeIncidence]
+    logicalCellReasonCount: int
+    logicalRootCellCount: int
+    logicalNamedReasonCount: int
+    sourceRegions: int
+    workbookFeatures: list[str]
+    unavailableResultCells: int
+    physicalUnavailableObservations: PhysicalCounter
+    physicalFunctionDispatches: PhysicalCounter
+    dependencyEvidence: Union[SourceDependencyEvidence, None]
+    samples: list[SourceOperationSample]
+    samplesTruncated: int
+
+
+class SourceCalculationWarning(TypedDict):
+    field: str
+    message: str
+
+
+class ResolvedSourceCalculation(TypedDict):
+    cycleDetection: Literal["runtime", "static"]
+    iterationEnabled: bool
+    maxIterations: Union[int, None]
+    maxChange: Union[float, None]
+    iterationInitialState: Literal["require_verified", "cold_start"]
+    dateSystem: Literal["1900", "1904"]
+    workbookSeed: str
+    timezone: SourceTimezone
+    fixedNowUtc: Union[str, None]
+    iterationOrigin: SettingOrigin
+    maxIterationsOrigin: Union[SettingOrigin, None]
+    maxChangeOrigin: Union[SettingOrigin, None]
+    warnings: list[SourceCalculationWarning]
+    maxElapsedMs: Union[str, None]
+    maxWorkUnits: Union[str, None]
+
+
+class SourceClock(TypedDict):
+    now: Union[datetime, None]
+    timezone: str
+    fixed: bool
+
+
+class SourceSheetSummary(TypedDict):
+    evaluated: int
+    errors: int
+
+
+class SourceOptionalErrorSummary(TypedDict, total=False):
+    locations_truncated: int
+
+
+class SourceErrorSummary(SourceOptionalErrorSummary):
+    count: int
+    locations: list[str]
+    messages: list[Union[str, None]]
+
+
+class SourceUnknownFunction(TypedDict):
+    name: str
+    cells: int
+
+
+class SourceOptionalSummary(TypedDict, total=False):
+    error_summary: dict[str, SourceErrorSummary]
+
+
+class SourceSummary(SourceOptionalSummary):
+    status: str
+    evaluated: int
+    errors: int
+    total_formulas: int
+    total_errors: int
+    sheets: dict[str, SourceSheetSummary]
+    unknown_functions: list[SourceUnknownFunction]
+
+
+class SourceOptionalResult(TypedDict, total=False):
+    external_links: dict[str, Union[str, int, bool]]
+
+
+class SourceRecalculateResult(SourceOptionalResult):
+    bytes: bytes
+    summary: SourceSummary
+    formula_cells: int
+    cache_cells_changed: int
+    worksheet_parts_changed: int
+    clock: SourceClock
+    seed: int
+    calculation: Union[ResolvedSourceCalculation, None]
+    coverage: Literal["complete", "partial"]
+    coverage_scope: Literal["none", "conservative"]
+    caches_invalidated: int
+    calculation_flags_changed: bool
+    operation_diagnostics: SourceOperationDiagnostics
