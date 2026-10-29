@@ -271,12 +271,11 @@ fn receipt_value(result: &formualizer::workbook::XlsxRecalculateResult) -> serde
 
 pub(crate) fn receipt(
     result: &formualizer::workbook::XlsxRecalculateResult,
-    out: &Object,
-) -> Result<(), JsValue> {
+) -> Result<Object, JsValue> {
     // JSON-compatible serialization keeps canonical receipt field names and exact
     // seed/budget strings, without turning dictionaries into JS Map instances.
     let value = receipt_value(result);
-    let receipt = js_sys::JSON::parse(&value.to_string())?;
-    Object::assign(out, receipt.unchecked_ref::<Object>());
-    Ok(())
+    // JSON.parse creates own data properties. Return that object directly:
+    // Object.assign into a fresh ordinary object would invoke inherited setters.
+    Ok(js_sys::JSON::parse(&value.to_string())?.unchecked_into())
 }
