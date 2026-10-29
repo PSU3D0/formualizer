@@ -982,3 +982,335 @@ fn provider_mode_callable_consumer_retains_legacy_values() {
         );
     }
 }
+
+fn producer_receipt(
+    formula: &str,
+    engine: &Engine<TestWorkbook>,
+    report: &OperationDiagnostics,
+    expected: &[Op],
+) {
+    producer_value_receipt(
+        formula,
+        engine.get_cell_value("Sheet1", 1, 8),
+        report,
+        expected,
+    );
+}
+fn producer_value_receipt(
+    formula: &str,
+    value: Option<LiteralValue>,
+    report: &OperationDiagnostics,
+    expected: &[Op],
+) {
+    println!(
+        "EXPRESSION_PRODUCER_RECEIPT {formula} value={:?} root_cells={} reasons={} operations={:?}",
+        value,
+        report.logical_root_cell_count,
+        report.logical_cell_reason_count,
+        report
+            .roots
+            .iter()
+            .map(|root| root.operation.as_ref())
+            .collect::<Vec<_>>()
+    );
+    let mut actual: Vec<_> = report
+        .roots
+        .iter()
+        .map(|root| {
+            let cell = root.cell.expect("producer cell");
+            assert_eq!((cell.coord.row(), cell.coord.col()), (0, 7));
+            root.operation.as_ref().clone()
+        })
+        .collect();
+    let mut expected = expected.to_vec();
+    actual.sort();
+    expected.sort();
+    assert_eq!(actual, expected, "{formula}: {report:?}");
+    assert_eq!(
+        report.logical_cell_reason_count,
+        expected.len(),
+        "{formula}"
+    );
+    assert_eq!(
+        report.logical_root_cell_count,
+        usize::from(!expected.is_empty()),
+        "{formula}"
+    );
+}
+fn producer_check(formula: &str, expected: &[Op]) {
+    let (e, r) = evaluate(formula);
+    producer_receipt(formula, &e, &r, expected);
+}
+fn producer_exercised(formula: &str, expected: &[Op]) {
+    producer_check(formula, expected);
+    producer_check(
+        &format!("=IFERROR({},7)", formula.trim_start_matches('=')),
+        expected,
+    );
+    producer_check(
+        &format!("=IF(FALSE,{},7)", formula.trim_start_matches('=')),
+        &[],
+    );
+}
+fn if_producer() -> Op {
+    unknown("IF", "function_reference_selected_value")
+}
+fn let_producer() -> Op {
+    unknown("LET", "function_reference_binding")
+}
+
+#[test]
+fn provider_mode_expression_producer_selected_matrix() {
+    let mut failures = Vec::new();
+    for (formula, operation) in [
+        (
+            "=GROUPBY(A1:A3,C1:C3,IF(TRUE,SUM,AVERAGE),0,0,0)",
+            if_producer(),
+        ),
+        (
+            "=GROUPBY(A1:A3,C1:C3,HSTACK(IF(TRUE,SUM,AVERAGE)),0,0,0)",
+            if_producer(),
+        ),
+        (
+            "=LET(f,SUM,GROUPBY(A1:A3,C1:C3,HSTACK(f),0,0,0))",
+            let_producer(),
+        ),
+        ("=IF(TRUE,SUM,AVERAGE)", if_producer()),
+        ("=IF(FALSE,7,AVERAGE)", if_producer()),
+        ("=SUM(IF(TRUE,SUM,A1))", if_producer()),
+        ("=ISREF(IF(TRUE,SUM,A1))", if_producer()),
+        ("=LET(f,SUM,7)", let_producer()),
+        (
+            "=LET(f,SUM,IF(FALSE,GROUPBY(A1:A3,C1:C3,HSTACK(f),0,0,0),7))",
+            let_producer(),
+        ),
+        ("=IF({TRUE;TRUE},SUM,7)", if_producer()),
+        ("=IF({FALSE;FALSE},7,AVERAGE)", if_producer()),
+        ("=IF({TRUE;FALSE},SUM,AVERAGE)", if_producer()),
+        ("=IF({TRUE;FALSE},7,SUM)", if_producer()),
+    ] {
+        if std::panic::catch_unwind(|| producer_exercised(formula, &[operation])).is_err() {
+            failures.push(formula);
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "missing actual producer receipts: {failures:?}"
+    );
+}
+
+#[test]
+fn provider_mode_expression_producer_neutral_controls() {
+    for formula in [
+        "=IF(FALSE,SUM,7)",
+        "=IF(TRUE,7,AVERAGE)",
+        "=IF(1/0,SUM,AVERAGE)",
+        "=IF(TRUE,1/0,AVERAGE)",
+        "=IF(TRUE,MISSING_FUNCTION_VALUE,7)",
+        "=IF(FALSE,LET(f,SUM,7),7)",
+        "=IF(TRUE,7,LET(f,SUM,7))",
+        "=IF({FALSE;FALSE},SUM,7)",
+        "=IF({TRUE;TRUE},7,AVERAGE)",
+        "=IF({1/0;1/0},SUM,AVERAGE)",
+        "=IF(TRUE,SUM,AVERAGE,7)",
+        "=LET(7,0,later,SUM,7)",
+        "=LET(SUM,9,f,SUM,f)",
+        "=LET(SUM,1/0,f,SUM,f)",
+        "=LET(SUM,\"SUM\",f,SUM,f)",
+        "=LET(SUM,9,LET(f,SUM,f))",
+        "=LET(first,9,SUM,first,f,SUM,f)",
+    ] {
+        producer_exercised(formula, &[]);
+    }
+}
+
+#[test]
+fn provider_mode_expression_producer_raw_callable_preserved() {
+    for formula in [
+        "=IF(TRUE,LAMBDA(x,x),7)",
+        "=IF(FALSE,7,LAMBDA(x,x))",
+        "=LET(f,LAMBDA(x,x),7)",
+        "=LET(f,IF(TRUE,LAMBDA(x,x),7),7)",
+        "=LET(f,LAMBDA(x,x),f(2))",
+    ] {
+        producer_exercised(formula, &[]);
+    }
+    producer_exercised(
+        "=GROUPBY(A1:A3,C1:C3,IF(TRUE,LAMBDA(x,SUM(x)),7),0,0,0)",
+        &[unknown("GROUPBY", "callable_aggregation")],
+    );
+    producer_exercised(
+        "=LET(f,IF(TRUE,LAMBDA(x,x),7),HSTACK(f,f))",
+        &[unknown("HSTACK", "callable_array_materialization")],
+    );
+}
+
+#[test]
+fn provider_mode_expression_producer_real_names_and_errors() {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    for sheet_scope in [false, true] {
+        for value in [
+            LiteralValue::Int(9),
+            LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Name,
+            )),
+            LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Div,
+            )),
+            LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Calc,
+            )),
+            LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Value,
+            )),
+            LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::NImpl,
+            )),
+        ] {
+            for formula in ["=IF(TRUE,SUM,7)", "=SUM(IF(TRUE,SUM,A1))", "=LET(f,SUM,f)"] {
+                let (mut e, _) = evaluate("=1");
+                let scope = if sheet_scope {
+                    NameScope::Sheet(e.sheet_id("Sheet1").unwrap())
+                } else {
+                    NameScope::Workbook
+                };
+                e.define_name("SUM", NamedDefinition::Literal(value.clone()), scope)
+                    .unwrap();
+                e.set_cell_formula("Sheet1", 1, 8, parse(formula).unwrap())
+                    .unwrap();
+                e.evaluate_all().unwrap();
+                let r = e.take_operation_diagnostics().unwrap().unwrap();
+                producer_receipt(formula, &e, &r, &[]);
+            }
+        }
+    }
+}
+
+#[test]
+fn provider_mode_expression_producer_identity_no_invocation_and_failed_binding() {
+    use crate::{
+        function::Function,
+        traits::{ArgumentHandle, CalcValue, FunctionContext},
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct Callback(Arc<AtomicUsize>);
+    impl Function for Callback {
+        fn name(&self) -> &'static str {
+            "PRODUCER_CALLBACK"
+        }
+        fn aliases(&self) -> &'static [&'static str] {
+            &["PRODUCER_CALLBACK_ALIAS"]
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _: &'c [ArgumentHandle<'a, 'b>],
+            _: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, formualizer_common::ExcelError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            panic!("classification must never invoke a callback")
+        }
+    }
+    struct FailedBinding;
+    impl Function for FailedBinding {
+        fn name(&self) -> &'static str {
+            "PRODUCER_FAIL_BINDING"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _: &'c [ArgumentHandle<'a, 'b>],
+            _: &dyn FunctionContext<'b>,
+        ) -> Result<CalcValue<'b>, formualizer_common::ExcelError> {
+            Err(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Div,
+            ))
+        }
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let wb = TestWorkbook::new()
+        .with_function(Arc::new(Callback(calls.clone())))
+        .with_function(Arc::new(FailedBinding));
+    let mut e = Engine::new(
+        wb,
+        EvalConfig {
+            enable_parallel: false,
+            ..arrow_eval_config()
+        },
+    );
+    e.enable_operation_diagnostics(32);
+    let mut failures = Vec::new();
+    for (formula, expected) in [
+        ("=IF(TRUE,PRODUCER_CALLBACK,7)", vec![if_producer()]),
+        ("=IF(FALSE,7,PRODUCER_CALLBACK_ALIAS)", vec![if_producer()]),
+        ("=LET(f,PRODUCER_CALLBACK_ALIAS,7)", vec![let_producer()]),
+        ("=IF(FALSE,PRODUCER_CALLBACK_ALIAS,7)", vec![]),
+        ("=IF(FALSE,LET(f,PRODUCER_CALLBACK,7),7)", vec![]),
+        ("=LET(first,PRODUCER_FAIL_BINDING(),later,SUM,7)", vec![]),
+    ] {
+        e.set_cell_formula("Sheet1", 1, 8, parse(formula).unwrap())
+            .unwrap();
+        e.evaluate_all().unwrap();
+        let r = e.take_operation_diagnostics().unwrap().unwrap();
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            producer_receipt(formula, &e, &r, &expected)
+        }))
+        .is_err()
+        {
+            failures.push(formula);
+        }
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+#[test]
+fn provider_mode_expression_producer_tree_arena_reference_agree() {
+    for (formula, operation) in [
+        ("=IFERROR(IF(TRUE,SUM,AVERAGE),7)", if_producer()),
+        ("=IFERROR(SUM(IF(TRUE,SUM,A1)),7)", if_producer()),
+        ("=IFERROR(ISREF(IF(TRUE,SUM,A1)),7)", if_producer()),
+        (
+            "=IFERROR(LET(f,SUM,GROUPBY(A1:A3,C1:C3,HSTACK(f),0,0,0)),7)",
+            let_producer(),
+        ),
+    ] {
+        let (arena, arena_report) = evaluate(formula);
+        let arena_value = arena.get_cell_value("Sheet1", 1, 8).unwrap();
+        producer_receipt(formula, &arena, &arena_report, &[operation.clone()]);
+        // A fresh engine has an active collector; evaluate() intentionally
+        // finalizes its collector when returning a request receipt.
+        let mut tree = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                enable_parallel: false,
+                ..arrow_eval_config()
+            },
+        );
+        tree.enable_operation_diagnostics(32);
+        for row in 1..=3 {
+            for (col, value) in [
+                (1, LiteralValue::Text("x".into())),
+                (2, LiteralValue::Text("p".into())),
+                (3, LiteralValue::Int(row as i64 * 10)),
+            ] {
+                tree.set_cell_value("Sheet1", row, col, value).unwrap();
+            }
+        }
+        tree.set_cell_formula("Sheet1", 1, 8, parse("=1").unwrap())
+            .unwrap();
+        let cell = crate::CellRef::new(
+            tree.sheet_id("Sheet1").unwrap(),
+            crate::Coord::from_excel(1, 8, true, true),
+        );
+        let interp = crate::interpreter::Interpreter::new_with_cell(&tree, "Sheet1", cell);
+        let tree_value = interp
+            .evaluate_ast(&parse(formula).unwrap())
+            .unwrap()
+            .into_literal();
+        assert_eq!(tree_value, arena_value, "{formula}");
+        let tree_report = tree.operation_diagnostics().unwrap().unwrap();
+        producer_value_receipt(formula, Some(tree_value), &tree_report, &[operation]);
+    }
+}
