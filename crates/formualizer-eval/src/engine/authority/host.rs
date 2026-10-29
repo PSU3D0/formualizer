@@ -270,6 +270,9 @@ impl AuthorityHost {
     /// Rectangles bound to the installed value. This attests the write lifetime,
     /// not completeness of all possible resolver/name/source read kinds.
     pub fn committed_observed(&self, reader: VertexId) -> Option<&[ObservedRect]> {
+        if !matches!(self.state, HostState::Ready) || self.structural_pending || self.replaying {
+            return None;
+        }
         let record = self.observed.get(&reader)?;
         record.value_committed.then_some(record.reads.as_slice())
     }
@@ -287,8 +290,29 @@ impl AuthorityHost {
         }
     }
 
+    /// Withdraw value proof without destroying valid last-known routing.
+    pub(crate) fn invalidate_all_observed_values(&mut self) {
+        let mut changed = false;
+        for record in self.observed.values_mut() {
+            changed |= record.value_committed;
+            record.value_committed = false;
+        }
+        if changed {
+            self.rev_observed_value += 1;
+        }
+    }
+
     /// Record `reader`'s reads from a fresh commit (normalized).
-    pub(crate) fn set_observed(&mut self, reader: VertexId, mut reads: Vec<ObservedRect>) {
+    pub(crate) fn set_observed(&mut self, reader: VertexId, reads: Vec<ObservedRect>) {
+        self.set_observed_with_value(reader, reads, true);
+    }
+
+    pub(crate) fn set_observed_with_value(
+        &mut self,
+        reader: VertexId,
+        mut reads: Vec<ObservedRect>,
+        value_committed: bool,
+    ) {
         reads.sort_unstable();
         reads.dedup();
         if let Some(record) = self.observed.get_mut(&reader) {
@@ -297,16 +321,16 @@ impl AuthorityHost {
                 record.reads = reads;
                 self.rev_dyn += 1;
             }
-            if changed || !record.value_committed {
+            if changed || record.value_committed != value_committed {
                 self.rev_observed_value += 1;
             }
-            record.value_committed = true;
+            record.value_committed = value_committed;
         } else {
             self.observed.insert(
                 reader,
                 ObservedReadRecord {
                     reads,
-                    value_committed: true,
+                    value_committed,
                 },
             );
             self.rev_dyn += 1;

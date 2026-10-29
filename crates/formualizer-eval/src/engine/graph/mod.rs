@@ -5882,6 +5882,7 @@ impl DependencyGraph {
     #[doc(hidden)]
     pub fn mark_as_ref_error(&mut self, id: VertexId) {
         self.materialize_vertex(id);
+        self.invalidate_observed_value_for_write(id);
         if !self.value_cache_enabled && self.is_grid_backed(id) {
             self.ref_error_vertices.insert(id);
             // Canonical-only: graph does not cache grid-backed values.

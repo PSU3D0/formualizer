@@ -629,12 +629,29 @@ impl ComputedWrite {
     }
 }
 
+#[derive(Debug)]
+struct BufferedReadClaim {
+    seq: u64,
+    result: Arc<crate::engine::effects::RecordedResult>,
+    winning: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum OverlayWriteDisposition {
+    Installed,
+    Buffered,
+    Skipped,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct ComputedWriteBuffer {
     writes: Vec<ComputedWrite>,
     next_seq: u64,
     estimated_bytes: usize,
     formats_present: bool,
+    // Only dynamic results allocate entries. Existing coalescer sequences
+    // identify the final installed write, including Cell/Rect/Run overwrites.
+    read_claims: FxHashMap<(SheetId, u32, u32), BufferedReadClaim>,
 }
 
 impl ComputedWriteBuffer {
@@ -755,6 +772,7 @@ impl ComputedWriteBuffer {
 
     pub(crate) fn clear(&mut self) {
         self.writes.clear();
+        self.read_claims.clear();
         self.estimated_bytes = 0;
         self.formats_present = false;
     }
@@ -12956,8 +12974,30 @@ where
         self.resource_checkpoint(0)?;
         let commit_started = self.preflight_evaluation_commit_window(buffer.len())?;
         let (writes, formats_present) = buffer.take_writes();
+        let mut claims = std::mem::take(&mut buffer.read_claims);
         let plan = self.plan_owned_computed_write_coalescing(writes, formats_present);
+        if !claims.is_empty() {
+            for chunk in &plan.chunks {
+                for entry in &chunk.entries {
+                    let key = (
+                        chunk.sheet_id,
+                        chunk
+                            .chunk_start_row0
+                            .saturating_add(entry.row_in_chunk as u32),
+                        chunk.col0,
+                    );
+                    if let Some(claim) = claims.get_mut(&key) {
+                        claim.winning = claim.seq == entry.seq;
+                    }
+                }
+            }
+        }
         self.flush_computed_write_plan(plan);
+        for claim in claims.into_values() {
+            if claim.winning {
+                self.freshness_record_installed(&claim.result, true);
+            }
+        }
         self.observe_evaluation_commit_window(commit_started);
 
         Ok(())
@@ -13311,30 +13351,30 @@ where
         vertex_id: VertexId,
         value: &LiteralValue,
         computed_writes: Option<&mut ComputedWriteBuffer>,
-    ) -> Result<(), ExcelError> {
+    ) -> Result<OverlayWriteDisposition, ExcelError> {
         if !(self.config.arrow_storage_enabled
             && self.config.delta_overlay_enabled
             && self.config.write_formula_overlay_enabled)
         {
-            return Ok(());
+            return Ok(OverlayWriteDisposition::Skipped);
         }
         if self.computed_overlay_mirroring_disabled {
-            return Ok(());
+            return Ok(OverlayWriteDisposition::Skipped);
         }
         if !matches!(
             self.graph.get_vertex_kind(vertex_id),
             VertexKind::FormulaScalar | VertexKind::FormulaArray
         ) {
-            return Ok(());
+            return Ok(OverlayWriteDisposition::Skipped);
         }
         let Some(cell) = self.graph.get_cell_ref(vertex_id) else {
-            return Ok(());
+            return Ok(OverlayWriteDisposition::Skipped);
         };
         let Some(buffer) = computed_writes else {
             // Unbuffered: one sheet lookup for the value and its format.
             let format_id = self.derived_formats.get(&cell);
             self.write_computed_cell_0based(cell, value, format_id);
-            return Ok(());
+            return Ok(OverlayWriteDisposition::Installed);
         };
         let date_system = self
             .arrow_sheet_by_id(cell.sheet_id)
@@ -13352,9 +13392,10 @@ where
             );
             if self.should_flush_computed_write_buffer(buffer) {
                 self.flush_computed_write_buffer(buffer)?;
+                return Ok(OverlayWriteDisposition::Installed);
             }
         }
-        Ok(())
+        Ok(OverlayWriteDisposition::Buffered)
     }
 
     #[inline]
@@ -20787,6 +20828,10 @@ mod authority_schedule_execution;
 mod scalar_commit_tests;
 
 #[cfg(test)]
+#[path = "tests/observed_effect_identity.rs"]
+mod observed_effect_identity;
+
+#[cfg(test)]
 #[path = "tests/pending_spill.rs"]
 mod pending_spill_tests;
 
@@ -20825,7 +20870,8 @@ where
             if self.freshness_drop_stale(vertex_id) {
                 return Ok(PlannedEffects::new());
             }
-            let effects = self.plan_vertex_effects_unrecorded(vertex_id, computed_value)?;
+            let mut effects = self.plan_vertex_effects_unrecorded(vertex_id, computed_value)?;
+            self.freshness_bind_planned_result(vertex_id, &mut effects);
             self.freshness_mark_committed(vertex_id);
             return Ok(effects);
         }
@@ -21167,11 +21213,42 @@ where
         effect: &Effect,
         delta: Option<&mut DeltaCollector>,
         log: Option<&mut ChangeLog>,
-        computed_writes: Option<&mut ComputedWriteBuffer>,
+        mut computed_writes: Option<&mut ComputedWriteBuffer>,
     ) -> Result<(), ExcelError> {
         match effect {
             Effect::WriteCell { vertex_id, value } => {
                 self.apply_write_cell(*vertex_id, value, delta, computed_writes)?;
+            }
+            Effect::WriteRecordedCell { result } => {
+                let vertex = result.vertex();
+                let disposition = self.apply_write_cell(
+                    vertex,
+                    result.value(),
+                    delta,
+                    computed_writes.as_deref_mut(),
+                )?;
+                match disposition {
+                    OverlayWriteDisposition::Installed => {
+                        self.freshness_record_installed(result, true)
+                    }
+                    OverlayWriteDisposition::Skipped => self.freshness_record_installed(
+                        result,
+                        self.graph.get_cell_ref(vertex).is_none(),
+                    ),
+                    OverlayWriteDisposition::Buffered => {
+                        let buffer = computed_writes.expect("buffered write has its buffer");
+                        let cell = self.graph.get_cell_ref(vertex).expect("buffered grid cell");
+                        let seq = buffer.writes.last().expect("staged write").seq();
+                        buffer.read_claims.insert(
+                            (cell.sheet_id, cell.coord.row(), cell.coord.col()),
+                            BufferedReadClaim {
+                                seq,
+                                result: result.clone(),
+                                winning: false,
+                            },
+                        );
+                    }
+                }
             }
             Effect::SpillClear { anchor_vertex } => {
                 self.apply_spill_clear(*anchor_vertex, delta, log, computed_writes)?;
@@ -21195,14 +21272,15 @@ where
         Ok(())
     }
 
-    /// Apply a WriteCell effect.
+    /// Apply a WriteCell effect. Read proof is promoted by the recorded-result
+    /// caller only when this reports installation, never on mere enqueue.
     fn apply_write_cell(
         &mut self,
         vertex_id: VertexId,
         value: &LiteralValue,
         delta: Option<&mut DeltaCollector>,
         mut computed_writes: Option<&mut ComputedWriteBuffer>,
-    ) -> Result<(), ExcelError> {
+    ) -> Result<OverlayWriteDisposition, ExcelError> {
         if let Some(d) = delta
             && d.mode != DeltaMode::Off
         {
@@ -21220,9 +21298,7 @@ where
             }
         }
         self.graph.update_vertex_value_ref(vertex_id, value);
-        self.record_vertex_value_to_overlay(vertex_id, value, computed_writes)?;
-        self.freshness_record_applied(vertex_id);
-        Ok(())
+        self.record_vertex_value_to_overlay(vertex_id, value, computed_writes)
     }
 
     /// Apply a SpillClear effect.
@@ -21241,6 +21317,9 @@ where
         if spill_cells.is_empty() {
             return Ok(());
         }
+        self.graph
+            .authority_host_mut()
+            .invalidate_observed_value(anchor_vertex);
 
         // Snapshot for ChangeLog before clearing.
         let snapshot = if log.is_some() {

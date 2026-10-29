@@ -148,6 +148,8 @@ mod tests {
 pub(crate) struct Freshness {
     /// The current pass enforces FR (its schedule has a dynamic reader).
     armed: bool,
+    /// Opaque pass identity; retained effects cannot attest another pass/engine.
+    pass_token: std::sync::Arc<()>,
     /// Stale readers of the current pass and the dirty cells they read.
     /// Written from evaluation (possibly parallel), read at commit.
     stale: Mutex<FxHashMap<VertexId, Vec<VertexId>>>,
@@ -198,6 +200,7 @@ impl<R: EvaluationContext> Engine<R> {
         f.stale.get_mut().unwrap().clear();
         f.fresh_reads.get_mut().unwrap().clear();
         f.armed = true;
+        f.pass_token = std::sync::Arc::new(());
         f.had_spills = self.graph.has_spill_anchors();
     }
 
@@ -441,20 +444,70 @@ impl<R: EvaluationContext> Engine<R> {
         self.graph.clear_dirty_flags(&[vertex]);
     }
 
-    /// Install reads only after the actual value and its overlay write succeed.
-    /// Planning-time dirty clearing remains separate (FR2/FR5).
-    pub(super) fn freshness_record_applied(&mut self, vertex: VertexId) {
-        if !self.freshness.armed {
-            return;
-        }
-        if let Some(reads) = self
+    /// Transfer reads only to this evaluation's own final anchor write. The
+    /// native pipeline plans each dynamic result once per commit unit; synthetic
+    /// writes to another anchor stay ordinary and cannot consume its staging.
+    pub(super) fn freshness_bind_planned_result(
+        &mut self,
+        vertex: VertexId,
+        effects: &mut smallvec::SmallVec<[crate::engine::effects::Effect; 2]>,
+    ) {
+        use crate::engine::effects::{Effect, RecordedResult};
+        let Some(reads) = self
             .freshness
             .fresh_reads
             .get_mut()
             .unwrap()
             .remove(&vertex)
-        {
-            self.graph.authority_host_mut().set_observed(vertex, reads);
+        else {
+            return;
+        };
+        let Some(effect) = effects.iter_mut().rfind(
+            |effect| matches!(effect, Effect::WriteCell { vertex_id, .. } if *vertex_id == vertex),
+        ) else {
+            return;
+        };
+        let previous = std::mem::replace(
+            effect,
+            Effect::SpillClear {
+                anchor_vertex: vertex,
+            },
+        );
+        let Effect::WriteCell { value, .. } = previous else {
+            unreachable!()
+        };
+        *effect = Effect::WriteRecordedCell {
+            result: std::sync::Arc::new(RecordedResult::new(
+                vertex,
+                value,
+                self.freshness.pass_token.clone(),
+                reads,
+            )),
+        };
+    }
+
+    /// Called only after installation, or with `installed=false` to retain
+    /// routing hints when no grid value was written. Evidence is one-use.
+    pub(super) fn freshness_record_installed(
+        &mut self,
+        result: &crate::engine::effects::RecordedResult,
+        installed: bool,
+    ) {
+        if !self.freshness.armed || !result.belongs_to_pass(&self.freshness.pass_token) {
+            return;
+        }
+        if let Some(reads) = result.take_reads() {
+            if installed {
+                self.graph
+                    .authority_host_mut()
+                    .set_observed(result.vertex(), reads);
+            } else {
+                self.graph.authority_host_mut().set_observed_with_value(
+                    result.vertex(),
+                    reads,
+                    false,
+                );
+            }
         }
     }
 
@@ -462,7 +515,10 @@ impl<R: EvaluationContext> Engine<R> {
     /// partially applied values, including a failure in final reconciliation.
     pub(super) fn freshness_discard_read_evidence(&mut self) {
         self.freshness.fresh_reads.get_mut().unwrap().clear();
-        self.graph.authority_host_mut().clear_observed();
+        self.freshness.armed = false;
+        self.graph
+            .authority_host_mut()
+            .invalidate_all_observed_values();
     }
 
     /// End of a pass. Armed: clear what legacy clears except stale readers,
