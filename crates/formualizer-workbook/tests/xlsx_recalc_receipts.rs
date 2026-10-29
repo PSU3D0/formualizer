@@ -57,7 +57,7 @@ fn name_errors(out: &formualizer_workbook::XlsxRecalculateResult) -> Vec<(String
 }
 
 #[test]
-fn name_error_reasons_survive_every_name_path() {
+fn executed_operations_stay_separate_from_final_name_error_causes() {
     for (formula, reason, unknown) in [
         ("SPDVOL(1)", "Unknown function: SPDVOL", Some("SPDVOL")),
         ("1+SPDVOL(1)", "Unknown function: SPDVOL", Some("SPDVOL")),
@@ -73,11 +73,21 @@ fn name_error_reasons_survive_every_name_path() {
         ),
         ("Macro1(2)", "Unknown function: Macro1", Some("Macro1")),
         ("NoSuchName", "Undefined name: NoSuchName", None),
+        (
+            "IFERROR(SPDVOL(1),NoSuchName)",
+            "Undefined name: NoSuchName",
+            Some("SPDVOL"),
+        ),
+        (
+            "IF(TRUE,NoSuchName,SPDVOL(1))",
+            "Undefined name: NoSuchName",
+            None,
+        ),
         ("NoSuchName*2", "Undefined name: NoSuchName", None),
         (
             "SUM(NoSuchName,SPDVOL(1))",
             "Undefined name: NoSuchName",
-            None,
+            Some("SPDVOL"),
         ),
     ] {
         let input = package(
@@ -89,17 +99,38 @@ fn name_error_reasons_survive_every_name_path() {
         let out = recalc(&input);
         // Written, not refused; the inheriting cell has no reason of its own.
         assert_eq!(out.summary.errors, 2, "{formula}");
+        // Arrow error storage currently loses reasons. Do not reconstruct a
+        // final cause from AST text or from an independently caught operation.
+        let errors = name_errors(&out);
         assert_eq!(
-            name_errors(&out),
-            vec![
-                ("Sheet1!A1".into(), Some(reason.to_owned())),
-                ("Sheet1!B1".into(), None)
-            ],
+            errors
+                .iter()
+                .map(|(loc, _)| loc.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Sheet1!A1", "Sheet1!B1"]
+        );
+        for (_, message) in errors {
+            if let Some(message) = message {
+                assert!(message.eq_ignore_ascii_case(reason), "{formula}: {message}");
+            }
+        }
+        let expected: BTreeMap<String, usize> = unknown
+            .into_iter()
+            .map(|n| (n.to_ascii_uppercase(), 1))
+            .collect();
+        assert_eq!(out.summary.unknown_functions, expected, "{formula}");
+        assert_eq!(
+            out.operation_diagnostics.logical_cell_reason_count,
+            usize::from(unknown.is_some()),
             "{formula}"
         );
-        let expected: BTreeMap<String, usize> =
-            unknown.into_iter().map(|n| (n.to_owned(), 1)).collect();
-        assert_eq!(out.summary.unknown_functions, expected, "{formula}");
+        assert!(
+            out.operation_diagnostics
+                .samples
+                .iter()
+                .all(|s| s.location.as_deref() == Some("Sheet1!A1")),
+            "{formula}"
+        );
         assert!(
             sheet_xml(&out.bytes).contains("<c r=\"A1\" t=\"e\"><f>"),
             "{formula}"
@@ -119,14 +150,21 @@ fn known_prefixed_functions_and_let_locals_have_no_unknown_reason() {
         "",
     );
     let out = recalc(&input);
-    assert_eq!(
-        name_errors(&out),
-        vec![(
-            "Sheet1!D1".into(),
-            Some("Unknown function: NOPE".to_owned())
-        )]
+    let errors = name_errors(&out);
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].0, "Sheet1!D1");
+    assert!(
+        name_errors(&out)[0]
+            .1
+            .as_deref()
+            .is_none_or(|m| m.eq_ignore_ascii_case("Unknown function: NOPE"))
     );
     assert_eq!(out.summary.errors, 1);
+    assert_eq!(
+        out.summary.unknown_functions,
+        BTreeMap::from([("NOPE".to_owned(), 1)])
+    );
+    assert_eq!(out.operation_diagnostics.logical_root_cell_count, 1);
 }
 
 #[test]
@@ -153,23 +191,23 @@ fn shared_formula_members_get_reasons_and_counts_are_complete_beyond_the_limit()
     assert_eq!(out.summary.errors, 6);
     assert_eq!(
         out.summary.unknown_functions,
-        BTreeMap::from([("SPDVOL".to_owned(), 5), ("_xll.EURO".to_owned(), 1)])
+        BTreeMap::from([("SPDVOL".to_owned(), 5), ("_XLL.EURO".to_owned(), 1)])
+    );
+    assert_eq!(out.operation_diagnostics.logical_cell_reason_count, 6);
+    assert_eq!(out.operation_diagnostics.samples.len(), 2);
+    assert_eq!(out.operation_diagnostics.samples_truncated, 4);
+    assert_eq!(
+        out.operation_diagnostics.unavailable_functions["SPDVOL"].cell_reason_count,
+        5
     );
     let listed = name_errors(&out);
     assert_eq!(listed.len(), 2);
-    assert!(
-        listed
-            .iter()
-            .all(|(_, m)| m.as_deref() == Some("Unknown function: SPDVOL"))
-    );
+    assert!(listed.iter().all(|(_, m)| {
+        m.as_deref()
+            .is_none_or(|m| m.eq_ignore_ascii_case("Unknown function: SPDVOL"))
+    }));
     let out = recalc(&input);
-    assert_eq!(
-        name_errors(&out)[1],
-        (
-            "Sheet1!A2".into(),
-            Some("Unknown function: SPDVOL".to_owned())
-        )
-    );
+    assert_eq!(name_errors(&out)[1].0, "Sheet1!A2");
 }
 
 /// One formula per (cache, formula) pair in row 1, columns A, B, ...
@@ -259,13 +297,35 @@ fn edited_input_is_still_written_untouched_cells_keep_excel_digits_and_rerun_is_
 #[test]
 fn precision_as_displayed_is_computed_in_full_precision() {
     // `fullPrecision="0"` is Excel's "precision as displayed"; it is not
-    // emulated or refused, and calcPr is kept as is.
+    // emulated in legacy strict mode, whose output is labelled partial.
+    // Workbook mode defers it as a global setting; calcPr is kept as is.
     let calc = "<calcPr calcId=\"191029\" fullPrecision=\"0\"/>";
     let input = package(
         &row("<c r=\"A1\" s=\"0\"><v>0.123456</v></c><c r=\"B1\"><f>A1*3</f><v>0.37</v></c>"),
         calc,
     );
     let out = recalc(&input);
+    assert_eq!(
+        out.coverage,
+        formualizer_workbook::SourceCalculationCoverage::Partial
+    );
+    assert!(
+        out.operation_diagnostics
+            .workbook_features
+            .contains(&"precision_as_displayed".to_owned())
+    );
+    for options in [
+        XlsxRecalculateOptions::workbook(),
+        XlsxRecalculateOptions {
+            require_complete: true,
+            ..Default::default()
+        },
+    ] {
+        assert!(matches!(
+            recalculate_xlsx_bytes(&input, options),
+            Err(formualizer_workbook::IoError::CalculationDeferred { .. })
+        ));
+    }
     assert_eq!(out.cache_cells_changed, 1);
     assert!(sheet_xml(&out.bytes).contains("<v>0.37036"));
     let mut z = ZipArchive::new(Cursor::new(&out.bytes)).unwrap();

@@ -197,6 +197,7 @@ fn cancellation_after_evaluation_publishes_nothing() {
         ingested,
         count,
         &options,
+        &crate::xlsx::recalculate::availability::Coverage::default(),
         &mut PhaseClock::from_env(),
     ) {
         Err(IoError::Engine(e)) => assert_eq!(e.kind, ExcelErrorKind::Cancelled),

@@ -241,10 +241,11 @@ fn debug_overflow_sites_agree_with_release() {
 }
 
 #[test]
-fn groupby_integer_options_saturate_like_numbers() {
-    // SEQUENCE yields an Int; the same value typed in is a Number. As the
-    // sort_order argument both must sort ascending (saturated), where the Int
-    // used to wrap to 0 (unsorted).
+fn groupby_sort_options_validate_without_integer_wraparound() {
+    // SEQUENCE yields an Int; a typed literal is a Number. A valid column
+    // index sorts identically. An overflowing Int must not wrap to zero and
+    // silently select unsorted output. This checks engine input admission;
+    // it does not establish Excel's overflow error subtype.
     let run = |code: &str| {
         let mut wb = Workbook::new();
         wb.add_sheet("S").unwrap();
@@ -266,7 +267,18 @@ fn groupby_integer_options_saturate_like_numbers() {
             .map(|r| (5..=6).map(|c| wb.get_value("S", r, c)).collect::<Vec<_>>())
             .collect::<Vec<_>>()
     };
-    let sorted = run("4294967296");
+    let sorted = run("1");
     assert_eq!(sorted[0][0], Some(LiteralValue::Text("a".into())));
-    assert_eq!(run("SEQUENCE(1,1,4294967296)"), sorted);
+    assert_eq!(sorted[1][0], Some(LiteralValue::Text("b".into())));
+    assert_eq!(run("SEQUENCE(1,1,1)"), sorted);
+    let error_kind = |result: Vec<Vec<Option<LiteralValue>>>| {
+        let Some(LiteralValue::Error(error)) = &result[0][0] else {
+            panic!("invalid sort index must fail, not wrap or clamp: {result:?}");
+        };
+        error.kind
+    };
+    assert_eq!(
+        error_kind(run("4294967296")),
+        error_kind(run("SEQUENCE(1,1,4294967296)"))
+    );
 }

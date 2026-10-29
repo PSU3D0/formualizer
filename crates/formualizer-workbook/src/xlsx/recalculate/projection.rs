@@ -44,6 +44,8 @@ pub(super) struct ProjectedAnchor {
 
 #[derive(Debug)]
 pub(super) enum Projection {
+    /// A source formula whose current value is not eligible for publication.
+    Unavailable,
     /// An ordinary formula with a current scalar (or 1x1) result.
     Scalar(Cache),
     Anchor(ProjectedAnchor),
@@ -66,6 +68,7 @@ pub(super) fn project_formula(
     prior: Option<&DynamicAnchor>,
     coerced: bool,
     date_system: DateSystem,
+    invalidate: bool,
     record: &mut dyn FnMut(&LiteralValue),
 ) -> Result<Projection, IoError> {
     let sheet = address.sheet.as_str();
@@ -110,6 +113,18 @@ pub(super) fn project_formula(
         coerced,
         || format!("{sheet}!{}", cell.address()),
     )?;
+    if invalidate {
+        if prior.is_some() || spill.is_some() {
+            return Err(IoError::CalculationDeferred {
+                reason: crate::CalculationDeferredReason::AffectedArrayCoverageUnverified,
+                context: format!(
+                    "{sheet}!{} retains its original array state",
+                    cell.address()
+                ),
+            });
+        }
+        return Ok(Projection::Unavailable);
+    }
     record(&value);
     let shape = if let Some(prior) = prior.filter(|a| a.binding.is_none()) {
         if prior.footprint.cell_count() != Some(1) && spill != Some(prior.footprint) {

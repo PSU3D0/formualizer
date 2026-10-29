@@ -15,6 +15,12 @@ pub(super) fn unchanged(
         worksheet_parts_changed: 0,
         clock_now_utc: None,
         external_links_used: 0,
+        calculation: None,
+        coverage: crate::SourceCalculationCoverage::Complete,
+        coverage_scope: crate::SourceCoverageScope::None,
+        caches_invalidated: 0,
+        calculation_flags_changed: false,
+        operation_diagnostics: Default::default(),
     }
 }
 /// The validated value of one source formula, exactly as the scalar writer
@@ -45,7 +51,7 @@ pub(super) fn validated_result(
     Ok(value)
 }
 /// Count one evaluated source formula (anchors included) in the summary.
-/// A `#NAME?` without a message gets the reason its own formula gives.
+/// Missing error payloads remain unknown; diagnostics use executed roots.
 pub(super) fn record_result(
     summary: &mut RecalculateSummary,
     engine: &Engine<WBResolver>,
@@ -55,17 +61,7 @@ pub(super) fn record_result(
     limit: usize,
 ) {
     let location = || format!("{sheet}!{}", cell.address());
-    match value {
-        LiteralValue::Error(error)
-            if error.kind == formualizer_common::ExcelErrorKind::Name
-                && error.message().is_none() =>
-        {
-            let mut error = error.clone();
-            error.set_message(error_reasons::name_error_reason(
-                engine, sheet, cell.row, cell.col,
-            ));
-            summary.record(sheet, location, &LiteralValue::Error(error), limit);
-        }
-        _ => summary.record(sheet, location, value, limit),
-    }
+    // Missing payloads remain unknown; never infer execution from inactive AST syntax.
+    let _ = engine;
+    summary.record(sheet, location, value, limit);
 }

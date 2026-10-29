@@ -60,6 +60,706 @@ fn data(bytes: &[u8], row: u32) -> Data {
 fn reject(parts: &BTreeMap<String, String>) {
     assert!(recalculate_xlsx_bytes(&pack(parts), XlsxRecalculateOptions::default()).is_err());
 }
+
+#[test]
+fn source_policy_boundary_strict_does_not_consume_affected_query_budget() {
+    use formualizer_workbook::{CalculationDeferredReason, IoError, SourceCalculationCoverage};
+    let input = fixture("SOME_MISSING_FN(1)", "99");
+    let mut options = XlsxRecalculateOptions::default();
+    options.limits.max_affected_regions = 0;
+    options.limits.max_affected_work = 0;
+    options.limits.max_affected_scratch_bytes = 0;
+    let result = recalculate_xlsx_bytes(&input, options.clone()).unwrap();
+    assert_eq!(result.coverage, SourceCalculationCoverage::Partial);
+    options.require_complete = true;
+    assert!(matches!(
+        recalculate_xlsx_bytes(&input, options),
+        Err(IoError::CalculationDeferred {
+            reason: CalculationDeferredReason::KnownCoverageIncomplete,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn source_policy_boundary_invalid_precision_never_claims_complete() {
+    use formualizer_workbook::{CalculationDeferredReason, IoError, SourceCalculationCoverage};
+    let mut source = single("1+1", "<v>99</v>");
+    let workbook = source.get_mut("xl/workbook.xml").unwrap();
+    *workbook = workbook.replace(
+        "</workbook>",
+        "<calcPr fullPrecision=\"maybe\"/></workbook>",
+    );
+    let bytes = pack(&source);
+    let partial = recalculate_xlsx_bytes(&bytes, XlsxRecalculateOptions::default()).unwrap();
+    assert_eq!(partial.coverage, SourceCalculationCoverage::Partial);
+    assert!(
+        partial
+            .operation_diagnostics
+            .workbook_features
+            .iter()
+            .any(|value| value == "invalid_full_precision")
+    );
+    let strict = XlsxRecalculateOptions {
+        require_complete: true,
+        ..Default::default()
+    };
+    assert!(matches!(
+        recalculate_xlsx_bytes(&bytes, strict),
+        Err(IoError::CalculationDeferred {
+            reason: CalculationDeferredReason::KnownCoverageIncomplete,
+            ..
+        })
+    ));
+    assert!(matches!(
+        recalculate_xlsx_bytes(&bytes, XlsxRecalculateOptions::workbook()),
+        Err(IoError::CalculationDeferred {
+            reason: CalculationDeferredReason::WorkbookPrecisionUnverified,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn source_policy_boundary_modes_and_unverified_producers_prevent_false_complete() {
+    use formualizer_workbook::{CalculationDeferredReason, IoError, SourceCalculationCoverage};
+    for formula in [
+        "CELL(\"format\",B1)",
+        "IF(TRUE,SUM,AVERAGE)",
+        "HSTACK(SUM,AVERAGE)",
+        "TEXT(1,\"[>0]yyyy;0\")",
+    ] {
+        let input = fixture(formula, "99");
+        let mut options = XlsxRecalculateOptions::workbook();
+        options.error_location_limit = 0;
+        let partial = recalculate_xlsx_bytes(&input, options.clone()).unwrap();
+        assert_eq!(
+            partial.coverage,
+            SourceCalculationCoverage::Partial,
+            "{formula}"
+        );
+        assert!(
+            !partial.operation_diagnostics.function_modes.is_empty(),
+            "{formula}"
+        );
+        assert!(partial.operation_diagnostics.samples.is_empty());
+        assert_eq!(
+            partial.operation_diagnostics.physical_function_dispatches,
+            None
+        );
+        assert!(
+            !member(&partial.bytes, SHEET).contains("<v>99</v>"),
+            "{formula}"
+        );
+        options.require_complete = true;
+        assert!(
+            matches!(
+                recalculate_xlsx_bytes(&input, options),
+                Err(IoError::CalculationDeferred {
+                    reason: CalculationDeferredReason::KnownCoverageIncomplete,
+                    ..
+                })
+            ),
+            "{formula}"
+        );
+    }
+    for formula in ["1/0", "IFERROR(1/0,7)", "IF(FALSE,IF(TRUE,SUM,AVERAGE),7)"] {
+        let result = recalculate_xlsx_bytes(
+            &fixture(formula, "99"),
+            XlsxRecalculateOptions {
+                require_complete: true,
+                ..XlsxRecalculateOptions::workbook()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            result.coverage,
+            SourceCalculationCoverage::Complete,
+            "{formula}"
+        );
+        assert!(
+            result.operation_diagnostics.function_modes.is_empty(),
+            "{formula}"
+        );
+    }
+}
+
+#[test]
+fn source_policy_boundary_independent_dynamic_cache_is_published() {
+    use formualizer_workbook::SourceCalculationCoverage;
+    let input = pack(&parts(
+        "<row r=\"1\"><c r=\"A1\"><f>SOME_MISSING_FN(1)</f><v>99</v></c><c r=\"B1\"><f>INDIRECT(\"A1\")</f><v>88</v></c><c r=\"C1\"><f>B1+1</f><v>77</v></c><c r=\"D1\"><v>7</v></c><c r=\"E1\"><f>INDIRECT(\"D1\")</f><v>66</v></c><c r=\"F1\"><f>E1+1</f><v>55</v></c></row>",
+    ));
+    let output = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    assert_eq!(output.coverage, SourceCalculationCoverage::Partial);
+    let xml = member(&output.bytes, SHEET);
+    for stale in [
+        "<v>99</v>",
+        "<v>88</v>",
+        "<v>77</v>",
+        "<v>66</v>",
+        "<v>55</v>",
+    ] {
+        assert!(!xml.contains(stale), "{xml}");
+    }
+    let mut reopened = Xlsx::new(Cursor::new(output.bytes)).unwrap();
+    let range = reopened.worksheet_range("Sheet1").unwrap();
+    assert_eq!(range.get_value((0, 4)), Some(&Data::Float(7.0)));
+    assert_eq!(range.get_value((0, 5)), Some(&Data::Float(8.0)));
+    let facts = output.operation_diagnostics.dependency_evidence.unwrap();
+    assert_eq!(facts.unknown_facts, 0);
+    assert!(
+        facts.semantic_reads_unattested,
+        "scope caveat must stay explicit"
+    );
+    assert_eq!(
+        facts.source_domain,
+        "admitted_workbook_and_fixed_cached_sources"
+    );
+}
+
+#[test]
+fn source_policy_boundary_evidence_and_query_failures_are_fatal_resources() {
+    use formualizer_common::{ExcelErrorExtra, ResourceExhaustionReason};
+    use formualizer_workbook::IoError;
+    let input = fixture("SOME_MISSING_FN(1)", "99");
+    for case in 0..5 {
+        let mut options = XlsxRecalculateOptions::workbook();
+        options.error_location_limit = 0;
+        match case {
+            0 => options.limits.max_operation_roots = 0,
+            1 => options.limits.max_operation_text_bytes = 0,
+            2 => options.limits.max_affected_work = 0,
+            3 => options.limits.max_affected_regions = 0,
+            _ => options.limits.max_affected_scratch_bytes = 0,
+        }
+        let error = recalculate_xlsx_bytes(&input, options).unwrap_err();
+        let IoError::Engine(error) = error else {
+            panic!("resource must remain fatal engine error: {error:?}")
+        };
+        let ExcelErrorExtra::Resource { detail } = error.extra() else {
+            panic!("missing typed resource detail: {error:?}")
+        };
+        let expected = match case {
+            0 => ResourceExhaustionReason::OperationEvidenceRoots,
+            1 => ResourceExhaustionReason::OperationEvidenceTextBytes,
+            2 => ResourceExhaustionReason::WorkUnits,
+            3 => ResourceExhaustionReason::DependencyClosureOutputItems,
+            _ => ResourceExhaustionReason::ScratchMemory,
+        };
+        assert_eq!(detail.reason, expected);
+    }
+    recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+}
+
+#[test]
+fn source_policy_boundary_optional_telemetry_is_measured_only_on_request() {
+    let input = fixture("1+1", "99");
+    let unmeasured = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    assert_eq!(
+        unmeasured
+            .operation_diagnostics
+            .physical_function_dispatches,
+        None
+    );
+    let measured = recalculate_xlsx_bytes(
+        &input,
+        XlsxRecalculateOptions {
+            physical_telemetry: true,
+            ..XlsxRecalculateOptions::workbook()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        measured.operation_diagnostics.physical_function_dispatches,
+        Some(0)
+    );
+    let called = recalculate_xlsx_bytes(
+        &fixture("SUM(1,2)", "99"),
+        XlsxRecalculateOptions {
+            physical_telemetry: true,
+            ..XlsxRecalculateOptions::workbook()
+        },
+    )
+    .unwrap();
+    assert!(
+        called
+            .operation_diagnostics
+            .physical_function_dispatches
+            .unwrap()
+            > 0
+    );
+}
+
+#[test]
+fn source_policy_boundary_publication_membership_respects_shared_work_limit() {
+    use formualizer_common::{ExcelErrorExtra, ResourceExhaustionReason};
+    use formualizer_workbook::IoError;
+    let input = pack(&parts(
+        "<row r=\"1\"><c r=\"A1\"><f>SOME_MISSING_FN(1)</f><v>99</v></c><c r=\"B1\"><f>1+1</f><v>88</v></c></row>",
+    ));
+    let normal = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    let query_work = normal
+        .operation_diagnostics
+        .dependency_evidence
+        .unwrap()
+        .query_work;
+    let mut limited = XlsxRecalculateOptions::workbook();
+    limited.limits.max_affected_work = query_work;
+    let error = recalculate_xlsx_bytes(&input, limited).unwrap_err();
+    let IoError::Engine(error) = error else {
+        panic!("membership bound must be fatal: {error:?}")
+    };
+    assert!(
+        matches!(error.extra(),ExcelErrorExtra::Resource{detail} if detail.reason==ResourceExhaustionReason::WorkUnits)
+    );
+}
+
+#[test]
+fn source_policy_boundary_portable_policy_requires_records() {
+    use formualizer_workbook::SourceCalculationPolicy;
+    for input in [
+        r#"[{}]"#,
+        r#"{"iteration":["workbook"]}"#,
+        r#"{"timezone":[0]}"#,
+    ] {
+        assert!(
+            serde_json::from_str::<SourceCalculationPolicy>(input).is_err(),
+            "{input}"
+        );
+    }
+    for input in [
+        r#"{}"#,
+        r#"{"iteration":{"mode":"disabled"}}"#,
+        r#"{"timezone":{"offsetSeconds":0}}"#,
+    ] {
+        serde_json::from_str::<SourceCalculationPolicy>(input).unwrap();
+    }
+}
+
+#[test]
+fn source_policy_boundary_unverified_actual_provider_is_reported() {
+    use formualizer_workbook::{
+        CalculationDeferredReason, IoError, SourceCalculationCoverage, SourceUnavailableOperation,
+    };
+    const CASE: &str = "source_policy_boundary_unverified_actual_provider_is_reported";
+    if std::env::var("FZ_SOURCE_PROVIDER_CHILD").ok().as_deref() != Some(CASE) {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", CASE, "--nocapture"])
+            .env("FZ_SOURCE_PROVIDER_CHILD", CASE)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    struct Provider;
+    impl formualizer_eval::function::Function for Provider {
+        fn name(&self) -> &'static str {
+            "SOURCE_TEST_LOCAL_PROVIDER"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _: &'c [formualizer_eval::traits::ArgumentHandle<'a, 'b>],
+            _: &dyn formualizer_eval::traits::FunctionContext<'b>,
+        ) -> Result<formualizer_eval::traits::CalcValue<'b>, formualizer_common::ExcelError>
+        {
+            Ok(formualizer_eval::traits::CalcValue::Scalar(
+                formualizer_common::LiteralValue::Number(9.0),
+            ))
+        }
+    }
+    formualizer_eval::function_registry::try_register_function(std::sync::Arc::new(Provider))
+        .unwrap();
+    let input = fixture("SOURCE_TEST_LOCAL_PROVIDER()", "99");
+    let result = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    assert_eq!(result.coverage, SourceCalculationCoverage::Partial);
+    assert!(result.operation_diagnostics.samples.iter().any(|sample|matches!(
+        &sample.operation,SourceUnavailableOperation::UnverifiedProvider{name} if name=="SOURCE_TEST_LOCAL_PROVIDER"
+    )));
+    assert!(matches!(
+        recalculate_xlsx_bytes(
+            &input,
+            XlsxRecalculateOptions {
+                require_complete: true,
+                ..XlsxRecalculateOptions::workbook()
+            }
+        ),
+        Err(IoError::CalculationDeferred {
+            reason: CalculationDeferredReason::KnownCoverageIncomplete,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn source_policy_boundary_unsupported_named_modes_preserve_admission_refusal() {
+    use formualizer_workbook::IoError;
+    let mut source = parts(
+        "<row r=\"1\"><c r=\"A1\"><f>GapName+1</f><v>99</v></c><c r=\"B1\"><v>7</v></c></row>",
+    );
+    let workbook = source.get_mut("xl/workbook.xml").unwrap();
+    *workbook=workbook.replace("</workbook>","<definedNames><definedName name=\"GapName\">CELL(\"format\",Sheet1!$B$1)</definedName></definedNames></workbook>");
+    for options in [
+        XlsxRecalculateOptions::default(),
+        XlsxRecalculateOptions::workbook(),
+    ] {
+        assert!(matches!(recalculate_xlsx_bytes(&pack(&source),options),
+            Err(IoError::Unsupported{feature,context}) if feature=="unsupported or cyclic calculation name"&&context=="GapName"));
+    }
+}
+
+#[test]
+fn source_policy_boundary_independent_dynamic_spill_is_published() {
+    use formualizer_workbook::SourceCalculationCoverage;
+    let input = pack(&parts(
+        "<row r=\"1\"><c r=\"A1\"><f>SOME_MISSING_FN(1)</f><v>99</v></c><c r=\"B1\"><f>INDIRECT(\"A1\")</f><v>88</v></c></row><row r=\"3\"><c r=\"D3\"><v>7</v></c><c r=\"E3\"><f>INDIRECT(\"D3:D4\")</f><v>66</v></c></row><row r=\"4\"><c r=\"D4\"><v>8</v></c></row>",
+    ));
+    let result = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    assert_eq!(result.coverage, SourceCalculationCoverage::Partial);
+    let mut reopened = Xlsx::new(Cursor::new(result.bytes)).unwrap();
+    let range = reopened.worksheet_range("Sheet1").unwrap();
+    assert_eq!(range.get_value((2, 4)), Some(&Data::Float(7.0)));
+    assert_eq!(range.get_value((3, 4)), Some(&Data::Float(8.0)));
+    assert!(result.operation_diagnostics.dependency_evidence.is_some());
+}
+
+#[test]
+fn portable_policy_reports_effective_settings_without_rewriting_workbook() {
+    use formualizer_eval::engine::{CycleDetection, CyclePolicy};
+    use formualizer_workbook::{
+        CalculationSettingOrigin, SourceCalculationPolicy, SourceIterationPolicy,
+    };
+    let input = fixture("1+1", "99");
+    let options = XlsxRecalculateOptions {
+        calculation: Some(SourceCalculationPolicy {
+            iteration: SourceIterationPolicy::Disabled,
+            workbook_seed: Some(u64::MAX),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let out = recalculate_xlsx_bytes(&input, options).unwrap();
+    let report = out.calculation.as_ref().unwrap();
+    assert_eq!(report.cycle.detection, CycleDetection::Runtime);
+    assert_eq!(report.cycle.policy, CyclePolicy::Error);
+    assert_eq!(report.iteration_origin, CalculationSettingOrigin::Caller);
+    assert_eq!(report.workbook_seed, u64::MAX);
+    assert_eq!(data(&out.bytes, 0), Data::Float(2.0));
+    assert_eq!(
+        member(&input, "xl/workbook.xml"),
+        member(&out.bytes, "xl/workbook.xml")
+    );
+    assert!(
+        recalculate_xlsx_bytes(&input, Default::default())
+            .unwrap()
+            .calculation
+            .is_none()
+    );
+}
+
+#[test]
+fn workbook_profile_admits_sparse_declared_and_actual_grid_corners() {
+    for (dimension, row, address) in [
+        ("A1:XFD1048576", 1, "B1"),
+        ("A1:IW1", 1, "IW1"),
+        ("A1:XFD1048576", 1_048_576, "XFD1048576"),
+    ] {
+        let rows = if row == 1 {
+            format!(
+                "<row r=\"1\"><c r=\"A1\"><v>2</v></c><c r=\"{address}\"><f>A1+1</f><v>0</v></c></row>"
+            )
+        } else {
+            format!(
+                "<row r=\"1\"><c r=\"A1\"><v>2</v></c></row><row r=\"{row}\"><c r=\"{address}\"><f>A1+1</f><v>0</v></c></row>"
+            )
+        };
+        let mut p = parts(&rows);
+        let xml = p[SHEET].replace(
+            "<sheetData>",
+            &format!("<dimension ref=\"{dimension}\"/><sheetData>"),
+        );
+        p.insert(SHEET.into(), xml);
+        let input = pack(&p);
+        assert!(recalculate_xlsx_bytes(&input, Default::default()).is_err());
+        let out = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+        let output = member(&out.bytes, SHEET);
+        assert!(
+            output.contains(&format!("<c r=\"{address}\"><f>A1+1</f><v>3</v></c>")),
+            "{output}"
+        );
+        assert_eq!(out.cache_cells_changed, 1);
+        let mut limited = XlsxRecalculateOptions::workbook();
+        limited.limits.max_cells = 1;
+        assert!(recalculate_xlsx_bytes(&input, limited).is_err());
+    }
+}
+
+#[test]
+fn source_iteration_requires_verified_state_or_explicit_cold_start() {
+    use formualizer_workbook::{CalculationDeferredReason, IoError, SourceIterationInitialState};
+    let mut p = single("A1+1", "<v>5</v>");
+    let workbook = p.get_mut("xl/workbook.xml").unwrap();
+    *workbook = workbook.replace(
+        "</workbook>",
+        "<calcPr iterate=\"1\" iterateCount=\"1\" iterateDelta=\"0.001\"/></workbook>",
+    );
+    let input = pack(&p);
+    assert!(matches!(
+        recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()),
+        Err(IoError::CalculationDeferred {
+            reason: CalculationDeferredReason::IterativeInitialStateUnverified,
+            ..
+        })
+    ));
+    let mut options = XlsxRecalculateOptions::workbook();
+    options
+        .calculation
+        .as_mut()
+        .unwrap()
+        .iteration_initial_state = SourceIterationInitialState::ColdStart;
+    let out = recalculate_xlsx_bytes(&input, options).unwrap();
+    assert_eq!(data(&out.bytes, 0), Data::Float(1.0));
+    assert_eq!(
+        out.calculation.unwrap().iteration_initial_state,
+        SourceIterationInitialState::ColdStart
+    );
+    let mut raw = XlsxRecalculateOptions::default();
+    raw.eval_config.cycle = formualizer_eval::engine::CycleConfig::iterate(1, 0.001);
+    assert!(recalculate_xlsx_bytes(&input, raw).is_err());
+    p.get_mut(SHEET)
+        .unwrap()
+        .clone_from(&single("1+1", "<v>0</v>")[SHEET]);
+    let out = recalculate_xlsx_bytes(&pack(&p), XlsxRecalculateOptions::workbook()).unwrap();
+    assert_eq!(data(&out.bytes, 0), Data::Float(2.0));
+}
+
+#[test]
+fn workbook_partial_invalidates_caught_gap_and_dependent_caches() {
+    use formualizer_workbook::SourceCalculationCoverage;
+    let input = pack(&parts(
+        "<row r=\"1\"><c r=\"A1\"><f>IFERROR(GAP_ALPHA(1),7)</f><v>999</v></c><c r=\"B1\"><f>A1+1</f><v>999</v></c><c r=\"D1\"><f>2+2</f><v>0</v></c><c r=\"E1\"><f>IFERROR(1/0,7)</f><v>0</v></c></row>",
+    ));
+    let legacy = recalculate_xlsx_bytes(&input, Default::default()).unwrap();
+    assert_eq!(legacy.coverage, SourceCalculationCoverage::Partial);
+    assert_eq!(data(&legacy.bytes, 0), Data::Float(7.0));
+    let out = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    let xml = member(&out.bytes, SHEET);
+    assert_eq!(out.coverage, SourceCalculationCoverage::Partial);
+    assert_eq!(out.caches_invalidated, 2);
+    assert!(out.calculation_flags_changed);
+    let flags = member(&out.bytes, "xl/workbook.xml");
+    assert!(flags.contains("fullCalcOnLoad=\"1\"") && flags.contains("forceFullCalc=\"1\""));
+    let repeat = recalculate_xlsx_bytes(&out.bytes, XlsxRecalculateOptions::workbook()).unwrap();
+    assert_eq!(repeat.bytes, out.bytes);
+    assert_eq!(repeat.caches_invalidated, 0);
+    assert!(!repeat.calculation_flags_changed);
+    assert_eq!(repeat.operation_diagnostics.logical_cell_reason_count, 1);
+    assert!(
+        xml.contains("<c r=\"A1\"><f>IFERROR(GAP_ALPHA(1),7)</f></c>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<c r=\"B1\"><f>A1+1</f></c>"));
+    assert!(xml.contains("<c r=\"D1\"><f>2+2</f><v>4</v></c>"));
+    assert!(xml.contains("<c r=\"E1\"><f>IFERROR(1/0,7)</f><v>7</v></c>"));
+    for mut options in [
+        XlsxRecalculateOptions::default(),
+        XlsxRecalculateOptions::workbook(),
+    ] {
+        options.require_complete = true;
+        assert!(recalculate_xlsx_bytes(&input, options).is_err());
+        assert!(
+            recalculate_xlsx_bytes(
+                &fixture("1/0", "0"),
+                XlsxRecalculateOptions {
+                    require_complete: true,
+                    ..Default::default()
+                }
+            )
+            .is_ok()
+        );
+    }
+}
+
+#[test]
+fn workbook_partial_data_table_preserves_descriptor_and_independent_result() {
+    use formualizer_workbook::SourceCalculationCoverage;
+    let input = pack(&parts(
+        "<row r=\"1\"><c r=\"A1\"><v>1</v></c><c r=\"B1\"><f t=\"dataTable\" ref=\"B1:B2\" r1=\"A1\"/><v>123</v></c><c r=\"C1\"><f>SUM(B1:B2)</f><v>999</v></c><c r=\"D1\"><f>2+2</f><v>0</v></c></row><row r=\"2\"><c r=\"B2\"><v>456</v></c></row>",
+    ));
+    assert!(recalculate_xlsx_bytes(&input, Default::default()).is_err());
+    let out = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    let xml = member(&out.bytes, SHEET);
+    assert_eq!(out.coverage, SourceCalculationCoverage::Partial);
+    assert!(xml.contains("<f t=\"dataTable\" ref=\"B1:B2\" r1=\"A1\"/>"));
+    assert!(
+        !xml.contains("123") && !xml.contains("456") && !xml.contains("999"),
+        "{xml}"
+    );
+    assert!(xml.contains("<c r=\"D1\"><f>2+2</f><v>4</v></c>"));
+    assert_eq!(out.caches_invalidated, 3);
+}
+
+#[test]
+fn workbook_partial_uses_executed_roots_and_published_error_totals() {
+    use formualizer_workbook::SourceCalculationCoverage;
+    let mut options = XlsxRecalculateOptions::workbook();
+    options.require_complete = true;
+    let out = recalculate_xlsx_bytes(
+        &fixture("IF(TRUE,MISSING_BINDING,GAP_INACTIVE(1))", "0"),
+        options,
+    )
+    .unwrap();
+    assert_eq!(out.coverage, SourceCalculationCoverage::Complete);
+    assert_eq!(out.summary.errors, 1);
+    assert!(
+        out.summary
+            .error_summary
+            .values()
+            .flat_map(|s| &s.messages)
+            .all(|m| m.as_deref().is_none_or(|m| !m.contains("GAP_INACTIVE")))
+    );
+    assert!(out.summary.unknown_functions.is_empty());
+    assert_eq!(out.operation_diagnostics.logical_cell_reason_count, 0);
+    let input = pack(&parts(
+        "<row r=\"1\"><c r=\"A1\"><v>1</v></c><c r=\"B1\"><f t=\"dataTable\" ref=\"B1:B2\" r1=\"A1\"/><v>123</v></c><c r=\"C1\"><f>IF(B2=456,GAP_STALE(1),42)</f><v>999</v></c><c r=\"D1\"><f>1/0</f><v>0</v></c></row><row r=\"2\"><c r=\"B2\"><v>456</v></c></row>",
+    ));
+    let out = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    assert_eq!(out.coverage, SourceCalculationCoverage::Partial);
+    assert_eq!(
+        out.operation_diagnostics.logical_cell_reason_count, 0,
+        "saved generated cache must not select GAP_STALE"
+    );
+    assert_eq!(out.operation_diagnostics.source_regions, 1);
+    assert_eq!(
+        out.summary.evaluated, 2,
+        "synthetic data-table sentinel is not a source calculation"
+    );
+    assert_eq!(
+        out.summary.errors, 1,
+        "only the published independent DIV/0 is a final error"
+    );
+    assert!(out.summary.unknown_functions.is_empty());
+}
+
+#[test]
+fn workbook_partial_refuses_ambiguous_ownership_and_defers_affected_array() {
+    use formualizer_workbook::{CalculationDeferredReason, IoError};
+    for table in [
+        "<c r=\"B1\"><f t=\"dataTable\" ref=\"B1:B2\"/><v>123</v></c></row><row r=\"2\"><c r=\"B2\"><f>1+1</f><v>456</v></c>",
+        "<c r=\"B1\"><f t=\"dataTable\" ref=\"B2:B3\"/><v>123</v></c>",
+        "<c r=\"B1\"><f t=\"dataTable\" ref=\"B1:B3\"/><v>123</v></c><c r=\"C1\"><f t=\"dataTable\" ref=\"C1:C2\"/><v>0</v></c></row><row r=\"2\"><c r=\"B2\"><f t=\"dataTable\" ref=\"B2:B4\"/><v>456</v></c>",
+    ] {
+        let input = pack(&parts(&format!("<row r=\"1\">{table}</row>")));
+        let error = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap_err();
+        assert!(
+            !matches!(error, IoError::CalculationDeferred { .. }),
+            "{error:?}"
+        );
+    }
+    let error = recalculate_xlsx_bytes(
+        &fixture("IFERROR(GAP_ARRAY(1),SEQUENCE(2))", "999"),
+        XlsxRecalculateOptions::workbook(),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            IoError::CalculationDeferred {
+                reason: CalculationDeferredReason::AffectedArrayCoverageUnverified,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn workbook_partial_flags_preserve_source_mode_and_namespace() {
+    let mut input =
+        parts("<row r=\"1\"><c r=\"A1\"><f>IFERROR(GAP_FLAG(1),7)</f><v>999</v></c></row>");
+    let workbook = input["xl/workbook.xml"].clone();
+    let workbook = workbook.replace("<workbook ", "<s:workbook ").replace("</workbook>", "</s:workbook>").replace("xmlns=", "xmlns:s=").replace("<sheets>", "<s:sheets>").replace("</sheets>", "</s:sheets>").replace("<sheet ", "<s:sheet ").replace("</s:workbook>", "<s:calcPr calcMode=\"manual\" iterate=\"0\" fullCalcOnLoad=\"0\" forceFullCalc=\"false\"/><s:extLst/></s:workbook>");
+    input.insert("xl/workbook.xml".into(), workbook);
+    let input = pack(&input);
+    let out = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    let workbook = member(&out.bytes, "xl/workbook.xml");
+    assert!(workbook.contains("calcMode=\"manual\"") && workbook.contains("iterate=\"0\""));
+    assert!(workbook.contains("fullCalcOnLoad=\"1\"") && workbook.contains("forceFullCalc=\"1\""));
+    assert_eq!(workbook.matches("calcPr").count(), 1);
+    assert_eq!(
+        recalculate_xlsx_bytes(&out.bytes, XlsxRecalculateOptions::workbook())
+            .unwrap()
+            .bytes,
+        out.bytes
+    );
+}
+
+#[test]
+fn workbook_partial_internal_cycle_and_zero_sample_scope_are_truthful() {
+    use formualizer_workbook::SourceCalculationCoverage;
+    let mut options = XlsxRecalculateOptions::workbook();
+    options.error_location_limit = 0;
+    let gap = recalculate_xlsx_bytes(
+        &fixture("IFERROR(GAP_ZERO_SAMPLE(1),7)", "999"),
+        options.clone(),
+    )
+    .unwrap();
+    assert_eq!(gap.coverage, SourceCalculationCoverage::Partial);
+    assert!(gap.operation_diagnostics.samples.is_empty());
+    assert_eq!(gap.operation_diagnostics.samples_truncated, 1);
+    assert_eq!(
+        gap.operation_diagnostics.unavailable_functions["GAP_ZERO_SAMPLE"].cell_reason_count,
+        1
+    );
+    assert_eq!(gap.summary.unknown_functions["GAP_ZERO_SAMPLE"], 1);
+    let cycle = recalculate_xlsx_bytes(&fixture("A1+1", "999"), options).unwrap();
+    assert_eq!(cycle.coverage, SourceCalculationCoverage::Partial);
+    assert_eq!(cycle.caches_invalidated, 1);
+    assert_eq!(cycle.operation_diagnostics.unavailable_result_cells, 1);
+    assert_eq!(cycle.summary.errors, 0);
+    assert!(!member(&cycle.bytes, SHEET).contains("<v>"));
+}
+
+#[test]
+fn parse_refusal_precedes_any_coverage_deferral() {
+    use formualizer_workbook::IoError;
+    let input = pack(&parts(
+        "<row r=\"1\"><c r=\"A1\"><f>IFERROR(GAP_ALPHA(1),7)</f><v>999</v></c><c r=\"B1\"><f>SUM((A1</f><v>999</v></c></row>",
+    ));
+    for require_complete in [false, true] {
+        let options = XlsxRecalculateOptions {
+            require_complete,
+            ..XlsxRecalculateOptions::workbook()
+        };
+        let error = recalculate_xlsx_bytes(&input, options).unwrap_err();
+        assert!(
+            !matches!(error, IoError::CalculationDeferred { .. }),
+            "{error:?}"
+        );
+        assert!(
+            error.to_string().contains("unparseable formula") && error.to_string().contains("B1"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn invalid_cycle_request_returns_typed_error_before_package_import() {
+    use formualizer_eval::engine::{CycleConfig, CycleDetection, CyclePolicy};
+    let mut options = XlsxRecalculateOptions::default();
+    options.eval_config.cycle = CycleConfig {
+        detection: CycleDetection::Static,
+        policy: CyclePolicy::Iterate {
+            max_iterations: 0,
+            max_change: 0.0,
+        },
+    };
+    assert!(matches!(
+        recalculate_xlsx_bytes(&[], options),
+        Err(formualizer_workbook::IoError::InvalidOptions { .. })
+    ));
+}
+
 #[test]
 fn defined_constant_is_calculated_not_published_as_name_error() {
     let mut p = single("Rate*2", "<v>99</v>");

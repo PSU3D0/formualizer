@@ -619,6 +619,25 @@ fn refuse_policy_refuses_when_a_formula_reads_a_link_value() {
 }
 
 #[test]
+fn workbook_external_refusal_is_not_downgraded_by_partial_array_deferral() {
+    let input = workbook(
+        vec![
+            formula("A1", "IFERROR(GAP_EXTERNAL(1),SEQUENCE(2))"),
+            formula("D1", "[1]Data!B2*2"),
+        ],
+        "",
+    );
+    let options = XlsxRecalculateOptions {
+        external_links: ExternalLinkPolicy::Refuse,
+        ..XlsxRecalculateOptions::workbook()
+    };
+    match recalculate_xlsx_bytes(&input, options) {
+        Err(IoError::Unsupported { feature, .. }) => assert_eq!(feature, "external link values"),
+        other => panic!("explicit external-cache refusal must stay fatal: {other:?}"),
+    }
+}
+
+#[test]
 fn refuse_policy_recalculates_when_nothing_reads_a_link() {
     for bytes in [
         workbook(vec![formula("A1", "1+1")], ""),

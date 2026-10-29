@@ -217,7 +217,7 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
         *logical_cells = logical_cells
             .checked_add(u64::from(self.max_row) * u64::from(self.max_col))
             .ok_or_else(|| unsupported("logical area overflow", "workbook"))?;
-        if *logical_cells > options.limits.max_cells as u64 {
+        if !options.sparse_dimensions && *logical_cells > options.limits.max_cells as u64 {
             return Err(unsupported("workbook logical cell limit", "workbook"));
         }
         if STRICT {

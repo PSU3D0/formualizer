@@ -731,6 +731,8 @@ fn x15_workbook_pr(
 }
 /// The workbook as discovered from its package.
 pub(super) struct Discovery {
+    pub precision_as_displayed: bool,
+    pub calculation_properties: Option<crate::calc_pr::ParsedCalcProperties>,
     pub sheets: Vec<Sheet>,
     pub date_system: formualizer_common::DateSystem,
     /// The single relationship-resolved sheet metadata part, if any.
@@ -792,6 +794,8 @@ pub(super) fn discover(
     let mut names = HashSet::new();
     let mut targets = HashSet::new();
     let mut epoch = formualizer_common::DateSystem::Excel1900;
+    let mut precision_as_displayed = false;
+    let mut calculation_properties = None;
     let mut workbook_pr = false;
     let mut ext_uri: Option<String> = None;
     let mut x15_seen = false;
@@ -910,6 +914,30 @@ pub(super) fn discover(
             if !defined_names.insert((scope, node.required("name")?.to_ascii_lowercase())) {
                 return Err(unsupported("duplicate defined name", "workbook XML"));
             }
+        }
+        if e.local == "calcPr" {
+            use crate::calc_pr::ParsedCalcProperties;
+            if let xml::Kind::Open { attributes, .. } = &node.kind {
+                if attributes.iter().any(|attribute| {
+                    attribute.qualified.contains(':')
+                        && ParsedCalcProperties::ATTRIBUTE_NAMES.contains(&attribute.local)
+                }) {
+                    return Err(unsupported(
+                        "foreign calculation-property lookalike",
+                        "calcPr",
+                    ));
+                }
+            }
+            let properties = ParsedCalcProperties::from_attributes(
+                ParsedCalcProperties::ATTRIBUTE_NAMES
+                    .into_iter()
+                    .filter_map(|key| node.value(key).map(|value| (key, value))),
+            );
+            // Absence and invalid precision remain distinct in the retained
+            // properties. Publication policy for invalid precision is resolved
+            // separately from the existing valid precision-as-displayed guard.
+            precision_as_displayed = properties.full_precision == Some(false);
+            calculation_properties = Some(properties);
         }
         if e.local == "workbookPr" {
             if workbook_pr || !xml::path_is(path, xml::MAIN, &["workbook", "workbookPr"]) {
@@ -1102,6 +1130,8 @@ pub(super) fn discover(
         options,
     )?;
     Ok(Discovery {
+        precision_as_displayed,
+        calculation_properties,
         sheets,
         date_system: epoch,
         metadata,

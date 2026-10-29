@@ -4,6 +4,7 @@ use super::*;
 mod coalesce;
 mod mask_child;
 pub(in crate::xlsx) mod patches;
+mod recalc_flags;
 #[cfg(test)]
 pub(in crate::xlsx) use super::tests::oracles::ingestion_view::patches;
 pub(in crate::xlsx) use coalesce::coalesce;
@@ -14,6 +15,7 @@ use patches::cache_patches;
 struct Publication {
     summary: RecalculateSummary,
     changed: usize,
+    invalidated: usize,
     /// Worksheet replacements, plus metadata, relationship
     /// and content-type edits.
     edits: package::Edits,
@@ -65,6 +67,7 @@ pub(super) fn publish_caches(
     ingested: Ingested<'_>,
     formula_count: usize,
     options: &XlsxRecalculateOptions,
+    coverage: &availability::Coverage,
     clock: &mut PhaseClock,
 ) -> Result<XlsxRecalculateResult, IoError> {
     let Ingested {
@@ -89,7 +92,8 @@ pub(super) fn publish_caches(
     let Publication {
         mut summary,
         changed,
-        edits,
+        invalidated,
+        mut edits,
         worksheets,
     } = publish_spill_caches(
         &engine,
@@ -100,7 +104,21 @@ pub(super) fn publish_caches(
         &coerced,
         &mut expanded,
         options,
+        coverage,
     )?;
+    let mut calculation_flags_changed = false;
+    if coverage.has_gaps && options.profile == crate::XlsxRecalculateProfile::Workbook {
+        let workbook = package::read_part(
+            &mut archive,
+            "xl/workbook.xml",
+            options.limits.max_worksheet_bytes,
+        )?;
+        if let Some(patched) = recalc_flags::patch(&workbook, options)? {
+            expand(&mut expanded, workbook.len(), patched.len(), options)?;
+            edits.replace.insert("xl/workbook.xml".into(), patched);
+            calculation_flags_changed = true;
+        }
+    }
     clock.lap("publication (validate results, build patches)");
     summary.status = if summary.errors == 0 {
         RecalculateStatus::Success
@@ -114,6 +132,7 @@ pub(super) fn publish_caches(
         }
         let mut result = unchanged(bytes, formula_count, summary);
         result.external_links_used = external_links_used;
+        result.caches_invalidated = invalidated;
         return Ok(result);
     }
     let output = package::rewrite(bytes, &mut archive, &edits, options)?;
@@ -131,6 +150,12 @@ pub(super) fn publish_caches(
         worksheet_parts_changed: worksheets,
         clock_now_utc: None,
         external_links_used,
+        calculation: None,
+        coverage: crate::SourceCalculationCoverage::Complete,
+        coverage_scope: crate::SourceCoverageScope::None,
+        caches_invalidated: invalidated,
+        calculation_flags_changed,
+        operation_diagnostics: Default::default(),
     })
 }
 /// Publication: scalar caches and dynamic-array geometry, plus, when an
@@ -147,14 +172,16 @@ fn publish_spill_caches(
     coerced: &HashSet<(String, u32, u32)>,
     expanded: &mut usize,
     options: &XlsxRecalculateOptions,
+    coverage: &availability::Coverage,
 ) -> Result<Publication, IoError> {
     let mut binder = dynamic_metadata::Binder::new(metadata);
-    let planned = plan_spill_publication(
+    let planned = plan_spill_publication_covered(
         engine,
         sheets,
         plans,
         coerced,
         options,
+        coverage,
         &mut |sheet, request| {
             if !request.multi_cell {
                 return Err(unsupported(
@@ -168,6 +195,7 @@ fn publish_spill_caches(
     let mut publication = Publication {
         summary: planned.summary,
         changed: planned.changed,
+        invalidated: planned.invalidated,
         edits: package::Edits::default(),
         worksheets: 0,
     };
@@ -231,6 +259,7 @@ type SheetBindingResolver<'a> =
 pub(super) struct SpillPlan {
     pub(super) summary: RecalculateSummary,
     pub(super) changed: usize,
+    pub(super) invalidated: usize,
     /// Ordered patches per worksheet, parallel to the sheet plans.
     pub(super) patches: Vec<Vec<Patch>>,
 }
@@ -238,6 +267,7 @@ pub(super) struct SpillPlan {
 /// bounds, then build one ordered geometry plan per worksheet, reading each
 /// member at the final engine state. `bind` resolves a requested XLDAPR
 /// binding to a one-based `cm`.
+#[cfg(test)]
 pub(super) fn plan_spill_publication(
     engine: &Engine<WBResolver>,
     sheets: &[package::Sheet],
@@ -246,10 +276,31 @@ pub(super) fn plan_spill_publication(
     options: &XlsxRecalculateOptions,
     bind: &mut SheetBindingResolver<'_>,
 ) -> Result<SpillPlan, IoError> {
+    plan_spill_publication_covered(
+        engine,
+        sheets,
+        plans,
+        coerced,
+        options,
+        &availability::Coverage::default(),
+        bind,
+    )
+}
+
+fn plan_spill_publication_covered(
+    engine: &Engine<WBResolver>,
+    sheets: &[package::Sheet],
+    plans: &[SheetPlan],
+    coerced: &HashSet<(String, u32, u32)>,
+    options: &XlsxRecalculateOptions,
+    coverage: &availability::Coverage,
+    bind: &mut SheetBindingResolver<'_>,
+) -> Result<SpillPlan, IoError> {
     let date_system = engine.config.date_system;
     let mut publication = SpillPlan {
         summary: RecalculateSummary::default(),
         changed: 0,
+        invalidated: 0,
         patches: Vec::with_capacity(plans.len()),
     };
     // Borrow sheet names and copy coordinates once, instead of cloning a
@@ -274,8 +325,18 @@ pub(super) fn plan_spill_publication(
             column: 1,
         };
         let sheet_coerced = coerced_by_sheet.get(sheet.name.as_str());
+        let sheet_id = engine
+            .sheet_id(&sheet.name)
+            .ok_or_else(|| unsupported("missing admitted engine sheet", &sheet.name))?;
         for (i, cell) in plan.cells.iter().enumerate() {
             checkpoint(&options.cancel)?;
+            if cell.data_table_ref().is_some() {
+                let (changed, invalidated) =
+                    patches::invalidate_formula_cache(cell, &mut scalar_patches);
+                publication.changed += usize::from(changed);
+                publication.invalidated += usize::from(invalidated);
+                continue;
+            }
             let prior = plan
                 .ownership
                 .anchors
@@ -292,6 +353,7 @@ pub(super) fn plan_spill_publication(
                 prior,
                 sheet_coerced.is_some_and(|cells| cells.contains(&(cell.row, cell.col))),
                 date_system,
+                coverage.affects(sheet_id, cell.row, cell.col),
                 &mut |value| {
                     record_result(
                         summary,
@@ -304,6 +366,19 @@ pub(super) fn plan_spill_publication(
                 },
             )?;
             match projection {
+                projection::Projection::Unavailable => {
+                    publication.summary.evaluated += 1;
+                    publication
+                        .summary
+                        .sheets
+                        .entry(sheet.name.clone())
+                        .or_default()
+                        .evaluated += 1;
+                    let (changed, invalidated) =
+                        patches::invalidate_formula_cache(cell, &mut scalar_patches);
+                    publication.changed += usize::from(changed);
+                    publication.invalidated += usize::from(invalidated);
+                }
                 projection::Projection::Scalar(cache) => {
                     if !cache.matches(cell, &plan.data) {
                         publication.changed += 1;
@@ -338,6 +413,38 @@ pub(super) fn plan_spill_publication(
                         binding,
                     });
                 }
+            }
+        }
+        if let Some(index) = &plan.index {
+            for &child_index in &plan.ownership.unavailable_children {
+                checkpoint(&options.cancel)?;
+                let child = &index.cells[child_index];
+                {
+                    let before = scalar_patches.len();
+                    mask_child(child, &mut scalar_patches);
+                    publication.changed += usize::from(scalar_patches.len() > before);
+                    publication.invalidated +=
+                        usize::from(child.value.is_some() || child.inline.is_some());
+                }
+            }
+        }
+        let mut unavailable: Vec<_> = coverage
+            .regions
+            .iter()
+            .filter(|(name, _)| name == &sheet.name)
+            .map(|(_, rect)| *rect)
+            .collect();
+        if !unavailable.is_empty() {
+            unavailable.extend(
+                anchors
+                    .iter()
+                    .filter_map(|a: &geometry::AnchorEdit| a.spill),
+            );
+            if !ownership::disjoint_rects(unavailable, options)? {
+                return Err(IoError::CalculationDeferred {
+                    reason: crate::CalculationDeferredReason::AffectedArrayCoverageUnverified,
+                    context: "computed spill intersects unavailable source ownership".into(),
+                });
             }
         }
         projected.push((scalar_patches, anchors));
@@ -393,7 +500,9 @@ pub(super) fn plan_spill_publication(
     if serialized.saturating_add(inserted) > options.limits.max_cells as u64 {
         return Err(unsupported("generated spill cell limit", "workbook"));
     }
-    if logical > options.limits.max_cells as u64 {
+    if options.profile == crate::XlsxRecalculateProfile::Strict
+        && logical > options.limits.max_cells as u64
+    {
         return Err(unsupported("workbook logical cell limit", "workbook"));
     }
     // 3. One ordered geometry plan per worksheet.

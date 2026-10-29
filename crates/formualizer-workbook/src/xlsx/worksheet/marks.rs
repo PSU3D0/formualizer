@@ -145,6 +145,7 @@ pub(crate) struct FormulaMark {
 }
 #[derive(Debug, Default)]
 pub(in crate::xlsx) struct DynamicAttributes {
+    pub(in crate::xlsx) data_table_ref: Option<SourceRect>,
     /// Preserve accepted noncanonical A1 spellings in cold diagnostics.
     pub(super) original_address: Option<Box<str>>,
     /// One-based cellMetadata index from `c/@cm`.
@@ -242,6 +243,9 @@ impl FormulaMark {
         self.dynamic.as_ref().and_then(|d| d.cm_span.as_ref())
     }
     /// Declared array extent from `f/@ref` for `t="array"` formulas.
+    pub fn data_table_ref(&self) -> Option<SourceRect> {
+        self.dynamic.as_ref().and_then(|d| d.data_table_ref)
+    }
     pub fn array_ref(&self) -> Option<SourceRect> {
         self.dynamic.as_ref().and_then(|d| d.array_ref)
     }

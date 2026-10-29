@@ -28,6 +28,8 @@ pub(in crate::xlsx) struct SheetOwnership {
     pub anchors: BTreeMap<(u32, u32), DynamicAnchor>,
     /// Child cell -> owning anchor.
     pub children: BTreeMap<(u32, u32), (u32, u32)>,
+    /// Serialized literal cache indices owned by unsupported data tables.
+    pub unavailable_children: Vec<usize>,
 }
 impl SheetOwnership {
     pub fn owner_of(&self, row: u32, col: u32) -> Option<(u32, u32)> {
@@ -180,5 +182,113 @@ pub(in crate::xlsx) fn own_sheet(
             }
         }
     }
+    own.unavailable_children = data_table_children(index, cells, &own, options)?;
     Ok(own)
+}
+
+/// Sweep disjoint rectangles without expanding their logical area.
+pub(super) fn disjoint_rects(
+    mut rects: Vec<SourceRect>,
+    options: &XlsxRecalculateOptions,
+) -> Result<bool, IoError> {
+    rects.sort_unstable_by_key(|r| (r.first_row, r.first_col));
+    let mut active: BTreeMap<u32, (u32, usize)> = BTreeMap::new();
+    let mut expiry = BinaryHeap::new();
+    for (id, r) in rects.into_iter().enumerate() {
+        if id & 1023 == 0 {
+            checkpoint(&options.cancel)?;
+        }
+        while let Some(Reverse((last, col, old))) = expiry.peek().copied() {
+            if last >= r.first_row {
+                break;
+            }
+            expiry.pop();
+            if active.get(&col).is_some_and(|(_, current)| *current == old) {
+                active.remove(&col);
+            }
+        }
+        if active
+            .range(..=r.last_col)
+            .next_back()
+            .is_some_and(|(_, (last, _))| *last >= r.first_col)
+        {
+            return Ok(false);
+        }
+        active.insert(r.first_col, (r.last_col, id));
+        expiry.push(Reverse((r.last_row, r.first_col, id)));
+    }
+    Ok(true)
+}
+fn data_table_children(
+    index: &SourceIndex,
+    cells: &[FormulaMark],
+    own: &SheetOwnership,
+    options: &XlsxRecalculateOptions,
+) -> Result<Vec<usize>, IoError> {
+    let rects: Vec<_> = cells
+        .iter()
+        .filter_map(FormulaMark::data_table_ref)
+        .collect();
+    if rects.is_empty() {
+        return Ok(Vec::new());
+    }
+    if !index.merges.is_empty() {
+        return Err(unsupported(
+            "data-table masking in a merged worksheet is unverified",
+            "worksheet",
+        ));
+    }
+    if !disjoint_rects(
+        rects
+            .iter()
+            .copied()
+            .chain(own.anchors.values().map(|a| a.footprint))
+            .collect(),
+        options,
+    )? {
+        return Err(unsupported(
+            "overlapping data-table/array ownership",
+            "worksheet",
+        ));
+    }
+    let mut active: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut expiry = BinaryHeap::new();
+    let mut next = 0;
+    let mut children = Vec::new();
+    for (i, cell) in index.cells.iter().enumerate() {
+        if i & 1023 == 0 {
+            checkpoint(&options.cancel)?;
+        }
+        while let Some(Reverse((last, col, id))) = expiry.peek().copied() {
+            if last >= cell.row {
+                break;
+            }
+            expiry.pop();
+            if active.get(&col) == Some(&id) {
+                active.remove(&col);
+            }
+        }
+        while next < rects.len() && rects[next].first_row <= cell.row {
+            let r = rects[next];
+            if r.last_row >= cell.row {
+                active.insert(r.first_col, next);
+                expiry.push(Reverse((r.last_row, r.first_col, next)));
+            }
+            next += 1;
+        }
+        if let Some((_, id)) = active.range(..=cell.col).next_back() {
+            let r = rects[*id];
+            if r.contains(cell.row, cell.col) && (r.first_row, r.first_col) != (cell.row, cell.col)
+            {
+                if cell.formula.is_some() {
+                    return Err(unsupported(
+                        "formula inside data-table owned outputs",
+                        "worksheet",
+                    ));
+                }
+                children.push(i);
+            }
+        }
+    }
+    Ok(children)
 }
