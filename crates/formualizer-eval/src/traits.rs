@@ -460,6 +460,13 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
     /// Inspect an actual registered function reference in a higher-order value
     /// position. Ordinary argument evaluation and errors remain unchanged.
     pub(crate) fn function_value_reference_intent(&self) -> Option<FunctionValueReferenceIntent> {
+        self.function_value_reference_intent_using(self.interp)
+    }
+
+    fn function_value_reference_intent_using(
+        &self,
+        interp: &crate::interpreter::Interpreter<'_>,
+    ) -> Option<FunctionValueReferenceIntent> {
         let name = match &self.expr {
             ArgumentExpr::Ast(node) => match &node.node_type {
                 ASTNodeType::Reference {
@@ -482,21 +489,28 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 data_store.resolve_ast_string(*name)
             }
         };
-        if self.interp.has_local_name(name) {
+        if interp.has_local_name(name) {
             return None;
         }
-        let presence = self
-            .interp
+        let presence = interp
             .context
-            .named_binding_presence(name, self.interp.current_sheet());
+            .named_binding_presence(name, interp.current_sheet());
         if presence == Some(true) {
             return None;
         }
-        let function = self.interp.ast_function_arc("", name)?;
+        let function = interp.ast_function_arc("", name)?;
         Some(FunctionValueReferenceIntent {
             function,
             binding_absent: presence == Some(false),
         })
+    }
+
+    /// Metadata query for an incrementally constructed lexical environment.
+    pub(crate) fn function_value_reference_intent_in_env(
+        &self,
+        env: &crate::interpreter::LocalEnv,
+    ) -> Option<FunctionValueReferenceIntent> {
+        self.function_value_reference_intent_using(&self.interp.with_local_env(env.clone()))
     }
 
     /// The spill rectangle of the anchor this argument names, as `ANCHORARRAY`

@@ -228,3 +228,58 @@ fn callable_intent_normal_array_errors_and_names_are_neutral() {
     e.evaluate_all().unwrap();
     assert!(e.operation_diagnostics().unwrap().unwrap().roots.is_empty());
 }
+
+struct ScopedIntentProbe;
+impl Function for ScopedIntentProbe {
+    fn name(&self) -> &'static str {
+        "SCOPED_INTENT_PROBE"
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        use crate::interpreter::{LocalBinding, LocalEnv};
+        let original = args[0].function_value_reference_intent().is_some();
+        let shadowed = args[0].current_env().with_binding(
+            "SUM",
+            LocalBinding::Value(LiteralValue::Error(ExcelError::new(
+                formualizer_common::ExcelErrorKind::Name,
+            ))),
+        );
+        let scoped = args[0]
+            .function_value_reference_intent_in_env(&shadowed)
+            .is_some();
+        let empty = args[0]
+            .function_value_reference_intent_in_env(&LocalEnv::default())
+            .is_some();
+        Ok(CalcValue::Scalar(LiteralValue::Number(f64::from(
+            u8::from(original) + 2 * u8::from(scoped) + 4 * u8::from(empty),
+        ))))
+    }
+}
+
+#[test]
+fn callable_intent_incremental_env_takes_precedence_without_inheriting_caller_bindings() {
+    crate::builtins::load_builtins();
+    let mut e = Engine::new(
+        TestWorkbook::new().with_function(Arc::new(ScopedIntentProbe)),
+        EvalConfig {
+            enable_parallel: false,
+            ..arrow_eval_config()
+        },
+    );
+    for (row, formula, expected) in [
+        (1, "=SCOPED_INTENT_PROBE(SUM)", 5.0),
+        (2, "=LET(SUM,9,SCOPED_INTENT_PROBE(SUM))", 4.0),
+    ] {
+        e.set_cell_formula("Sheet1", row, 1, parse(formula).unwrap())
+            .unwrap();
+        e.evaluate_all().unwrap();
+        assert_eq!(
+            e.get_cell_value("Sheet1", row, 1),
+            Some(LiteralValue::Number(expected)),
+            "{formula}"
+        );
+    }
+}
