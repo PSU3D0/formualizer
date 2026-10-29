@@ -22,6 +22,9 @@ pub mod ingest;
 pub mod ingest_builder;
 pub(crate) mod ingest_pipeline;
 pub mod inspect;
+// Request-local closure adapter is being integrated with source policy.
+#[allow(dead_code)]
+pub(crate) mod affected_closure;
 pub mod journal;
 pub mod live_edges;
 pub mod live_graph;

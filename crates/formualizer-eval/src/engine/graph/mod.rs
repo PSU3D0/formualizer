@@ -5190,6 +5190,29 @@ impl DependencyGraph {
         self.spill_cell_to_anchor.get(&cell).copied()
     }
 
+    /// Pre-admit hash-table capacity before iterating committed anchor entries.
+    /// The prepaid bound covers empty/tombstone scanning; callbacks admit their
+    /// own identity/geometry processing. No spill cells are enumerated.
+    pub(crate) fn visit_spill_anchors_bounded<
+        M: crate::engine::authority::level_index::QueryWorkBudget,
+    >(
+        &self,
+        meter: &mut M,
+        visit: &mut impl FnMut(VertexId, &mut M) -> Result<(), M::Error>,
+    ) -> Result<(), M::Error> {
+        // Capacity is at most the allocated bucket count, with load <= 7/8;
+        // twice the usable capacity plus one conservatively admits that scan.
+        let capacity = self.spill_anchor_to_cells.capacity() as u64;
+        meter.charge_work(capacity)?;
+        meter.charge_work(capacity)?;
+        meter.charge_work(1)?;
+        for &anchor in self.spill_anchor_to_cells.keys() {
+            meter.charge_work(1)?;
+            visit(anchor, meter)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn spill_registry_counts(&self) -> (usize, usize) {
         (
             self.spill_anchor_to_cells.len(),

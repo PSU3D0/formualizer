@@ -4951,6 +4951,20 @@ where
         }
     }
 
+    /// Read-only queries must not observe a partially staged request/action.
+    pub(super) fn affected_closure_idle(&self) -> bool {
+        self.active_evaluation_resource_request.is_none()
+            && self.active_resource_ledger.is_none()
+            && self.action_depth == 0
+            && !self.freshness_armed()
+            && !self.has_staged_formulas()
+            && !self.graph.deferred_dirty_active()
+    }
+
+    pub(super) fn affected_closure_owner(&self) -> &Arc<()> {
+        &self.recalc_plan_token
+    }
+
     /// Mutation revision captured by read-only engine reports.
     pub(crate) fn inspection_mutation_revision(&self) -> u64 {
         self.snapshot_id.load(std::sync::atomic::Ordering::Relaxed)
