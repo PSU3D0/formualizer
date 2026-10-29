@@ -114,6 +114,8 @@ pub enum ResourceExhaustionReason {
     MaterializationCells,
     OperationEvidenceRoots,
     OperationEvidenceTextBytes,
+    /// Combined affected-region and uncertainty items, not grid cells/bytes.
+    DependencyClosureOutputItems,
     ArithmeticOverflow,
 }
 
@@ -130,6 +132,7 @@ impl ResourceExhaustionReason {
             Self::MaterializationCells => "materialization_cells",
             Self::OperationEvidenceRoots => "operation_evidence_roots",
             Self::OperationEvidenceTextBytes => "operation_evidence_text_bytes",
+            Self::DependencyClosureOutputItems => "dependency_closure_output_items",
             Self::ArithmeticOverflow => "arithmetic_overflow",
         }
     }

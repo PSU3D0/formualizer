@@ -15527,7 +15527,12 @@ where
         ExcelError::new(kind).with_message(format!("unified_authority: {error:?}"))
     }
 
-    /// Evaluate all dirty/volatile vertices
+    /// Iterative members whose next-request invalidation was deferred by a
+    /// completed snapshot. This does not establish source-cache seed provenance.
+    pub fn pending_snapshot_iterative_members(&self) -> usize {
+        self.snapshot_iterative_redirty_pending.len()
+    }
+
     /// Evaluate a current result snapshot, optionally with cancellation.
     ///
     /// This evaluates exactly like [`Self::evaluate_all`] (or its cancellable

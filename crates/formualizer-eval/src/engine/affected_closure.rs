@@ -9,7 +9,7 @@ use super::vertex::VertexId;
 use crate::CellRef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AffectedRoot {
+pub enum AffectedRoot {
     Cell(CellRef),
     Symbol(VertexId),
     Region(RegionPiece),
@@ -17,13 +17,13 @@ pub(crate) enum AffectedRoot {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct RegionPiece {
+pub struct RegionPiece {
     pub sheet: u16,
     pub rect: Rect,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ClosureLimits {
+pub struct ClosureLimits {
     pub max_work: u64,
     pub max_output_items: usize,
     /// Requested owned vector capacity, including outputs and relocation peaks.
@@ -32,14 +32,14 @@ pub(crate) struct ClosureLimits {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ClosureResource {
+pub enum ClosureResource {
     Work,
     Output,
     Scratch,
 }
 
 #[derive(Debug)]
-pub(crate) enum ClosureError {
+pub enum ClosureError {
     Authority(AuthorityError),
     Busy,
     InvalidRoot {
@@ -62,7 +62,7 @@ impl From<AuthorityError> for ClosureError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ClosureStamp {
+pub struct ClosureStamp {
     pub state: StateStamp,
     pub authority_revision: u64,
     pub symbol_revision: u64,
@@ -71,13 +71,13 @@ pub(crate) struct ClosureStamp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReadRelationCoverage {
+pub enum ReadRelationCoverage {
     NotQueried,
     StaticAuthorityAndCommittedGridRectangles,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum UnknownReason {
+pub enum UnknownReason {
     MissingObservation,
     UncommittedObservation,
     DirtyReader,
@@ -87,21 +87,21 @@ pub(crate) enum UnknownReason {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct UnknownFact {
+pub struct UnknownFact {
     pub region: RegionPiece,
     pub vertex: Option<VertexId>,
     pub reason: UnknownReason,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct ClosureUsage {
+pub struct ClosureUsage {
     pub work: u64,
     pub output_items: usize,
     pub requested_capacity_peak_bytes: usize,
 }
 
 #[derive(Debug)]
-pub(crate) struct CurrentReadClosure<'engine> {
+pub struct CurrentReadClosure<'engine> {
     // Keep the source engine immutably borrowed through the policy decision.
     owner: &'engine std::sync::Arc<()>,
     pub stamp: ClosureStamp,
@@ -117,7 +117,7 @@ pub(crate) struct CurrentReadClosure<'engine> {
 }
 
 impl CurrentReadClosure<'_> {
-    pub(crate) fn belongs_to<R: crate::traits::EvaluationContext>(
+    pub fn belongs_to<R: crate::traits::EvaluationContext>(
         &self,
         engine: &super::Engine<R>,
     ) -> bool {
@@ -514,7 +514,7 @@ impl<R: crate::traits::EvaluationContext> super::Engine<R> {
     /// Immutable, request-local relation query. Output borrows the engine so a
     /// policy decision cannot retain it across a safe mutable engine operation.
     /// Negative facts apply only to the reported relation and declared unknowns.
-    pub(crate) fn current_read_affected_closure(
+    pub fn current_read_affected_closure(
         &self,
         roots: &[AffectedRoot],
         limits: ClosureLimits,
