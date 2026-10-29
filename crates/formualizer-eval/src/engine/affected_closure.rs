@@ -450,6 +450,9 @@ impl<R: crate::traits::EvaluationContext> super::Engine<R> {
                     if self.graph.is_dirty(anchor)
                         || self.graph.spill_may_be_intruded(anchor)
                         || extent.is_none()
+                        || extent.is_some_and(|(first, last)| {
+                            first != cell || last.sheet_id != cell.sheet_id
+                        })
                     {
                         *unlocalized_spill_geometry = true;
                         return add_unknown(
