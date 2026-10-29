@@ -1852,9 +1852,9 @@ impl Function for GroupByFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        // The documented seventh filter slot and vector/callable selections
-        // belong to this provider, not the scalar six-slot generic schema.
-        if !(3..=7).contains(&args.len()) {
+        // The documented filter/field-relationship slots and vector/callable
+        // selections belong here, not the scalar six-slot generic schema.
+        if !(3..=8).contains(&args.len()) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
@@ -1966,6 +1966,18 @@ impl Function for GroupByFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
+        // Core resolves actual function-provider intent while respecting real
+        // name/local bindings. Unknown binding presence is not absence proof:
+        // both metadata states remain uncertainty, without invoking a callback
+        // or changing the legacy value/error produced below.
+        if args[2].function_value_reference_intent().is_some() {
+            _ctx.report_unavailable_operation(
+                crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                    name: self.name().into(),
+                    mode: "function_reference_aggregation",
+                },
+            );
+        }
         // Preserve the actual callable before literal conversion; a callback
         // refusal is distinct from an invalid legacy aggregation selector.
         let agg_value = args[2].value()?;
@@ -2016,7 +2028,11 @@ impl Function for GroupByFn {
         let (field_headers, automatic_headers) = PivotByFn::option(args, 3, 1)?;
         let (total_depth, automatic_totals) = PivotByFn::option(args, 4, 0)?;
         let (sort_order, sort_vector) = PivotByFn::sort_option(args, 5, rf_cols, val_cols)?;
-        if !(0..=3).contains(&field_headers) || total_depth.unsigned_abs() as usize > rf_cols {
+        let (field_relationship, _) = PivotByFn::option(args, 7, 0)?;
+        if !(0..=3).contains(&field_headers)
+            || total_depth.unsigned_abs() as usize > rf_cols
+            || !(0..=1).contains(&field_relationship)
+        {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
             )));
@@ -2086,6 +2102,20 @@ impl Function for GroupByFn {
                 unverified("filter_array");
             } else {
                 unverified("sort_vector");
+            }
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
+        if args.len() == 8 && rf_cols > 1 {
+            // The official GROUPBY contract distinguishes Hierarchy0 and
+            // Table1 here. Preserve the previous public VALUE refusal while
+            // reporting the actual unresolved relationship selection.
+            unverified("field_relationship");
+            if field_relationship == 1 && total_depth.unsigned_abs() > 1 {
+                // Table has no subtotal semantics. The reference does not
+                // establish whether this combination errors or ignores them.
+                unverified("table_subtotals");
             }
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new_value(),
@@ -2553,6 +2583,17 @@ impl Function for PivotByFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
+        // Inspect typed Core intent before ordinary value evaluation can lose
+        // function-as-value identity to a name error. Even when binding
+        // presence is unknown this is only uncertainty, never absence proof.
+        if args[3].function_value_reference_intent().is_some() {
+            _ctx.report_unavailable_operation(
+                crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                    name: self.name().into(),
+                    mode: "function_reference_aggregation",
+                },
+            );
+        }
         // Preserve callables until their actual selection seam. Converting one
         // to a literal first loses the distinction from an invalid aggregator.
         let agg_value = args[3].value()?;

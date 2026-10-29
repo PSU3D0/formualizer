@@ -701,7 +701,7 @@ fn provider_mode_review_groupby_controls() {
         "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,{TRUE;FALSE})",
         "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,{TRUE;FALSE;1/0})",
         "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,{1;99})",
-        "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,,1)",
+        "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,,1,0)",
     ] {
         check(formula, &[]);
     }
@@ -811,6 +811,174 @@ fn provider_mode_review_aggregate_uncertainty_and_error_kinds() {
             matches!(e.get_cell_value("Sheet1",1,8),Some(LiteralValue::Error(error)) if error.kind==kind),
             "{formula}: {:?}",
             e.get_cell_value("Sheet1", 1, 8)
+        );
+    }
+}
+
+#[test]
+fn provider_mode_callable_consumer_actual_selections() {
+    let mut failures = Vec::new();
+    for (function, prefix, suffix) in [
+        ("PIVOTBY", "A1:A3,B1:B3,C1:C3,", ",0,0,0,0,0"),
+        ("GROUPBY", "A1:A3,C1:C3,", ",0,0,0"),
+    ] {
+        for (aggregation, operations) in [
+            (
+                "SUM",
+                vec![unknown(function, "function_reference_aggregation")],
+            ),
+            (
+                "_xlfn.SUM",
+                vec![unknown(function, "function_reference_aggregation")],
+            ),
+            (
+                "HSTACK(SUM,AVERAGE)",
+                vec![unknown("HSTACK", "function_reference_array")],
+            ),
+            (
+                "VSTACK(LAMBDA(x,SUM(x)),LAMBDA(x,MAX(x)))",
+                vec![unknown("VSTACK", "callable_array_materialization")],
+            ),
+        ] {
+            let formula = format!("={function}({prefix}{aggregation}{suffix})");
+            if std::panic::catch_unwind(|| exercised(&formula, &operations)).is_err() {
+                failures.push(formula);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:?}");
+}
+
+#[test]
+fn provider_mode_callable_consumer_ordinary_controls() {
+    for (function, prefix, suffix) in [
+        ("PIVOTBY", "A1:A3,B1:B3,C1:C3,", ",0,0,0,0,0"),
+        ("GROUPBY", "A1:A3,C1:C3,", ",0,0,0"),
+    ] {
+        for aggregation in [
+            "MISSING_AGG_NAME",
+            "1/0",
+            "HSTACK(MISSING_AGG_NAME,1)",
+            "HSTACK(1/0,1)",
+        ] {
+            exercised(&format!("={function}({prefix}{aggregation}{suffix})"), &[]);
+        }
+        check(&format!("=LET(SUM,9,{function}({prefix}SUM{suffix}))"), &[]);
+        check(
+            &format!("=LET(SUM,1/0,{function}({prefix}SUM{suffix}))"),
+            &[],
+        );
+        check(
+            &format!("=LET(SUM,\"SUM\",{function}({prefix}SUM{suffix}))"),
+            &[],
+        );
+    }
+}
+
+#[test]
+fn provider_mode_callable_consumer_real_name_error_shadowing() {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    for function in ["PIVOTBY", "GROUPBY"] {
+        for value in [
+            LiteralValue::Int(9),
+            LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Name,
+            )),
+            LiteralValue::Error(formualizer_common::ExcelError::new(
+                formualizer_common::ExcelErrorKind::Div,
+            )),
+        ] {
+            let (mut e, _) = evaluate("=1");
+            e.define_name("SUM", NamedDefinition::Literal(value), NameScope::Workbook)
+                .unwrap();
+            let formula = if function == "PIVOTBY" {
+                "=PIVOTBY(A1:A3,B1:B3,C1:C3,SUM,0,0,0,0,0)"
+            } else {
+                "=GROUPBY(A1:A3,C1:C3,SUM,0,0,0)"
+            };
+            e.set_cell_formula("Sheet1", 1, 8, parse(formula).unwrap())
+                .unwrap();
+            e.evaluate_all().unwrap();
+            let report = e.take_operation_diagnostics().unwrap().unwrap();
+            assert_eq!(report.logical_cell_reason_count, 0, "{formula}: {report:?}");
+        }
+    }
+}
+
+#[test]
+fn provider_mode_groupby_field_relationship() {
+    for relationship in [0, 1] {
+        exercised(
+            &format!("=GROUPBY(A1:B3,C1:C3,\"SUM\",0,0,0,,{relationship})"),
+            &[unknown("GROUPBY", "field_relationship")],
+        );
+    }
+    exercised(
+        "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,2,0,,1)",
+        &[
+            unknown("GROUPBY", "field_relationship"),
+            unknown("GROUPBY", "table_subtotals"),
+        ],
+    );
+    for relationship in [0, 1] {
+        check(
+            &format!("=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,,{relationship})"),
+            &[],
+        );
+    }
+    for formula in [
+        "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,0,0,,2)",
+        "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,0,0,,-1)",
+        "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,0,0,,0.5)",
+        "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,0,0,,1/0)",
+        "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,0,0,,1,0)",
+        "=GROUPBY(A1:B3,C1:C3,SUM,0,0,0,,1,0)",
+        "=GROUPBY(A1:B3,C1:C3,GAP_ARITY_SHOULD_NOT_RUN(),0,0,0,,1,0)",
+        "=GROUPBY(A1:B3,C1:C3,\"SUM\",0,99,0,,1)",
+    ] {
+        exercised(formula, &[]);
+    }
+}
+
+#[test]
+fn provider_mode_callable_consumer_retains_legacy_values() {
+    for (function, prefix, suffix) in [
+        ("PIVOTBY", "A1:A3,B1:B3,C1:C3,", ",0,0,0,0,0"),
+        ("GROUPBY", "A1:A3,C1:C3,", ",0,0,0"),
+    ] {
+        for (aggregation, kind) in [
+            ("SUM", formualizer_common::ExcelErrorKind::Name),
+            (
+                "HSTACK(SUM,AVERAGE)",
+                formualizer_common::ExcelErrorKind::Name,
+            ),
+            (
+                "VSTACK(LAMBDA(x,SUM(x)),LAMBDA(x,MAX(x)))",
+                formualizer_common::ExcelErrorKind::Calc,
+            ),
+        ] {
+            let formula = format!("={function}({prefix}{aggregation}{suffix})");
+            let (e, _) = evaluate(&formula);
+            assert!(
+                matches!(e.get_cell_value("Sheet1",1,8),Some(LiteralValue::Error(error)) if error.kind==kind),
+                "{formula}: {:?}",
+                e.get_cell_value("Sheet1", 1, 8)
+            );
+            let (caught, _) = evaluate(&format!("=IFERROR({},7)", formula.trim_start_matches('=')));
+            assert_eq!(
+                caught.get_cell_value("Sheet1", 1, 8),
+                Some(LiteralValue::Number(7.0))
+            );
+        }
+    }
+    for relationship in [0, 1] {
+        let (e, r) = evaluate(&format!(
+            "=GROUPBY(A1:A3,C1:C3,\"SUM\",0,0,0,,{relationship})"
+        ));
+        assert_eq!(r.logical_cell_reason_count, 0);
+        assert_eq!(
+            e.get_cell_value("Sheet1", 1, 9),
+            Some(LiteralValue::Number(60.0))
         );
     }
 }
