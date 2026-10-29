@@ -5569,6 +5569,11 @@ impl DependencyGraph {
         out
     }
 
+    /// Production liveness check, including deletion, for immutable query adapters.
+    pub(crate) fn vertex_exists_active(&self, vertex_id: VertexId) -> bool {
+        self.store.vertex_exists_active(vertex_id)
+    }
+
     /// Whether `vertex_id` is an existing, non-deleted vertex that still
     /// holds a formula (a cell overwritten with a literal keeps its vertex
     /// but drops its formula).

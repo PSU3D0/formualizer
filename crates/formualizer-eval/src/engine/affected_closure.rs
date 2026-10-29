@@ -328,8 +328,7 @@ impl<R: crate::traits::EvaluationContext> super::Engine<R> {
                         .graph
                         .authority_vertex_of_cell(coordinate)
                         .ok_or(ClosureError::InconsistentIdentity)?;
-                    if !self.graph.vertex_exists(vertex)
-                        || self.graph.is_deleted(vertex)
+                    if !self.graph.vertex_exists_active(vertex)
                         || self.graph.authority_cell_of_vertex(vertex) != Some(coordinate)
                     {
                         return Err(ClosureError::InconsistentIdentity);
@@ -553,7 +552,7 @@ impl<R: crate::traits::EvaluationContext> super::Engine<R> {
                 AffectedRoot::Region(region) => region,
                 AffectedRoot::Symbol(vertex) => {
                     budget.charge_work(128)?;
-                    if !self.graph.vertex_exists(vertex) || self.graph.is_deleted(vertex) {
+                    if !self.graph.vertex_exists_active(vertex) {
                         return Err(ClosureError::InvalidRoot { index });
                     }
                     let Some((sheet, row, column)) = self.graph.authority_cell_of_vertex(vertex)
