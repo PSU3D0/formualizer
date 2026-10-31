@@ -238,7 +238,7 @@ use super::{
         stream::{FormulaBatches, LoadConfig, SheetFormulas, install_values},
         values::{Context, ValueSink},
     },
-    metadata::{SharedStringTable, Styles, read_source},
+    metadata::{SharedStringTable, Styles, dynamic::DynamicMetadata, read_source},
     options::{ReadOptions, XlsxLoadLimits},
     package, worksheet, xml,
 };
@@ -273,6 +273,8 @@ pub struct NativeXlsxAdapter {
     sheets: Vec<SheetSource>,
     strings: SharedStringTable,
     styles: Styles,
+    /// Validated XLDAPR declarations, when the package has an admissible part.
+    dynamic: Option<DynamicMetadata>,
     options: ReadOptions,
     budget: package::ConsumptionBudget,
     loaded: HashSet<String>,
@@ -357,7 +359,17 @@ impl NativeXlsxAdapter {
         super::options::checkpoint(&options.cancel)?;
         let debug_load = std::env::var_os("FZ_DEBUG_LOAD").is_some();
         let load_clock = timing::Timer::start(debug_load);
-        let (sheets, strings, styles, names, calc_settings, has_links, sheet_diagnostics, budget) = {
+        let (
+            sheets,
+            strings,
+            styles,
+            dynamic,
+            names,
+            calc_settings,
+            has_links,
+            sheet_diagnostics,
+            budget,
+        ) = {
             let bytes = source.bytes(&options)?;
             let (mut archive, (workbook_xml, relationships, declared, has_links)) =
                 package::admit_retaining(&bytes, &options, |archive| {
@@ -437,7 +449,8 @@ impl NativeXlsxAdapter {
                         .collect();
                     for relation in relationships.values() {
                         if (relation.kind.ends_with("/sharedStrings")
-                            || relation.kind.ends_with("/styles"))
+                            || relation.kind.ends_with("/styles")
+                            || relation.kind.ends_with("/sheetMetadata"))
                             && let Some(target) = &relation.target
                         {
                             needed.insert(target.clone());
@@ -488,6 +501,15 @@ impl NativeXlsxAdapter {
             };
             let string_bytes = metadata("sharedStrings")?;
             let style_bytes = metadata("styles")?;
+            // Dynamic-array declarations prove which saved cells are generated
+            // spill children. The ordinary reader stays permissive: metadata the
+            // shared validator does not admit proves nothing, and children then
+            // load as plain values exactly as before.
+            let dynamic = Some(metadata("sheetMetadata")?)
+                .filter(|bytes| !bytes.is_empty())
+                .and_then(|bytes| {
+                    super::metadata::dynamic::parse_read(&bytes, "sheetMetadata", &options).ok()
+                });
             let strings = if string_bytes.is_empty() {
                 SharedStringTable::default()
             } else {
@@ -509,6 +531,7 @@ impl NativeXlsxAdapter {
                 sheets,
                 strings,
                 styles,
+                dynamic,
                 names,
                 calc_settings,
                 has_links,
@@ -522,6 +545,7 @@ impl NativeXlsxAdapter {
             sheets,
             strings,
             styles,
+            dynamic,
             options,
             budget,
             loaded: HashSet::new(),
@@ -767,6 +791,8 @@ impl NativeXlsxAdapter {
         let mut sink = LoadSink {
             strings: &self.strings,
             styles: &self.styles,
+            dynamic: self.dynamic.as_ref(),
+            generated: Default::default(),
             values,
             reader_values,
             records: Vec::new(),
@@ -953,6 +979,9 @@ struct ParsedSheet {
 struct LoadSink<'a> {
     strings: &'a SharedStringTable,
     styles: &'a Styles,
+    dynamic: Option<&'a DynamicMetadata>,
+    /// Footprints of proven dynamic-array anchors seen so far in source order.
+    generated: worksheet::scanner::generated::GeneratedChildren,
     values: ValueSink<'a>,
     records: Vec<OwnedSpoolFormulaRecord>,
     record_count: usize,
@@ -1007,12 +1036,45 @@ impl LoadSink<'_> {
                 } else {
                     Ok(())
                 }
+            } else if self.generated.contains(row, col) {
+                // A saved spill child is the anchor's previous output, not user
+                // input; installing it would block the recalculated spill.
+                if let worksheet::events::Value::Shared(index) = value {
+                    self.strings.get(index).map(|_| ())
+                } else {
+                    Ok(())
+                }
             } else {
                 self.values.push_decoded(row, col, value, format)
             };
             self.retain_value_error(result)?;
         }
         Ok(())
+    }
+    /// Record a dynamic-array anchor (`<f t="array" ref>` on a cell whose
+    /// `cm` resolves to a validated XLDAPR binding). Only the top-left cell
+    /// of its declared extent can own the remaining cells as spill children.
+    fn observe_dynamic_anchor(&mut self, row0: u32, col0: u32, cm: &[u8], extent: SourceRect) {
+        let Some(metadata) = self.dynamic else {
+            return;
+        };
+        let bound = atoi_simd::parse::<u32, true, false>(cm)
+            .ok()
+            .is_some_and(|cm| metadata.resolve(cm).is_ok_and(|b| !b.collapsed));
+        if bound
+            && extent.start
+                == (SourceCoord {
+                    row: row0,
+                    col: col0,
+                })
+        {
+            self.generated.observe(worksheet::SourceRect {
+                first_row: extent.start.row + 1,
+                first_col: extent.start.col + 1,
+                last_row: extent.end.row + 1,
+                last_col: extent.end.col + 1,
+            });
+        }
     }
 
     fn retain_value_error(&mut self, result: Result<(), IoError>) -> Result<(), IoError> {

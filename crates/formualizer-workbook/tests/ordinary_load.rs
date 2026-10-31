@@ -569,3 +569,99 @@ fn ordinary_defaults_are_independent_of_recalculation() {
     assert_eq!(strict.max_input_bytes, 64 * 1024 * 1024);
     assert!(NativeXlsxAdapter::open_bytes_with_limits(Vec::new(), limits).is_err());
 }
+
+/// Excel's save shape for `=SEQUENCE(A1)` in `C1` with `A1 = 5`: an XLDAPR
+/// anchor (`cm`, `t="array"`, `ref`) followed by plain cached spill children.
+fn saved_spill_parts(metadata: bool) -> BTreeMap<String, String> {
+    let mut p = parts(false);
+    let meta_rel =
+        format!("<Relationship Id=\"m\" Type=\"{OFFICE}/sheetMetadata\" Target=\"metadata.xml\"/>");
+    p.insert(
+        "xl/_rels/workbook.xml.rels".into(),
+        format!(
+            "<Relationships xmlns=\"{RELS}\"><Relationship Id=\"s\" Type=\"{OFFICE}/worksheet\" Target=\"worksheets/sheet1.xml\"/>{}</Relationships>",
+            if metadata { meta_rel.as_str() } else { "" }
+        ),
+    );
+    if metadata {
+        p.insert("xl/metadata.xml".into(), format!(
+            "<metadata xmlns=\"{MAIN}\" xmlns:xda=\"http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray\"><metadataTypes count=\"1\"><metadataType name=\"XLDAPR\" minSupportedVersion=\"120000\" copy=\"1\" pasteAll=\"1\" pasteValues=\"1\" merge=\"1\" splitFirst=\"1\" rowColShift=\"1\" clearFormats=\"1\" clearComments=\"1\" assign=\"1\" coerce=\"1\" cellMeta=\"1\"/></metadataTypes><futureMetadata name=\"XLDAPR\" count=\"1\"><bk><extLst><ext uri=\"{{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}}\"><xda:dynamicArrayProperties fDynamic=\"1\" fCollapsed=\"0\"/></ext></extLst></bk></futureMetadata><cellMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk></cellMetadata></metadata>"
+        ));
+    }
+    let children: String = (2..=5)
+        .map(|r| format!("<row r=\"{r}\"><c r=\"C{r}\"><v>{r}</v></c></row>"))
+        .collect();
+    p.insert(
+        SHEET.into(),
+        format!(
+            "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"A1\"><v>5</v></c><c r=\"C1\" cm=\"1\"><f t=\"array\" ref=\"C1:C5\">_xlfn.SEQUENCE(A1)</f><v>1</v></c><c r=\"H1\"><f>SUM(_xlfn.ANCHORARRAY(C1))</f><v>15</v></c></row>{children}<row r=\"7\"><c r=\"C7\"><v>70</v></c></row></sheetData></worksheet>"
+        ),
+    );
+    p
+}
+
+#[test]
+fn saved_dynamic_array_children_do_not_block_the_recalculated_spill() {
+    use formualizer_common::LiteralValue::{Empty, Number};
+    let bytes = pack(&saved_spill_parts(true), CompressionMethod::Deflated);
+    let mut wb = Workbook::from_reader(
+        NativeXlsxAdapter::open_bytes(bytes.clone()).unwrap(),
+        formualizer_workbook::LoadStrategy::EagerAll,
+        formualizer_workbook::WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    let column = |wb: &Workbook| -> Vec<_> {
+        (1..=8)
+            .map(|r| wb.get_value("Sheet1", r, 3).unwrap_or(Empty))
+            .collect()
+    };
+    wb.evaluate_all().unwrap();
+    let n = |v: &[f64]| v.iter().map(|x| Number(*x)).collect::<Vec<_>>();
+    let mut expected = n(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+    expected.extend([Empty, Number(70.0), Empty]);
+    assert_eq!(column(&wb), expected);
+    assert_eq!(wb.get_value("Sheet1", 1, 8), Some(Number(15.0)));
+    // The spill follows its input: no stale saved children survive a shrink.
+    wb.set_value("Sheet1", 1, 1, Number(3.0)).unwrap();
+    wb.evaluate_all().unwrap();
+    let mut expected = n(&[1.0, 2.0, 3.0]);
+    expected.extend([Empty, Empty, Empty, Number(70.0), Empty]);
+    assert_eq!(column(&wb), expected);
+    assert_eq!(wb.get_value("Sheet1", 1, 8), Some(Number(6.0)));
+    // Growth past the saved extent is blocked only by real user content.
+    wb.set_value("Sheet1", 1, 1, Number(6.0)).unwrap();
+    wb.evaluate_all().unwrap();
+    let mut expected = n(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    expected.extend([Number(70.0), Empty]);
+    assert_eq!(column(&wb), expected);
+    wb.set_value("Sheet1", 1, 1, Number(8.0)).unwrap();
+    wb.evaluate_all().unwrap();
+    assert!(matches!(
+        wb.get_value("Sheet1", 1, 3),
+        Some(formualizer_common::LiteralValue::Error(e))
+            if e.kind == formualizer_common::ExcelErrorKind::Spill
+    ));
+
+    // The generic reader surface still reports the saved cached children.
+    let mut adapter = NativeXlsxAdapter::open_bytes(bytes).unwrap();
+    let sheet = adapter.read_sheet("Sheet1").unwrap();
+    assert_eq!(sheet.cells[&(3, 3)].value, Some(Number(3.0)));
+}
+
+#[test]
+fn array_cells_without_dynamic_metadata_keep_their_saved_values() {
+    // Without an XLDAPR declaration nothing proves C2:C5 are generated, so
+    // they stay user content and the anchor reports #SPILL!, as before.
+    let bytes = pack(&saved_spill_parts(false), CompressionMethod::Deflated);
+    let mut wb = Workbook::from_reader(
+        NativeXlsxAdapter::open_bytes(bytes).unwrap(),
+        formualizer_workbook::LoadStrategy::EagerAll,
+        formualizer_workbook::WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(
+        wb.get_value("Sheet1", 2, 3),
+        Some(formualizer_common::LiteralValue::Number(2.0))
+    );
+}
