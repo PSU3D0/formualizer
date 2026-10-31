@@ -35,6 +35,24 @@ fn na_result<'ctx>() -> Result<CalcValue<'ctx>, ExcelError> {
     Ok(error_value(ExcelErrorKind::Na))
 }
 
+/// A type test (`ISNUMBER`, `ISTEXT`, ...) of one argument. An array or a
+/// multi-cell range is tested element by element, as in Excel
+/// (`ISNUMBER(C1:C6)` is a column of booleans), so the verdict is never
+/// that of the array as a whole.
+fn type_test<'b>(
+    arg: &ArgumentHandle<'_, 'b>,
+    test: impl Fn(&LiteralValue) -> bool,
+) -> Result<CalcValue<'b>, ExcelError> {
+    Ok(scalar(match arg.value()?.into_literal() {
+        LiteralValue::Array(rows) => LiteralValue::Array(
+            rows.iter()
+                .map(|row| row.iter().map(|v| LiteralValue::Boolean(test(v))).collect())
+                .collect(),
+        ),
+        v => LiteralValue::Boolean(test(&v)),
+    }))
+}
+
 #[derive(Debug)]
 pub struct IsNumberFn;
 /// Returns TRUE when the value is numeric.
@@ -106,19 +124,17 @@ impl Function for IsNumberFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        let is_num = matches!(
-            v,
-            LiteralValue::Int(_)
-                | LiteralValue::Number(_)
-                | LiteralValue::Date(_)
-                | LiteralValue::DateTime(_)
-                | LiteralValue::Time(_)
-                | LiteralValue::Duration(_)
-        );
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            is_num,
-        )))
+        type_test(&args[0], |v| {
+            matches!(
+                v,
+                LiteralValue::Int(_)
+                    | LiteralValue::Number(_)
+                    | LiteralValue::Date(_)
+                    | LiteralValue::DateTime(_)
+                    | LiteralValue::Time(_)
+                    | LiteralValue::Duration(_)
+            )
+        })
     }
 }
 
@@ -191,10 +207,7 @@ impl Function for IsTextFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            matches!(v, LiteralValue::Text(_)),
-        )))
+        type_test(&args[0], |v| matches!(v, LiteralValue::Text(_)))
     }
 }
 
@@ -267,10 +280,7 @@ impl Function for IsLogicalFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            matches!(v, LiteralValue::Boolean(_)),
-        )))
+        type_test(&args[0], |v| matches!(v, LiteralValue::Boolean(_)))
     }
 }
 
@@ -343,10 +353,7 @@ impl Function for IsBlankFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            matches!(v, LiteralValue::Empty),
-        )))
+        type_test(&args[0], |v| matches!(v, LiteralValue::Empty))
     }
 }
 
@@ -419,10 +426,7 @@ impl Function for IsErrorFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            matches!(v, LiteralValue::Error(_)),
-        )))
+        type_test(&args[0], |v| matches!(v, LiteralValue::Error(_)))
     }
 }
 
@@ -495,14 +499,10 @@ impl Function for IsErrFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        let is_err = match v {
-            LiteralValue::Error(e) => e.kind != ExcelErrorKind::Na,
-            _ => false,
-        };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            is_err,
-        )))
+        type_test(
+            &args[0],
+            |v| matches!(v, LiteralValue::Error(e) if e.kind != ExcelErrorKind::Na),
+        )
     }
 }
 
@@ -575,11 +575,10 @@ impl Function for IsNaFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        let is_na = matches!(v, LiteralValue::Error(e) if e.kind==ExcelErrorKind::Na);
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            is_na,
-        )))
+        type_test(
+            &args[0],
+            |v| matches!(v, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Na),
+        )
     }
 }
 
@@ -1731,10 +1730,7 @@ impl Function for IsNonTextFn {
                 ExcelError::new_value(),
             )));
         }
-        let v = args[0].value()?.into_literal();
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
-            !matches!(v, LiteralValue::Text(_)),
-        )))
+        type_test(&args[0], |v| !matches!(v, LiteralValue::Text(_)))
     }
 }
 
