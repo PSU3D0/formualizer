@@ -101,16 +101,19 @@ fn calculated_shared_lookup_intersects_its_own_row() {
 #[test]
 fn without_calc_chain_evaluation_is_unchanged() {
     // An openpyxl/XlsxWriter-style workbook: no calc chain, dynamic semantics.
+    // The range lookup value spills, which a shared family member cannot, so
+    // recalculation refuses instead of intersecting with its own row.
     let bytes = lookup_book();
-    let out = recalc(&bytes);
-    assert_ne!(value_at(&out, 1, "E4").as_deref(), Some("Tue"));
+    let options = XlsxRecalculateOptions::default;
+    let dynamic = recalculate_xlsx_bytes(&bytes, options()).unwrap_err();
+    assert!(dynamic.to_string().contains("shared formula"), "{dynamic}");
     // A family member missing from the chain keeps the whole family dynamic.
     let partial = with_chain(
         &bytes,
         &[(1, "E4"), (1, "E5"), (1, "E6"), (1, "E7"), (1, "E8")],
     );
-    let partial_out = recalc(&partial);
-    assert_eq!(value_at(&partial_out, 1, "E4"), value_at(&out, 1, "E4"));
+    let partial_error = recalculate_xlsx_bytes(&partial, options()).unwrap_err();
+    assert_eq!(partial_error.to_string(), dynamic.to_string());
 }
 
 #[test]
