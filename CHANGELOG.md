@@ -4,6 +4,15 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Practical workbook recalculation
+
+- Added a workbook-aware source recalculation profile that applies saved calculation settings and preserves useful independent results when an executed feature is unsupported or unverified. The low-level strict profile remains available and is still the Rust default.
+- Added explicit complete, partial and deferred outcomes, affected-cache invalidation, optional physical telemetry and portable finite limits across Rust, Python and WASM/TypeScript. Corruption, cancellation, resource exhaustion and output failures remain errors.
+- Removed sparse-coordinate admission failures caused by treating declared worksheet rectangles as populated work. Actual byte, cell, formula and host-memory limits still apply.
+- Fixed lazy error consumers, dynamic/name invalidation and cycle handling, plus supported array, lookup, rounding and text-format modes. Executed unsupported or unverified modes remain visible through caught errors and optimized reuse.
+- Preserved source formulas and package ownership during selective cache publication. What-If table calculation, saved iterative seeds and external-data refresh are not newly implemented; partial output does not claim full Excel equivalence.
+- Prepared product packages 0.14.0 with parser/common SDK 4.2.0. Published seeded-RAND streams remain target-specific. Small-workbook WASM overhead and a family linear-memory increase remain documented maintenance follow-ups.
+
 ## [0.13.0] - 2026-10-25
 
 XLSX reading moves in-house: Rust, Python and JavaScript now use Formualizer's native reader by default, without a second production parser underneath it. Ordinary loading reads the workbook data it needs rather than decompressing every picture and attachment along the way. Source-preserving recalculation keeps its stricter whole-package integrity contract, and Umya remains available for rich document editing and export.
