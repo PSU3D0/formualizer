@@ -1048,6 +1048,8 @@ pub struct Engine<R> {
     /// one recalc — including SCC iteration passes — agree (spec §7.11).
     clock: crate::timezone::SnapshotClock,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
+    /// Full path of the workbook's file, for `CELL("filename")`.
+    workbook_path: Option<String>,
     pub recalc_epoch: u64,
     resumable: Option<super::resumable::LogicalRecalculation>,
     resumable_call: bool,
@@ -3157,6 +3159,7 @@ where
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
+            workbook_path: None,
             criteria_mask_cache: Default::default(),
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -3345,6 +3348,7 @@ where
         let lookup_cache_max_bytes = config.lookup_index_cache_max_bytes;
         let function_provider_revision_seen = resolver.planning_semantic_revision();
         let mut engine = Self {
+            workbook_path: None,
             criteria_mask_cache: Default::default(),
             graph: DependencyGraph::new_with_config(config.clone()),
             resolver,
@@ -4850,6 +4854,18 @@ where
 
     pub fn sheet_name(&self, id: SheetId) -> &str {
         self.graph.sheet_name(id)
+    }
+
+    /// Record the full path of the workbook's file (`None`: no file), as
+    /// read by `CELL("filename")`. Set it before evaluating; formulas
+    /// already calculated are not marked dirty by a change.
+    pub fn set_workbook_path(&mut self, path: Option<String>) {
+        self.workbook_path = path;
+    }
+
+    /// The path recorded by [`Self::set_workbook_path`].
+    pub fn workbook_path(&self) -> Option<&str> {
+        self.workbook_path.as_deref()
     }
 
     fn arrow_sheet_position(&self, id: SheetId) -> Option<usize> {
@@ -19719,6 +19735,14 @@ where
 
     fn current_sheet_index(&self, current_sheet: &str) -> Option<usize> {
         self.sheet_index_by_name(current_sheet)
+    }
+
+    fn workbook_path(&self) -> Option<&str> {
+        self.workbook_path.as_deref()
+    }
+
+    fn sheet_name_by_id(&self, sheet: SheetId) -> Option<&str> {
+        Some(self.graph.sheet_name(sheet))
     }
 
     fn inspect_reference(

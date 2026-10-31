@@ -1,6 +1,6 @@
 //! CELL / HYPERLINK builtins.
 //!
-//! CELL answers `contents`, `address`, `col`, `row` and `type` for a reference;
+//! CELL answers `contents`, `address`, `col`, `row`, `type` and `filename`;
 //! HYPERLINK returns its friendly name or link location as text.
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
@@ -171,7 +171,6 @@ fn cell_contents_on_blank_is_empty_in_graph() {
 #[test]
 fn cell_unsupported_info_type_is_value_error() {
     assert_error(r#"=CELL("format",A1)"#, ExcelErrorKind::Value);
-    assert_error(r#"=CELL("filename",A1)"#, ExcelErrorKind::Value);
     assert_error(r#"=CELL("protect",A1)"#, ExcelErrorKind::Value);
     assert_error(r#"=CELL("width",A1)"#, ExcelErrorKind::Value);
 }
@@ -352,4 +351,72 @@ fn hyperlink_rejects_multi_cell_arguments() {
         ExcelErrorKind::Value,
     );
     assert_text("=HYPERLINK({1})", "1");
+}
+
+/// Evaluate `formulas` on Sheet1 of an engine with sheets `Sheet1` and `G`.
+fn eval_with_path(path: Option<&str>, formulas: &[&str]) -> Vec<LiteralValue> {
+    let mut engine = new_engine();
+    engine.graph.add_sheet("G").unwrap();
+    engine.set_workbook_path(path.map(str::to_owned));
+    for (i, formula) in formulas.iter().enumerate() {
+        engine
+            .set_cell_formula("Sheet1", i as u32 + 1, 20, parse(formula).unwrap())
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    (1..=formulas.len() as u32)
+        .map(|row| engine.get_cell_value("Sheet1", row, 20).unwrap())
+        .collect()
+}
+
+#[test]
+fn cell_filename_names_the_saved_file_and_sheet() {
+    // Excel 16: `dir\[file]sheet` for the reference's sheet, the formula's
+    // own sheet without a reference, and the sheet's own spelling.
+    let text = |s: &str| LiteralValue::Text(s.into());
+    assert_eq!(
+        eval_with_path(
+            Some(r"C:\Data\Books\Model.xlsx"),
+            &[
+                r#"=CELL("filename",A1)"#,
+                r#"=CELL("filename")"#,
+                r#"=CELL("filename",g!B2:C3)"#,
+                r#"=CELL("FILENAME",Sheet1!A1)"#,
+            ],
+        ),
+        [
+            text(r"C:\Data\Books\[Model.xlsx]Sheet1"),
+            text(r"C:\Data\Books\[Model.xlsx]Sheet1"),
+            text(r"C:\Data\Books\[Model.xlsx]G"),
+            text(r"C:\Data\Books\[Model.xlsx]Sheet1"),
+        ]
+    );
+    assert_eq!(
+        eval_with_path(Some("/srv/books/m.xlsx"), &[r#"=CELL("filename")"#]),
+        [text("/srv/books/[m.xlsx]Sheet1")]
+    );
+}
+
+#[test]
+fn cell_filename_is_empty_without_a_file() {
+    assert_eq!(
+        eval_with_path(None, &[r#"=CELL("filename",A1)"#, r#"=CELL("filename")"#]),
+        [
+            LiteralValue::Text(String::new()),
+            LiteralValue::Text(String::new())
+        ]
+    );
+    // A non-reference argument is still #VALUE!, an error argument propagates.
+    let errors = eval_with_path(
+        Some(r"C:\b.xlsx"),
+        &[r#"=CELL("filename",42)"#, r#"=CELL("filename",1/0)"#],
+    );
+    assert!(
+        matches!(&errors[0], LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value),
+        "{errors:?}"
+    );
+    assert!(
+        matches!(&errors[1], LiteralValue::Error(e) if e.kind == ExcelErrorKind::Div),
+        "{errors:?}"
+    );
 }
