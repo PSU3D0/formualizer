@@ -313,18 +313,22 @@ pub(crate) fn load(
             checkpoint(&options.cancel)?;
             let mut reads = Reads::default();
             collect(ast, &mut reads);
-            for ext in reads.externals {
-                if values.contains(&ext.raw) {
+            for read in reads.external_reads() {
+                let raw = read.raw();
+                if values.contains(raw) {
                     continue;
                 }
-                let (index, served) = links.serve(ext, &ext.raw, &mut area, options)?;
+                let (index, served) = match read {
+                    ExternalRead::Reference(ext) => links.serve(ext, raw, &mut area, options),
+                    ExternalRead::Name(name) => links.serve_name(name, raw, &mut area, options),
+                }?;
                 indices.insert(index);
                 match served {
                     Served::Scalar(v) => {
-                        values.scalars.insert(ext.raw.clone(), v);
+                        values.scalars.insert(raw.to_owned(), v);
                     }
                     Served::Range(v) => {
-                        values.ranges.insert(ext.raw.clone(), v);
+                        values.ranges.insert(raw.to_owned(), v);
                     }
                 }
             }
@@ -375,6 +379,19 @@ pub(crate) fn load(
         });
         if !valid {
             refused_names.insert(key);
+        }
+    }
+    // See `linked_range_in_name`: such a name is refused like any other
+    // externally computed name the cache cannot serve.
+    for ((name, _, _), ast) in names.iter().zip(&parsed_names) {
+        let mut reads = Reads::default();
+        if let Some(ast) = ast {
+            collect(ast, &mut reads);
+        }
+        if reads.external_reads().any(
+            |read| matches!(read, ExternalRead::Name(linked) if values.ranges.contains_key(linked)),
+        ) {
+            refused_names.insert(name.to_ascii_lowercase());
         }
     }
     // Propagate unsupported externally computed names through the name graph.

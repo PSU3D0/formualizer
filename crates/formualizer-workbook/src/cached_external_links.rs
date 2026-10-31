@@ -66,8 +66,19 @@ enum Link {
 }
 struct Book {
     sheets: Vec<String>,
+    /// `externalBook/definedNames`: the linked workbook's names as Excel
+    /// last read them.
+    names: Vec<ExternalName>,
     /// `None` when the link has no `sheetDataSet`.
     cache: Option<HashMap<usize, SheetCache>>,
+}
+/// A defined name of a linked workbook (`[1]!Name` in a formula).
+struct ExternalName {
+    name: String,
+    /// `refersTo`, e.g. `='Data'!$B$1`.
+    refers_to: Option<String>,
+    /// Present on a sheet-scoped name.
+    sheet_id: Option<String>,
 }
 #[derive(Default)]
 struct SheetCache {
@@ -222,6 +233,7 @@ fn parse_part(
 ) -> Result<Link, IoError> {
     let mut kind: Option<&'static str> = None;
     let mut sheets = Vec::new();
+    let mut names = Vec::new();
     let mut cache: Option<HashMap<usize, SheetCache>> = None;
     let mut sheet: Option<usize> = None;
     let mut cell: Option<((u32, u32), RawCell)> = None;
@@ -254,6 +266,12 @@ fn parse_part(
                 }
                 if at(path, &["sheetNames", "sheetName"]) {
                     sheets.push(node.required("val")?.to_owned());
+                } else if at(path, &["definedNames", "definedName"]) {
+                    names.push(ExternalName {
+                        name: node.required("name")?.to_owned(),
+                        refers_to: node.value("refersTo").map(str::to_owned),
+                        sheet_id: node.value("sheetId").map(str::to_owned),
+                    });
                 } else if at(path, &["sheetDataSet"]) {
                     if cache.replace(HashMap::new()).is_some() {
                         return Err(malformed(part));
@@ -341,7 +359,11 @@ fn parse_part(
             {
                 return Err(malformed(part));
             }
-            Ok(Link::Book(Book { sheets, cache }))
+            Ok(Link::Book(Book {
+                sheets,
+                names,
+                cache,
+            }))
         }
         Some(other) => Ok(Link::Other(other)),
         None => Err(malformed(part)),
@@ -534,6 +556,92 @@ impl Links {
             )),
         }
     }
+
+    /// The value of `[n]!Name`, a workbook-level defined name of a linked
+    /// workbook, served from the cache when the link part records the name
+    /// and its `refersTo` is one cell or range of a cached sheet. Anything
+    /// else (sheet-scoped names, formulas, constants, `#REF!`) is refused.
+    fn serve_name(
+        &self,
+        written: &str,
+        context: &str,
+        area: &mut usize,
+        options: &CacheOptions,
+    ) -> Result<(usize, Served), IoError> {
+        let refuse = || unsupported("defined name of a linked workbook", context.to_owned());
+        let (qualifier, name) = written.split_once('!').ok_or_else(refuse)?;
+        if !(qualifier.starts_with('[') && qualifier.ends_with(']')) {
+            return Err(refuse());
+        }
+        let book_ref = formualizer_parse::parser::ExternalBookRef::Token(qualifier.to_owned());
+        // Resolve the link (and refuse an undeclared or uncached one) first.
+        let index = qualifier[1..qualifier.len() - 1]
+            .parse::<usize>()
+            .ok()
+            .filter(|i| *i >= 1)
+            .ok_or_else(refuse)?;
+        let Some(Link::Book(book)) = self.links.get(index - 1) else {
+            return Err(refuse());
+        };
+        let mut matches = book
+            .names
+            .iter()
+            .filter(|n| n.sheet_id.is_none() && n.name.eq_ignore_ascii_case(name));
+        let (Some(defined), None) = (matches.next(), matches.next()) else {
+            return Err(refuse());
+        };
+        let ast = defined
+            .refers_to
+            .as_deref()
+            .and_then(parse_formula)
+            .ok_or_else(refuse)?;
+        let ASTNodeType::Reference { reference, .. } = &ast.node_type else {
+            return Err(refuse());
+        };
+        let (sheet, kind) = match reference {
+            ReferenceType::Cell {
+                sheet: Some(sheet),
+                row,
+                col,
+                row_abs,
+                col_abs,
+            } => (
+                sheet,
+                ExternalRefKind::cell_with_abs(*row, *col, *row_abs, *col_abs),
+            ),
+            ReferenceType::Range {
+                sheet: Some(sheet),
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            } => (
+                sheet,
+                ExternalRefKind::Range {
+                    start_row: *start_row,
+                    start_col: *start_col,
+                    end_row: *end_row,
+                    end_col: *end_col,
+                    start_row_abs: *start_row_abs,
+                    start_col_abs: *start_col_abs,
+                    end_row_abs: *end_row_abs,
+                    end_col_abs: *end_col_abs,
+                },
+            ),
+            _ => return Err(refuse()),
+        };
+        let ext = formualizer_parse::parser::ExternalReference {
+            raw: written.to_owned(),
+            book: book_ref,
+            sheet: sheet.clone(),
+            kind,
+        };
+        self.serve(&ext, context, area, options)
+    }
 }
 
 /// Lowercased name of a defined-name reference (`Sheet1!Name` reads `name`).
@@ -559,6 +667,43 @@ fn parse_formula(text: &str) -> Option<ASTNode> {
 struct Reads<'a> {
     externals: Vec<&'a formualizer_parse::parser::ExternalReference>,
     names: Vec<String>,
+}
+/// The engine binds a defined name's dependencies to names and scalar
+/// sources only, so a linked workbook's name that holds a range is read from
+/// cell formulas, not from inside a defined name of this workbook.
+fn linked_range_in_name(context: &str, linked: &str) -> IoError {
+    unsupported(
+        "defined name of a linked workbook",
+        format!("{context}: {linked} (a range read inside a defined name)"),
+    )
+}
+/// One read of a linked workbook: a reference, or one of its defined names.
+#[derive(Clone, Copy)]
+enum ExternalRead<'a> {
+    Reference(&'a formualizer_parse::parser::ExternalReference),
+    Name(&'a str),
+}
+impl ExternalRead<'_> {
+    /// The reference text, which also keys the served value.
+    fn raw(&self) -> &str {
+        match self {
+            Self::Reference(ext) => &ext.raw,
+            Self::Name(name) => name,
+        }
+    }
+}
+impl Reads<'_> {
+    fn external_reads(&self) -> impl Iterator<Item = ExternalRead<'_>> {
+        self.externals
+            .iter()
+            .map(|ext| ExternalRead::Reference(ext))
+            .chain(
+                self.names
+                    .iter()
+                    .filter(|name| is_external_name(name))
+                    .map(|name| ExternalRead::Name(name)),
+            )
+    }
 }
 fn collect<'a>(ast: &'a ASTNode, reads: &mut Reads<'a>) {
     match &ast.node_type {
@@ -622,17 +767,9 @@ fn check_shape(
     context: &str,
 ) -> Result<(), IoError> {
     match &ast.node_type {
-        ASTNodeType::Reference { reference, .. } => {
-            if let ReferenceType::NamedRange(name) = reference
-                && is_external_name(name)
-            {
-                return Err(unsupported(
-                    "defined name of a linked workbook",
-                    format!("{context}: {name}"),
-                ));
-            }
-            Ok(())
-        }
+        // A linked workbook's name (`[1]!Name`) is served or refused with
+        // the other external reads.
+        ASTNodeType::Reference { .. } => Ok(()),
         ASTNodeType::UnaryOp { expr, .. } => check_shape(expr, external_names, context),
         ASTNodeType::BinaryOp { op, left, right } => {
             if matches!(op.as_str(), ":" | "," | " ")
@@ -847,23 +984,33 @@ pub(crate) fn plan(
     let mut used_links = BTreeSet::new();
     let mut first_read = None;
     let mut area = 0usize;
-    let mut serve = |ext: &formualizer_parse::parser::ExternalReference,
+    let mut linked_range_names = HashSet::new();
+    let mut serve = |read: ExternalRead<'_>,
                      context: &str,
                      values: &mut ExternalValues|
      -> Result<(), IoError> {
-        if values.contains(&ext.raw) {
+        let raw = read.raw();
+        if values.contains(raw) {
             return Ok(());
         }
-        let context = format!("{context}: {}", ext.raw);
-        let (index, served) = links.serve(ext, &context, &mut area, &options.into())?;
+        let context = format!("{context}: {raw}");
+        let (index, served) = match read {
+            ExternalRead::Reference(ext) => links.serve(ext, &context, &mut area, &options.into()),
+            ExternalRead::Name(name) => {
+                links.serve_name(name, &context, &mut area, &options.into())
+            }
+        }?;
         used_links.insert(index);
         first_read.get_or_insert(context);
         match served {
             Served::Scalar(v) => {
-                values.scalars.insert(ext.raw.clone(), v);
+                values.scalars.insert(raw.to_owned(), v);
             }
             Served::Range(v) => {
-                values.ranges.insert(ext.raw.clone(), v);
+                if matches!(read, ExternalRead::Name(_)) {
+                    linked_range_names.insert(name_key(raw));
+                }
+                values.ranges.insert(raw.to_owned(), v);
             }
         }
         Ok(())
@@ -889,8 +1036,8 @@ pub(crate) fn plan(
             for name in &reads.names {
                 used.insert(name_key(name));
             }
-            for ext in reads.externals {
-                serve(ext, &context, &mut values)?;
+            for read in reads.external_reads() {
+                serve(read, &context, &mut values)?;
             }
         }
     }
@@ -930,10 +1077,18 @@ pub(crate) fn plan(
         }
         let mut reads = Reads::default();
         collect(ast, &mut reads);
-        for ext in reads.externals {
-            serve(ext, &context, &mut values)?;
+        for read in reads.external_reads() {
+            serve(read, &context, &mut values)?;
+            if let ExternalRead::Name(linked) = read
+                && values.ranges.contains_key(linked)
+            {
+                return Err(linked_range_in_name(&context, linked));
+            }
         }
     }
+    // A linked workbook's name holding a range has no worksheet position:
+    // legacy implicit intersection of it is refused like a local name's.
+    range_names.extend(linked_range_names);
     Ok(Plan {
         values,
         links_used: used_links.len(),
