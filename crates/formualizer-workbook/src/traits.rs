@@ -366,6 +366,13 @@ pub trait SpreadsheetReader: Send + Sync {
         None
     }
 
+    /// Full path of the file the workbook was opened from, when the backend
+    /// read a file. `Workbook::from_reader` passes it to the engine for
+    /// `CELL("filename")`. Default: unknown (bytes/reader input).
+    fn source_path(&self) -> Option<&Path> {
+        None
+    }
+
     /// Constructor variants for different environments
     fn open_path<P: AsRef<Path>>(path: P) -> Result<Self, Self::Error>
     where

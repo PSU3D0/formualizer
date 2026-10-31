@@ -529,6 +529,12 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
     fn current_sheet_index(&self, current_sheet: &str) -> Option<usize> {
         self.engine.current_sheet_index(current_sheet)
     }
+    fn workbook_path(&self) -> Option<&str> {
+        self.engine.workbook_path()
+    }
+    fn sheet_name_by_id(&self, sheet: crate::SheetId) -> Option<&str> {
+        self.engine.sheet_name_by_id(sheet)
+    }
     fn inspect_reference(
         &self,
         reference: &ReferenceType,
