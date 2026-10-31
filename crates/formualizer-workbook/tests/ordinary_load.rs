@@ -569,3 +569,44 @@ fn ordinary_defaults_are_independent_of_recalculation() {
     assert_eq!(strict.max_input_bytes, 64 * 1024 * 1024);
     assert!(NativeXlsxAdapter::open_bytes_with_limits(Vec::new(), limits).is_err());
 }
+
+#[test]
+fn cell_filename_reports_the_opened_file() {
+    use formualizer_common::LiteralValue::Text;
+    let mut p = parts(false);
+    p.insert(
+        SHEET.into(),
+        format!(
+            "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"A1\"><f>CELL(\"filename\")</f></c><c r=\"B1\"><f>CELL(\"filename\",A1)</f></c></row></sheetData></worksheet>"
+        ),
+    );
+    let bytes = pack(&p, CompressionMethod::Deflated);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Book One.xlsx");
+    std::fs::write(&path, &bytes).unwrap();
+    let load = |adapter| {
+        let mut wb = Workbook::from_reader(
+            adapter,
+            formualizer_workbook::LoadStrategy::EagerAll,
+            formualizer_workbook::WorkbookConfig::ephemeral(),
+        )
+        .unwrap();
+        wb.evaluate_all().unwrap();
+        [wb.get_value("Sheet1", 1, 1), wb.get_value("Sheet1", 1, 2)]
+    };
+    let folder = std::path::absolute(dir.path()).unwrap();
+    let expected = format!(
+        "{}{}[Book One.xlsx]Sheet1",
+        folder.display(),
+        std::path::MAIN_SEPARATOR
+    );
+    assert_eq!(
+        load(NativeXlsxAdapter::open_path(&path).unwrap()),
+        [Some(Text(expected.clone())), Some(Text(expected))]
+    );
+    // Bytes have no file: Excel's unsaved-workbook answer.
+    assert_eq!(
+        load(NativeXlsxAdapter::open_bytes(bytes).unwrap()),
+        [Some(Text(String::new())), Some(Text(String::new()))]
+    );
+}

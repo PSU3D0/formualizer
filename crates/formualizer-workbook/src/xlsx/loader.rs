@@ -282,6 +282,8 @@ pub struct NativeXlsxAdapter {
     name_diagnostics: Vec<crate::traits::NameImportDiagnostic>,
     sheet_diagnostics: Vec<crate::traits::SheetImportDiagnostic>,
     has_links: bool,
+    /// Absolute path of the opened file, for `CELL("filename")`.
+    path: Option<std::path::PathBuf>,
     external: Option<Arc<crate::CachedExternalLinkValues>>,
     admission_error: Option<IoError>,
     debug_load: bool,
@@ -312,7 +314,9 @@ impl NativeXlsxAdapter {
     ) -> Result<Self, IoError> {
         let options = limits.read_options()?;
         let source = XlsxSource::open_path(path.as_ref(), source, options.limits.max_input_bytes)?;
-        Self::open_source_with_options(source, options)
+        let mut adapter = Self::open_source_with_options(source, options)?;
+        adapter.path = std::path::absolute(path.as_ref()).ok();
+        Ok(adapter)
     }
     /// Open owned bytes with explicit ordinary package/XML limits.
     pub fn open_bytes_with_limits(bytes: Vec<u8>, limits: XlsxLoadLimits) -> Result<Self, IoError> {
@@ -531,6 +535,7 @@ impl NativeXlsxAdapter {
             name_diagnostics: Vec::new(),
             sheet_diagnostics,
             has_links,
+            path: None,
             external: None,
             admission_error: None,
             debug_load,
@@ -1083,6 +1088,9 @@ impl SpreadsheetReader for NativeXlsxAdapter {
     }
     fn calc_settings(&self) -> Option<crate::traits::CalcSettings> {
         self.calc_settings.clone()
+    }
+    fn source_path(&self) -> Option<&Path> {
+        self.path.as_deref()
     }
     fn defined_names(&mut self) -> Result<Vec<crate::traits::DefinedName>, IoError> {
         self.names.defined_names().map_err(IoError::from)

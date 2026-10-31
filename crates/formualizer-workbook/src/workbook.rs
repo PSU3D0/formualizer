@@ -3680,6 +3680,11 @@ impl Workbook {
         // the XLSX write path can re-emit them; iterate* are sourced from the
         // live engine config at save time.
         wb.calc_settings = parsed_calc;
+        wb.engine.set_workbook_path(
+            backend
+                .source_path()
+                .map(|path| path.to_string_lossy().into_owned()),
+        );
         backend
             .stream_into_engine(&mut wb.engine)
             .map_err(IoError::from)?;

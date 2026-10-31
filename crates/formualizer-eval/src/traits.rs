@@ -2100,6 +2100,18 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         self.sheet_index_by_name(current_sheet)
     }
 
+    /// Full path of the file the workbook was loaded from or saved to, if
+    /// any. `None` for a workbook that has no file (`CELL("filename")` is
+    /// then empty text, as in an unsaved Excel workbook).
+    fn workbook_path(&self) -> Option<&str> {
+        None
+    }
+
+    /// Name of the sheet with this id, if known.
+    fn sheet_name_by_id(&self, _sheet: crate::SheetId) -> Option<&str> {
+        None
+    }
+
     /// Inspect reference metadata without materializing referenced values.
     fn inspect_reference(
         &self,
@@ -2343,6 +2355,16 @@ pub trait FunctionContext<'ctx> {
         self.sheet_index_by_name(self.current_sheet())
     }
 
+    /// See [`EvaluationContext::workbook_path`].
+    fn workbook_path(&self) -> Option<&str> {
+        None
+    }
+
+    /// See [`EvaluationContext::sheet_name_by_id`].
+    fn sheet_name_by_id(&self, _sheet: crate::SheetId) -> Option<&str> {
+        None
+    }
+
     fn inspect_reference(
         &self,
         _reference: &ReferenceType,
@@ -2479,6 +2501,14 @@ impl<'a> FunctionContext<'a> for DefaultFunctionContext<'a> {
 
     fn current_sheet_index(&self) -> Option<usize> {
         self.base.current_sheet_index(self.current_sheet)
+    }
+
+    fn workbook_path(&self) -> Option<&str> {
+        self.base.workbook_path()
+    }
+
+    fn sheet_name_by_id(&self, sheet: crate::SheetId) -> Option<&str> {
+        self.base.sheet_name_by_id(sheet)
     }
 
     fn inspect_reference(
