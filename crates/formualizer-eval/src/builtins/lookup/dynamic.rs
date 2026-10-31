@@ -252,14 +252,70 @@ impl Function for XLookupFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 3 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        let lookup_value = args[0].value()?.into_literal();
+        // An array (or multi-cell range) of lookup values lifts the call, as
+        // in Excel: one lookup per element, each giving the first cell of its
+        // return row or column (`XLOOKUP(D1:D6, H1:H3, I1:J3)` is a column).
+        match args[0].value()?.into_literal() {
+            LiteralValue::Array(needles) => lift_lookup_values(ctx, needles, |needle| {
+                XLookupFn::lookup_one(args, ctx, needle)
+            }),
+            lookup_value => XLookupFn::lookup_one(args, ctx, lookup_value),
+        }
+    }
+}
+
+/// A lookup whose lookup value is an array (or a multi-cell range): one
+/// lookup per element, as in Excel, giving an array of the same shape. An
+/// element whose own lookup returns several cells (a multi-column return
+/// range) contributes its first cell.
+fn lift_lookup_values<'b>(
+    ctx: &dyn FunctionContext<'b>,
+    needles: Vec<Vec<LiteralValue>>,
+    mut one: impl FnMut(LiteralValue) -> Result<crate::traits::CalcValue<'b>, ExcelError>,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    let (rows, cols) = (needles.len(), needles.first().map_or(0, |r| r.len()));
+    if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+        rows,
+        cols,
+        ctx.materialized_array_cells(),
+    ) {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+    }
+    let mut out = Vec::with_capacity(rows);
+    for row in needles {
+        let mut out_row = Vec::with_capacity(row.len());
+        for needle in row {
+            out_row.push(match one(needle) {
+                Ok(value) => match value.into_literal() {
+                    LiteralValue::Array(found) => found
+                        .into_iter()
+                        .next()
+                        .and_then(|r| r.into_iter().next())
+                        .unwrap_or(LiteralValue::Empty),
+                    other => other,
+                },
+                Err(e) => LiteralValue::Error(e),
+            });
+        }
+        out.push(out_row);
+    }
+    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(out)))
+}
+
+impl XLookupFn {
+    /// One `XLOOKUP` of a single lookup value (the arity is already checked).
+    fn lookup_one<'b>(
+        args: &[ArgumentHandle<'_, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+        lookup_value: LiteralValue,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if let LiteralValue::Error(ref e) = lookup_value {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 e.clone(),
@@ -647,14 +703,30 @@ impl Function for XMatchFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if args.len() < 2 {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Value),
             )));
         }
-        let lookup_value = args[0].value()?.into_literal();
+        // An array of lookup values gives an array of positions, as in Excel.
+        match args[0].value()?.into_literal() {
+            LiteralValue::Array(needles) => lift_lookup_values(ctx, needles, |needle| {
+                XMatchFn::lookup_one(args, ctx, needle)
+            }),
+            lookup_value => XMatchFn::lookup_one(args, ctx, lookup_value),
+        }
+    }
+}
+
+impl XMatchFn {
+    /// One `XMATCH` of a single lookup value (the arity is already checked).
+    fn lookup_one<'b>(
+        args: &[ArgumentHandle<'_, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+        lookup_value: LiteralValue,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if let LiteralValue::Error(ref e) = lookup_value {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 e.clone(),
