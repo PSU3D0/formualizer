@@ -183,6 +183,7 @@ mod info_reference_context;
 mod inspect;
 mod invariant_calls;
 mod let_lambda;
+mod lookup_array_lookup_value;
 mod lookup_blank_results;
 mod npv_variadic;
 mod offset_dynamic;
