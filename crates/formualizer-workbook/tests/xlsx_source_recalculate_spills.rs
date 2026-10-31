@@ -718,7 +718,8 @@ fn unsupported_metadata_and_structures_stay_refused() {
         ),
         "data-table formula",
     );
-    // Rich value metadata on a cell, and unknown metadata records.
+    // Rich value metadata on a literal cell, and a cell block of an
+    // unsupported metadata type.
     refused(
         recalculate_xlsx_bytes(
             &pack(&edit(
@@ -734,20 +735,14 @@ fn unsupported_metadata_and_structures_stay_refused() {
     refused(
         recalculate_xlsx_bytes(
             &pack(&edit(
-                producer(),
+                with_rich_value_metadata(producer()),
                 METADATA,
-                "</cellMetadata>",
-                "</cellMetadata><valueMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk></valueMetadata>",
+                "<cellMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk>",
+                "<cellMetadata count=\"1\"><bk><rc t=\"2\" v=\"0\"/></bk>",
             )),
             Default::default(),
         ),
-        "unsupported sheet metadata element",
-    );
-    let mut rich = producer();
-    rich.insert("xl/richData/rdrichvalue.xml".into(), "<rv/>".into());
-    refused(
-        recalculate_xlsx_bytes(&pack(&rich), Default::default()),
-        "rich value data",
+        "cell metadata of an unsupported type",
     );
     // A link part the workbook does not reference.
     let mut linked = producer();
@@ -1098,5 +1093,114 @@ fn new_spill_onto_a_source_formula_publishes_a_spill_error() {
     assert_eq!(
         x.cell("C2"),
         parse_sheet(&sheet_xml(&by_value.bytes)).cell("C2")
+    );
+}
+
+/// Excel's rich-value metadata, as saved beside a blocked spill: a second
+/// metadata type, its future records and one value block selecting it.
+fn with_rich_value_metadata(p: Parts) -> Parts {
+    let p = edit(
+        p,
+        METADATA,
+        "<metadataTypes count=\"1\">",
+        "<metadataTypes count=\"2\">",
+    );
+    let p = edit(
+        p,
+        METADATA,
+        "</metadataTypes>",
+        "<metadataType name=\"XLRICHVALUE\" minSupportedVersion=\"120000\" copy=\"1\" pasteAll=\"1\" pasteValues=\"1\" merge=\"1\" splitFirst=\"1\" rowColShift=\"1\" clearFormats=\"1\" clearComments=\"1\" assign=\"1\" coerce=\"1\"/></metadataTypes>",
+    );
+    edit(
+        p,
+        METADATA,
+        "</cellMetadata>",
+        concat!(
+            "</cellMetadata><futureMetadata name=\"XLRICHVALUE\" count=\"1\"><bk><extLst>",
+            "<ext uri=\"{3e2802c4-a4d2-4d8b-9148-e3be6c30e623}\">",
+            "<xlrd:rvb xmlns:xlrd=\"http://schemas.microsoft.com/office/spreadsheetml/2017/richdata\" i=\"0\"/>",
+            "</ext></extLst></bk></futureMetadata>",
+            "<valueMetadata count=\"1\"><bk><rc t=\"2\" v=\"0\"/></bk></valueMetadata>"
+        ),
+    )
+}
+
+/// Excel 16's save of `E1 = SEQUENCE(3)` blocked by text in `E2`: a `t="e"`
+/// `#VALUE!` cache whose `vm` selects a rich `_error` value (#SPILL!), plus
+/// the rich value parts.
+fn blocked_by_text_with_rich_error() -> Parts {
+    let mut p = with_rich_value_metadata(producer());
+    p = edit(
+        p,
+        SHEET,
+        "<dimension ref=\"A1:C11\"/>",
+        "<dimension ref=\"A1:E11\"/>",
+    );
+    p = edit(
+        p,
+        SHEET,
+        "<c r=\"B1\"><v>5</v></c></row>",
+        "<c r=\"B1\"><v>5</v></c><c r=\"E1\" t=\"e\" cm=\"1\" vm=\"1\"><f t=\"array\" ref=\"E1\">_xlfn.SEQUENCE(3)</f><v>#VALUE!</v></c></row>",
+    );
+    p = edit(
+        p,
+        SHEET,
+        "_xlfn.SEQUENCE($B$1)</f><v>1</v></c></row>",
+        "_xlfn.SEQUENCE($B$1)</f><v>1</v></c><c r=\"E2\" t=\"s\"><v>1</v></c></row>",
+    );
+    let rd = "http://schemas.microsoft.com/office/spreadsheetml/2017/richdata";
+    p.insert(
+        "xl/richData/rdrichvalue.xml".into(),
+        format!("<rvData xmlns=\"{rd}\" count=\"1\"><rv s=\"0\"><v>0</v><v>8</v><v>2</v><v>1</v></rv></rvData>"),
+    );
+    p.insert(
+        "xl/richData/rdrichvaluestructure.xml".into(),
+        format!("<rvStructures xmlns=\"{rd}\" count=\"1\"><s t=\"_error\"><k n=\"colOffset\" t=\"i\"/><k n=\"errorType\" t=\"i\"/><k n=\"rwOffset\" t=\"i\"/><k n=\"subType\" t=\"i\"/></s></rvStructures>"),
+    );
+    p
+}
+
+#[test]
+fn rich_error_value_metadata_on_formula_cells_is_recomputed() {
+    let source = blocked_by_text_with_rich_error();
+    let out = run(&pack(&source));
+    let x = parse_sheet(&sheet_xml(&out.bytes));
+    let e1 = x.cell("E1");
+    assert_eq!(e1.v.as_deref(), Some("#SPILL!"));
+    assert_eq!(e1.attrs.get("t").map(String::as_str), Some("e"));
+    assert_eq!(e1.attrs.get("cm").map(String::as_str), Some("1"));
+    // The value metadata described the old cache; it is not carried over.
+    assert_eq!(e1.attrs.get("vm"), None);
+    let parts = unpack(&out.bytes);
+    for part in [METADATA, "xl/richData/rdrichvalue.xml"] {
+        assert_eq!(parts.get(part), source.get(part), "{part} kept verbatim");
+    }
+    let again = run(&out.bytes);
+    assert_eq!(again.bytes, out.bytes);
+    assert_eq!(again.cache_cells_changed, 0);
+
+    // Without the blocker the anchor spills; no stale rich error survives.
+    let unblocked = edit(source, SHEET, "<c r=\"E2\" t=\"s\"><v>1</v></c>", "");
+    let out = run(&pack(&unblocked));
+    let x = parse_sheet(&sheet_xml(&out.bytes));
+    assert_eq!(x.cell("E1").attrs.get("vm"), None);
+    assert_eq!(x.cell("E1").attrs.get("t"), None);
+    assert_eq!(data(&out.bytes, "E1"), Data::Float(1.0));
+    assert_eq!(data(&out.bytes, "E3"), Data::Float(3.0));
+}
+
+#[test]
+fn rich_value_metadata_on_a_literal_cell_is_refused() {
+    refused(
+        recalculate_xlsx_bytes(
+            &pack(&edit(
+                blocked_by_text_with_rich_error(),
+                SHEET,
+                "<c r=\"E2\" t=\"s\">",
+                "<c r=\"E2\" t=\"s\" vm=\"1\">",
+            )),
+            Default::default(),
+        ),
+        "rich value metadata (vm)",
     );
 }

@@ -152,7 +152,8 @@ fn compatible_container_reads_skip_rewrite_only_admission() {
             _ => unreachable!(),
         }
         let bytes = build(&entries);
-        assert!(admit(&bytes).is_err(), "strict case {case}");
+        // Rich value parts are opaque to strict package admission (case 5).
+        assert_eq!(admit(&bytes).is_err(), case != 5, "strict case {case}");
         let mut archive = package::admit_with(&bytes, &ReadOptions::default(), |_| {
             panic!("compatible package read must not invoke strict binding")
         })
