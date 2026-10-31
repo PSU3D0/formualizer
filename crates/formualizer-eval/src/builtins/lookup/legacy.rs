@@ -186,7 +186,26 @@ impl Function for LookupFn {
             ))));
         }
 
-        let lookup_value = args[0].value()?.into_literal();
+        // An array (or multi-cell range) of lookup values lifts the call, as
+        // in Excel: one LOOKUP per element, giving an array of results.
+        match args[0].value()?.into_literal() {
+            LiteralValue::Array(needles) => {
+                super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
+                    LookupFn::lookup_one(args, ctx, needle)
+                })
+            }
+            lookup_value => LookupFn::lookup_one(args, ctx, lookup_value),
+        }
+    }
+}
+
+impl LookupFn {
+    /// One `LOOKUP` of a single lookup value (the arity is already checked).
+    fn lookup_one<'b>(
+        args: &[ArgumentHandle<'_, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+        lookup_value: LiteralValue,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if let LiteralValue::Error(e) = lookup_value {
             return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
         }
