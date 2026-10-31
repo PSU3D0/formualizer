@@ -665,3 +665,129 @@ fn refuse_policy_keeps_other_link_refusals() {
         }
     }
 }
+
+/// `data_link()` plus the linked workbook's defined names, as Excel stores
+/// them in `externalBook/definedNames`.
+fn named_link(names: &str) -> String {
+    data_link().replace(
+        "</sheetNames>",
+        &format!("</sheetNames><definedNames>{names}</definedNames>"),
+    )
+}
+const LINKED_NAMES: &str = concat!(
+    "<definedName name=\"Region\" refersTo=\"='Data'!$A$2\"/>",
+    "<definedName name=\"Sales\" refersTo=\"='Data'!$B$1:$B$3\"/>",
+    "<definedName name=\"Local\" refersTo=\"='Data'!$B$1\" sheetId=\"0\"/>",
+    "<definedName name=\"Computed\" refersTo=\"=SUM('Data'!$B$1:$B$3)\"/>",
+    "<definedName name=\"Broken\" refersTo=\"=#REF!\"/>",
+);
+
+#[test]
+fn linked_workbook_names_are_served_from_the_cache() {
+    let bytes = with_links(
+        &book(
+            &[Ws::new(
+                "Sheet1",
+                vec![
+                    formula("A1", "[1]!Region"),
+                    formula("A2", "SUM([1]!Sales)"),
+                    formula("A3", "[1]!region&\"-\"&[1]Data!$A$3"),
+                    formula("A4", "Twice*2"),
+                ],
+            )],
+            "<definedName name=\"Twice\">IF([1]!Region=\"b\",1,0)</definedName>",
+        ),
+        &[named_link(LINKED_NAMES)],
+    );
+    let out = recalc(&bytes);
+    assert_eq!(value_at(&out.bytes, 1, "A1").as_deref(), Some("b"));
+    assert_eq!(value_at(&out.bytes, 1, "A2").as_deref(), Some("63.5"));
+    assert_eq!(value_at(&out.bytes, 1, "A3").as_deref(), Some("b-c"));
+    assert_eq!(value_at(&out.bytes, 1, "A4").as_deref(), Some("2"));
+    // A local name over a linked name holding a range stays refused: the
+    // engine binds names only to names and scalar sources.
+    let bytes = with_links(
+        &book(
+            &[Ws::new("Sheet1", vec![formula("A1", "TotalSales")])],
+            "<definedName name=\"TotalSales\">SUM([1]!Sales)</definedName>",
+        ),
+        &[named_link(LINKED_NAMES)],
+    );
+    refuses(&bytes, "defined name of a linked workbook");
+}
+
+#[test]
+fn linked_workbook_names_without_an_exact_cached_target_are_refused() {
+    for name in [
+        "[1]!Missing",
+        "[1]!Local",
+        "[1]!Computed",
+        "[1]!Broken",
+        "'[1]Data'!Region",
+    ] {
+        let bytes = with_links(
+            &book(&[Ws::new("Sheet1", vec![formula("A1", name)])], ""),
+            &[named_link(LINKED_NAMES)],
+        );
+        refuses(&bytes, "defined name of a linked workbook");
+    }
+    // A name over uncached cells of a sheet whose refresh failed keeps the
+    // cache's own refusal.
+    let bytes = with_links(
+        &book(
+            &[Ws::new("Sheet1", vec![formula("A1", "SUM([1]!Gone)")])],
+            "",
+        ),
+        &[named_link(
+            "<definedName name=\"Gone\" refersTo=\"='Failed'!$A$1:$A$2\"/>",
+        )],
+    );
+    refuses(
+        &bytes,
+        "external range over uncached cells of a sheet whose link refresh failed",
+    );
+}
+
+#[test]
+fn ordinary_load_reads_linked_workbook_names_from_the_cache() {
+    use formualizer_common::LiteralValue;
+    use formualizer_workbook::{LoadStrategy, NativeXlsxAdapter, SpreadsheetReader, Workbook};
+    let bytes = with_links(
+        &book(
+            &[Ws::new(
+                "Sheet1",
+                vec![
+                    formula("A1", "[1]!Region"),
+                    formula("A2", "SUM([1]!Sales)"),
+                    formula("A3", "[1]!Computed"),
+                    formula("A4", "TotalSales"),
+                ],
+            )],
+            "<definedName name=\"TotalSales\">SUM([1]!Sales)</definedName>",
+        ),
+        &[named_link(LINKED_NAMES)],
+    );
+    let mut wb = Workbook::from_reader(
+        NativeXlsxAdapter::open_bytes(bytes).unwrap(),
+        LoadStrategy::EagerAll,
+        formualizer_workbook::WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 1),
+        Some(LiteralValue::Text("b".into()))
+    );
+    assert_eq!(
+        wb.get_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(63.5))
+    );
+    // A name the cache cannot answer, and a local name over a linked range
+    // name, stay per-cell #REF!.
+    for row in [3, 4] {
+        assert!(matches!(
+            wb.get_value("Sheet1", row, 1),
+            Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Ref
+        ));
+    }
+}

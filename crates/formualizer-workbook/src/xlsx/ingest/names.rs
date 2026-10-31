@@ -392,7 +392,10 @@ impl CalculationNames {
         let mut names_exist = true;
         ast.visit_refs(|r| {
             if let formualizer_parse::parser::RefView::NamedRange { name } = r {
-                names_exist &= self.calculation_name_index(name, scope).is_some();
+                // A linked workbook's name (`[1]!Name`) exists when the link
+                // cache serves it.
+                names_exist &= self.calculation_name_index(name, scope).is_some()
+                    || self.external_admitted(name);
             }
         });
         ((!self.policy.referenced_only || self.legacy_calculation_name(name) || names_exist)
