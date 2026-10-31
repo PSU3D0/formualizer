@@ -2231,10 +2231,33 @@ pub(crate) fn cmp_f64(a: f64, b: f64, op: BinaryOperator) -> bool {
     }
 }
 
+/// `base ^ exponent` as Excel computes it, before the finite-result check.
+/// A negative base with a fractional exponent has a real result only when
+/// the exponent is the reciprocal of an odd integer (`(-8)^(1/3)` is -2,
+/// `(-32)^0.2` is -2): Excel reads `1/exponent` at 15 significant digits,
+/// so `(-8)^0.333333333333333` is -2 but `(-8)^0.3333` is `#NUM!`. The
+/// result is then `-(|base|^exponent)`. Any other negative base with a
+/// fractional exponent (`(-8)^(2/3)`, `(-8)^(1/2)`) is `#NUM!`. Shared by
+/// `^` and `POWER`.
+pub(crate) fn excel_pow(base: f64, exponent: f64) -> Result<f64, ExcelError> {
+    if base < 0.0 && exponent.fract() != 0.0 {
+        let root = 1.0 / exponent;
+        // 15 significant digits, as Excel displays and compares numbers.
+        let root = format!("{root:.14e}").parse::<f64>().unwrap_or(f64::NAN);
+        let odd = root.is_finite() && root.rem_euclid(2.0) == 1.0;
+        if !odd {
+            return Err(ExcelError::new_num());
+        }
+        return Ok(-(-base).powf(exponent));
+    }
+    Ok(base.powf(exponent))
+}
+
 /// `+ - * / ^` on two numbers after coercion: the result, or the error
 /// the operator yields (`#DIV/0!`, `#NUM!` for a negative base with a
-/// fractional exponent or a non-finite result). Shared by the walk and
-/// the typed lift, so both are bit-identical.
+/// fractional exponent that is not the reciprocal of an odd integer, or a
+/// non-finite result). Shared by the walk and the typed lift, so both are
+/// bit-identical.
 #[inline]
 pub(crate) fn arith_f64(op: u8, a: f64, b: f64) -> Result<f64, ExcelError> {
     let v = match op {
@@ -2247,13 +2270,7 @@ pub(crate) fn arith_f64(op: u8, a: f64, b: f64) -> Result<f64, ExcelError> {
             }
             a / b
         }
-        b'^' => {
-            // Excel domain: negative base with non-integer exponent -> #NUM!
-            if a < 0.0 && b.fract() != 0.0 {
-                return Err(ExcelError::new_num());
-            }
-            a.powf(b)
-        }
+        b'^' => excel_pow(a, b)?,
         _ => unreachable!("arithmetic operator"),
     };
     crate::coercion::sanitize_numeric(v)
