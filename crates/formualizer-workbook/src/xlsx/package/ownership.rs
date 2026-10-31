@@ -149,9 +149,9 @@ pub(super) fn audit_unique_payloads<'a>(
         {
             return Err(unsupported("package digital signature", "XLSX package"));
         }
-        if options.policy == ReadPolicy::Strict && name.starts_with("xl/richData/") {
-            return Err(unsupported("rich value data", "XLSX package"));
-        }
+        // Rich value parts (`xl/richData/`) are kept as opaque bytes. Their
+        // meaning reaches a worksheet only through `c/@vm`, which the strict
+        // scanner admits on formula cells alone (see `worksheet::scanner`).
         drop(file);
         let retain = archive.parts.contains_key(&name) || needed.contains(&name);
         let mut part = archive.parts.remove(&name).unwrap_or_else(|| {

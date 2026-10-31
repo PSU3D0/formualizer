@@ -38,6 +38,8 @@ pub(crate) struct DynamicAttributes {
     pub cm_span: Option<Range<usize>>,
     pub array_ref: Option<SourceRect>,
     pub array_ref_span: Option<Range<usize>>,
+    pub vm: Option<u32>,
+    pub vm_span: Option<Range<usize>>,
 }
 impl Cell {
     pub fn cm(&self) -> Option<u32> {
@@ -80,7 +82,7 @@ record_debug!(ValueNode: span, open_end, close_start, empty, qualified, text);
 record_debug!(Cell: row, col, address, span, open_end, qualified, kind, kind_span,
     formula_end, formula_text, value, inline, formula_kind, shared_id, shared_range,
     has_formula, formula_open, formula_kind_span, dynamic);
-record_debug!(DynamicAttributes: cm, cm_span, array_ref, array_ref_span);
+record_debug!(DynamicAttributes: cm, cm_span, array_ref, array_ref_span, vm, vm_span);
 record_debug!(Scan: cells, table_ids, table_merges, hidden_rows, rows_hidden_by_default,
     has_dimension, active_filters, index, serialized, bounds);
 impl std::fmt::Debug for Scanned {
