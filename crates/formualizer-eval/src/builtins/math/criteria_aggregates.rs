@@ -218,11 +218,111 @@ impl CriteriaMaskMemo {
     }
 }
 
+/// The argument positions of the criteria of an `*IF`/`*IFS` call of
+/// `n` arguments, or `None` when the arity is invalid (the core reports it).
+fn criteria_arg_indices(n: usize, agg_type: AggregationType, multi: bool) -> Option<Vec<usize>> {
+    if !multi {
+        return (2..=3).contains(&n).then(|| vec![1]);
+    }
+    if agg_type == AggregationType::Count {
+        (n >= 2 && n.is_multiple_of(2)).then(|| (1..n).step_by(2).collect())
+    } else {
+        (n >= 3 && (n - 1).is_multiple_of(2)).then(|| (2..n).step_by(2).collect())
+    }
+}
+
+/// The shape of a criterion that lifts the call: an array (or multi-cell
+/// range) of more than one element. A 1x1 array is one criterion.
+fn lifting_shape(value: &LiteralValue) -> Option<(usize, usize)> {
+    match value {
+        LiteralValue::Array(rows) => {
+            let shape = (rows.len(), rows.first().map_or(0, |r| r.len()));
+            (shape.0 * shape.1 > 1).then_some(shape)
+        }
+        _ => None,
+    }
+}
+
+/// `SUMIF(S)`, `COUNTIF(S)`, `AVERAGEIF(S)`. A criterion that is an array or
+/// a multi-cell range lifts the call, as in Excel: the result is an array
+/// with one aggregate per criterion element (`SUMIFS(B:B, A:A, {"a","b"})`
+/// is `{sum for a, sum for b}`). Several array criteria broadcast against
+/// each other (a row by a column gives a grid); an element past a shorter
+/// array's end is `#N/A`, which as a criterion matches nothing. Scalar
+/// criteria take the single-criterion path unchanged.
 fn eval_if_family<'a, 'b>(
     args: &[ArgumentHandle<'a, 'b>],
     ctx: &dyn FunctionContext<'b>,
     agg_type: AggregationType,
     multi: bool,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    let Some(indices) = criteria_arg_indices(args.len(), agg_type, multi) else {
+        return eval_if_core(args, ctx, agg_type, multi, &[]);
+    };
+    let mut values = Vec::with_capacity(indices.len());
+    for &i in &indices {
+        values.push(args[i].value()?.into_literal());
+    }
+    if !values.iter().any(|v| lifting_shape(v).is_some()) {
+        let preds: Vec<_> = values.iter().map(crate::args::parse_criteria).collect();
+        return eval_if_core(args, ctx, agg_type, multi, &preds);
+    }
+
+    let shapes: Vec<Option<(usize, usize)>> = values.iter().map(lifting_shape).collect();
+    let rows = shapes.iter().flatten().map(|s| s.0).max().unwrap_or(1);
+    let cols = shapes.iter().flatten().map(|s| s.1).max().unwrap_or(1);
+    if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+        rows,
+        cols,
+        ctx.materialized_array_cells(),
+    ) {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+    }
+    let mut out = Vec::with_capacity(rows);
+    for r in 0..rows {
+        let mut out_row = Vec::with_capacity(cols);
+        for c in 0..cols {
+            let preds: Vec<_> = values
+                .iter()
+                .zip(&shapes)
+                .map(|(value, shape)| {
+                    let (LiteralValue::Array(arr), Some((ar, ac))) = (value, shape) else {
+                        return crate::args::parse_criteria(value);
+                    };
+                    let rr = if *ar == 1 { 0 } else { r };
+                    let cc = if *ac == 1 { 0 } else { c };
+                    match arr.get(rr).and_then(|row| row.get(cc)) {
+                        // An error element (or one past a shorter array's
+                        // end) matches nothing; the other elements still
+                        // aggregate.
+                        Some(LiteralValue::Error(e)) => Ok(crate::args::CriteriaPredicate::Eq(
+                            LiteralValue::Error(e.clone()),
+                        )),
+                        Some(element) => crate::args::parse_criteria(element),
+                        None => Ok(crate::args::CriteriaPredicate::Eq(LiteralValue::Error(
+                            ExcelError::new(formualizer_common::ExcelErrorKind::Na),
+                        ))),
+                    }
+                })
+                .collect();
+            out_row.push(match eval_if_core(args, ctx, agg_type, multi, &preds) {
+                Ok(value) => value.into_literal(),
+                Err(e) => LiteralValue::Error(e),
+            });
+        }
+        out.push(out_row);
+    }
+    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(out)))
+}
+
+/// One aggregate for one predicate per criteria pair (`preds`, in argument
+/// order; a criterion's parse error is reported where the walk reaches it).
+fn eval_if_core<'a, 'b>(
+    args: &[ArgumentHandle<'a, 'b>],
+    ctx: &dyn FunctionContext<'b>,
+    agg_type: AggregationType,
+    multi: bool,
+    preds: &[Result<crate::args::CriteriaPredicate, ExcelError>],
 ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
     let mut sum_view: Option<crate::engine::range_view::RangeView<'_>> = None;
     let mut sum_scalar: Option<LiteralValue> = None;
@@ -251,7 +351,7 @@ fn eval_if_family<'a, 'b>(
                 )),
             )));
         }
-        let pred = crate::args::parse_criteria(&args[1].value()?.into_literal())?;
+        let pred = preds[0].clone()?;
         let (crit_rv, crit_val) = if agg_type == AggregationType::Count {
             let (argument, logical_cells) = resolve_count_argument(&args[0], ctx)?;
             logical_count_cells = logical_cells;
@@ -294,7 +394,7 @@ fn eval_if_family<'a, 'b>(
                     )),
                 )));
             }
-            for i in (0..args.len()).step_by(2) {
+            for (k, i) in (0..args.len()).step_by(2).enumerate() {
                 let (mut rv, mut val) = resolve_range_or_scalar!(&args[i]);
 
                 // Broadcast semantics: treat 1x1 criteria ranges as scalar criteria.
@@ -306,7 +406,7 @@ fn eval_if_family<'a, 'b>(
                     }
                 }
 
-                let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
+                let pred = preds[k].clone()?;
                 crit_specs.push((rv, pred, val));
             }
         } else {
@@ -319,7 +419,7 @@ fn eval_if_family<'a, 'b>(
                 )));
             }
             (sum_view, sum_scalar) = resolve_range_or_scalar!(&args[0]);
-            for i in (1..args.len()).step_by(2) {
+            for (k, i) in (1..args.len()).step_by(2).enumerate() {
                 let (mut rv, mut val) = resolve_range_or_scalar!(&args[i]);
 
                 // Broadcast semantics: treat 1x1 criteria ranges as scalar criteria.
@@ -331,7 +431,7 @@ fn eval_if_family<'a, 'b>(
                     }
                 }
 
-                let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
+                let pred = preds[k].clone()?;
                 crit_specs.push((rv, pred, val));
             }
         }
