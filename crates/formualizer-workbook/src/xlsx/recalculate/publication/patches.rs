@@ -14,6 +14,12 @@ pub(in crate::xlsx::recalculate) fn cache_patches(
     value: &Cache,
     patches: &mut Vec<Patch>,
 ) {
+    if let Some(span) = cell.vm_span() {
+        patches.push(Patch {
+            span: span.clone(),
+            replacement: Vec::new(),
+        });
+    }
     let wanted = value.kind();
     let current = cell.kind.as_deref().filter(|t| *t != "n");
     if wanted != current {

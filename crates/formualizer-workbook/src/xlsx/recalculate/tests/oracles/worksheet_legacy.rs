@@ -132,6 +132,7 @@ pub(in crate::xlsx) fn normalize(scan: crate::xlsx::worksheet::Scanned, bytes: &
                         || d.cm_span.is_some()
                         || d.array_ref.is_some()
                         || d.array_ref_span.is_some()
+                        || d.vm.is_some()
                 })
                 .map(|d| {
                     Box::new(DynamicAttributes {
@@ -139,6 +140,8 @@ pub(in crate::xlsx) fn normalize(scan: crate::xlsx::worksheet::Scanned, bytes: &
                         cm_span: d.cm_span.clone(),
                         array_ref: d.array_ref,
                         array_ref_span: d.array_ref_span.clone(),
+                        vm: d.vm,
+                        vm_span: d.vm_span.clone(),
                     })
                 });
             let old = Cell {
@@ -541,9 +544,13 @@ fn scan_inner(
                     if *observed > options.limits.max_cells {
                         return Err(unsupported("serialized cell count limit", "worksheet"));
                     }
-                    if node.value("vm").is_some() {
-                        return Err(unsupported("rich value metadata (vm)", "worksheet"));
-                    }
+                    let vm = node
+                        .attribute("", "vm")
+                        .map(|a| match a.value.parse::<u32>().ok().filter(|n| *n > 0) {
+                            Some(index) if !*empty => Ok((index, a.span.clone())),
+                            _ => Err(unsupported("rich value metadata (vm)", "worksheet")),
+                        })
+                        .transpose()?;
                     let cm = node
                         .value("cm")
                         .map(|value| {
@@ -587,10 +594,12 @@ fn scan_inner(
                             has_formula: false,
                             formula_open: 0..0,
                             formula_kind_span: None,
-                            dynamic: cm.map(|cm| {
+                            dynamic: (cm.is_some() || vm.is_some()).then(|| {
                                 Box::new(DynamicAttributes {
-                                    cm: Some(cm),
+                                    cm,
                                     cm_span: node.attribute("", "cm").map(|a| a.span.clone()),
+                                    vm: vm.as_ref().map(|(index, _)| *index),
+                                    vm_span: vm.map(|(_, span)| span),
                                     ..Default::default()
                                 })
                             }),
@@ -765,6 +774,9 @@ fn scan_inner(
                         .take()
                         .ok_or_else(|| unsupported("unbalanced cell", "worksheet"))?;
                     cell.span.end = node.span.end;
+                    if !cell.has_formula && cell.dynamic.as_ref().is_some_and(|d| d.vm.is_some()) {
+                        return Err(unsupported("rich value metadata (vm)", "worksheet"));
+                    }
                     let refusal = literal_refusal(&cell, bytes);
                     dynamic_anchor_extent(&cell)?;
                     if let Some(index) = index.as_mut() {

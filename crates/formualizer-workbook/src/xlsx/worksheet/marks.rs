@@ -155,6 +155,10 @@ pub(in crate::xlsx) struct DynamicAttributes {
     pub(in crate::xlsx) array_ref: Option<SourceRect>,
     /// `ref="…"` attribute span on an array formula start tag.
     pub(in crate::xlsx) array_ref_span: Option<Range<usize>>,
+    /// One-based valueMetadata index from `c/@vm` (formula cells only).
+    pub(in crate::xlsx) vm: Option<u32>,
+    /// `vm="…"` attribute span on the cell start tag.
+    pub(in crate::xlsx) vm_span: Option<Range<usize>>,
 }
 impl FormulaMark {
     pub(in crate::xlsx) fn source_event(&self, sequence: u64) -> super::events::Formula<'_> {
@@ -240,6 +244,14 @@ impl FormulaMark {
     /// `cm="…"` attribute span on the cell start tag.
     pub fn cm_span(&self) -> Option<&Range<usize>> {
         self.dynamic.as_ref().and_then(|d| d.cm_span.as_ref())
+    }
+    /// One-based valueMetadata index from `c/@vm`.
+    pub fn vm(&self) -> Option<u32> {
+        self.dynamic.as_ref().and_then(|d| d.vm)
+    }
+    /// `vm="…"` attribute span on the cell start tag.
+    pub fn vm_span(&self) -> Option<&Range<usize>> {
+        self.dynamic.as_ref().and_then(|d| d.vm_span.as_ref())
     }
     /// Declared array extent from `f/@ref` for `t="array"` formulas.
     pub fn array_ref(&self) -> Option<SourceRect> {
