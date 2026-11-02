@@ -3104,29 +3104,27 @@ impl DependencyGraph {
             return Ok(false);
         };
 
-        // This-row shorthand: parsed as an unnamed table reference with a Combination specifier.
-        if !tref.name.is_empty() {
-            return Ok(false);
-        }
-
-        let col_name = match &tref.specifier {
+        // This-row references: `[@Col]` parses as an unnamed table reference, and files
+        // store `Table[[#This Row],[Col]]`, named, usually with a column or a column range.
+        let named = !tref.name.is_empty();
+        let mut saw_this_row = false;
+        let mut columns: Option<(&str, &str)> = None;
+        match &tref.specifier {
+            Some(TableSpecifier::SpecialItem(SpecialItem::ThisRow)) => saw_this_row = true,
             Some(TableSpecifier::Combination(parts)) => {
-                let mut saw_this_row = false;
-                let mut col: Option<&str> = None;
                 for p in parts {
                     match p.as_ref() {
                         TableSpecifier::SpecialItem(SpecialItem::ThisRow) => {
                             saw_this_row = true;
                         }
-                        TableSpecifier::Column(c) => {
-                            if col.is_some() {
-                                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                                    "This-row structured reference with multiple columns is not supported"
-                                        .to_string(),
-                                ));
-                            }
-                            col = Some(c.as_str());
+                        TableSpecifier::Column(c) if columns.is_none() => {
+                            columns = Some((c.as_str(), c.as_str()));
                         }
+                        TableSpecifier::ColumnRange(first, last) if columns.is_none() => {
+                            columns = Some((first.as_str(), last.as_str()));
+                        }
+                        // Other mixes, such as #Totals with a column, aren't this-row forms.
+                        _ if named => return Ok(false),
                         other => {
                             return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
                                 format!(
@@ -3136,28 +3134,36 @@ impl DependencyGraph {
                         }
                     }
                 }
-                if !saw_this_row {
-                    return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                        "Unnamed structured reference requires a this-row selector".to_string(),
-                    ));
-                }
-                col.ok_or_else(|| {
-                    ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                        "This-row structured reference missing column selector".to_string(),
-                    )
-                })?
             }
+            _ if named => return Ok(false),
             _ => {
                 return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
                     "Unnamed structured reference form is not supported".to_string(),
                 ));
             }
-        };
+        }
+        if !saw_this_row {
+            if named {
+                return Ok(false);
+            }
+            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                "Unnamed structured reference requires a this-row selector".to_string(),
+            ));
+        }
 
-        let Some(table) = self.find_table_containing_cell(cell) else {
+        let table = if named {
+            self.resolve_table_entry(&tref.name)
+        } else {
+            self.find_table_containing_cell(cell)
+        };
+        let Some(table) = table else {
             return Err(ExcelError::new(ExcelErrorKind::Name)
                 .with_message("This-row structured reference used outside a table".to_string()));
         };
+        if table.sheet_id() != cell.sheet_id {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("This-row structured reference used on another sheet".to_string()));
+        }
 
         let row0 = cell.coord.row();
         let col0 = cell.coord.col();
@@ -3166,9 +3172,15 @@ impl DependencyGraph {
         let er0 = table.range.end.coord.row();
         let ec0 = table.range.end.coord.col();
 
-        if row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0 {
-            return Err(ExcelError::new(ExcelErrorKind::Name)
-                .with_message("This-row structured reference used outside a table".to_string()));
+        // A named reference can sit beside its table, in the same rows.
+        let inside_rows = row0 >= sr0 && row0 <= er0;
+        if !inside_rows || (!named && (col0 < sc0 || col0 > ec0)) {
+            return Err(ExcelError::new(if named {
+                ExcelErrorKind::Value
+            } else {
+                ExcelErrorKind::Name
+            })
+            .with_message("This-row structured reference used outside a table".to_string()));
         }
 
         if table.header_row && row0 == sr0 {
@@ -3184,21 +3196,43 @@ impl DependencyGraph {
             ));
         }
 
-        let Some(idx) = table.col_index(col_name) else {
-            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
-                "Unknown table column in this-row reference: {col_name}"
-            )));
+        let index = |name: &str| table.col_index(name).map(|idx| sc0 + idx as u32);
+        let (first_col0, last_col0) = match columns {
+            Some((first, last)) => match (index(first), index(last)) {
+                (Some(first), Some(last)) => (first, last),
+                // A named reference stays a table reference, so that only its own
+                // cell shows the error when it evaluates.
+                _ if named => return Ok(false),
+                _ => {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                        "Unknown table column in this-row reference: {first}"
+                    )));
+                }
+            },
+            None => (sc0, ec0),
         };
-        let target_col0 = sc0 + (idx as u32);
         let target_row = row0 + 1;
-        let target_col = target_col0 + 1;
 
-        *reference = ReferenceType::Cell {
-            sheet: None,
-            row: target_row,
-            col: target_col,
-            row_abs: true,
-            col_abs: true,
+        *reference = if first_col0 == last_col0 {
+            ReferenceType::Cell {
+                sheet: None,
+                row: target_row,
+                col: first_col0 + 1,
+                row_abs: true,
+                col_abs: true,
+            }
+        } else {
+            ReferenceType::Range {
+                sheet: None,
+                start_row: Some(target_row),
+                start_col: Some(first_col0 + 1),
+                end_row: Some(target_row),
+                end_col: Some(last_col0 + 1),
+                start_row_abs: true,
+                start_col_abs: true,
+                end_row_abs: true,
+                end_col_abs: true,
+            }
         };
 
         Ok(true)

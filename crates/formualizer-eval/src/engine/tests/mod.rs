@@ -68,6 +68,7 @@ mod striped_dirty_propagation;
 mod structural_op_clears_computed_values;
 mod switch_blank_selector;
 mod symbol_rebinding;
+mod table_references;
 mod tables;
 mod target_preparation;
 mod tarjan_differential;

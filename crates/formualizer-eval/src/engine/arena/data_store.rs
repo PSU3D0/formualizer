@@ -399,10 +399,27 @@ impl DataStore {
             match node {
                 super::ast::AstNodeData::Reference { ref_type, .. } => {
                     let ref_type = self.compact_ref(*ref_type);
-                    if let CompactRefType::Table { name_id, .. } = ref_type
-                        && self.resolve_ast_string(*name_id).is_empty()
+                    // Unnamed `[@Col]`, and named `T[[#This Row],[Col]]`, both resolve per cell.
+                    if let CompactRefType::Table {
+                        name_id,
+                        specifier_id,
+                    } = ref_type
                     {
-                        return true;
+                        use formualizer_parse::parser::{SpecialItem, TableSpecifier};
+                        let this_row = |item: &TableSpecifier| {
+                            matches!(item, TableSpecifier::SpecialItem(SpecialItem::ThisRow))
+                        };
+                        let per_cell = specifier_id
+                            .and_then(|id| self.asts.resolve_table_specifier(id))
+                            .is_some_and(|specifier| match specifier {
+                                TableSpecifier::Combination(parts) => {
+                                    parts.iter().any(|part| this_row(part))
+                                }
+                                other => this_row(other),
+                            });
+                        if per_cell || self.resolve_ast_string(*name_id).is_empty() {
+                            return true;
+                        }
                     }
                 }
                 super::ast::AstNodeData::UnaryOp { expr_id, .. } => stack.push(*expr_id),

@@ -28,7 +28,8 @@ pub const MENU: &[&str] = &[
     "=SUM(NRange)",
     "=Loc*2",
     "=NF*3",
-    "=SUM(T1[X])",
+    // The whole table: the legacy graph has no narrower edge than the table symbol.
+    "=SUM(T1[#All])",
     "=SUM(3:3)",
     "=SUM(A{r}:B{n})",
     "=IF(A{r}>0,B{r},D{p})",
