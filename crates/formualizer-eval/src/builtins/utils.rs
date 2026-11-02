@@ -616,6 +616,17 @@ pub static ARG_NUM_LENIENT_TWO: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
     }]
 });
 
+/// Three scalar numeric arguments, for functions such as `CEILING.MATH` with a mode.
+pub static ARG_NUM_LENIENT_THREE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+    let mut optional = ArgSchema::number_lenient_scalar();
+    optional.required = false;
+    vec![
+        ArgSchema::number_lenient_scalar(),
+        optional.clone(),
+        optional,
+    ]
+});
+
 /// Single range argument, numeric semantics with lenient text-to-number coercion.
 /// Best for reductions over ranges (e.g., `SUM`, `AVERAGE`, `COUNT`-like families).
 pub static ARG_RANGE_NUM_LENIENT_ONE: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {

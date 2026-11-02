@@ -1,5 +1,6 @@
 use super::super::utils::{
-    ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_TWO, ARG_RANGE_NUM_LENIENT_ONE, coerce_num,
+    ARG_NUM_LENIENT_ONE, ARG_NUM_LENIENT_THREE, ARG_NUM_LENIENT_TWO, ARG_RANGE_NUM_LENIENT_ONE,
+    coerce_num,
 };
 use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
@@ -1056,8 +1057,8 @@ pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
 /// Min args: 1
 /// Max args: variadic
 /// Variadic: true
-/// Signature: CEILING.MATH(arg1: number@scalar, arg2...: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Signature: CEILING.MATH(arg1: number@scalar, arg2?: number@scalar, arg3?...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for CeilingMathFn {
@@ -1072,7 +1073,7 @@ impl Function for CeilingMathFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        &ARG_NUM_LENIENT_TWO[..]
+        &ARG_NUM_LENIENT_THREE[..]
     } // allow up to 3 handled manually
     fn eval<'a, 'b, 'c>(
         &self,
@@ -1261,8 +1262,8 @@ pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
 /// Min args: 1
 /// Max args: variadic
 /// Variadic: true
-/// Signature: FLOOR.MATH(arg1: number@scalar, arg2...: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Signature: FLOOR.MATH(arg1: number@scalar, arg2?: number@scalar, arg3?...: number@scalar)
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for FloorMathFn {
@@ -1277,7 +1278,7 @@ impl Function for FloorMathFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        &ARG_NUM_LENIENT_TWO[..]
+        &ARG_NUM_LENIENT_THREE[..]
     }
     fn eval<'a, 'b, 'c>(
         &self,
