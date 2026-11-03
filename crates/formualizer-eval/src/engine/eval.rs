@@ -1039,6 +1039,9 @@ pub struct Engine<R> {
     #[cfg(test)]
     pub(crate) resumable_stop_after_units_for_test: Option<usize>,
     snapshot_id: std::sync::atomic::AtomicU64,
+    // Admission-only signal: source publication must not change ordinary
+    // snapshots or invalidate unrelated lookup/planning/bounds caches.
+    source_mutation_generation: u64,
     topology_epoch: u64,
     cached_static_schedule: Option<CachedScheduleEntry>,
     /// Program 3 (plan reuse): schedules of recent earlier requests, most
@@ -2937,6 +2940,7 @@ where
             #[cfg(test)]
             resumable_stop_after_units_for_test: None,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
+            source_mutation_generation: 0,
             topology_epoch: 0,
             cached_static_schedule: None,
             recent_schedules: Vec::new(),
@@ -3117,6 +3121,7 @@ where
             #[cfg(test)]
             resumable_stop_after_units_for_test: None,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
+            source_mutation_generation: 0,
             topology_epoch: 0,
             cached_static_schedule: None,
             recent_schedules: Vec::new(),
@@ -4911,7 +4916,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_scalar_version(name, version)?;
-        self.mark_data_edited();
+        self.source_mutation_generation = self.source_mutation_generation.wrapping_add(1);
         Ok(())
     }
 
@@ -4921,13 +4926,13 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_table_version(name, version)?;
-        self.mark_data_edited();
+        self.source_mutation_generation = self.source_mutation_generation.wrapping_add(1);
         Ok(())
     }
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
         self.graph.invalidate_source(name)?;
-        self.mark_data_edited();
+        self.source_mutation_generation = self.source_mutation_generation.wrapping_add(1);
         Ok(())
     }
 
@@ -15690,7 +15695,9 @@ where
         let semantics_changed = !initial
             && (state.function_epoch != function_epoch
                 || state.provider_revision != provider_revision);
-        let mutated = !initial && state.mutation_revision != mutation_revision;
+        let mutated = !initial
+            && (state.mutation_revision != mutation_revision
+                || state.source_mutation_generation != self.source_mutation_generation);
         if semantics_changed || mutated {
             let invalidated: Vec<_> = state
                 .installed
@@ -15708,6 +15715,7 @@ where
         state.function_epoch = function_epoch;
         state.provider_revision = provider_revision;
         state.mutation_revision = mutation_revision;
+        state.source_mutation_generation = self.source_mutation_generation;
         self.reset_virtual_dep_telemetry_if_disabled();
         let mut computed = 0;
         let mut cycles = 0;
@@ -15856,6 +15864,7 @@ where
         let mutation_revision = self.inspection_mutation_revision();
         let state = self.resumable.as_mut().unwrap();
         state.mutation_revision = mutation_revision;
+        state.source_mutation_generation = self.source_mutation_generation;
         // Empty workbooks have no schedule, and therefore no original SCCs.
         state.original_cycles_recorded = true;
         state.computed_vertices += computed;

@@ -60,6 +60,7 @@ pub(super) struct LogicalRecalculation {
     pub function_epoch: u64,
     pub provider_revision: Option<u64>,
     pub mutation_revision: u64,
+    pub source_mutation_generation: u64,
     // FR5 must also propagate from readers installed in an earlier slice.
     pub installed: super::idset::DenseIdSet,
     // Retrying an SCC after an edit/cancellation must not count another
