@@ -398,9 +398,20 @@ fn cell_filename_names_the_saved_file_and_sheet() {
 }
 
 #[test]
-fn cell_filename_is_empty_without_a_file() {
+fn cell_filename_needs_a_path_from_the_host() {
+    let errors = eval_with_path(None, &[r#"=CELL("filename",A1)"#, r#"=CELL("filename")"#]);
+    for error in &errors {
+        assert!(
+            matches!(error, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value),
+            "{errors:?}"
+        );
+    }
+    // An empty path is a workbook never saved.
     assert_eq!(
-        eval_with_path(None, &[r#"=CELL("filename",A1)"#, r#"=CELL("filename")"#]),
+        eval_with_path(
+            Some(""),
+            &[r#"=CELL("filename",A1)"#, r#"=CELL("filename")"#]
+        ),
         [
             LiteralValue::Text(String::new()),
             LiteralValue::Text(String::new())
@@ -419,4 +430,74 @@ fn cell_filename_is_empty_without_a_file() {
         matches!(&errors[1], LiteralValue::Error(e) if e.kind == ExcelErrorKind::Div),
         "{errors:?}"
     );
+}
+
+#[test]
+fn cell_filename_follows_a_renamed_sheet_and_a_new_path() {
+    for family_execution in [true, false] {
+        let config = EvalConfig {
+            family_execution,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(TestWorkbook::new(), config);
+        engine.graph.add_sheet("G").unwrap();
+        engine.set_workbook_path(Some(r"C:\a\One.xlsx".into()));
+        engine
+            .define_name(
+                "Tag",
+                crate::engine::named_range::NamedDefinition::Formula {
+                    ast: parse(r#"=CELL("filename")"#).unwrap(),
+                    dependencies: Vec::new(),
+                    range_deps: Vec::new(),
+                },
+                crate::engine::named_range::NameScope::Workbook,
+            )
+            .unwrap();
+        let formulas = [
+            ("Sheet1", 1, r#"=CELL("filename",G!A1)"#),
+            ("Sheet1", 2, r#"=CELL("filename",G!A2)"#),
+            ("Sheet1", 3, r#"=CELL("filename",G!A3)"#),
+            ("Sheet1", 4, r#"="in "&T1"#),
+            ("Sheet1", 5, "=Tag"),
+            ("G", 1, r#"=CELL("filename")"#),
+            ("Sheet1", 6, "=G!T1"),
+        ];
+        for (sheet, row, formula) in formulas {
+            engine
+                .set_cell_formula(sheet, row, 20, parse(formula).unwrap())
+                .unwrap();
+        }
+        // `g` is what a read of sheet G gives, `name` what `=Tag` gives: the
+        // name reads the formula's own sheet, Sheet1.
+        let check = |engine: &mut Engine<TestWorkbook>, g: &str, name: &str| {
+            engine.evaluate_all().unwrap();
+            let text = |s: &str| Some(LiteralValue::Text(s.to_owned()));
+            for row in [1, 2, 3, 6] {
+                assert_eq!(
+                    engine.get_cell_value("Sheet1", row, 20),
+                    text(g),
+                    "row {row}, family execution {family_execution}"
+                );
+            }
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 4, 20),
+                text(&format!("in {g}")),
+                "a dependent, family execution {family_execution}"
+            );
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 5, 20),
+                text(name),
+                "a defined name, family execution {family_execution}"
+            );
+        };
+        let sheet1 = r"C:\a\[One.xlsx]Sheet1";
+        check(&mut engine, r"C:\a\[One.xlsx]G", sheet1);
+
+        let g = engine.sheet_id("G").unwrap();
+        engine.rename_sheet(g, "Renamed").unwrap();
+        check(&mut engine, r"C:\a\[One.xlsx]Renamed", sheet1);
+
+        engine.set_workbook_path(Some("/b/Two.xlsx".into()));
+        check(&mut engine, "/b/[Two.xlsx]Renamed", "/b/[Two.xlsx]Sheet1");
+    }
 }

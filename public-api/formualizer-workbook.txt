@@ -56,7 +56,6 @@ pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> cor
 pub fn formualizer_workbook::CalamineAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::CalamineAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -197,7 +196,6 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &s
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::csv::CsvAdapter
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -276,7 +274,6 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::json::JsonAdapter
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -353,7 +350,6 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya::UmyaAdapter
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -421,7 +417,6 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self,
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya3::UmyaAdapter
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -486,7 +481,6 @@ pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> cor
 pub fn formualizer_workbook::CalamineAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::CalamineAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -523,7 +517,6 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &s
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::csv::CsvAdapter
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -597,7 +590,6 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::json::JsonAdapter
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -642,7 +634,6 @@ pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> cor
 pub fn formualizer_workbook::CalamineAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::CalamineAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -673,7 +664,6 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self,
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya3::UmyaAdapter
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -718,7 +708,6 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya::UmyaAdapter
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -1608,7 +1597,6 @@ pub fn formualizer_workbook::traits::SpreadsheetReader::read_sheet(&mut self, &s
 pub fn formualizer_workbook::traits::SpreadsheetReader::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::traits::SpreadsheetReader::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::traits::SpreadsheetReader::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::traits::SpreadsheetReader::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -1628,7 +1616,6 @@ pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> cor
 pub fn formualizer_workbook::CalamineAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::CalamineAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::csv::CsvAdapter
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -1648,7 +1635,6 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &s
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::json::JsonAdapter
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -1668,7 +1654,6 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::umya3::UmyaAdapter
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -1688,7 +1673,6 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self,
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::umya::UmyaAdapter
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -1708,7 +1692,6 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 pub trait formualizer_workbook::traits::SpreadsheetWriter: core::marker::Send + core::marker::Sync
 pub type formualizer_workbook::traits::SpreadsheetWriter::Error: core::error::Error + core::marker::Send + core::marker::Sync + 'static
 pub fn formualizer_workbook::traits::SpreadsheetWriter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -2127,6 +2110,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_row_hidden(&mut self, &str,
 pub fn formualizer_workbook::workbook::Workbook::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::set_workbook_path(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
 pub fn formualizer_workbook::workbook::Workbook::sheet_names(&self) -> alloc::vec::Vec<alloc::string::String>
@@ -2700,7 +2684,6 @@ pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> cor
 pub fn formualizer_workbook::CalamineAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::CalamineAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -2763,7 +2746,6 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &s
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::csv::CsvAdapter
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -2900,7 +2882,6 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::json::JsonAdapter
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -2981,7 +2962,6 @@ pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> cor
 pub fn formualizer_workbook::CalamineAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::CalamineAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -3245,7 +3225,6 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self,
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya3::UmyaAdapter
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -3290,7 +3269,6 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya::UmyaAdapter
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -3540,6 +3518,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_row_hidden(&mut self, &str,
 pub fn formualizer_workbook::workbook::Workbook::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::set_workbook_path(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
 pub fn formualizer_workbook::workbook::Workbook::sheet_names(&self) -> alloc::vec::Vec<alloc::string::String>
@@ -3718,7 +3697,6 @@ pub fn formualizer_workbook::SpreadsheetReader::read_sheet(&mut self, &str) -> c
 pub fn formualizer_workbook::SpreadsheetReader::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::SpreadsheetReader::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::SpreadsheetReader::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::SpreadsheetReader::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -3738,7 +3716,6 @@ pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> cor
 pub fn formualizer_workbook::CalamineAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::CalamineAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::csv::CsvAdapter
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -3758,7 +3735,6 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &s
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::json::JsonAdapter
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -3778,7 +3754,6 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::umya3::UmyaAdapter
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -3798,7 +3773,6 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self,
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::backends::umya::UmyaAdapter
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -3818,7 +3792,6 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, 
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::SheetImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::sheet_names(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::source_path(&self) -> core::option::Option<&std::path::Path>
 pub trait formualizer_workbook::SpreadsheetWriter: core::marker::Send + core::marker::Sync
 pub type formualizer_workbook::SpreadsheetWriter::Error: core::error::Error + core::marker::Send + core::marker::Sync + 'static
 pub fn formualizer_workbook::SpreadsheetWriter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>

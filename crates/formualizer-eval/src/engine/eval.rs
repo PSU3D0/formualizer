@@ -1048,7 +1048,7 @@ pub struct Engine<R> {
     /// one recalc — including SCC iteration passes — agree (spec §7.11).
     clock: crate::timezone::SnapshotClock,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
-    /// Full path of the workbook's file, for `CELL("filename")`.
+    /// The host's workbook path, for `CELL("filename")`.
     workbook_path: Option<String>,
     pub recalc_epoch: u64,
     resumable: Option<super::resumable::LogicalRecalculation>,
@@ -3086,6 +3086,31 @@ pub fn formula_plane_mode_ignored_for_test() -> bool {
     plane_mode_ignored()
 }
 
+/// Whether `ast` calls `CELL` with `filename`, or an info type only known when
+/// it is evaluated.
+fn reads_workbook_identity(ast: &ASTNode) -> bool {
+    match &ast.node_type {
+        ASTNodeType::Function { name, args } => {
+            (name.eq_ignore_ascii_case("CELL")
+                && !matches!(
+                    args.first().map(|info| &info.node_type),
+                    Some(ASTNodeType::Literal(LiteralValue::Text(info)))
+                        if !info.eq_ignore_ascii_case("filename")
+                ))
+                || args.iter().any(reads_workbook_identity)
+        }
+        ASTNodeType::Call { callee, args } => {
+            reads_workbook_identity(callee) || args.iter().any(reads_workbook_identity)
+        }
+        ASTNodeType::UnaryOp { expr, .. } => reads_workbook_identity(expr),
+        ASTNodeType::BinaryOp { left, right, .. } => {
+            reads_workbook_identity(left) || reads_workbook_identity(right)
+        }
+        ASTNodeType::Array(rows) => rows.iter().flatten().any(reads_workbook_identity),
+        ASTNodeType::Literal(_) | ASTNodeType::Reference { .. } | ASTNodeType::Omitted => false,
+    }
+}
+
 impl<R> Engine<R>
 where
     R: EvaluationContext,
@@ -4856,16 +4881,46 @@ where
         self.graph.sheet_name(id)
     }
 
-    /// Record the full path of the workbook's file (`None`: no file), as
-    /// read by `CELL("filename")`. Set it before evaluating; formulas
-    /// already calculated are not marked dirty by a change.
+    /// Give the workbook the path `CELL("filename")` reports. It need not be a
+    /// location on this machine: the host chooses what results may disclose,
+    /// and the engine never takes it from the file it was loaded from. An
+    /// empty path means a workbook never saved; `None` means unknown. A change
+    /// marks the formulas that read it, and their dependents, dirty.
     pub fn set_workbook_path(&mut self, path: Option<String>) {
-        self.workbook_path = path;
+        if self.workbook_path != path {
+            self.workbook_path = path;
+            self.mark_workbook_identity_readers_dirty();
+        }
     }
 
     /// The path recorded by [`Self::set_workbook_path`].
     pub fn workbook_path(&self) -> Option<&str> {
         self.workbook_path.as_deref()
+    }
+
+    /// Formulas and defined names that call `CELL("filename")` answer from
+    /// the workbook path and sheet names, which no dependency edge tracks.
+    fn mark_workbook_identity_readers_dirty(&mut self) {
+        let formulas = self.graph.vertices_with_formulas().filter(|vertex| {
+            self.graph
+                .get_formula(*vertex)
+                .is_some_and(|ast| reads_workbook_identity(&ast))
+        });
+        let names = self
+            .graph
+            .named_ranges_iter()
+            .map(|(_, named)| named)
+            .chain(self.graph.sheet_named_ranges_iter().map(|(_, named)| named))
+            .filter(|named| {
+                matches!(
+                    &named.definition,
+                    crate::engine::named_range::NamedDefinition::Formula { ast, .. }
+                        if reads_workbook_identity(ast)
+                )
+            })
+            .map(|named| named.vertex);
+        let readers: Vec<VertexId> = formulas.chain(names).collect();
+        self.graph.mark_dirty_many(&readers);
     }
 
     fn arrow_sheet_position(&self, id: SheetId) -> Option<usize> {
@@ -5036,6 +5091,7 @@ where
                 for v_id in sheet_vertices {
                     self.graph.mark_vertex_dirty(v_id);
                 }
+                self.mark_workbook_identity_readers_dirty();
                 // Sheet rename preserves SheetId and therefore formula dependencies.
                 self.mark_topology_edited();
                 Ok(())

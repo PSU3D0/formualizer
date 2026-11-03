@@ -2262,9 +2262,8 @@ pub trait EvaluationContext: Resolver + FunctionProvider + SourceResolver {
         self.sheet_index_by_name(current_sheet)
     }
 
-    /// Full path of the file the workbook was loaded from or saved to, if
-    /// any. `None` for a workbook that has no file (`CELL("filename")` is
-    /// then empty text, as in an unsaved Excel workbook).
+    /// The path the host gave the workbook for `CELL("filename")`; `None` when
+    /// its identity is unknown. See `Engine::set_workbook_path`.
     fn workbook_path(&self) -> Option<&str> {
         None
     }

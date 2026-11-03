@@ -1769,15 +1769,22 @@ pub struct CellFn;
 /// - `"col"`      — the 1-based column of the upper-left cell
 /// - `"row"`      — the 1-based row of the upper-left cell
 /// - `"type"`     — `"b"` for a blank cell, `"l"` for text, `"v"` for any value
-/// - `"filename"` — the workbook's directory, `[file name]` and the sheet name
-///   of the reference (the formula's own sheet without one), e.g.
-///   `C:\dir\[Book1.xlsx]Sheet1`; empty text when the workbook has no file
+/// - `"filename"` — the directory, `[file name]` and sheet name of the reference
+///   (the formula's own sheet without one), e.g. `C:\dir\[Book1.xlsx]Sheet1`,
+///   from the path the host gave `Engine::set_workbook_path`. An empty path
+///   means a workbook never saved, which gives empty text. With no path the
+///   workbook's identity is unknown, which gives `#VALUE!`: opening a file does
+///   not publish where it is stored.
 ///
 /// Other `info_type` values (`format`, `parentheses`, `prefix`, `protect`,
 /// `width`) and calls without a reference (except `filename`) return
 /// `#VALUE!`, as do 3-D references and a non-reference argument for
 /// `address`, `col`, `row` or `filename`.
 /// An argument that evaluates to an error propagates that error unchanged.
+///
+/// Known divergence: without a reference Excel's `filename` names the sheet of
+/// the cell selected at calculation time. There is no selection state here, so
+/// it names the formula's own sheet.
 ///
 /// Known divergence: `CELL("contents", <blank cell>)` produces `Empty` in-graph
 /// where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
@@ -1874,15 +1881,11 @@ impl Function for CellFn {
                     },
                 );
             }
-            // `filename` names the formula's own sheet, as Excel does for the
-            // active sheet. Otherwise, without a reference Excel reports on the
-            // last-changed cell, which is not reproducible here; #VALUE! keeps
-            // the result well-defined.
+            // `filename` names the formula's own sheet (Excel: the selected
+            // cell's sheet, a state that does not exist here); the other info
+            // types give #VALUE!, which keeps the result well-defined.
             if info_type == "filename" {
-                return Ok(scalar(LiteralValue::Text(cell_filename(
-                    ctx,
-                    ctx.current_sheet(),
-                ))));
+                return Ok(scalar(cell_filename(ctx, ctx.current_sheet())));
             }
             return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
         }
@@ -1967,21 +1970,25 @@ impl Function for CellFn {
                     .sheet_name_by_id(cell.sheet_id)
                     .or_else(|| reference_sheet(&reference))
                     .unwrap_or_else(|| ctx.current_sheet());
-                Ok(scalar(LiteralValue::Text(cell_filename(ctx, sheet))))
+                Ok(scalar(cell_filename(ctx, sheet)))
             }
             _ => Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
         }
     }
 }
 
-/// `CELL("filename")` text: `dir\[file]sheet` from the workbook's file path
-/// (split at its last `\` or `/`), or empty text when it has none.
-fn cell_filename(ctx: &dyn FunctionContext<'_>, sheet: &str) -> String {
-    let Some(path) = ctx.workbook_path() else {
-        return String::new();
-    };
-    let split = path.rfind(['\\', '/']).map_or(0, |i| i + 1);
-    format!("{}[{}]{sheet}", &path[..split], &path[split..])
+/// `CELL("filename")`: `dir\[file]sheet` from the host's workbook path (split at
+/// its last `\` or `/`), empty text for an empty path (never saved), or `#VALUE!`
+/// when the workbook's identity is unknown.
+fn cell_filename(ctx: &dyn FunctionContext<'_>, sheet: &str) -> LiteralValue {
+    match ctx.workbook_path() {
+        None => LiteralValue::Error(ExcelError::new_value()),
+        Some("") => LiteralValue::Text(String::new()),
+        Some(path) => {
+            let split = path.rfind(['\\', '/']).map_or(0, |i| i + 1);
+            LiteralValue::Text(format!("{}[{}]{sheet}", &path[..split], &path[split..]))
+        }
+    }
 }
 
 /// Materializes the upper-left cell of the reference argument as a literal.
