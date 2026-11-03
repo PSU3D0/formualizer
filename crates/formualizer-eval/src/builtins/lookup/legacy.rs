@@ -188,15 +188,67 @@ impl Function for LookupFn {
 
         // An array (or multi-cell range) of lookup values lifts the call, as
         // in Excel: one LOOKUP per element, giving an array of results.
+        let mut vectors = LookupVectors::default();
         match args[0].value()?.into_literal() {
             LiteralValue::Array(needles) => {
                 super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
-                    LookupFn::lookup_one(args, ctx, needle)
+                    LookupFn::lookup_one(args, ctx, needle, &mut vectors)
                 })
             }
-            lookup_value => LookupFn::lookup_one(args, ctx, lookup_value),
+            lookup_value => LookupFn::lookup_one(args, ctx, lookup_value, &mut vectors),
         }
     }
+}
+
+/// The lookup vector or array of one `LOOKUP` call and what it searches.
+struct LookupVector {
+    data: Vec<Vec<LiteralValue>>,
+    rows: usize,
+    cols: usize,
+    search: Vec<LiteralValue>,
+    is_row_search: bool,
+}
+
+impl LookupVector {
+    fn read<'b>(
+        arg: &ArgumentHandle<'_, 'b>,
+        has_result_vector: bool,
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<Self, ExcelError> {
+        let data = materialise_range(arg, ctx)?;
+        let (rows, cols) = dims(&data);
+
+        // Determine search orientation and build the search slice.
+        let (search, is_row_search) = if has_result_vector {
+            // Vector form: lookup_data must be 1-D
+            flatten_1d(&data, rows, cols)
+        } else if rows == 1 && cols == 1 {
+            // Single cell – trivially a column search
+            (vec![data[0][0].clone()], false)
+        } else if cols > rows {
+            // Array form: wider than tall → search first row
+            (data[0].clone(), true)
+        } else {
+            // Array form: tall or square → search first column
+            (data.iter().map(|r| r[0].clone()).collect::<Vec<_>>(), false)
+        };
+        Ok(Self {
+            data,
+            rows,
+            cols,
+            search,
+            is_row_search,
+        })
+    }
+}
+
+/// The range arguments of one `LOOKUP` call, each read on first need and then
+/// kept, so that an array of lookup values reads them once rather than once
+/// per element, and a lookup value that needs one never reads the other.
+#[derive(Default)]
+struct LookupVectors {
+    lookup: Option<Result<LookupVector, ExcelError>>,
+    result: Option<Result<Vec<LiteralValue>, ExcelError>>,
 }
 
 impl LookupFn {
@@ -205,6 +257,7 @@ impl LookupFn {
         args: &[ArgumentHandle<'_, 'b>],
         ctx: &dyn FunctionContext<'b>,
         lookup_value: LiteralValue,
+        vectors: &mut LookupVectors,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if let LiteralValue::Error(e) = lookup_value {
             return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
@@ -212,30 +265,14 @@ impl LookupFn {
 
         let has_result_vector = args.len() >= 3;
 
-        // --- Materialise lookup vector / array ---
-        let lookup_data = materialise_range(&args[1], ctx)?;
-        let (l_rows, l_cols) = dims(&lookup_data);
-
-        // Determine search orientation and build the search slice.
-        let (search_vec, is_row_search) = if has_result_vector {
-            // Vector form: lookup_data must be 1-D
-            flatten_1d(&lookup_data, l_rows, l_cols)
-        } else if l_rows == 1 && l_cols == 1 {
-            // Single cell – trivially a column search
-            (vec![lookup_data[0][0].clone()], false)
-        } else if l_cols > l_rows {
-            // Array form: wider than tall → search first row
-            (lookup_data[0].clone(), true)
-        } else {
-            // Array form: tall or square → search first column
-            (
-                lookup_data.iter().map(|r| r[0].clone()).collect::<Vec<_>>(),
-                false,
-            )
-        };
+        let lookup = vectors
+            .lookup
+            .get_or_insert_with(|| LookupVector::read(&args[1], has_result_vector, ctx))
+            .as_ref()
+            .map_err(Clone::clone)?;
 
         // Approximate match – largest <= needle
-        let match_idx = approx_match_ascending(&search_vec, &lookup_value, ctx.date_system());
+        let match_idx = approx_match_ascending(&lookup.search, &lookup_value, ctx.date_system());
         let match_idx = match match_idx {
             Some(i) => i,
             None => {
@@ -247,22 +284,29 @@ impl LookupFn {
 
         // --- Retrieve result ---
         if has_result_vector {
-            let result_data = materialise_range(&args[2], ctx)?;
-            let (r_rows, r_cols) = dims(&result_data);
-            let result_vec = flatten_1d_vec(&result_data, r_rows, r_cols);
+            let result_vec = vectors
+                .result
+                .get_or_insert_with(|| {
+                    let result_data = materialise_range(&args[2], ctx)?;
+                    let (r_rows, r_cols) = dims(&result_data);
+                    Ok(flatten_1d_vec(&result_data, r_rows, r_cols))
+                })
+                .as_ref()
+                .map_err(Clone::clone)?;
             let val = result_vec
                 .get(match_idx)
                 .cloned()
                 .unwrap_or(LiteralValue::Empty);
             Ok(CalcValue::Scalar(materialise_empty(val)))
-        } else if l_rows == 1 && l_cols == 1 {
+        } else if lookup.rows == 1 && lookup.cols == 1 {
             Ok(CalcValue::Scalar(materialise_empty(
-                lookup_data[0][0].clone(),
+                lookup.data[0][0].clone(),
             )))
-        } else if is_row_search {
+        } else if lookup.is_row_search {
             // Return from last row at matched column
-            let last_row = l_rows - 1;
-            let val = lookup_data
+            let last_row = lookup.rows - 1;
+            let val = lookup
+                .data
                 .get(last_row)
                 .and_then(|r| r.get(match_idx))
                 .cloned()
@@ -270,8 +314,9 @@ impl LookupFn {
             Ok(CalcValue::Scalar(materialise_empty(val)))
         } else {
             // Return from last column at matched row
-            let last_col = l_cols - 1;
-            let val = lookup_data
+            let last_col = lookup.cols - 1;
+            let val = lookup
+                .data
                 .get(match_idx)
                 .and_then(|r| r.get(last_col))
                 .cloned()

@@ -164,3 +164,46 @@ fn memoized_single_value_lookups_are_unchanged() {
         .unwrap_or(LiteralValue::Empty);
     assert!(same(&total, &n(90.0)), "array total = {total:?}");
 }
+
+#[test]
+fn array_lookup_reads_long_vectors_once_for_all_lookup_values() {
+    const ROWS: u32 = 10_000;
+    const NEEDLES: u32 = 1_000;
+    let mut e = Engine::new(TestWorkbook::default(), EvalConfig::default());
+    for row in 1..=ROWS {
+        e.set_cell_value("Sheet1", row, 1, n(f64::from(row)))
+            .unwrap();
+        e.set_cell_value("Sheet1", row, 2, n(f64::from(row) * 2.0))
+            .unwrap();
+    }
+    // Rereading both vectors per lookup value takes tens of seconds here.
+    let formula = format!("=SUM(LOOKUP(A1:A{NEEDLES},A1:A{ROWS},B1:B{ROWS}))");
+    e.set_cell_formula("Sheet1", 1, 4, parse(&formula).unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    let want = f64::from(NEEDLES * (NEEDLES + 1));
+    let got = e.get_cell_value("Sheet1", 1, 4).unwrap();
+    assert!(same(&got, &n(want)), "{got:?}");
+}
+
+#[test]
+fn array_lookup_keeps_each_form_and_a_miss_per_element() {
+    let mut e = build(FormulaPlaneMode::Off);
+    let cases = [
+        // Tall array form: first column, result from the last.
+        ("=SUM(LOOKUP({\"y\",\"z\"},H1:I3))", 50.0),
+        // Wide array form: first row, result from the last.
+        ("=SUM(LOOKUP({\"y\",\"z\"},H5:J6))", 50.0),
+        // Before the first entry is #N/A for that element alone.
+        ("=SUM(IFERROR(LOOKUP({5,15},I1:I3,H6:J6),100))", 110.0),
+    ];
+    for (i, (formula, _)) in cases.iter().enumerate() {
+        e.set_cell_formula("Sheet1", 40 + i as u32, 12, parse(formula).unwrap())
+            .unwrap();
+    }
+    e.evaluate_all().unwrap();
+    for (i, (formula, want)) in cases.iter().enumerate() {
+        let got = e.get_cell_value("Sheet1", 40 + i as u32, 12).unwrap();
+        assert!(same(&got, &n(*want)), "{formula} = {got:?}");
+    }
+}
