@@ -25,7 +25,7 @@ pub(super) fn ingest_source<'a>(
     // or ZIP is created and the authoritative package stays intact.
     let has_tables = plans.iter().any(|p| !p.tables.is_empty());
     // Legacy implicit intersection for formulas Excel calculated (listed in
-    // the calc chain); see `legacy_intersection`.
+    // the calc chain) and shared families; see `legacy_intersection`.
     let calc_chain = if legacy_intersection::needs_calc_chain(&plans, options)? {
         let calc_chain_part = package::calc_chain_part(&mut archive, options);
         legacy_intersection::calc_chain(&mut archive, calc_chain_part.as_deref(), &sheets, options)?
@@ -40,17 +40,15 @@ pub(super) fn ingest_source<'a>(
     let mut evaluation_texts = Vec::with_capacity(plans.len());
     for (index, (sheet, plan)) in sheets.iter().zip(&plans).enumerate() {
         let mut transforms = Vec::new();
-        if !calc_chain.is_empty() {
-            let (legacy, _) = legacy_intersection::lowered_texts(
-                index,
-                plan,
-                &calc_chain,
-                &table_names,
-                external.as_ref().map(|e| &e.range_names),
-                options,
-            )?;
-            transforms.extend(legacy);
-        }
+        let (legacy, _) = legacy_intersection::lowered_texts(
+            index,
+            plan,
+            &calc_chain,
+            &table_names,
+            external.as_ref().map(|e| &e.range_names),
+            options,
+        )?;
+        transforms.extend(legacy);
         if has_tables {
             transforms.extend(table_lowering::lowered_texts(
                 &sheet.name,

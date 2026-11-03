@@ -1,6 +1,6 @@
 #![cfg(feature = "xlsx-recalc")]
-//! Legacy implicit intersection for formulas Excel calculated: a formula
-//! listed in `xl/calcChain.xml` and not marked as a dynamic array keeps its
+//! Legacy implicit intersection: a formula listed in `xl/calcChain.xml`, or
+//! belonging to a shared family, and not marked as a dynamic array keeps its
 //! pre-dynamic-array meaning. Without that evidence evaluation is unchanged.
 mod support {
     pub mod source_xlsx;
@@ -77,10 +77,8 @@ fn lookup_book() -> Vec<u8> {
 }
 const LOOKUP_CELLS: [&str; 6] = ["E4", "E5", "E6", "E7", "E8", "E9"];
 
-#[test]
-fn calculated_shared_lookup_intersects_its_own_row() {
-    let chain: Vec<_> = LOOKUP_CELLS.iter().map(|c| (1, *c)).collect();
-    let out = recalc(&with_chain(&lookup_book(), &chain));
+/// Each row of `lookup_book` reads its own `B` value.
+fn assert_lookup_rows(out: &[u8]) {
     for (cell, expected) in [
         ("E4", "Tue"),
         ("E5", "Wed"),
@@ -90,8 +88,15 @@ fn calculated_shared_lookup_intersects_its_own_row() {
         ("E8", "#VALUE!"),
         ("E9", "#VALUE!"),
     ] {
-        assert_eq!(value_at(&out, 1, cell).as_deref(), Some(expected), "{cell}");
+        assert_eq!(value_at(out, 1, cell).as_deref(), Some(expected), "{cell}");
     }
+}
+
+#[test]
+fn calculated_shared_lookup_intersects_its_own_row() {
+    let chain: Vec<_> = LOOKUP_CELLS.iter().map(|c| (1, *c)).collect();
+    let out = recalc(&with_chain(&lookup_book(), &chain));
+    assert_lookup_rows(&out);
     // The stored formula text is untouched.
     assert!(formula_text(&out, 1, "E4").contains(
         "<f t=\"shared\" ref=\"E4:E9\" si=\"0\">VLOOKUP($B$4:$B$7,$C$11:$D$13,2,FALSE)</f>"
@@ -99,21 +104,47 @@ fn calculated_shared_lookup_intersects_its_own_row() {
 }
 
 #[test]
-fn without_calc_chain_evaluation_is_unchanged() {
-    // An openpyxl/XlsxWriter-style workbook: no calc chain, dynamic semantics.
-    // The range lookup value spills, which a shared family member cannot, so
-    // recalculation refuses instead of intersecting with its own row.
+fn shared_family_intersects_without_a_complete_calc_chain() {
+    // Shared storage cannot hold a dynamic array, so neither a missing chain
+    // nor a member missing from one makes the family dynamic.
     let bytes = lookup_book();
-    let options = XlsxRecalculateOptions::default;
-    let dynamic = recalculate_xlsx_bytes(&bytes, options()).unwrap_err();
-    assert!(dynamic.to_string().contains("shared formula"), "{dynamic}");
-    // A family member missing from the chain keeps the whole family dynamic.
-    let partial = with_chain(
+    assert_lookup_rows(&recalc(&bytes));
+    assert_lookup_rows(&recalc(&with_chain(
         &bytes,
         &[(1, "E4"), (1, "E5"), (1, "E6"), (1, "E7"), (1, "E8")],
-    );
-    let partial_error = recalculate_xlsx_bytes(&partial, options()).unwrap_err();
-    assert_eq!(partial_error.to_string(), dynamic.to_string());
+    )));
+}
+
+#[test]
+fn array_lookup_values_keep_lifting_outside_shared_families() {
+    let table = || {
+        vec![
+            num("C11", 1.0),
+            text("D11", "Mon"),
+            num("C12", 2.0),
+            text("D12", "Tue"),
+            num("B4", 2.0),
+            num("B5", 1.0),
+        ]
+    };
+    let lookup = "VLOOKUP($B$4:$B$5,$C$11:$D$12,2,FALSE)";
+
+    // No calc chain and no sharing: a dynamic formula, which spills.
+    let mut plain = table();
+    plain.push(formula("E4", lookup));
+    let out = recalc(&book(&[Ws::new("Sheet1", plain)], ""));
+    assert_eq!(value_at(&out, 1, "E4").as_deref(), Some("Tue"));
+    assert_eq!(value_at(&out, 1, "E5").as_deref(), Some("Mon"));
+
+    // An explicit array formula fills its declared range, chain or no chain.
+    let mut explicit = table();
+    explicit.push(formula_with("E4", lookup, " t=\"array\" ref=\"E4:E5\""));
+    let bytes = book(&[Ws::new("Sheet1", explicit)], "");
+    for bytes in [bytes.clone(), with_chain(&bytes, &[(1, "E4")])] {
+        let out = recalc(&bytes);
+        assert_eq!(value_at(&out, 1, "E4").as_deref(), Some("Tue"));
+        assert_eq!(value_at(&out, 1, "E5").as_deref(), Some("Mon"));
+    }
 }
 
 #[test]
