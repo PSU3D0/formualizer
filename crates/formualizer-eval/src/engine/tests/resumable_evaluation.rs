@@ -87,17 +87,19 @@ impl Function for Sleep {
 }
 #[test]
 fn wall_clock_slow_unit_finishes() {
-    crate::function_registry::register_function(Arc::new(Sleep));
-    let mut e = engine(false);
-    f(&mut e, 1, 1, "=RESUMABLE_SLEEP()");
-    f(&mut e, 2, 1, "=A1+1");
-    incomplete(
-        e.evaluate_all_until(EvaluationStop::after(Duration::from_millis(1)))
-            .unwrap(),
-    );
-    assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
-    drain(&mut e);
-    assert_eq!(v(&e, 2, 1), Some(LiteralValue::Number(2.)));
+    for family in [false, true] {
+        crate::function_registry::register_function(Arc::new(Sleep));
+        let mut e = engine(family);
+        f(&mut e, 1, 1, "=RESUMABLE_SLEEP()");
+        f(&mut e, 2, 1, "=A1+1");
+        incomplete(
+            e.evaluate_all_until(EvaluationStop::after(Duration::from_millis(1)))
+                .unwrap(),
+        );
+        assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
+        drain(&mut e);
+        assert_eq!(v(&e, 2, 1), Some(LiteralValue::Number(2.)));
+    }
 }
 #[test]
 fn buffered_installation_boundary() {
@@ -146,19 +148,22 @@ impl Function for Cancel {
 }
 #[test]
 fn cancellation_retains_four_installed_units() {
-    crate::function_registry::register_function(Arc::new(Cancel));
-    let mut e = chain(false);
-    f(&mut e, 5, 1, "=A4+RESUMABLE_CANCEL()");
-    let p = incomplete(
-        e.evaluate_all_until(EvaluationStop::cancel(CancelToken::new()))
-            .unwrap(),
-    );
-    assert_eq!(p.reason, StopReason::Cancelled);
-    assert_eq!(e.graph.get_evaluation_vertices().len(), 16);
-    assert_eq!(v(&e, 4, 1), Some(LiteralValue::Number(4.)));
-    assert_eq!(v(&e, 5, 1), None);
-    drain(&mut e);
-    assert_eq!(v(&e, 20, 1), Some(LiteralValue::Number(20.)));
+    for family in [false, true] {
+        crate::function_registry::register_function(Arc::new(Cancel));
+        let mut e = chain(family);
+        f(&mut e, 5, 1, "=A4+RESUMABLE_CANCEL()");
+        let p = incomplete(
+            e.evaluate_all_until(EvaluationStop::cancel(CancelToken::new()))
+                .unwrap(),
+        );
+        assert_eq!(p.reason, StopReason::Cancelled);
+        assert_eq!(p.computed_vertices, 4);
+        assert_eq!(e.graph.get_evaluation_vertices().len(), 16);
+        assert_eq!(v(&e, 4, 1), Some(LiteralValue::Number(4.)));
+        assert_eq!(v(&e, 5, 1), None);
+        drain(&mut e);
+        assert_eq!(v(&e, 20, 1), Some(LiteralValue::Number(20.)));
+    }
 }
 fn spill(family: bool) -> Engine<TestWorkbook> {
     spill_into(engine(family))
@@ -264,31 +269,33 @@ fn seeded_rand_now_one_logical_recalculation() {
 }
 #[test]
 fn diagnostics_union_survives_completion() {
-    let mut e = engine(false);
-    e.enable_operation_diagnostics(10);
-    f(&mut e, 1, 1, "=IFERROR(RESUMABLE_MISSING(),7)");
-    for r in 2..=20 {
-        f(&mut e, r, 1, &format!("=A{}+1", r - 1));
+    for family in [false, true] {
+        let mut e = engine(family);
+        e.enable_operation_diagnostics(10);
+        f(&mut e, 1, 1, "=IFERROR(RESUMABLE_MISSING(),7)");
+        for r in 2..=20 {
+            f(&mut e, r, 1, &format!("=A{}+1", r - 1));
+        }
+        incomplete(
+            e.evaluate_all_until(EvaluationStop::after(Duration::ZERO))
+                .unwrap(),
+        );
+        assert_eq!(
+            e.operation_diagnostics()
+                .unwrap()
+                .unwrap()
+                .logical_root_cell_count,
+            1
+        );
+        drain(&mut e);
+        assert_eq!(
+            e.operation_diagnostics()
+                .unwrap()
+                .unwrap()
+                .logical_root_cell_count,
+            1
+        );
     }
-    incomplete(
-        e.evaluate_all_until(EvaluationStop::after(Duration::ZERO))
-            .unwrap(),
-    );
-    assert_eq!(
-        e.operation_diagnostics()
-            .unwrap()
-            .unwrap()
-            .logical_root_cell_count,
-        1
-    );
-    drain(&mut e);
-    assert_eq!(
-        e.operation_diagnostics()
-            .unwrap()
-            .unwrap()
-            .logical_root_cell_count,
-        1
-    );
 }
 #[test]
 fn iterative_cycle_atomic_and_redirty_once() {
@@ -329,60 +336,67 @@ fn iterative_cycle_atomic_and_redirty_once() {
 }
 #[test]
 fn iterative_edits_reuse_the_logical_initial_seed() {
-    let make = || {
-        let mut e = Engine::new(
-            TestWorkbook::new(),
-            EvalConfig::default().with_cycle(CycleConfig::iterate(1, 0.)),
+    for family in [false, true] {
+        let make = || {
+            let mut e = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig {
+                    family_execution: family,
+                    ..EvalConfig::default().with_cycle(CycleConfig::iterate(1, 0.))
+                },
+            );
+            e.set_cell_value("Sheet1", 1, 2, LiteralValue::Number(1.))
+                .unwrap();
+            f(&mut e, 1, 1, "=A1+B1");
+            for r in 2..=20 {
+                f(&mut e, r, 1, &format!("=A{}+1", r - 1));
+            }
+            e
+        };
+        let mut e = make();
+        let mut reference = make();
+        incomplete(
+            e.evaluate_all_until(EvaluationStop::after(Duration::ZERO))
+                .unwrap(),
         );
-        e.set_cell_value("Sheet1", 1, 2, LiteralValue::Number(1.))
-            .unwrap();
-        f(&mut e, 1, 1, "=A1+B1");
-        for r in 2..=20 {
-            f(&mut e, r, 1, &format!("=A{}+1", r - 1));
+        assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
+        for x in [&mut e, &mut reference] {
+            x.set_cell_value("Sheet1", 1, 2, LiteralValue::Number(2.))
+                .unwrap();
         }
-        e
-    };
-    let mut e = make();
-    let mut reference = make();
-    incomplete(
-        e.evaluate_all_until(EvaluationStop::after(Duration::ZERO))
-            .unwrap(),
-    );
-    assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
-    for x in [&mut e, &mut reference] {
-        x.set_cell_value("Sheet1", 1, 2, LiteralValue::Number(2.))
-            .unwrap();
-    }
-    drain(&mut e);
-    reference.evaluate_all().unwrap();
-    for r in 1..=20 {
-        assert_eq!(v(&e, r, 1), v(&reference, r, 1));
+        drain(&mut e);
+        reference.evaluate_all().unwrap();
+        for r in 1..=20 {
+            assert_eq!(v(&e, r, 1), v(&reference, r, 1));
+        }
     }
 }
 
 #[test]
 fn hard_errors_are_errors() {
-    let mut e = chain(false);
-    e.set_evaluation_resource_budgets(EvaluationBudgets {
-        deadline: DeadlineResourceBudget {
-            max_elapsed: Some(Duration::ZERO),
-        },
-        ..EvaluationBudgets::default()
-    });
-    assert!(e.evaluate_all_until(EvaluationStop::none()).is_err());
-    assert!(!e.has_pending_resumable_evaluation());
-    assert_eq!(e.graph.get_evaluation_vertices().len(), 20);
-    e.set_evaluation_resource_budgets(EvaluationBudgets::default());
-    for r in 1..=64 {
-        e.set_cell_value("Sheet1", r, 3, LiteralValue::Number(r as f64))
-            .unwrap();
-        f(&mut e, r, 4, &format!("=C{r}*2"));
+    for family in [false, true] {
+        let mut e = chain(family);
+        e.set_evaluation_resource_budgets(EvaluationBudgets {
+            deadline: DeadlineResourceBudget {
+                max_elapsed: Some(Duration::ZERO),
+            },
+            ..EvaluationBudgets::default()
+        });
+        assert!(e.evaluate_all_until(EvaluationStop::none()).is_err());
+        assert!(!e.has_pending_resumable_evaluation());
+        assert_eq!(e.graph.get_evaluation_vertices().len(), 20);
+        e.set_evaluation_resource_budgets(EvaluationBudgets::default());
+        for r in 1..=64 {
+            e.set_cell_value("Sheet1", r, 3, LiteralValue::Number(r as f64))
+                .unwrap();
+            f(&mut e, r, 4, &format!("=C{r}*2"));
+        }
+        e.fail_evaluation_commit_preflight_once_for_test();
+        assert!(e.evaluate_all_until(EvaluationStop::none()).is_err());
+        assert!(!e.has_pending_resumable_evaluation());
+        e.evaluate_all().unwrap();
+        assert_eq!(v(&e, 20, 1), Some(LiteralValue::Number(20.)));
     }
-    e.fail_evaluation_commit_preflight_once_for_test();
-    assert!(e.evaluate_all_until(EvaluationStop::none()).is_err());
-    assert!(!e.has_pending_resumable_evaluation());
-    e.evaluate_all().unwrap();
-    assert_eq!(v(&e, 20, 1), Some(LiteralValue::Number(20.)));
 }
 #[test]
 fn seeded_random_workbooks_and_edits() {
