@@ -41,27 +41,27 @@ pub(super) fn patch(
         {
             insert.get_or_insert(node.span.start);
         }
-        if xml::path_is(path, xml::MAIN, &["workbook", "calcPr"]) {
-            if let xml::Kind::Open { empty, .. } = &node.kind {
-                seen = true;
-                let mut missing = String::new();
-                for name in ["fullCalcOnLoad", "forceFullCalc"] {
-                    match node.attribute("", name) {
-                        Some(a) if matches!(&*a.value, "1" | "true") => {}
-                        Some(a) => patches.push(Patch {
-                            span: a.span.clone(),
-                            replacement: format!("{name}=\"1\"").into_bytes(),
-                        }),
-                        None => missing.push_str(&format!(" {name}=\"1\"")),
-                    }
+        if xml::path_is(path, xml::MAIN, &["workbook", "calcPr"])
+            && let xml::Kind::Open { empty, .. } = &node.kind
+        {
+            seen = true;
+            let mut missing = String::new();
+            for name in ["fullCalcOnLoad", "forceFullCalc"] {
+                match node.attribute("", name) {
+                    Some(a) if matches!(&*a.value, "1" | "true") => {}
+                    Some(a) => patches.push(Patch {
+                        span: a.span.clone(),
+                        replacement: format!("{name}=\"1\"").into_bytes(),
+                    }),
+                    None => missing.push_str(&format!(" {name}=\"1\"")),
                 }
-                if !missing.is_empty() {
-                    let at = node.span.end - if *empty { 2 } else { 1 };
-                    patches.push(Patch {
-                        span: at..at,
-                        replacement: missing.into_bytes(),
-                    });
-                }
+            }
+            if !missing.is_empty() {
+                let at = node.span.end - if *empty { 2 } else { 1 };
+                patches.push(Patch {
+                    span: at..at,
+                    replacement: missing.into_bytes(),
+                });
             }
         }
         Ok(())

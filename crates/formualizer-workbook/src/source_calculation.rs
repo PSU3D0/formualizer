@@ -127,12 +127,12 @@ impl SourceCalculationPolicy {
                 ));
             }
         }
-        if self.fixed_now_utc.is_some() {
-            if let Some(timezone) = &self.timezone {
-                timezone
-                    .validate_for_determinism()
-                    .map_err(|message| invalid("timezone", message))?;
-            }
+        if self.fixed_now_utc.is_some()
+            && let Some(timezone) = &self.timezone
+        {
+            timezone
+                .validate_for_determinism()
+                .map_err(|message| invalid("timezone", message))?;
         }
         Ok(())
     }

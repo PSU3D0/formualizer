@@ -917,16 +917,16 @@ pub(super) fn discover(
         }
         if e.local == "calcPr" {
             use crate::calc_pr::ParsedCalcProperties;
-            if let xml::Kind::Open { attributes, .. } = &node.kind {
-                if attributes.iter().any(|attribute| {
+            if let xml::Kind::Open { attributes, .. } = &node.kind
+                && attributes.iter().any(|attribute| {
                     attribute.qualified.contains(':')
                         && ParsedCalcProperties::ATTRIBUTE_NAMES.contains(&attribute.local)
-                }) {
-                    return Err(unsupported(
-                        "foreign calculation-property lookalike",
-                        "calcPr",
-                    ));
-                }
+                })
+            {
+                return Err(unsupported(
+                    "foreign calculation-property lookalike",
+                    "calcPr",
+                ));
             }
             let properties = ParsedCalcProperties::from_attributes(
                 ParsedCalcProperties::ATTRIBUTE_NAMES

@@ -705,7 +705,7 @@ fn current_read_closure_cross_sheet_family_range_needs_no_grid_expansion() {
             "Second",
             row,
             2,
-            parse(&format!("=Sheet1!A{row}+1")).unwrap(),
+            parse(format!("=Sheet1!A{row}+1")).unwrap(),
         )
         .unwrap();
     }
