@@ -15635,6 +15635,8 @@ where
         debug_assert!(!self.graph.deferred_dirty_active());
         let start = crate::instant::FzInstant::now();
         let stop_at = stop.soft_deadline.and_then(|d| start.checked_add(d));
+        let function_epoch = crate::function_registry::semantic_epoch();
+        let provider_revision = self.resolver.planning_semantic_revision();
         self.observe_function_semantic_epoch()?;
         self.lookup_index_cache.reset_counters();
         let _source_cache = self.source_cache_session();
@@ -15647,7 +15649,35 @@ where
         if initial {
             self.begin_evaluation_request();
             self.resumable = Some(Default::default());
+        } else {
+            // Dispatch/name/sheet snapshots are per-call, unlike the logical
+            // clock, diagnostics, hints and random epoch. Newly introduced
+            // names and replaced providers must be visible before any work.
+            self.refresh_resolution_snapshots();
         }
+        let mutation_revision = self.inspection_mutation_revision();
+        let state = self.resumable.as_ref().unwrap();
+        let semantics_changed = !initial
+            && (state.function_epoch != function_epoch
+                || state.provider_revision != provider_revision);
+        let mutated = !initial && state.mutation_revision != mutation_revision;
+        if semantics_changed || mutated {
+            let invalidated: Vec<_> = state
+                .installed
+                .iter()
+                .filter(|&v| {
+                    self.graph.is_live_formula_vertex(v)
+                        && (semantics_changed
+                            || self.graph.is_volatile(v)
+                            || self.graph.is_dynamic(v))
+                })
+                .collect();
+            self.graph.mark_dirty_many(&invalidated);
+        }
+        let state = self.resumable.as_mut().unwrap();
+        state.function_epoch = function_epoch;
+        state.provider_revision = provider_revision;
+        state.mutation_revision = mutation_revision;
         self.reset_virtual_dep_telemetry_if_disabled();
         let mut computed = 0;
         let mut cycles = 0;
@@ -15767,7 +15797,11 @@ where
                 break;
             }
         }
+        // Snapshot after installation too: internal graph maintenance in this
+        // call must not look like an external edit on the next admission.
+        let mutation_revision = self.inspection_mutation_revision();
         let state = self.resumable.as_mut().unwrap();
+        state.mutation_revision = mutation_revision;
         state.computed_vertices += computed;
         state.cycle_errors += cycles;
         state.elapsed += start.elapsed();

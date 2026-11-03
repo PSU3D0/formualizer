@@ -14,6 +14,32 @@ use std::sync::{
 };
 use std::time::Duration;
 
+// Registry replacement is process-global. Keep those fixtures, and the exact
+// fixed-input progress bound, isolated from concurrent registration in the suite.
+fn isolated_test(name: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = name;
+        false
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let full = format!("engine::tests::resumable_evaluation::{name}");
+        if std::env::var("FZ_RESUMABLE_CHILD").ok().as_deref() == Some(full.as_str()) {
+            return false;
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &full, "--nocapture"])
+            .env("FZ_RESUMABLE_CHILD", &full)
+            .status()
+            .unwrap();
+        assert!(
+            status.success(),
+            "isolated resumable fixture failed: {full}"
+        );
+        true
+    }
+}
 fn engine(family: bool) -> Engine<TestWorkbook> {
     crate::builtins::load_builtins();
     Engine::new(
@@ -61,6 +87,9 @@ fn drain(e: &mut Engine<TestWorkbook>) -> usize {
 }
 #[test]
 fn zero_budget_progress() {
+    if isolated_test("zero_budget_progress") {
+        return;
+    }
     for family in [false, true] {
         let mut e = chain(family);
         let p = incomplete(
@@ -449,9 +478,16 @@ fn seeded_random_workbooks_and_edits() {
                     let x = (next() % 6 + 1) as f64;
                     // F4 is inherited spill teardown behavior, tracked separately:
                     // never write a user value into a currently live spill extent.
-                    let anchor = e.graph.get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1",1,2)).unwrap();
-                    let blocker_is_live = e.graph.spill_cells_for_anchor(anchor).is_some_and(|cells|
-                        cells.iter().any(|cell| cell.coord.row() == 3 && cell.coord.col() == 1));
+                    let anchor = e
+                        .graph
+                        .get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1", 1, 2))
+                        .unwrap();
+                    let blocker_is_live =
+                        e.graph.spill_cells_for_anchor(anchor).is_some_and(|cells| {
+                            cells
+                                .iter()
+                                .any(|cell| cell.coord.row() == 3 && cell.coord.col() == 1)
+                        });
                     for xengine in [&mut e, &mut reference] {
                         xengine
                             .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(x))
@@ -461,15 +497,30 @@ fn seeded_random_workbooks_and_edits() {
                             .unwrap();
                         if call % 3 == 0 {
                             f(xengine, 1, 7, &format!("=F1*{}", call + 3));
-                            f(xengine, 1, 9, if call % 2 == 0 {
-                                "=INDIRECT(\"C6\")+OFFSET(B1,4,0)+RAND()"
-                            } else {
-                                "=INDIRECT(\"G1\")+OFFSET(B1,2,0)+RAND()"
-                            });
+                            f(
+                                xengine,
+                                1,
+                                9,
+                                if call % 2 == 0 {
+                                    "=INDIRECT(\"C6\")+OFFSET(B1,4,0)+RAND()"
+                                } else {
+                                    "=INDIRECT(\"G1\")+OFFSET(B1,2,0)+RAND()"
+                                },
+                            );
                         }
                         if !blocker_is_live {
-                            xengine.set_cell_value("Sheet1",4,2,
-                                if call % 2 == 0 { LiteralValue::Number(99.) } else { LiteralValue::Empty }).unwrap();
+                            xengine
+                                .set_cell_value(
+                                    "Sheet1",
+                                    4,
+                                    2,
+                                    if call % 2 == 0 {
+                                        LiteralValue::Number(99.)
+                                    } else {
+                                        LiteralValue::Empty
+                                    },
+                                )
+                                .unwrap();
                         }
                     }
                 }
