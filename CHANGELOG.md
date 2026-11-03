@@ -4,6 +4,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+- Added `Engine::evaluate_all_until` and its `Workbook` passthrough for cooperative recalculation with soft deadlines and cancellation, preserving installed work and one clock, random epoch and diagnostics collection across calls.
+
 ## [0.13.0] - 2026-10-25
 
 XLSX reading moves in-house: Rust, Python and JavaScript now use Formualizer's native reader by default, without a second production parser underneath it. Ordinary loading reads the workbook data it needs rather than decompressing every picture and attachment along the way. Source-preserving recalculation keeps its stricter whole-package integrity contract, and Umya remains available for rich document editing and export.

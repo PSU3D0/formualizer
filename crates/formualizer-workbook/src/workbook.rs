@@ -3199,6 +3199,16 @@ impl Workbook {
             .map_err(IoError::Engine)
     }
 
+    /// Continue full recalculation until a cooperative stop boundary.
+    pub fn evaluate_all_until(
+        &mut self,
+        stop: formualizer_eval::engine::EvaluationStop,
+    ) -> Result<formualizer_eval::engine::EvaluationProgress, IoError> {
+        self.engine
+            .evaluate_all_until(stop)
+            .map_err(IoError::Engine)
+    }
+
     pub fn evaluate_all_cancellable(
         &mut self,
         cancel: formualizer_eval::engine::CancelToken,

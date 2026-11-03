@@ -588,6 +588,35 @@ impl<R: EvaluationContext> Engine<R> {
             }
     }
 
+    /// Settle a partial pass without clearing unreached candidates. The caller
+    /// only supplies completed cycles (which use write-through installation).
+    /// Ordinary members are already cleared by commit. Buffered values still
+    /// awaiting installation must be dirty before FR5 propagation.
+    pub(super) fn freshness_finish_interrupted_pass(
+        &mut self,
+        completed_cycles: &[VertexId],
+        installed_earlier: &mut crate::engine::idset::DenseIdSet,
+    ) -> bool {
+        // SCC tasks write through but do not mark their vertices committed.
+        // Match full-pass completion for these atomic, completed tasks only.
+        self.graph.clear_dirty_flags(completed_cycles);
+        let unflushed: Vec<_> = self.freshness.unflushed.iter().collect();
+        for &v in &unflushed {
+            self.graph.set_dirty(v, true);
+        }
+        installed_earlier.extend(
+            self.freshness
+                .committed
+                .iter()
+                .filter(|v| !self.freshness.unflushed.contains(v)),
+        );
+        installed_earlier.extend(completed_cycles.iter().copied());
+        self.freshness.committed.extend(installed_earlier.iter());
+        let pending = self.freshness_finish_pass(completed_cycles, &[], true);
+        self.freshness.unflushed.clear();
+        pending
+    }
+
     /// A request failed with a pass still armed (a commit preflight, a
     /// deadline, cancellation): legacy clears a pass's dirty flags only at
     /// its end, so a failed pass leaves every scheduled vertex dirty. Put

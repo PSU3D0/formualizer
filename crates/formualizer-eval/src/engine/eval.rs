@@ -1034,6 +1034,8 @@ pub struct Engine<R> {
     clock: crate::timezone::SnapshotClock,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
     pub recalc_epoch: u64,
+    resumable: Option<super::resumable::LogicalRecalculation>,
+    resumable_call: bool,
     #[cfg(test)]
     pub(crate) resumable_stop_after_units_for_test: Option<usize>,
     snapshot_id: std::sync::atomic::AtomicU64,
@@ -2930,6 +2932,8 @@ where
             clock: crate::timezone::SnapshotClock::new(clock),
             thread_pool,
             recalc_epoch: 0,
+            resumable: None,
+            resumable_call: false,
             #[cfg(test)]
             resumable_stop_after_units_for_test: None,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
@@ -3108,6 +3112,8 @@ where
             clock: crate::timezone::SnapshotClock::new(clock),
             thread_pool: Some(thread_pool),
             recalc_epoch: 0,
+            resumable: None,
+            resumable_call: false,
             #[cfg(test)]
             resumable_stop_after_units_for_test: None,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
@@ -3334,9 +3340,20 @@ where
         evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
     ) -> Result<T, ExcelError> {
         let outermost = self.evaluation_resource_request_depth == 0;
+        // Foreign requests settle the logical recalculation before any early
+        // admission/cancellation exit. Every resumable pass is already settled.
+        if outermost && !self.resumable_call && self.resumable.take().is_some() {
+            self.redirty_for_next_recalc();
+            self.freshness_begin_request();
+        }
+        // Resumable calls have per-call resource ledgers, but one collector.
+        let continuing = self.resumable_call && self.resumable.is_some();
         // Request evidence starts here, before cancellation/admission can exit.
         // Nested entry points and internal replans retain the outer union.
-        if outermost && let Some(collector) = &self.operation_diagnostic_collector {
+        if outermost
+            && !continuing
+            && let Some(collector) = &self.operation_diagnostic_collector
+        {
             collector.reset();
         }
         if outermost {
@@ -15583,11 +15600,208 @@ where
         result
     }
 
-    pub fn evaluate_all_until(&mut self, _stop: super::EvaluationStop) -> Result<super::EvaluationProgress, ExcelError> {
-        self.evaluate_all().map(super::EvaluationProgress::Complete)
+    /// Evaluate until a soft boundary, preserving installed work for a later call.
+    /// A family run or cycle may overrun the budget. Cancellation keeps its
+    /// existing post-work boundary: the observing unit is not completed.
+    pub fn evaluate_all_until(
+        &mut self,
+        stop: super::EvaluationStop,
+    ) -> Result<super::EvaluationProgress, ExcelError> {
+        self.resumable_call = true;
+        self.active_cancel_flag = stop.cancel.clone();
+        let result = self.observe_evaluation_resource_request(
+            EvaluationRequestKind::FullCancellable,
+            |engine| engine.evaluate_all_until_impl(stop),
+        );
+        self.active_cancel_flag = None;
+        self.resumable_call = false;
+        if result.is_err() {
+            self.resumable = None;
+            self.redirty_for_next_recalc();
+        }
+        result
     }
 
-    pub fn has_pending_resumable_evaluation(&self) -> bool { false }
+    /// Whether a logical recalculation is awaiting another resumable call.
+    pub fn has_pending_resumable_evaluation(&self) -> bool {
+        self.resumable.is_some()
+    }
+
+    fn evaluate_all_until_impl(
+        &mut self,
+        stop: super::EvaluationStop,
+    ) -> Result<super::EvaluationProgress, ExcelError> {
+        use super::{EvaluationProgress, IncompleteEvaluation, StopReason};
+        debug_assert!(!self.graph.deferred_dirty_active());
+        let start = crate::instant::FzInstant::now();
+        let stop_at = stop.soft_deadline.and_then(|d| start.checked_add(d));
+        self.observe_function_semantic_epoch()?;
+        self.lookup_index_cache.reset_counters();
+        let _source_cache = self.source_cache_session();
+        self.validate_deterministic_mode()?;
+        if self.config.defer_graph_building {
+            self.build_graph_all()?;
+        }
+        self.require_unified_authority()?;
+        let mut initial = self.resumable.is_none();
+        if initial {
+            self.begin_evaluation_request();
+            self.resumable = Some(Default::default());
+        }
+        self.reset_virtual_dep_telemetry_if_disabled();
+        let mut computed = 0;
+        let mut cycles = 0;
+        let mut units = 0;
+        let mut reason = None;
+        loop {
+            let candidates: Vec<_> = self
+                .graph
+                .get_evaluation_vertices()
+                .into_iter()
+                .filter(|&v| initial || self.graph.is_dirty(v))
+                .collect();
+            initial = false;
+            if candidates.is_empty() {
+                break;
+            }
+            if stop.cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                reason = Some(StopReason::Cancelled);
+                break;
+            }
+            let (schedule, old_vdeps, _) = self.create_evaluation_schedule(&candidates)?;
+            self.begin_pass(&schedule);
+            let mut completed_cycles = Vec::new();
+            let mut barrier = false;
+            'walk: for (index, &unit) in schedule.units.iter().enumerate() {
+                match unit {
+                    ScheduleUnit::Cycle(i) => {
+                        match self.handle_cycle_unit(
+                            schedule.unit_cycle(i),
+                            None,
+                            None,
+                            stop.cancel.as_ref().map(|t| &**t.as_flag()),
+                        ) {
+                            Ok(n) => {
+                                cycles += usize::from(n > 0);
+                                completed_cycles.extend_from_slice(schedule.unit_cycle(i));
+                                units += 1;
+                            }
+                            Err(e) if e.kind == ExcelErrorKind::Cancelled => {
+                                reason = Some(StopReason::Cancelled);
+                                break 'walk;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    ScheduleUnit::Layer(i) => {
+                        let layer = schedule.unit_layer(i);
+                        // Keep family runs whole. Flush each installed unit so a
+                        // slice never attests a merely planned buffered result.
+                        for unit in layer_units(layer) {
+                            let (lo, hi) = match unit {
+                                LayerUnit::Cell(i) => (i, i + 1),
+                                LayerUnit::Run(r) => (r.start as usize, (r.start + r.len) as usize),
+                            };
+                            let part = layer.sub_layer(lo, hi);
+                            self.resource_checkpoint(part.vertices.len() as u64)?;
+                            match self.evaluate_layer_units_until(
+                                &part,
+                                None,
+                                None,
+                                None,
+                                buffer_layer_writes(&part),
+                                None,
+                            ) {
+                                Ok(n) => {
+                                    computed += n;
+                                    units += 1;
+                                }
+                                Err(e) if e.kind == ExcelErrorKind::Cancelled => {
+                                    reason = Some(StopReason::Cancelled);
+                                    break 'walk;
+                                }
+                                Err(e) => return Err(e),
+                            }
+                            if self.stop_after_unit(&schedule, index) {
+                                barrier = true;
+                                break 'walk;
+                            }
+                            if self.resumable_should_stop(units, stop_at) {
+                                reason = Some(StopReason::Deadline);
+                                break 'walk;
+                            }
+                        }
+                    }
+                }
+                if self.stop_after_unit(&schedule, index) {
+                    barrier = true;
+                    break;
+                }
+                if self.resumable_should_stop(units, stop_at) {
+                    reason = Some(StopReason::Deadline);
+                    break;
+                }
+            }
+            let changed = self.changed_virtual_dep_vertices(&candidates, &old_vdeps);
+            self.resource_checkpoint(0)?;
+            let state = self.resumable.as_mut().unwrap();
+            // Taking the bitmap avoids borrowing self during freshness settlement.
+            let mut installed = std::mem::take(&mut state.installed);
+            let pending = self.freshness_finish_interrupted_pass(&completed_cycles, &mut installed);
+            self.resumable.as_mut().unwrap().installed = installed;
+            for v in changed {
+                self.graph.set_dirty(v, true);
+            }
+            if !pending && !self.graph.has_dirty_evaluation_vertices() {
+                reason = None;
+                break;
+            }
+            if barrier || reason.is_none() {
+                let state = self.resumable.as_mut().unwrap();
+                if state.replans >= 5 {
+                    return Err(self.replan_exhausted_error(5, "dynamic dependency evaluation"));
+                }
+                state.replans += 1;
+            }
+            if reason.is_some() {
+                break;
+            }
+        }
+        let state = self.resumable.as_mut().unwrap();
+        state.computed_vertices += computed;
+        state.cycle_errors += cycles;
+        state.elapsed += start.elapsed();
+        if let Some(reason) = reason {
+            Ok(EvaluationProgress::Incomplete(IncompleteEvaluation {
+                reason,
+                computed_vertices: computed,
+            }))
+        } else {
+            let state = self.resumable.take().unwrap();
+            self.redirty_for_next_recalc();
+            self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+            Ok(EvaluationProgress::Complete(EvalResult {
+                computed_vertices: state.computed_vertices,
+                cycle_errors: state.cycle_errors,
+                elapsed: state.elapsed,
+            }))
+        }
+    }
+
+    fn resumable_should_stop(
+        &self,
+        units: usize,
+        stop_at: Option<crate::instant::FzInstant>,
+    ) -> bool {
+        #[cfg(test)]
+        if self
+            .resumable_stop_after_units_for_test
+            .is_some_and(|n| units >= n.max(1))
+        {
+            return true;
+        }
+        units > 0 && stop_at.is_some_and(|t| crate::instant::FzInstant::now() >= t)
+    }
 
     /// Evaluate all dirty/volatile vertices.
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
@@ -19955,7 +20169,7 @@ where
 
         // ── 1. Pre-task value snapshot (overlay-first for cells — G3; the
         // graph value map may be evicted in value-cache-disabled mode).
-        let snapshot: Vec<LiteralValue> = members
+        let mut snapshot: Vec<LiteralValue> = members
             .iter()
             .map(|m| match m.cell {
                 Some(cell) => {
@@ -19969,6 +20183,20 @@ where
                     .unwrap_or(LiteralValue::Empty),
             })
             .collect();
+
+        if let Some(state) = &mut self.resumable {
+            for (member, value) in members.iter().zip(&mut snapshot) {
+                let seed = state
+                    .cycle_seeds
+                    .entry(member.vertex)
+                    .or_insert_with(|| value.clone());
+                *value = seed.clone();
+            }
+            for (member, value) in members.iter().zip(&snapshot) {
+                self.graph.update_vertex_value_ref(member.vertex, value);
+                self.mirror_vertex_value_to_overlay(member.vertex, value);
+            }
+        }
 
         // ── 2. Pre-scan: spill anchors (FormulaArray) are stamped `#CIRC!`
         // with full spill teardown (spec §7.9, #115) and excluded from

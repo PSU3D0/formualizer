@@ -10,7 +10,10 @@ pub mod arrow_ingest;
 pub mod authority;
 pub mod cancel;
 pub mod resumable;
-pub use resumable::{EvaluationStop, EvaluationProgress, IncompleteEvaluation, StopReason};
+pub use resumable::{EvaluationProgress, EvaluationStop, IncompleteEvaluation, StopReason};
+/// Bounded relation facts for source publication policy, not all-read certification.
+#[doc(hidden)]
+pub mod affected_closure;
 pub(crate) mod convergence;
 pub(crate) mod derived_formats;
 pub mod effects;
@@ -24,9 +27,6 @@ pub mod ingest;
 pub mod ingest_builder;
 pub(crate) mod ingest_pipeline;
 pub mod inspect;
-/// Bounded relation facts for source publication policy, not all-read certification.
-#[doc(hidden)]
-pub mod affected_closure;
 pub mod journal;
 pub mod live_edges;
 pub mod live_graph;
