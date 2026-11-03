@@ -1,4 +1,6 @@
 use crate::engine::{Engine, EvalConfig};
+use crate::engine::named_range::{NameScope, NamedDefinition};
+use crate::reference::{CellRef, Coord};
 use crate::traits::{
     EvaluationContext, FunctionProvider, NamedRangeResolver, Range, RangeResolver,
     ReferenceResolver, Resolver, SourceResolver, Table, TableResolver,
@@ -202,13 +204,21 @@ use formualizer_parse::parser::parse;
 
 #[test]
 fn source_change_after_installed_dynamic_reader() {
-    source_change_matrix(false);
+    source_change_matrix(false, false);
 }
 #[test]
 fn table_source_change_after_installed_dynamic_reader() {
-    source_change_matrix(true);
+    source_change_matrix(true, false);
 }
-fn source_change_matrix(table: bool) {
+#[test]
+fn named_source_change_after_installed_dynamic_reader() {
+    source_change_matrix(false, true);
+}
+#[test]
+fn named_table_source_change_after_installed_dynamic_reader() {
+    source_change_matrix(true, true);
+}
+fn source_change_matrix(table: bool, named: bool) {
     crate::builtins::load_builtins();
     let mut failures = Vec::new();
     let mut exercised = 0;
@@ -261,8 +271,14 @@ fn source_change_matrix(table: bool) {
                         )
                         .unwrap();
                     }
-                    e.set_cell_formula("Sheet1", 1, 2, parse("=INDIRECT(\"A3\")").unwrap())
-                        .unwrap();
+                    if named {
+                        e.define_name("SourceAlias", NamedDefinition::Cell(CellRef::new(
+                            e.sheet_id("Sheet1").unwrap(), Coord::from_excel(3,1,true,true)
+                        )), NameScope::Workbook).unwrap();
+                    }
+                    e.set_cell_formula("Sheet1", 1, 2, parse(if named {
+                        "=INDIRECT(\"SourceAlias\")"
+                    } else { "=INDIRECT(\"A3\")" }).unwrap()).unwrap();
                     e
                 };
                 let mut e = make();
@@ -300,11 +316,11 @@ fn source_change_matrix(table: bool) {
                 ordinary.evaluate_all().unwrap();
                 let actual = e.get_cell_value("Sheet1", 1, 2);
                 let expected = ordinary.get_cell_value("Sheet1", 1, 2);
-                let published = e.inspection_mutation_revision() != revision;
+                let ordinary_revision_preserved = e.inspection_mutation_revision() == revision;
                 println!(
-                    "SOURCE table={table} family={family} mode={mode} cut={cut} actual={actual:?} expected={expected:?} revision_published={published}"
+                    "SOURCE table={table} named={named} family={family} mode={mode} cut={cut} actual={actual:?} expected={expected:?} ordinary_revision_preserved={ordinary_revision_preserved}"
                 );
-                if actual != expected || !published {
+                if actual != expected || !ordinary_revision_preserved {
                     failures.push((family, mode, cut));
                 }
                 if table {
@@ -319,6 +335,73 @@ fn source_change_matrix(table: bool) {
             );
         }
     }
-    println!("SOURCE table={table} exercised={exercised} failures={failures:?}");
+    println!("SOURCE table={table} named={named} exercised={exercised} failures={failures:?}");
     assert!(failures.is_empty(), "source mutation failures {failures:?}");
+}
+
+fn lookup_source_engine(formulas: u32, rows: u32) -> Engine<SourceCtx> {
+    let ctx=SourceCtx::default();
+    ctx.set_scalar("Foo",LiteralValue::Number(1.));
+    let mut e=Engine::new(ctx,EvalConfig{
+        family_execution:true,enable_parallel:false,..EvalConfig::default()
+    });
+    e.define_source_scalar("Foo",Some(1)).unwrap();
+    e.define_source_table("Unused",Some(1)).unwrap();
+    let mut ingest=e.begin_bulk_ingest_arrow();
+    ingest.add_sheet("Sheet1",4,32768);
+    for r in 1..=rows {
+        ingest.append_row("Sheet1",&[LiteralValue::Empty,LiteralValue::Empty,LiteralValue::Empty,LiteralValue::Number(r as f64)]).unwrap();
+    }
+    ingest.finish().unwrap();
+    let text=format!("=MATCH(Foo,D$1:D${rows},0)");
+    for r in 1..=formulas {e.set_cell_formula("Sheet1",r,1,parse(&text).unwrap()).unwrap();}
+    e.evaluate_all().unwrap();
+    assert_eq!(e.lookup_index_flights_built_for_test(),1);
+    e.reset_recalc_reuse_probe();
+    e
+}
+
+#[test]
+fn source_setters_preserve_ordinary_snapshot_and_lookup_reuse() {
+    let mut e=lookup_source_engine(64,4096);
+    let revision=e.inspection_mutation_revision();
+    let builds=e.lookup_index_flights_built_for_test();
+    for mode in 0..3 {
+        match mode {
+            0=>e.set_source_scalar_version("Foo",Some(2)).unwrap(),
+            1=>e.set_source_table_version("Unused",Some(2)).unwrap(),
+            _=>e.invalidate_source("Foo").unwrap(),
+        }
+        assert_eq!(e.inspection_mutation_revision(),revision,"source setter {mode} changed ordinary snapshot");
+        e.evaluate_all().unwrap();
+        assert_eq!(e.lookup_index_flights_built_for_test(),builds,"source setter {mode} discarded reusable lookup index");
+        assert_eq!(e.get_cell_value("Sheet1",64,1),Some(LiteralValue::Number(1.)));
+    }
+}
+
+#[test]
+#[ignore = "release/LTO paired ordinary source-version lookup benchmark"]
+fn paired_source_bump_large_lookup_cost() {
+    let mut old=lookup_source_engine(10000,100000);
+    let mut new=lookup_source_engine(10000,100000);
+    for pair in 0..5 {
+        for public in if pair%2==0 {[false,true]} else {[true,false]} {
+            let e=if public {&mut new} else {&mut old};
+            let before=e.lookup_index_flights_built_for_test();
+            let revision=e.inspection_mutation_revision();
+            let start=std::time::Instant::now();
+            for i in 0..3 {
+                let version=Some((pair*3+i+2) as u64);
+                if public {e.set_source_scalar_version("Foo",version).unwrap();}
+                else {e.graph.set_source_scalar_version("Foo",version).unwrap();}
+                e.evaluate_all().unwrap();
+            }
+            let elapsed_us=start.elapsed().as_micros();
+            let after=e.lookup_index_flights_built_for_test();
+            println!("SOURCE_COST pair={pair} public={public} elapsed_us={elapsed_us} reuse={:?} lookup_before={before} lookup_after={after}",e.recalc_reuse_probe());
+            assert_eq!(after,before,"public={public}: lookup axis was unchanged");
+            assert_eq!(e.inspection_mutation_revision(),revision);
+            assert_eq!(e.get_cell_value("Sheet1",10000,1),Some(LiteralValue::Number(1.)));
+        }
+    }
 }
