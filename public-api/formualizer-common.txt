@@ -483,9 +483,12 @@ pub fn formualizer_common::PreparationStaleReason::deserialize<__D>(__D) -> core
 pub formualizer_common::error::ResourceExhaustionReason::Admission
 pub formualizer_common::error::ResourceExhaustionReason::ArithmeticOverflow
 pub formualizer_common::error::ResourceExhaustionReason::Deadline
+pub formualizer_common::error::ResourceExhaustionReason::DependencyClosureOutputItems
 pub formualizer_common::error::ResourceExhaustionReason::GraphEdges
 pub formualizer_common::error::ResourceExhaustionReason::GraphVertices
 pub formualizer_common::error::ResourceExhaustionReason::MaterializationCells
+pub formualizer_common::error::ResourceExhaustionReason::OperationEvidenceRoots
+pub formualizer_common::error::ResourceExhaustionReason::OperationEvidenceTextBytes
 pub formualizer_common::error::ResourceExhaustionReason::RetainedMemory
 pub formualizer_common::error::ResourceExhaustionReason::ScratchMemory
 pub formualizer_common::error::ResourceExhaustionReason::WorkUnits
@@ -1107,9 +1110,12 @@ pub fn formualizer_common::PreparationStaleReason::deserialize<__D>(__D) -> core
 pub formualizer_common::ResourceExhaustionReason::Admission
 pub formualizer_common::ResourceExhaustionReason::ArithmeticOverflow
 pub formualizer_common::ResourceExhaustionReason::Deadline
+pub formualizer_common::ResourceExhaustionReason::DependencyClosureOutputItems
 pub formualizer_common::ResourceExhaustionReason::GraphEdges
 pub formualizer_common::ResourceExhaustionReason::GraphVertices
 pub formualizer_common::ResourceExhaustionReason::MaterializationCells
+pub formualizer_common::ResourceExhaustionReason::OperationEvidenceRoots
+pub formualizer_common::ResourceExhaustionReason::OperationEvidenceTextBytes
 pub formualizer_common::ResourceExhaustionReason::RetainedMemory
 pub formualizer_common::ResourceExhaustionReason::ScratchMemory
 pub formualizer_common::ResourceExhaustionReason::WorkUnits
