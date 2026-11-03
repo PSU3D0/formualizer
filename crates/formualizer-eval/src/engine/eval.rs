@@ -15603,6 +15603,12 @@ where
     /// Evaluate until a soft boundary, preserving installed work for a later call.
     /// A family run or cycle may overrun the budget. Cancellation keeps its
     /// existing post-work boundary: the observing unit is not completed.
+    ///
+    /// Results are independent of call boundaries, except for iterative cycles
+    /// created by edits during a pending recalculation. Such new cycles start
+    /// from the cells' current values when they form, including values installed
+    /// by earlier calls; they need not match a fresh, uninterrupted calculation.
+    /// SCCs already present at the start retain their original recalc seeds.
     pub fn evaluate_all_until(
         &mut self,
         stop: super::EvaluationStop,
@@ -15648,7 +15654,17 @@ where
         let mut initial = self.resumable.is_none();
         if initial {
             self.begin_evaluation_request();
-            self.resumable = Some(Default::default());
+            let mut state = super::resumable::LogicalRecalculation::default();
+            // Clean retained SCCs may not be included in the dirty schedule.
+            let mut retained: FxHashMap<u64, Vec<VertexId>> = FxHashMap::default();
+            for (&vertex, &scc) in &self.retained_scc_members {
+                retained.entry(scc).or_default().push(vertex);
+            }
+            for mut key in retained.into_values() {
+                key.sort_unstable();
+                state.original_cycles.insert(key);
+            }
+            self.resumable = Some(state);
         } else {
             // Dispatch/name/sheet snapshots are per-call, unlike the logical
             // clock, diagnostics, hints and random epoch. Newly introduced
@@ -15694,11 +15710,34 @@ where
             if candidates.is_empty() {
                 break;
             }
+            if stop.cancel.as_ref().is_some_and(|t| t.is_cancelled())
+                && self.resumable.as_ref().unwrap().original_cycles_recorded
+            {
+                reason = Some(StopReason::Cancelled);
+                break;
+            }
+            // Identifying original SCCs is metadata-only, and must precede
+            // edits even when the initial token is already cancelled. Finish
+            // this atomic planning step with cancellation masked; keep all
+            // hard resource/deadline checks and restore the token before work.
+            let cancelled_initial_plan = stop.cancel.as_ref().is_some_and(|t| t.is_cancelled())
+                && !self.resumable.as_ref().unwrap().original_cycles_recorded;
+            let saved_cancel = cancelled_initial_plan.then(|| self.active_cancel_flag.take());
+            let planned = self.create_evaluation_schedule(&candidates);
+            if let Some(saved_cancel) = saved_cancel {
+                self.active_cancel_flag = saved_cancel;
+            }
+            let (schedule, old_vdeps, _) = planned?;
+            self.resumable
+                .as_mut()
+                .unwrap()
+                .record_original_cycles(&schedule);
+            // Even a pre-cancelled initial call must identify original SCCs
+            // before edits can create indistinguishable new memberships.
             if stop.cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
                 reason = Some(StopReason::Cancelled);
                 break;
             }
-            let (schedule, old_vdeps, _) = self.create_evaluation_schedule(&candidates)?;
             self.begin_pass(&schedule);
             let mut completed_cycles = Vec::new();
             let mut barrier = false;
@@ -15734,6 +15773,10 @@ where
                             };
                             let part = layer.sub_layer(lo, hi);
                             self.resource_checkpoint(part.vertices.len() as u64)?;
+                            self.resumable
+                                .as_mut()
+                                .unwrap()
+                                .forget_dissolved_new_cycles(&part.vertices);
                             match self.evaluate_layer_units_until(
                                 &part,
                                 None,
@@ -15802,6 +15845,8 @@ where
         let mutation_revision = self.inspection_mutation_revision();
         let state = self.resumable.as_mut().unwrap();
         state.mutation_revision = mutation_revision;
+        // Empty workbooks have no schedule, and therefore no original SCCs.
+        state.original_cycles_recorded = true;
         state.computed_vertices += computed;
         state.cycle_errors += cycles;
         state.elapsed += start.elapsed();
@@ -20219,11 +20264,27 @@ where
             .collect();
 
         if let Some(state) = &mut self.resumable {
+            // Seed ownership belongs to this SCC, not to each vertex across
+            // every cycle it might join after an edit. A new membership uses
+            // current values, including earlier installed results.
+            let mut key = cycle.to_vec();
+            key.sort_unstable();
+            if cycle.iter().any(|v| state.new_cycle_members.contains(v)) {
+                // A changed membership supersedes earlier edit-created SCCs
+                // over these cells. Returning to an older membership later is
+                // another formation and must not resurrect its retired seed.
+                state.cycle_seeds.retain(|old, _| {
+                    state.original_cycles.contains(old)
+                        || *old == key
+                        || !cycle.iter().any(|v| old.binary_search(v).is_ok())
+                });
+            }
+            if !state.original_cycles.contains(&key) {
+                state.new_cycle_members.extend(cycle.iter().copied());
+            }
+            let seeds = state.cycle_seeds.entry(key).or_default();
             for (member, value) in members.iter().zip(&mut snapshot) {
-                let seed = state
-                    .cycle_seeds
-                    .entry(member.vertex)
-                    .or_insert_with(|| value.clone());
+                let seed = seeds.entry(member.vertex).or_insert_with(|| value.clone());
                 *value = seed.clone();
             }
             for (member, value) in members.iter().zip(&snapshot) {

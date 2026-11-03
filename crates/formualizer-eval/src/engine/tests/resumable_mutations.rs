@@ -69,15 +69,25 @@ fn review_mutate(e: &mut Engine<TestWorkbook>, mode: usize) {
 fn copy_current_formula_values(from: &Engine<TestWorkbook>, to: &mut Engine<TestWorkbook>) {
     for r in 1..=24 {
         for c in 1..=12 {
-            let vertex = to.graph.get_vertex_id_for_address(&to.graph.make_cell_ref("Sheet1",r,c));
-            if let Some(vertex) = vertex.filter(|&v| to.graph.is_live_formula_vertex(v)) {
-                if let Some(value) = v(from,r,c) {
-                    to.apply_effect(&crate::engine::effects::Effect::WriteCell {vertex_id:vertex,value},None,None).unwrap();
-                }
+            let vertex = to
+                .graph
+                .get_vertex_id_for_address(&to.graph.make_cell_ref("Sheet1", r, c));
+            if let Some(vertex) = vertex.filter(|&v| to.graph.is_live_formula_vertex(v))
+                && let Some(value) = v(from, r, c)
+            {
+                to.apply_effect(
+                    &crate::engine::effects::Effect::WriteCell {
+                        vertex_id: vertex,
+                        value,
+                    },
+                    None,
+                    None,
+                )
+                .unwrap();
             }
         }
     }
-    review_compare(from,to,"current-value oracle before edit");
+    review_compare(from, to, "current-value oracle before edit");
 }
 fn run_review_mutation_matrix(modes: &[usize]) {
     let mut failures = Vec::new();
@@ -122,7 +132,7 @@ fn run_review_mutation_matrix(modes: &[usize]) {
                         // F3 decision: a cycle created during the logical
                         // calculation starts from current values, not a fresh
                         // engine's missing formula caches.
-                        copy_current_formula_values(&e,&mut reference);
+                        copy_current_formula_values(&e, &mut reference);
                     }
                     review_mutate(&mut e, mode);
                     review_mutate(&mut reference, mode);
@@ -422,70 +432,117 @@ fn review_mutations_preserve_clock_and_rand_epoch() {
 }
 
 fn cycle_change_engine(family: bool, existing: bool) -> Engine<TestWorkbook> {
-    let mut e=Engine::new(TestWorkbook::new(),EvalConfig {
-        family_execution:family,enable_parallel:false,
-        ..EvalConfig::default().with_cycle(CycleConfig::iterate(1,0.))
-    });
-    f(&mut e,1,1,if existing { "=A1+1" } else { "=1" });
-    for r in 2..=20 { f(&mut e,r,1,&format!("=A{}+1",r-1)); }
+    let mut e = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            family_execution: family,
+            enable_parallel: false,
+            ..EvalConfig::default().with_cycle(CycleConfig::iterate(1, 0.))
+        },
+    );
+    f(&mut e, 1, 1, if existing { "=A1+1" } else { "=1" });
+    for r in 2..=20 {
+        f(&mut e, r, 1, &format!("=A{}+1", r - 1));
+    }
+    // A tail after A20 keeps the recalculation pending even when family
+    // execution lifts the entire first chain into one atomic unit.
+    f(&mut e, 1, 3, "=A20+1");
+    for r in 2..=20 {
+        f(&mut e, r, 3, &format!("=C{}+1", r - 1));
+    }
     e
 }
 #[test]
 fn newly_formed_cycle_uses_current_values() {
-    for family in [false,true] {
-        let mut e=cycle_change_engine(family,false);
-        let mut ordinary=cycle_change_engine(family,false);
-        e.resumable_stop_after_units_for_test=Some(2);
+    for family in [false, true] {
+        let mut e = cycle_change_engine(family, false);
+        let mut ordinary = cycle_change_engine(family, false);
+        e.resumable_stop_after_units_for_test = Some(2);
         incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
-        copy_current_formula_values(&e,&mut ordinary);
-        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(1.)));
-        assert_eq!(v(&e,2,1),Some(LiteralValue::Number(2.)));
-        for x in [&mut e,&mut ordinary] { f(x,1,1,"=A2"); }
+        copy_current_formula_values(&e, &mut ordinary);
+        assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
+        assert_eq!(v(&e, 2, 1), Some(LiteralValue::Number(2.)));
+        for x in [&mut e, &mut ordinary] {
+            f(x, 1, 1, "=A2");
+        }
         drain(&mut e);
         ordinary.evaluate_all().unwrap();
-        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(2.)));
-        assert_eq!(v(&e,2,1),Some(LiteralValue::Number(3.)));
-        review_compare(&e,&ordinary,"brand-new cycle");
+        assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(2.)));
+        assert_eq!(v(&e, 2, 1), Some(LiteralValue::Number(3.)));
+        review_compare(&e, &ordinary, "brand-new cycle");
     }
 }
 #[test]
 fn changed_cycle_membership_uses_current_values() {
-    for family in [false,true] {
-        let mut e=cycle_change_engine(family,true);
-        let mut ordinary=cycle_change_engine(family,true);
-        e.resumable_stop_after_units_for_test=Some(2);
+    for family in [false, true] {
+        let mut e = cycle_change_engine(family, true);
+        let mut ordinary = cycle_change_engine(family, true);
+        e.resumable_stop_after_units_for_test = Some(1);
         incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
-        copy_current_formula_values(&e,&mut ordinary);
-        for x in [&mut e,&mut ordinary] { f(x,1,1,"=A1+A2"); }
+        copy_current_formula_values(&e, &mut ordinary);
+        for x in [&mut e, &mut ordinary] {
+            f(x, 1, 1, "=A1+A2");
+        }
         drain(&mut e);
         ordinary.evaluate_all().unwrap();
-        assert_eq!(v(&ordinary,1,1),Some(LiteralValue::Number(3.)));
-        assert_eq!(v(&ordinary,2,1),Some(LiteralValue::Number(4.)));
-        review_compare(&e,&ordinary,"new SCC containing an earlier cycle member");
+        assert_eq!(v(&ordinary, 1, 1), Some(LiteralValue::Number(1.)));
+        assert_eq!(v(&ordinary, 2, 1), Some(LiteralValue::Number(2.)));
+        review_compare(&e, &ordinary, "new SCC containing an earlier cycle member");
     }
 }
 #[test]
 fn newly_created_cycle_reformation_uses_current_values() {
-    for family in [false,true] {
-        let mut e=cycle_change_engine(family,false);
-        e.resumable_stop_after_units_for_test=Some(2);
+    for family in [false, true] {
+        let mut e = cycle_change_engine(family, false);
+        e.resumable_stop_after_units_for_test = Some(2);
         incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
-        f(&mut e,1,1,"=A1+A2");
-        e.resumable_stop_after_units_for_test=Some(1);
+        f(&mut e, 1, 1, "=A1+A2");
+        e.resumable_stop_after_units_for_test = Some(1);
         incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
-        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(3.)));
-        f(&mut e,1,1,"=7");
-        e.resumable_stop_after_units_for_test=Some(2);
+        assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(3.)));
+        f(&mut e, 1, 1, "=7");
+        e.resumable_stop_after_units_for_test = Some(2);
         incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
-        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(7.)));
-        assert_eq!(v(&e,2,1),Some(LiteralValue::Number(8.)));
-        let mut ordinary=cycle_change_engine(family,false);
-        f(&mut ordinary,1,1,"=7");
-        copy_current_formula_values(&e,&mut ordinary);
-        for x in [&mut e,&mut ordinary] { f(x,1,1,"=A1+A2"); }
+        assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(7.)));
+        assert_eq!(v(&e, 2, 1), Some(LiteralValue::Number(8.)));
+        let mut ordinary = cycle_change_engine(family, false);
+        f(&mut ordinary, 1, 1, "=7");
+        copy_current_formula_values(&e, &mut ordinary);
+        for x in [&mut e, &mut ordinary] {
+            f(x, 1, 1, "=A1+A2");
+        }
         drain(&mut e);
         ordinary.evaluate_all().unwrap();
-        assert_eq!(v(&ordinary,1,1),Some(LiteralValue::Number(15.)));
-        review_compare(&e,&ordinary,"re-formed new cycle");
+        assert_eq!(v(&ordinary, 1, 1), Some(LiteralValue::Number(15.)));
+        review_compare(&e, &ordinary, "re-formed new cycle");
+    }
+}
+
+#[test]
+fn original_cycle_reformation_keeps_original_seed() {
+    for family in [false, true] {
+        for pre_cancelled in [false, true] {
+            let mut e = cycle_change_engine(family, true);
+            e.resumable_stop_after_units_for_test = Some(1);
+            if pre_cancelled {
+                let cancel = CancelToken::new();
+                cancel.cancel();
+                incomplete(
+                    e.evaluate_all_until(EvaluationStop::cancel(cancel))
+                        .unwrap(),
+                );
+                assert_eq!(v(&e, 1, 1), None);
+            }
+            incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+            assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
+            f(&mut e, 1, 1, "=7");
+            incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+            assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(7.)));
+            f(&mut e, 1, 1, "=A1+1");
+            drain(&mut e);
+            // This SCC existed at logical start: preserve the original helper's
+            // pre-recalc seed, even though its members ran acyclically in between.
+            assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
+        }
     }
 }

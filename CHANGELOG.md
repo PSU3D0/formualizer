@@ -4,7 +4,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
-- Added `Engine::evaluate_all_until` and its `Workbook` passthrough for cooperative recalculation with soft deadlines and cancellation, preserving installed work and one clock, random epoch and diagnostics collection across calls.
+- Added `Engine::evaluate_all_until` and its `Workbook` passthrough for cooperative recalculation with soft deadlines and cancellation, preserving installed work and one clock, random epoch and diagnostics collection across calls. Results are independent of call boundaries except for iterative cycles created by edits during a pending recalculation: new cycles start from current cell values, including results installed by earlier calls; existing SCCs retain their original recalculation seeds.
 
 ## [0.13.0] - 2026-10-25
 

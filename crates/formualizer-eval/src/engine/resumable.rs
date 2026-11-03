@@ -64,5 +64,40 @@ pub(super) struct LogicalRecalculation {
     pub installed: super::idset::DenseIdSet,
     // Retrying an SCC after an edit/cancellation must not count another
     // recalculation's iteration against its already advanced visible values.
-    pub cycle_seeds: rustc_hash::FxHashMap<super::VertexId, formualizer_common::LiteralValue>,
+    pub cycle_seeds: rustc_hash::FxHashMap<
+        Vec<super::VertexId>,
+        rustc_hash::FxHashMap<super::VertexId, formualizer_common::LiteralValue>,
+    >,
+    pub original_cycles: rustc_hash::FxHashSet<Vec<super::VertexId>>,
+    pub original_cycles_recorded: bool,
+    // Fast rejection for ordinary layer units; no scan of SCC seed maps on
+    // the usual acyclic path. Conservatively retains bits after dissolution.
+    pub new_cycle_members: super::idset::DenseIdSet,
+}
+
+impl LogicalRecalculation {
+    pub fn record_original_cycles(&mut self, schedule: &super::scheduler::Schedule) {
+        if !self.original_cycles_recorded {
+            for cycle in &schedule.cycles {
+                let mut key = cycle.clone();
+                key.sort_unstable();
+                self.original_cycles.insert(key);
+            }
+            self.original_cycles_recorded = true;
+        }
+    }
+
+    pub fn forget_dissolved_new_cycles(&mut self, vertices: &[super::VertexId]) {
+        if self.new_cycle_members.is_empty()
+            || !vertices.iter().any(|v| self.new_cycle_members.contains(v))
+        {
+            return;
+        }
+        // A new cycle that dissolved and ran acyclically must start from its
+        // then-current values if it forms again. Original SCC seeds survive.
+        self.cycle_seeds.retain(|key, _| {
+            self.original_cycles.contains(key)
+                || !vertices.iter().any(|v| key.binary_search(v).is_ok())
+        });
+    }
 }
