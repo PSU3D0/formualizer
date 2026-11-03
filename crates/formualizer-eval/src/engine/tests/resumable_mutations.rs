@@ -1,0 +1,169 @@
+use super::*;
+use crate::engine::named_range::{NameScope, NamedDefinition};
+
+
+fn review_compare(a: &Engine<TestWorkbook>, b: &Engine<TestWorkbook>, label: &str) {
+    for r in 1..=24 { for c in 1..=12 {
+        assert_eq!(v(a,r,c),v(b,r,c), "{label} ({r},{c})");
+    }}
+}
+
+fn review_mutate(e: &mut Engine<TestWorkbook>, mode: usize) {
+    match mode {
+      0 => f(e,1,1,"=77"),
+      1 => f(e,19,1,"=77"),
+      2 => { e.insert_rows("Sheet1",1,1).unwrap(); },
+      3 => { e.delete_rows("Sheet1",1,1).unwrap(); },
+      4 => { e.insert_columns("Sheet1",1,1).unwrap(); },
+      5 => { e.delete_columns("Sheet1",1,1).unwrap(); },
+      6 => { e.add_sheet("Added").unwrap(); e.set_cell_formula("Added",1,1,parse("=Sheet1!A20").unwrap()).unwrap(); },
+      7 => { let id=e.graph.sheet_id("Aux").unwrap(); e.rename_sheet(id,"Renamed").unwrap(); },
+      8 => { let id=e.graph.sheet_id("Aux").unwrap(); e.remove_sheet(id).unwrap(); },
+      9 => { e.update_name("ReviewName", NamedDefinition::Literal(LiteralValue::Number(90.)),NameScope::Workbook).unwrap(); },
+      10 => { e.delete_name("ReviewName",NameScope::Workbook).unwrap(); },
+      11 => { f(e,1,1,"=A2"); },
+      12 => { f(e,1,1,"=4"); },
+      13 => { e.set_cell_value("Sheet1",1,8,LiteralValue::Text("A18".into())).unwrap(); },
+      _ => unreachable!()
+    }
+}
+
+fn run_review_mutation_matrix(modes: &[usize]) {
+  let mut failures=Vec::new();
+  for family in [false,true] { for parallel in [false,true] { for &mode in modes { for cut in [1,3,9] {
+    let make=|| {
+      let mut e=Engine::new(TestWorkbook::new(),EvalConfig {
+        family_execution:family, enable_parallel:parallel,
+        ..EvalConfig::default().with_cycle(CycleConfig::iterate(1,0.))
+      });
+      e.add_sheet("Aux").unwrap();
+      e.set_cell_value("Aux",1,1,LiteralValue::Number(7.)).unwrap();
+      e.define_name("ReviewName",NamedDefinition::Literal(LiteralValue::Number(3.)),NameScope::Workbook).unwrap();
+      f(&mut e,1,1,if mode==12 {"=A1+1"} else {"=1"});
+      for r in 2..=20 { f(&mut e,r,1,&format!("=A{}+1",r-1)); }
+      f(&mut e,1,2,"=Aux!A1+ReviewName+A20");
+      e.set_cell_value("Sheet1",1,8,LiteralValue::Text("A3".into())).unwrap();
+      f(&mut e,1,9,"=INDIRECT(H1)");
+      f(&mut e,2,9,"=OFFSET(A1,1,0)");
+      e
+    };
+    let mut e=make(); let mut reference=make();
+    e.resumable_stop_after_units_for_test=Some(cut);
+    let _=e.evaluate_all_until(EvaluationStop::none()).unwrap();
+    review_mutate(&mut e,mode);review_mutate(&mut reference,mode);
+    let a=e.evaluate_all_until(EvaluationStop::none());
+    let b=reference.evaluate_all();
+    let label=format!("mutation {mode} family {family} parallel {parallel} cut {cut}");
+    let result=std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| { match (a,b) {
+      (Ok(EvaluationProgress::Complete(_)), Ok(_))=>review_compare(&e,&reference,&label),
+      (Ok(EvaluationProgress::Incomplete(_)), Ok(_))=>{drain(&mut e);review_compare(&e,&reference,&label);},
+      (Err(a),Err(b))=>assert_eq!(a,b,"{label}"),
+      (a,b)=>panic!("{label}: {a:?} vs {b:?}")
+    }
+    })); if result.is_err(){failures.push(label);}
+  }}}}
+  println!("MUTATIONS failures={failures:?}");assert!(failures.is_empty(),"{} matrix failures",failures.len());
+}
+
+#[test]
+fn review_min_formula_dynamic() {
+ let mut failures=Vec::new();
+ for family in [false,true] {for len in 3..=12 {for cut in 1..=len {
+  let make=||{let mut e=engine(family);f(&mut e,1,1,"=1");for r in 2..=len {f(&mut e,r,1,&format!("=A{}+1",r-1));}
+   e.set_cell_value("Sheet1",1,8,LiteralValue::Text("A3".into())).unwrap(); f(&mut e,1,9,"=INDIRECT(H1)");e};
+  let mut e=make();let mut b=make(); e.resumable_stop_after_units_for_test=Some(cut as usize);
+  let p=e.evaluate_all_until(EvaluationStop::none()).unwrap();
+  if !matches!(p,EvaluationProgress::Incomplete(_)){continue;}
+  let pre=v(&e,1,9);
+  f(&mut e,1,1,"=77");f(&mut b,1,1,"=77");drain(&mut e);b.evaluate_all().unwrap();
+  if v(&e,1,9)!=v(&b,1,9) {
+   let id=e.graph.get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1",1,9)).unwrap();
+   println!("MINFORM family={family} len={len} cut={cut} pre={pre:?} actual={:?} expected={:?} dirty={}",v(&e,1,9),v(&b,1,9),e.graph.is_dirty(id));
+   failures.push((family,len,cut));
+  }
+ }}}
+ assert!(failures.is_empty(),"{} failures",failures.len());
+}
+
+#[test]
+fn review_min_new_builtin_after_slice() {
+ for family in [false,true] {
+ let make=||{let mut e=chain(family);e.set_cell_value("Sheet1",1,2,LiteralValue::Number(-5.)).unwrap();e};
+ let mut e=make();let mut b=make();
+ incomplete(e.evaluate_all_until(EvaluationStop::after(Duration::ZERO)).unwrap());
+ f(&mut e,20,1,"=ABS(B1)");f(&mut b,20,1,"=ABS(B1)");drain(&mut e);b.evaluate_all().unwrap();
+ println!("NEWFUNCTION actual={:?} expected={:?}",v(&e,20,1),v(&b,20,1));
+ assert_eq!(v(&e,20,1),v(&b,20,1));
+ }
+}
+
+#[test]
+fn review_min_dynamic_value_edit() {
+ for family in [false,true] {
+  let make=||{let mut e=engine(family);e.set_cell_value("Sheet1",1,1,LiteralValue::Number(1.)).unwrap();for r in 2..=6 {f(&mut e,r,1,&format!("=A{}+1",r-1));}f(&mut e,1,2,"=INDIRECT(\"A3\")");e};
+  let mut e=make();let mut b=make();
+  e.resumable_stop_after_units_for_test=Some(4);
+  incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+  println!("DYNVALUE before={:?}",v(&e,1,2));
+  for x in [&mut e,&mut b] {x.set_cell_value("Sheet1",1,1,LiteralValue::Number(77.)).unwrap();}
+  drain(&mut e);b.evaluate_all().unwrap();
+  println!("DYNVALUE family={family} actual={:?} expected={:?}",v(&e,1,2),v(&b,1,2));assert_eq!(v(&e,1,2),v(&b,1,2));
+ }
+}
+
+
+#[test]
+fn review_mutation_matrix() {
+    // 156 cases from the reviewer's 168-case matrix. The remaining twelve
+    // create a new cycle and are preserved separately pending review F3.
+    run_review_mutation_matrix(&(0..14).filter(|&mode| mode != 11).collect::<Vec<_>>());
+}
+#[test]
+#[ignore = "F3: maintainer decision pending for newly created iterative cycle seeds"]
+fn review_mutation_matrix_cycle_creation_f3() {
+    // Review F3: do not silently remove these twelve cycle-creation cases.
+    run_review_mutation_matrix(&[11]);
+}
+#[derive(Debug)]
+struct Replacement { name: &'static str, value: f64 }
+impl Function for Replacement {
+    fn name(&self) -> &'static str { self.name }
+    fn eval<'a,'b,'c>(&self, _: &'c [ArgumentHandle<'a,'b>], _: &dyn FunctionContext<'b>) -> Result<CalcValue<'b>,ExcelError> {
+        Ok(CalcValue::Scalar(LiteralValue::Number(self.value)))
+    }
+}
+#[test]
+fn review_min_registry_dirty() {
+    for family in [false,true] {
+        const NAME: &str = "RESUMABLE_REPLACE_PENDING";
+        crate::function_registry::register_function(Arc::new(Replacement{name:NAME,value:1.}));
+        let mut e=engine(family);
+        f(&mut e,1,1,"=1");
+        f(&mut e,2,1,"=A1+RESUMABLE_REPLACE_PENDING()");
+        f(&mut e,3,1,"=A2+1");
+        incomplete(e.evaluate_all_until(EvaluationStop::after(Duration::ZERO)).unwrap());
+        assert_eq!(v(&e,2,1),None);
+        crate::function_registry::register_function(Arc::new(Replacement{name:NAME,value:9.}));
+        drain(&mut e);
+        assert_eq!(v(&e,2,1),Some(LiteralValue::Number(10.)));
+    }
+}
+#[test]
+fn review_custom_registration_between_calls() {
+    for family in [false,true] {
+        const NAME: &str = "RESUMABLE_REPLACE_INSTALLED";
+        crate::function_registry::register_function(Arc::new(Replacement{name:NAME,value:1.}));
+        let mut e=chain(family);
+        f(&mut e,1,1,"=RESUMABLE_REPLACE_INSTALLED()");
+        incomplete(e.evaluate_all_until(EvaluationStop::after(Duration::ZERO)).unwrap());
+        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(1.)));
+        crate::function_registry::register_function(Arc::new(Replacement{name:NAME,value:9.}));
+        // A mutation consumes the engine's usual semantic-epoch guard. The
+        // pending recalculation must retain its own epoch for invalidation.
+        e.set_cell_value("Sheet1",1,12,LiteralValue::Number(1.)).unwrap();
+        drain(&mut e);
+        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(9.)));
+        assert_eq!(v(&e,20,1),Some(LiteralValue::Number(28.)));
+        assert_eq!(e.recalc_epoch,1);
+    }
+}

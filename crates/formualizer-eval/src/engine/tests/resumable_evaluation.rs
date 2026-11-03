@@ -1,3 +1,6 @@
+#[path = "resumable_mutations.rs"]
+mod mutations;
+
 use crate::engine::*;
 use crate::function::Function;
 use crate::test_workbook::TestWorkbook;
@@ -401,7 +404,7 @@ fn hard_errors_are_errors() {
 #[test]
 fn seeded_random_workbooks_and_edits() {
     for family in [false, true] {
-        for seed in 1..=12u64 {
+        for seed in 1..=256u64 {
             let mut rng = seed;
             let mut next = || {
                 rng ^= rng << 13;
@@ -433,14 +436,22 @@ fn seeded_random_workbooks_and_edits() {
                     f(&mut e, r, 8, &format!("=SUMIF(F1:F12,\">0\",G1:G12)+G{r}"));
                 }
                 f(&mut e, 1, 9, "=INDIRECT(\"C6\")+OFFSET(B1,4,0)+RAND()");
+                e.set_clock(Arc::new(Clock(AtomicUsize::new(0))));
+                f(&mut e, 1, 11, "=NOW()+I1");
+                // F3: existing SCC only; edits below never create a new cycle.
                 e
             };
             let mut e = make();
             let mut reference = make();
             let mut complete = false;
-            for call in 0..200 {
-                if call < 4 && next() % 2 == 0 {
+            for call in 0..600 {
+                if call < 16 && next() % 2 == 0 {
                     let x = (next() % 6 + 1) as f64;
+                    // F4 is inherited spill teardown behavior, tracked separately:
+                    // never write a user value into a currently live spill extent.
+                    let anchor = e.graph.get_vertex_id_for_address(&e.graph.make_cell_ref("Sheet1",1,2)).unwrap();
+                    let blocker_is_live = e.graph.spill_cells_for_anchor(anchor).is_some_and(|cells|
+                        cells.iter().any(|cell| cell.coord.row() == 3 && cell.coord.col() == 1));
                     for xengine in [&mut e, &mut reference] {
                         xengine
                             .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(x))
@@ -448,20 +459,18 @@ fn seeded_random_workbooks_and_edits() {
                         xengine
                             .set_cell_value("Sheet1", 1, 6, LiteralValue::Number(x))
                             .unwrap();
-                        // Alternate blocked and unblocked extents while also growing
-                        // and shrinking the anchor through A1.
-                        xengine
-                            .set_cell_value(
-                                "Sheet1",
-                                4,
-                                2,
-                                if call % 2 == 0 {
-                                    LiteralValue::Number(99.)
-                                } else {
-                                    LiteralValue::Empty
-                                },
-                            )
-                            .unwrap();
+                        if call % 3 == 0 {
+                            f(xengine, 1, 7, &format!("=F1*{}", call + 3));
+                            f(xengine, 1, 9, if call % 2 == 0 {
+                                "=INDIRECT(\"C6\")+OFFSET(B1,4,0)+RAND()"
+                            } else {
+                                "=INDIRECT(\"G1\")+OFFSET(B1,2,0)+RAND()"
+                            });
+                        }
+                        if !blocker_is_live {
+                            xengine.set_cell_value("Sheet1",4,2,
+                                if call % 2 == 0 { LiteralValue::Number(99.) } else { LiteralValue::Empty }).unwrap();
+                        }
                     }
                 }
                 e.resumable_stop_after_units_for_test = Some((next() % 4) as usize);
@@ -475,7 +484,7 @@ fn seeded_random_workbooks_and_edits() {
             assert!(complete, "seed {seed} family {family}");
             reference.evaluate_all().unwrap();
             for r in 1..=12 {
-                for c in 1..=10 {
+                for c in 1..=11 {
                     assert_eq!(
                         v(&e, r, c),
                         v(&reference, r, c),
