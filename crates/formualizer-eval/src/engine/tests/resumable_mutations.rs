@@ -63,6 +63,22 @@ fn review_mutate(e: &mut Engine<TestWorkbook>, mode: usize) {
     }
 }
 
+// Ordinary evaluation oracle with exactly the visible formula values at the
+// cycle-forming edit. Install caches through the normal effects boundary;
+// do not run the control first, since that would finish pending precedents.
+fn copy_current_formula_values(from: &Engine<TestWorkbook>, to: &mut Engine<TestWorkbook>) {
+    for r in 1..=24 {
+        for c in 1..=12 {
+            let vertex = to.graph.get_vertex_id_for_address(&to.graph.make_cell_ref("Sheet1",r,c));
+            if let Some(vertex) = vertex.filter(|&v| to.graph.is_live_formula_vertex(v)) {
+                if let Some(value) = v(from,r,c) {
+                    to.apply_effect(&crate::engine::effects::Effect::WriteCell {vertex_id:vertex,value},None,None).unwrap();
+                }
+            }
+        }
+    }
+    review_compare(from,to,"current-value oracle before edit");
+}
 fn run_review_mutation_matrix(modes: &[usize]) {
     let mut failures = Vec::new();
     for family in [false, true] {
@@ -102,6 +118,12 @@ fn run_review_mutation_matrix(modes: &[usize]) {
                     let mut reference = make();
                     e.resumable_stop_after_units_for_test = Some(cut);
                     let _ = e.evaluate_all_until(EvaluationStop::none()).unwrap();
+                    if mode == 11 {
+                        // F3 decision: a cycle created during the logical
+                        // calculation starts from current values, not a fresh
+                        // engine's missing formula caches.
+                        copy_current_formula_values(&e,&mut reference);
+                    }
                     review_mutate(&mut e, mode);
                     review_mutate(&mut reference, mode);
                     let a = e.evaluate_all_until(EvaluationStop::none());
@@ -242,14 +264,12 @@ fn review_min_dynamic_value_edit() {
 
 #[test]
 fn review_mutation_matrix() {
-    // 156 cases from the reviewer's 168-case matrix. The remaining twelve
-    // create a new cycle and are preserved separately pending review F3.
+    // These 156 cases retain the strict fresh-uninterrupted oracle.
     run_review_mutation_matrix(&(0..14).filter(|&mode| mode != 11).collect::<Vec<_>>());
 }
 #[test]
-#[ignore = "F3: maintainer decision pending for newly created iterative cycle seeds"]
 fn review_mutation_matrix_cycle_creation_f3() {
-    // Review F3: do not silently remove these twelve cycle-creation cases.
+    // The twelve F3 cases use the maintainer-approved current-value oracle.
     run_review_mutation_matrix(&[11]);
 }
 #[derive(Debug)]
@@ -398,5 +418,74 @@ fn review_mutations_preserve_clock_and_rand_epoch() {
         assert_eq!(v(&e, 2, 2), Some(rand));
         assert_eq!(clock.0.load(Ordering::SeqCst) - before, 1);
         assert_eq!(e.recalc_epoch, 1);
+    }
+}
+
+fn cycle_change_engine(family: bool, existing: bool) -> Engine<TestWorkbook> {
+    let mut e=Engine::new(TestWorkbook::new(),EvalConfig {
+        family_execution:family,enable_parallel:false,
+        ..EvalConfig::default().with_cycle(CycleConfig::iterate(1,0.))
+    });
+    f(&mut e,1,1,if existing { "=A1+1" } else { "=1" });
+    for r in 2..=20 { f(&mut e,r,1,&format!("=A{}+1",r-1)); }
+    e
+}
+#[test]
+fn newly_formed_cycle_uses_current_values() {
+    for family in [false,true] {
+        let mut e=cycle_change_engine(family,false);
+        let mut ordinary=cycle_change_engine(family,false);
+        e.resumable_stop_after_units_for_test=Some(2);
+        incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+        copy_current_formula_values(&e,&mut ordinary);
+        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(1.)));
+        assert_eq!(v(&e,2,1),Some(LiteralValue::Number(2.)));
+        for x in [&mut e,&mut ordinary] { f(x,1,1,"=A2"); }
+        drain(&mut e);
+        ordinary.evaluate_all().unwrap();
+        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(2.)));
+        assert_eq!(v(&e,2,1),Some(LiteralValue::Number(3.)));
+        review_compare(&e,&ordinary,"brand-new cycle");
+    }
+}
+#[test]
+fn changed_cycle_membership_uses_current_values() {
+    for family in [false,true] {
+        let mut e=cycle_change_engine(family,true);
+        let mut ordinary=cycle_change_engine(family,true);
+        e.resumable_stop_after_units_for_test=Some(2);
+        incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+        copy_current_formula_values(&e,&mut ordinary);
+        for x in [&mut e,&mut ordinary] { f(x,1,1,"=A1+A2"); }
+        drain(&mut e);
+        ordinary.evaluate_all().unwrap();
+        assert_eq!(v(&ordinary,1,1),Some(LiteralValue::Number(3.)));
+        assert_eq!(v(&ordinary,2,1),Some(LiteralValue::Number(4.)));
+        review_compare(&e,&ordinary,"new SCC containing an earlier cycle member");
+    }
+}
+#[test]
+fn newly_created_cycle_reformation_uses_current_values() {
+    for family in [false,true] {
+        let mut e=cycle_change_engine(family,false);
+        e.resumable_stop_after_units_for_test=Some(2);
+        incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+        f(&mut e,1,1,"=A1+A2");
+        e.resumable_stop_after_units_for_test=Some(1);
+        incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(3.)));
+        f(&mut e,1,1,"=7");
+        e.resumable_stop_after_units_for_test=Some(2);
+        incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+        assert_eq!(v(&e,1,1),Some(LiteralValue::Number(7.)));
+        assert_eq!(v(&e,2,1),Some(LiteralValue::Number(8.)));
+        let mut ordinary=cycle_change_engine(family,false);
+        f(&mut ordinary,1,1,"=7");
+        copy_current_formula_values(&e,&mut ordinary);
+        for x in [&mut e,&mut ordinary] { f(x,1,1,"=A1+A2"); }
+        drain(&mut e);
+        ordinary.evaluate_all().unwrap();
+        assert_eq!(v(&ordinary,1,1),Some(LiteralValue::Number(15.)));
+        review_compare(&e,&ordinary,"re-formed new cycle");
     }
 }
