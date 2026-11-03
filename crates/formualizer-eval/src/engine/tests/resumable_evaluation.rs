@@ -1,3 +1,8 @@
+#[path = "resumable_review_risks.rs"]
+mod review_risks;
+#[path = "resumable_review_sources.rs"]
+mod review_sources;
+
 #[path = "resumable_mutations.rs"]
 mod mutations;
 
