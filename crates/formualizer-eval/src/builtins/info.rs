@@ -2121,7 +2121,7 @@ mod tests {
                 } else {
                     vec!["FAILARG()"]
                 } {
-                    let ast = formualizer_parse::parser::parse(&format!("={name}({arg})")).unwrap();
+                    let ast = formualizer_parse::parser::parse(format!("={name}({arg})")).unwrap();
                     let result = ctx.evaluate_ast(&ast);
                     assert!(
                         matches!(result, Err(ref actual) if actual == &error),

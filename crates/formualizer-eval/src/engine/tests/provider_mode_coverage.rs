@@ -1278,7 +1278,12 @@ fn provider_mode_expression_producer_tree_arena_reference_agree() {
     ] {
         let (arena, arena_report) = evaluate(formula);
         let arena_value = arena.get_cell_value("Sheet1", 1, 8).unwrap();
-        producer_receipt(formula, &arena, &arena_report, &[operation.clone()]);
+        producer_receipt(
+            formula,
+            &arena,
+            &arena_report,
+            std::slice::from_ref(&operation),
+        );
         // A fresh engine has an active collector; evaluate() intentionally
         // finalizes its collector when returning a request receipt.
         let mut tree = Engine::new(

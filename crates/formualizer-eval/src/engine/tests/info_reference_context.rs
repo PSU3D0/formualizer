@@ -49,7 +49,7 @@ fn error_consumers_inline_reference_tree_arena() {
             },
         );
         engine
-            .set_cell_formula("Sheet1", 1, 1, parse(&format!("={source}")).unwrap())
+            .set_cell_formula("Sheet1", 1, 1, parse(format!("={source}")).unwrap())
             .unwrap();
         for (idx, (name, name_expected)) in cases.iter().enumerate() {
             let expected = LiteralValue::Boolean(match *name {
@@ -76,11 +76,11 @@ fn error_consumers_inline_reference_tree_arena() {
                     "Sheet1",
                     1,
                     20 + i as u32,
-                    parse(&format!("=ERROR.TYPE({arg})")).unwrap(),
+                    parse(format!("=ERROR.TYPE({arg})")).unwrap(),
                 )
                 .unwrap();
             let actual = tree
-                .evaluate_ast(&parse(&format!("=ERROR.TYPE({arg})")).unwrap())
+                .evaluate_ast(&parse(format!("=ERROR.TYPE({arg})")).unwrap())
                 .map(|v| v.into_literal());
             let code = match kind {
                 ExcelErrorKind::Name => 5,
@@ -129,7 +129,7 @@ fn error_consumers_inline_reference_tree_arena() {
         }
         for name in ["N", "T"] {
             for arg in [source, "A1"] {
-                let actual = tree.evaluate_ast(&parse(&format!("={name}({arg})")).unwrap());
+                let actual = tree.evaluate_ast(&parse(format!("={name}({arg})")).unwrap());
                 let actual_kind = match actual {
                     Err(e) => Some(e.kind),
                     Ok(v) => err_kind(Some(v.into_literal())),
@@ -163,7 +163,7 @@ fn registered_info_type_error_codes_tree_arena_family() {
                         "Sheet1",
                         row,
                         col as u32 + 1,
-                        parse(&format!("={arg}")).unwrap(),
+                        parse(format!("={arg}")).unwrap(),
                     )
                     .unwrap();
                 engine
@@ -171,7 +171,7 @@ fn registered_info_type_error_codes_tree_arena_family() {
                         "Sheet1",
                         row,
                         col as u32 + 5,
-                        parse(&format!("=TYPE({arg})")).unwrap(),
+                        parse(format!("=TYPE({arg})")).unwrap(),
                     )
                     .unwrap();
                 let letter = (b'A' + col as u8) as char;
@@ -180,7 +180,7 @@ fn registered_info_type_error_codes_tree_arena_family() {
                         "Sheet1",
                         row,
                         col as u32 + 9,
-                        parse(&format!("=TYPE({letter}{row})")).unwrap(),
+                        parse(format!("=TYPE({letter}{row})")).unwrap(),
                     )
                     .unwrap();
             }
@@ -208,7 +208,7 @@ fn registered_info_type_error_codes_tree_arena_family() {
             "D1",
         ] {
             let result = tree
-                .evaluate_ast(&parse(&format!("=TYPE({arg})")).unwrap())
+                .evaluate_ast(&parse(format!("=TYPE({arg})")).unwrap())
                 .map(|v| v.into_literal());
             if result != Ok(LiteralValue::Int(16)) {
                 failures.push(format!("tree TYPE({arg}): {result:?}"));
@@ -260,7 +260,7 @@ fn registered_info_isformula_metadata_edits() {
                     "Sheet1",
                     row,
                     2,
-                    parse(&format!("=ISFORMULA(A{row})")).unwrap(),
+                    parse(format!("=ISFORMULA(A{row})")).unwrap(),
                 )
                 .unwrap();
             engine
@@ -268,7 +268,7 @@ fn registered_info_isformula_metadata_edits() {
                     "Sheet1",
                     row,
                     3,
-                    parse(&format!("=ISFORMULA(A{row}:A{row})")).unwrap(),
+                    parse(format!("=ISFORMULA(A{row}:A{row})")).unwrap(),
                 )
                 .unwrap();
         }
@@ -286,7 +286,7 @@ fn registered_info_isformula_metadata_edits() {
                     "Sheet1",
                     1,
                     i as u32 + 4,
-                    parse(&format!("={formula}")).unwrap(),
+                    parse(format!("={formula}")).unwrap(),
                 )
                 .unwrap();
         }
@@ -324,7 +324,7 @@ fn registered_info_isformula_metadata_edits() {
                 );
                 let tree = crate::interpreter::Interpreter::new(&engine, "Sheet1");
                 assert_eq!(
-                    tree.evaluate_ast(&parse(&format!("={formula}")).unwrap())
+                    tree.evaluate_ast(&parse(format!("={formula}")).unwrap())
                         .unwrap()
                         .into_literal(),
                     LiteralValue::Boolean(expected),

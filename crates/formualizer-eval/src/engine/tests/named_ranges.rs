@@ -613,7 +613,7 @@ fn dynamic_name_rebinding_drops_obsolete_reads(literal: bool, targeted: bool) {
             NameScope::Workbook,
         )
         .unwrap();
-        e.set_cell_formula("Sheet1", 1, col, parse(&format!("={name}")).unwrap())
+        e.set_cell_formula("Sheet1", 1, col, parse(format!("={name}")).unwrap())
             .unwrap();
     }
     e.evaluate_all().unwrap();
@@ -779,7 +779,7 @@ fn transitive_name_observation_case(
     for i in 0..hops {
         if grid_mask & (1 << i) != 0 {
             let row = i as u32 + 1;
-            e.set_cell_formula("Sheet1", row, 3, parse(&format!("={previous}")).unwrap())
+            e.set_cell_formula("Sheet1", row, 3, parse(format!("={previous}")).unwrap())
                 .unwrap();
             previous = format!("C{row}");
         } else {
@@ -803,7 +803,7 @@ fn transitive_name_observation_case(
             NameScope::Workbook,
         )
         .unwrap();
-        e.set_cell_formula("Sheet1", 1, col, parse(&format!("={name}")).unwrap())
+        e.set_cell_formula("Sheet1", 1, col, parse(format!("={name}")).unwrap())
             .unwrap();
     }
     e.evaluate_all().unwrap();

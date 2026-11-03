@@ -155,7 +155,7 @@ fn error_consumer_scalar_family_timing() {
             e.set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64))
                 .unwrap();
             for (col, name) in [(2, "ISNUMBER"), (3, "ISERROR"), (4, "ISTEXT")] {
-                e.set_cell_formula("Sheet1", r, col, parse(&format!("={name}(A{r})")).unwrap())
+                e.set_cell_formula("Sheet1", r, col, parse(format!("={name}(A{r})")).unwrap())
                     .unwrap();
             }
         }
