@@ -4911,6 +4911,7 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_scalar_version(name, version)?;
+        self.mark_data_edited();
         Ok(())
     }
 
@@ -4920,11 +4921,13 @@ where
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
         self.graph.set_source_table_version(name, version)?;
+        self.mark_data_edited();
         Ok(())
     }
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
         self.graph.invalidate_source(name)?;
+        self.mark_data_edited();
         Ok(())
     }
 
@@ -15609,6 +15612,15 @@ where
     /// from the cells' current values when they form, including values installed
     /// by earlier calls; they need not match a fresh, uninterrupted calculation.
     /// SCCs already present at the start retain their original recalc seeds.
+    ///
+    /// Function providers without a semantic revision (`planning_semantic_revision`
+    /// returns `None`) are assumed stable for the duration of a logical
+    /// recalculation. Hosts changing provider behaviour must bump its semantic
+    /// revision or mark the affected cells dirty.
+    ///
+    /// Load-time mutation APIs, including `ArrowBulkIngestBuilder::finish` and
+    /// raw `sheet_store_mut` access, are unsupported while a resumable
+    /// recalculation is pending; they do not publish mutation revisions.
     pub fn evaluate_all_until(
         &mut self,
         stop: super::EvaluationStop,
@@ -15662,6 +15674,8 @@ where
             }
             for mut key in retained.into_values() {
                 key.sort_unstable();
+                let seeds = self.capture_original_cycle_seeds(&key);
+                state.cycle_seeds.insert(key.clone(), seeds);
                 state.original_cycles.insert(key);
             }
             self.resumable = Some(state);
@@ -15728,10 +15742,7 @@ where
                 self.active_cancel_flag = saved_cancel;
             }
             let (schedule, old_vdeps, _) = planned?;
-            self.resumable
-                .as_mut()
-                .unwrap()
-                .record_original_cycles(&schedule);
+            self.record_original_cycle_seeds(&schedule);
             // Even a pre-cancelled initial call must identify original SCCs
             // before edits can create indistinguishable new memberships.
             if stop.cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
@@ -15865,6 +15876,56 @@ where
                 elapsed: state.elapsed,
             }))
         }
+    }
+
+    /// Capture original values before a return or an acyclic installation can
+    /// overwrite a member. Match the SCC task's overlay-first snapshot and its
+    /// persistence repair for overlays cleared by structural edits.
+    fn capture_original_cycle_seeds(
+        &self,
+        cycle: &[VertexId],
+    ) -> FxHashMap<VertexId, LiteralValue> {
+        cycle
+            .iter()
+            .map(|&vertex| {
+                let value = if let Some(cell) = self.graph.get_cell_ref(vertex) {
+                    let current = self
+                        .read_cell_value(
+                            self.graph.sheet_name(cell.sheet_id),
+                            cell.coord.row() + 1,
+                            cell.coord.col() + 1,
+                        )
+                        .unwrap_or(LiteralValue::Empty);
+                    if matches!(current, LiteralValue::Empty) {
+                        self.iterative_state_values
+                            .get(&vertex)
+                            .cloned()
+                            .unwrap_or(current)
+                    } else {
+                        current
+                    }
+                } else {
+                    self.graph.get_value(vertex).unwrap_or(LiteralValue::Empty)
+                };
+                (vertex, value)
+            })
+            .collect()
+    }
+
+    fn record_original_cycle_seeds(&mut self, schedule: &super::scheduler::Schedule) {
+        if self.resumable.as_ref().unwrap().original_cycles_recorded {
+            return;
+        }
+        for cycle in &schedule.cycles {
+            let mut key = cycle.clone();
+            key.sort_unstable();
+            let seeds = self.capture_original_cycle_seeds(&key);
+            let state = self.resumable.as_mut().unwrap();
+            state.original_cycles.insert(key.clone());
+            // Retained SCCs were captured already at logical admission.
+            state.cycle_seeds.entry(key).or_insert(seeds);
+        }
+        self.resumable.as_mut().unwrap().original_cycles_recorded = true;
     }
 
     fn resumable_should_stop(

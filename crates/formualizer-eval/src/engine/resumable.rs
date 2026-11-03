@@ -76,17 +76,6 @@ pub(super) struct LogicalRecalculation {
 }
 
 impl LogicalRecalculation {
-    pub fn record_original_cycles(&mut self, schedule: &super::scheduler::Schedule) {
-        if !self.original_cycles_recorded {
-            for cycle in &schedule.cycles {
-                let mut key = cycle.clone();
-                key.sort_unstable();
-                self.original_cycles.insert(key);
-            }
-            self.original_cycles_recorded = true;
-        }
-    }
-
     pub fn forget_dissolved_new_cycles(&mut self, vertices: &[super::VertexId]) {
         if self.new_cycle_members.is_empty()
             || !vertices.iter().any(|v| self.new_cycle_members.contains(v))
