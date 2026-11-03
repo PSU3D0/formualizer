@@ -9,6 +9,7 @@ mod cancellation;
 mod change_log;
 mod changelog_replay;
 mod clock_snapshot;
+mod resumable_evaluation;
 mod common;
 mod cross_sheet_named_range_first_cell;
 mod current_read_closure;

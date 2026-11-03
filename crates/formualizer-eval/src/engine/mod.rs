@@ -9,6 +9,8 @@ pub mod arrow_ingest;
 #[doc(hidden)]
 pub mod authority;
 pub mod cancel;
+pub mod resumable;
+pub use resumable::{EvaluationStop, EvaluationProgress, IncompleteEvaluation, StopReason};
 pub(crate) mod convergence;
 pub(crate) mod derived_formats;
 pub mod effects;

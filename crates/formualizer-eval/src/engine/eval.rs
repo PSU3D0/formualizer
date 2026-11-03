@@ -1034,6 +1034,8 @@ pub struct Engine<R> {
     clock: crate::timezone::SnapshotClock,
     thread_pool: Option<Arc<rayon::ThreadPool>>,
     pub recalc_epoch: u64,
+    #[cfg(test)]
+    pub(crate) resumable_stop_after_units_for_test: Option<usize>,
     snapshot_id: std::sync::atomic::AtomicU64,
     topology_epoch: u64,
     cached_static_schedule: Option<CachedScheduleEntry>,
@@ -2928,6 +2930,8 @@ where
             clock: crate::timezone::SnapshotClock::new(clock),
             thread_pool,
             recalc_epoch: 0,
+            #[cfg(test)]
+            resumable_stop_after_units_for_test: None,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             topology_epoch: 0,
             cached_static_schedule: None,
@@ -3104,6 +3108,8 @@ where
             clock: crate::timezone::SnapshotClock::new(clock),
             thread_pool: Some(thread_pool),
             recalc_epoch: 0,
+            #[cfg(test)]
+            resumable_stop_after_units_for_test: None,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
             topology_epoch: 0,
             cached_static_schedule: None,
@@ -15576,6 +15582,12 @@ where
         }
         result
     }
+
+    pub fn evaluate_all_until(&mut self, _stop: super::EvaluationStop) -> Result<super::EvaluationProgress, ExcelError> {
+        self.evaluate_all().map(super::EvaluationProgress::Complete)
+    }
+
+    pub fn has_pending_resumable_evaluation(&self) -> bool { false }
 
     /// Evaluate all dirty/volatile vertices.
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
