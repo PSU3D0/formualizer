@@ -120,3 +120,133 @@ fn array_criteria_lift_criteria_aggregates() {
         }
     }
 }
+
+/// `COUNTIF` over a long array of criteria answers from one pass over the range;
+/// each element must still give what `COUNTIF` gives for that one criterion.
+#[test]
+fn array_countif_agrees_with_single_criterion_countif() {
+    use chrono::NaiveDate;
+    let date = NaiveDate::from_ymd_opt(2002, 2, 1).unwrap();
+    let serial = LiteralValue::Date(date).as_serial_number().unwrap();
+    let cells = [
+        n(5.0),
+        LiteralValue::Int(5),
+        n(5.0 + 1e-13),
+        n(5.0 + 1e-11),
+        t("5"),
+        t("05"),
+        t("5.0"),
+        t("Ab"),
+        t("aB"),
+        t("ab "),
+        t(""),
+        LiteralValue::Empty,
+        LiteralValue::Boolean(true),
+        LiteralValue::Boolean(false),
+        t("TRUE"),
+        n(1.0),
+        n(0.0),
+        LiteralValue::Date(date),
+        n(serial),
+        t("2/1/2002"),
+        LiteralValue::Error(formualizer_common::ExcelErrorKind::Na.into()),
+    ];
+    // Twice over: long enough for the array to be answered from one pass.
+    let cells = [cells.as_slice(), cells.as_slice()].concat();
+    let last = cells.len() as u32;
+    // Elements beyond the cells themselves: equality spellings, then the
+    // predicates that keep the walk, mixed in one array.
+    let literals = [
+        "5",
+        "\"5\"",
+        "\"5.0\"",
+        "\"05\"",
+        "\"=5\"",
+        "\"ab\"",
+        "\"AB\"",
+        "\"ab \"",
+        "\"\"",
+        "\"=\"",
+        "\"<>\"",
+        "TRUE",
+        "FALSE",
+        "\"true\"",
+        "1",
+        "0",
+        "\"2/1/2002\"",
+        "\">1\"",
+        "\"a*\"",
+        "\"<>ab\"",
+    ];
+    let literals = [literals.as_slice(), literals.as_slice()].concat();
+    let array = format!("{{{}}}", literals.join(","));
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let mut e = Engine::new(
+            TestWorkbook::default(),
+            EvalConfig::default().with_formula_plane_mode(mode),
+        );
+        for (i, cell) in cells.iter().enumerate() {
+            e.set_cell_value("Sheet1", i as u32 + 1, 1, cell.clone())
+                .unwrap();
+        }
+        let mut pairs = Vec::new();
+        let mut formula = |row: u32, col: u32, text: String| {
+            e.set_cell_formula("Sheet1", row, col, parse(&text).unwrap())
+                .unwrap();
+        };
+        // Column C: each cell as a criterion. Rows from 101: its lift.
+        formula(101, 3, format!("=COUNTIF(A1:A{last},A1:A{last})"));
+        // Not the error cells: an error criterion is the result of a single
+        // COUNTIF, while an error element matches nothing.
+        for row in
+            (1..=last).filter(|row| !matches!(cells[*row as usize - 1], LiteralValue::Error(_)))
+        {
+            formula(row, 3, format!("=COUNTIF(A1:A{last},A{row})"));
+            pairs.push(((row, 3), (100 + row, 3)));
+        }
+        // Row 201 from column D: a literal array over stored cells, then over
+        // a whole column with stored cells and one with none.
+        for (block, range) in [
+            (201, format!("A1:A{last}")),
+            (301, "A:A".into()),
+            (401, "AZ:AZ".into()),
+        ] {
+            formula(block, 4, format!("=COUNTIF({range},{array})"));
+            for (i, literal) in literals.iter().enumerate() {
+                let col = 4 + i as u32;
+                formula(block + 1, col, format!("=COUNTIF({range},{literal})"));
+                pairs.push(((block, col), (block + 1, col)));
+            }
+        }
+        e.evaluate_all().unwrap();
+        for ((r1, c1), (r2, c2)) in pairs {
+            let (a, b) = (
+                e.get_cell_value("Sheet1", r1, c1),
+                e.get_cell_value("Sheet1", r2, c2),
+            );
+            assert_eq!(a, b, "R{r1}C{c1} and R{r2}C{c2} differ ({mode:?})");
+        }
+    }
+}
+
+#[test]
+fn distinct_count_idiom_over_a_long_column() {
+    const ROWS: u32 = 5_000;
+    let mut e = Engine::new(TestWorkbook::default(), EvalConfig::default());
+    for row in 1..=ROWS {
+        e.set_cell_value("Sheet1", row, 1, t(&format!("k{}", row % 1_000)))
+            .unwrap();
+    }
+    // Walking the column per element is quadratic: 25 million visits here.
+    let formula = format!("=SUM(1/COUNTIF(A1:A{ROWS},A1:A{ROWS}))");
+    e.set_cell_formula("Sheet1", 1, 3, parse(&formula).unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    let got = e
+        .get_cell_value("Sheet1", 1, 3)
+        .unwrap_or(LiteralValue::Empty);
+    assert!(close(&got, &n(1_000.0)), "{got:?}");
+}
