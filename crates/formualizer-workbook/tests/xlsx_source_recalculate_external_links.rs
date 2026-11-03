@@ -791,3 +791,130 @@ fn ordinary_load_reads_linked_workbook_names_from_the_cache() {
         ));
     }
 }
+
+/// Evaluate `bytes` through the ordinary loader.
+fn ordinary_workbook(bytes: Vec<u8>) -> formualizer_workbook::Workbook {
+    use formualizer_workbook::{LoadStrategy, NativeXlsxAdapter, SpreadsheetReader, Workbook};
+    let mut wb = Workbook::from_reader(
+        NativeXlsxAdapter::open_bytes(bytes).unwrap(),
+        LoadStrategy::EagerAll,
+        formualizer_workbook::WorkbookConfig::ephemeral(),
+    )
+    .unwrap();
+    wb.evaluate_all().unwrap();
+    wb
+}
+
+fn is_ref_error(value: Option<formualizer_common::LiteralValue>) -> bool {
+    matches!(
+        value,
+        Some(formualizer_common::LiteralValue::Error(e))
+            if e.kind == formualizer_common::ExcelErrorKind::Ref
+    )
+}
+
+#[test]
+fn legacy_intersection_tells_local_and_linked_names_apart() {
+    let named_book = |cells, names| {
+        with_links(
+            &book(&[Ws::new("Sheet1", cells)], names),
+            &[named_link(LINKED_NAMES)],
+        )
+    };
+    // A local scalar spelled like a linked range name is not external.
+    let bytes = with_chain(
+        &named_book(
+            vec![formula("A1", "SUM([1]!Sales)"), formula("A2", "Sales+1")],
+            "<definedName name=\"Sales\">10</definedName>",
+        ),
+        &["A1", "A2"],
+    );
+    let out = recalc(&bytes);
+    assert_eq!(value_at(&out.bytes, 1, "A1").as_deref(), Some("63.5"));
+    assert_eq!(value_at(&out.bytes, 1, "A2").as_deref(), Some("11"));
+    // A linked scalar spelled like a local external range is not a range.
+    let bytes = with_chain(
+        &named_book(
+            vec![
+                formula("A1", "[1]!Region&\"x\""),
+                formula("A2", "SUM(Region)"),
+            ],
+            "<definedName name=\"Region\">[1]Data!$B$1:$B$3</definedName>",
+        ),
+        &["A1", "A2"],
+    );
+    let out = recalc(&bytes);
+    assert_eq!(value_at(&out.bytes, 1, "A1").as_deref(), Some("bx"));
+    assert_eq!(value_at(&out.bytes, 1, "A2").as_deref(), Some("63.5"));
+    // The linked range name itself still has no position to intersect.
+    let bytes = with_chain(
+        &named_book(
+            vec![
+                formula("A1", "SUM([1]!Sales)"),
+                formula("A2", "[1]!Sales+1"),
+            ],
+            "",
+        ),
+        &["A1", "A2"],
+    );
+    refuses(
+        &bytes,
+        "implicit intersection of a defined name holding an external range",
+    );
+}
+
+#[test]
+fn refused_local_alias_leaves_the_linked_name_it_spells_readable() {
+    const ALIAS: &str = "<definedName name=\"Sales\">SUM([1]!Sales)</definedName>";
+    let named_book = |cells| {
+        with_links(
+            &book(&[Ws::new("Sheet1", cells)], ALIAS),
+            &[named_link(LINKED_NAMES)],
+        )
+    };
+    let direct = || formula("A1", "SUM([1]!Sales)");
+
+    // Nothing reads the alias: it is left out, and the direct read is served.
+    let out = recalc(&named_book(vec![direct()]));
+    assert_eq!(value_at(&out.bytes, 1, "A1").as_deref(), Some("63.5"));
+    let wb = ordinary_workbook(named_book(vec![direct()]));
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 1),
+        Some(formualizer_common::LiteralValue::Number(63.5))
+    );
+
+    // Reading the alias is refused, and only that read in an ordinary load.
+    let both = || named_book(vec![direct(), formula("A2", "Sales")]);
+    refuses(&both(), "defined name of a linked workbook");
+    let wb = ordinary_workbook(both());
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 1),
+        Some(formualizer_common::LiteralValue::Number(63.5))
+    );
+    assert!(is_ref_error(wb.get_value("Sheet1", 2, 1)));
+}
+
+#[test]
+fn refused_local_name_does_not_spread_through_a_linked_name_it_spells() {
+    // `Region` is refused (a linked range inside a name); `Tag` reads the
+    // linked `[1]!Region`, a scalar, so it does not depend on the local one.
+    let bytes = with_links(
+        &book(
+            &[Ws::new(
+                "Sheet1",
+                vec![formula("A1", "Tag"), formula("A2", "Region")],
+            )],
+            concat!(
+                "<definedName name=\"Region\">SUM([1]!Sales)</definedName>",
+                "<definedName name=\"Tag\">[1]!Region&amp;\"x\"</definedName>",
+            ),
+        ),
+        &[named_link(LINKED_NAMES)],
+    );
+    let wb = ordinary_workbook(bytes);
+    assert_eq!(
+        wb.get_value("Sheet1", 1, 1),
+        Some(formualizer_common::LiteralValue::Text("bx".into()))
+    );
+    assert!(is_ref_error(wb.get_value("Sheet1", 2, 1)));
+}

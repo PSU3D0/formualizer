@@ -649,7 +649,7 @@ fn name_key(name: &str) -> String {
     name.rsplit('!').next().unwrap_or(name).to_ascii_lowercase()
 }
 /// `[1]!Name` / `[1]Sheet!Name`: a name defined in the linked workbook.
-fn is_external_name(name: &str) -> bool {
+pub(crate) fn is_external_name(name: &str) -> bool {
     name.split_once('!')
         .is_some_and(|(qualifier, _)| qualifier.trim_start_matches('\'').starts_with('['))
 }
@@ -693,6 +693,14 @@ impl ExternalRead<'_> {
     }
 }
 impl Reads<'_> {
+    /// The lowercased defined names of this workbook read here. A linked
+    /// workbook's name (`[1]!Name`) is never one of them, however it is spelled.
+    fn local_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.names
+            .iter()
+            .filter(|name| !is_external_name(name))
+            .map(|name| name_key(name))
+    }
     fn external_reads(&self) -> impl Iterator<Item = ExternalRead<'_>> {
         self.externals
             .iter()
@@ -962,7 +970,7 @@ pub(crate) fn plan(
         {
             external_names.insert(name.to_ascii_lowercase());
         }
-        name_refs.push(reads.names.iter().map(|n| name_key(n)).collect());
+        name_refs.push(reads.local_names().collect());
     }
     // Through other names.
     loop {
@@ -1008,7 +1016,7 @@ pub(crate) fn plan(
             }
             Served::Range(v) => {
                 if matches!(read, ExternalRead::Name(_)) {
-                    linked_range_names.insert(name_key(raw));
+                    linked_range_names.insert(raw.to_ascii_lowercase());
                 }
                 values.ranges.insert(raw.to_owned(), v);
             }
@@ -1033,9 +1041,7 @@ pub(crate) fn plan(
             check_shape(&ast, &external_names, &context)?;
             let mut reads = Reads::default();
             collect(&ast, &mut reads);
-            for name in &reads.names {
-                used.insert(name_key(name));
-            }
+            used.extend(reads.local_names());
             for read in reads.external_reads() {
                 serve(read, &context, &mut values)?;
             }
@@ -1087,7 +1093,8 @@ pub(crate) fn plan(
         }
     }
     // A linked workbook's name holding a range has no worksheet position:
-    // legacy implicit intersection of it is refused like a local name's.
+    // legacy implicit intersection of it is refused like a local name's. It
+    // keeps its qualifier, so a local name of that spelling is not affected.
     range_names.extend(linked_range_names);
     Ok(Plan {
         values,

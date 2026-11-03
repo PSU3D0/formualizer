@@ -289,7 +289,7 @@ pub(crate) fn load(
         {
             external_names.insert(name.to_ascii_lowercase());
         }
-        name_refs.push(reads.names.iter().map(|n| name_key(n)).collect::<Vec<_>>());
+        name_refs.push(reads.local_names().collect::<Vec<_>>());
     }
     loop {
         let before = external_names.len();
@@ -351,7 +351,7 @@ pub(crate) fn load(
         if let Some(ast) = parse_formula(text) {
             let mut reads = Reads::default();
             collect(&ast, &mut reads);
-            used.extend(reads.names.iter().map(|n| name_key(n)));
+            used.extend(reads.local_names());
             if check_shape(&ast, &external_names, text)
                 .and_then(|()| serve(&ast))
                 .is_err()
@@ -410,11 +410,7 @@ pub(crate) fn load(
         if let Some(ast) = parse_formula(text) {
             let mut reads = Reads::default();
             collect(&ast, &mut reads);
-            if reads
-                .names
-                .iter()
-                .any(|n| refused_names.contains(&name_key(n)))
-            {
+            if reads.local_names().any(|n| refused_names.contains(&n)) {
                 refused_formulas.insert((sheet.clone(), *row, *col), text.clone());
             }
         }

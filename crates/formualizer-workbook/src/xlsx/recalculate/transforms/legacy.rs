@@ -878,13 +878,19 @@ pub(in crate::xlsx) fn lowered_texts(
 }
 
 /// A defined name of `names` (lowercased) that the rewrite wraps whole in
-/// `@(...)`, possibly sheet-qualified.
+/// `@(...)`, possibly sheet-qualified. A linked workbook's name is matched
+/// with its `[n]!` qualifier, so it never answers for a local name.
 fn intersected_name<'t>(text: &'t str, names: &HashSet<String>) -> Option<&'t str> {
     text.match_indices("@(").find_map(|(at, _)| {
         let inner = &text[at + 2..];
         let inner = &inner[..inner.find(')')?];
-        let name = inner.rsplit('!').next().unwrap_or(inner).trim();
-        names.contains(&name.to_ascii_lowercase()).then_some(inner)
+        let trimmed = inner.trim();
+        let key = if trimmed.starts_with('[') {
+            trimmed
+        } else {
+            trimmed.rsplit('!').next().unwrap_or(trimmed).trim()
+        };
+        names.contains(&key.to_ascii_lowercase()).then_some(inner)
     })
 }
 

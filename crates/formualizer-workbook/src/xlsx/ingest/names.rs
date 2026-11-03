@@ -390,15 +390,23 @@ impl CalculationNames {
         ))
         .ok()?;
         let mut names_exist = true;
+        let mut reads_linked_range = false;
         ast.visit_refs(|r| {
             if let formualizer_parse::parser::RefView::NamedRange { name } = r {
                 // A linked workbook's name (`[1]!Name`) exists when the link
                 // cache serves it.
                 names_exist &= self.calculation_name_index(name, scope).is_some()
                     || self.external_admitted(name);
+                reads_linked_range |= self
+                    .external_values
+                    .as_ref()
+                    .is_some_and(|values| values.range(name).is_some());
             }
         });
-        ((!self.policy.referenced_only || self.legacy_calculation_name(name) || names_exist)
+        // The engine binds a name's dependencies to names and scalar sources,
+        // so a name over a linked workbook's range name cannot be defined.
+        (!reads_linked_range
+            && (!self.policy.referenced_only || self.legacy_calculation_name(name) || names_exist)
             && ground(
                 &mut ast,
                 scope.and_then(|id| sheets.get(id)),
@@ -626,7 +634,9 @@ impl CalculationNames {
         let mut legacy_used = HashSet::new();
         let legacy_references = |ast: &ASTNode, out: &mut HashSet<String>| {
             ast.visit_refs(|r| {
-                if let formualizer_parse::parser::RefView::NamedRange { name } = r {
+                if let formualizer_parse::parser::RefView::NamedRange { name } = r
+                    && !crate::cached_external_links::is_external_name(name)
+                {
                     out.insert(name.rsplit('!').next().unwrap_or(name).to_ascii_lowercase());
                 }
             });
