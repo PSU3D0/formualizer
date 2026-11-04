@@ -6,6 +6,9 @@ mod review_sources;
 #[path = "resumable_mutations.rs"]
 mod mutations;
 
+#[path = "resumable_job_fix_round1.rs"]
+mod fix_round1;
+
 use crate::engine::*;
 use crate::function::Function;
 use crate::test_workbook::TestWorkbook;

@@ -179,6 +179,8 @@ pub(crate) struct Freshness {
     stale_total: u64,
     /// Passes stopped at a barrier over the request.
     barrier_stops: u64,
+    #[cfg(test)]
+    resumable_fr5_examined: usize,
 }
 
 impl<R: EvaluationContext> Engine<R> {
@@ -613,6 +615,8 @@ impl<R: EvaluationContext> Engine<R> {
         installed_earlier.extend(completed_cycles.iter().copied());
         // Only spills can re-dirty earlier installed readers (FR5).
         if self.freshness.had_spills || self.graph.has_spill_anchors() {
+            #[cfg(test)]
+            { self.freshness.resumable_fr5_examined += installed_earlier.len(); }
             self.freshness.committed.extend(installed_earlier.iter());
         }
         let pending = self.freshness_finish_pass(completed_cycles, &[], true);
@@ -636,6 +640,11 @@ impl<R: EvaluationContext> Engine<R> {
                 self.graph.set_dirty(v, true);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resumable_fr5_examined_for_test(&self) -> usize {
+        self.freshness.resumable_fr5_examined
     }
 
     pub(super) fn freshness_has_hints(&self) -> bool {
