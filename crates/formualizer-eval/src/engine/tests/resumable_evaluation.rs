@@ -9,6 +9,9 @@ mod mutations;
 #[path = "resumable_job_fix_round1.rs"]
 mod fix_round1;
 
+#[path = "resumable_job_fix_round2.rs"]
+mod fix_round2;
+
 use crate::engine::*;
 use crate::function::Function;
 use crate::test_workbook::TestWorkbook;
