@@ -254,7 +254,7 @@ fn fr5_reports_already_reported_reader_again_and_progress_monotone() {
                             r.changed.overflow_sheets.contains(&sheet)
                                 || r.changed.delta.records.iter().any(|x| {
                                     let (a, b, c, d) = x.bounds();
-                                    a <= row - 1 && row - 1 <= c && b <= col - 1 && col - 1 <= d
+                                    a < row && row - 1 <= c && b < col && col - 1 <= d
                                 }),
                             "missing delta family={family} cap={cap} {row},{col}: {old:?}->{new:?}"
                         );
