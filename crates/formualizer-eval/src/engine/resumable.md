@@ -82,7 +82,10 @@ let outcome = engine.recalc_with(
     Default::default(), EvaluationStop::after(Duration::from_millis(5)),
     |_, report| {
         let p = &report.progress;
-        println!("pass {}: {} / {} (exact: {})",
+        let filled = (p.completed_in_pass.saturating_mul(20)
+            / p.scheduled_in_pass.max(1)).min(20);
+        println!("[{}{}] pass {}: {} / {} (exact: {})",
+            "#".repeat(filled), "-".repeat(20 - filled),
             p.pass, p.completed_in_pass, p.scheduled_in_pass, p.total_exact);
         ControlFlow::Continue(())
     },
