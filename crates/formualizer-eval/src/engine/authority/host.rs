@@ -25,6 +25,7 @@ pub type ObservedRect = (u16, u32, u32, u32, u32);
 #[derive(Debug)]
 pub(crate) struct ObservedReadRecord {
     reads: Vec<ObservedRect>,
+    route_slots: Vec<u32>,
     value_committed: bool,
 }
 
@@ -92,6 +93,7 @@ pub struct AuthorityHost {
     /// these hints; current-value attestation is a separate bit in each
     /// existing sparse record. Formula/binding edits and rebuilds drop both.
     pub(crate) observed: FxHashMap<VertexId, ObservedReadRecord>,
+    observed_routes: Option<Box<super::observed::ObservedRoutes>>,
     pub(crate) rev_observed_value: u64,
     /// Bumped whenever some reader's observed set changes: the schedule
     /// cache key's `rev.dyn` (design §8.4).
@@ -315,10 +317,28 @@ impl AuthorityHost {
     ) {
         reads.sort_unstable();
         reads.dedup();
+        let routing_changed = self.observed.get(&reader).is_none_or(|r| r.reads != reads);
+        let route_slots = if routing_changed {
+            if let Some(old) = self.observed.get(&reader)
+                && let Some(routes) = self.observed_routes.as_mut()
+            {
+                routes.remove(&old.reads, &old.route_slots);
+            }
+            if reads.is_empty() {
+                Vec::new()
+            } else {
+                self.observed_routes
+                    .get_or_insert_with(Default::default)
+                    .insert(reader, &reads)
+            }
+        } else {
+            Vec::new()
+        };
         if let Some(record) = self.observed.get_mut(&reader) {
             let changed = record.reads != reads;
             if changed {
                 record.reads = reads;
+                record.route_slots = route_slots;
                 self.rev_dyn += 1;
             }
             if changed || record.value_committed != value_committed {
@@ -330,6 +350,7 @@ impl AuthorityHost {
                 reader,
                 ObservedReadRecord {
                     reads,
+                    route_slots,
                     value_committed,
                 },
             );
@@ -339,7 +360,10 @@ impl AuthorityHost {
     }
 
     pub(crate) fn forget_observed(&mut self, reader: VertexId) {
-        if self.observed.remove(&reader).is_some() {
+        if let Some(old) = self.observed.remove(&reader) {
+            if let Some(routes) = self.observed_routes.as_mut() {
+                routes.remove(&old.reads, &old.route_slots);
+            }
             self.rev_dyn += 1;
             self.rev_observed_value += 1;
         }
@@ -348,8 +372,24 @@ impl AuthorityHost {
     pub(crate) fn clear_observed(&mut self) {
         if !self.observed.is_empty() {
             self.observed.clear();
+            self.observed_routes = None;
             self.rev_dyn += 1;
             self.rev_observed_value += 1;
+        }
+    }
+
+    pub(crate) fn has_observed_routes(&self) -> bool {
+        self.observed_routes.as_ref().is_some_and(|r| !r.is_empty())
+    }
+
+    pub(crate) fn observed_readers(
+        &self,
+        sheet: u16,
+        rect: &super::geom::Rect,
+        out: &mut Vec<VertexId>,
+    ) {
+        if let Some(routes) = self.observed_routes.as_ref() {
+            routes.query(sheet, rect, out);
         }
     }
 

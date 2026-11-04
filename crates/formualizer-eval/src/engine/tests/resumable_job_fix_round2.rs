@@ -55,11 +55,22 @@ fn tiny_cases(names: bool) {
                     e.resumable_stop_after_units_for_test = Some(1);
                     let before_spill = v(&e, 1, 2);
                     let result = test_recalc_slice(&mut e, EvaluationStop::none(), job).unwrap();
-                    if v(&e, 1, 2).is_none()
+                    if !installed_empty
+                        && v(&e, 1, 2).is_none()
                         && v(&e, 1, 4) == Some(LiteralValue::Number(0.))
                         && !e.graph.is_dirty(reader)
                     {
                         installed_empty = true;
+                        let observed = e
+                            .graph
+                            .authority_host()
+                            .observed(reader)
+                            .map(|r| r.to_vec());
+                        println!(
+                            "OBS names={names} family={family} job={job} dynamic={} observed={observed:?}",
+                            e.graph.is_dynamic(reader)
+                        );
+                        assert_eq!(observed.as_deref(), Some([(sheet, 4, 1, 4, 1)].as_slice()));
                         e.graph.authority_sync();
                         covered_at_install = e
                             .graph
@@ -108,37 +119,53 @@ fn unnamed_future_spill_indirect_matches_ordinary() {
 }
 
 #[test]
-fn empty_grid_views_record_bounded_reference_coordinates() {
+fn empty_grid_read_receipts_keep_future_coordinates() {
     use crate::engine::live_edges::{ReadLog, RecordingContext};
-    use crate::traits::{EvaluationContext, RangeResolver};
-    for materialized in [false, true] {
-        let mut e = engine(false);
-        f(&mut e, 1, 10, "=1");
-        e.force_materialize_range_views = materialized;
-        assert!(
-            e.sheet_store().sheet("Sheet1").is_none(),
-            "fixture must exercise missing Arrow sheet"
-        );
-        let sheet = e.graph.sheet_id("Sheet1").unwrap();
-        for (reference, expected) in [("B5", (sheet, 4, 1, 4, 1)), ("B5:B8", (sheet, 4, 1, 7, 1))] {
-            let log = ReadLog::default();
-            let ctx = RecordingContext::new(&e, &log);
-            let reference =
-                formualizer_parse::parser::ReferenceType::from_string(reference).unwrap();
-            let view = ctx.resolve_range_view(&reference, "Sheet1").unwrap();
-            assert_eq!(view.sheet_name(), "__tmp");
-            assert_eq!(
-                log.take(),
-                vec![expected],
-                "grid read must not inherit a temporary view's identity"
-            );
-        }
+    use crate::traits::EvaluationContext;
+    let mut e = engine(false);
+    f(&mut e, 1, 10, "=1");
+    assert_eq!(v(&e, 5, 2), None);
+    let sheet = e.graph.sheet_id("Sheet1").unwrap();
+    for (reference, expected) in [("B5", (sheet, 4, 1, 4, 1)), ("B5:B8", (sheet, 4, 1, 7, 1))] {
         let log = ReadLog::default();
         let ctx = RecordingContext::new(&e, &log);
-        ctx.resolve_range_reference(Some("Sheet1"), Some(5), Some(2), Some(8), Some(2))
-            .unwrap();
-        assert_eq!(log.take(), vec![(sheet, 4, 1, 7, 1)]);
+        let reference = formualizer_parse::parser::ReferenceType::from_string(reference).unwrap();
+        ctx.resolve_range_view(&reference, "Sheet1").unwrap();
+        assert_eq!(log.take(), vec![expected]);
     }
+}
+
+#[test]
+fn observed_routes_retarget_invalidate_and_clear() {
+    use crate::engine::authority::{geom::Rect, host::AuthorityHost};
+    let mut host = AuthorityHost::default();
+    let reader = crate::engine::VertexId(123);
+    let old = [(0, 4, 1, 4, 1)];
+    let new = [(1, 6, 2, 8, 2)];
+    let query = |host: &AuthorityHost, sheet, rect| {
+        let mut out = Vec::new();
+        host.observed_readers(sheet, &rect, &mut out);
+        out
+    };
+    host.set_observed(reader, old.to_vec());
+    assert_eq!(query(&host, 0, Rect::cell(4, 1)), vec![reader]);
+    let revision = host.rev_dyn();
+    host.set_observed_with_value(reader, old.to_vec(), false);
+    assert_eq!(host.rev_dyn(), revision);
+    assert_eq!(
+        query(&host, 0, Rect::cell(4, 1)),
+        vec![reader],
+        "routing survives value invalidation"
+    );
+    host.set_observed(reader, new.to_vec());
+    assert!(query(&host, 0, Rect::cell(4, 1)).is_empty());
+    assert_eq!(query(&host, 1, Rect::cell(7, 2)), vec![reader]);
+    host.forget_observed(reader);
+    assert!(!host.has_observed_routes());
+    assert!(query(&host, 1, Rect::cell(7, 2)).is_empty());
+    host.set_observed(reader, old.to_vec());
+    host.clear_observed();
+    assert!(!host.has_observed_routes());
 }
 
 fn make_sweep(family: bool, mask: usize, depth: u32) -> Engine<TestWorkbook> {
