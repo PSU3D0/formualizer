@@ -95,7 +95,7 @@ fn job_graph_build_and_scheduling_have_separate_boundaries() {
         },
     );
     for r in 1..=10 {
-        e.stage_formula_text("Sheet1", r, 1, format!("={r}"));
+        e.stage_formula_text("Sheet1", r, 1, if r == 1 { "=ABS(-1)".into() } else { format!("={r}") });
     }
     let sheet = e.graph.sheet_id("Sheet1").unwrap();
     e.begin_recalc(Default::default()).unwrap();
@@ -112,5 +112,9 @@ fn job_graph_build_and_scheduling_have_separate_boundaries() {
     assert_eq!(plan.phase, StepPhase::Scheduling);
     assert_eq!(plan.step_computed_vertices, 0);
     assert_eq!(plan.progress.scheduled_in_pass, 10);
-    assert!(plan.progress.total_exact);
+    assert!(!plan.progress.total_exact);
+    while e.has_active_recalc_job() {
+        e.step_recalc(EvaluationStop::after(Duration::ZERO)).unwrap();
+    }
+    assert_eq!(e.get_cell_value("Sheet1",1,1),Some(LiteralValue::Number(1.)));
 }

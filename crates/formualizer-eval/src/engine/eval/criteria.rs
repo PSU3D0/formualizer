@@ -248,6 +248,10 @@ impl ColumnIndex {
 
 /// A run's index: every criteria column (numbers and lowered texts, as the
 /// mask path reads them), the driver's row chunks and the target lane.
+#[cfg(test)]
+static INDEX_BUILDS_FOR_TEST: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 pub(super) struct CriteriaIndex {
     rows: usize,
     chunks: Vec<(usize, usize)>,
@@ -297,6 +301,11 @@ where
         let ref_type = ds.compact_ref(*ref_type);
         let reference = ds.reconstruct_reference_type_for_eval(ref_type, self.graph.sheet_reg());
         self.resolve_range_view(&reference, current_sheet).ok()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn criteria_index_builds_for_test(&self) -> usize {
+        INDEX_BUILDS_FOR_TEST.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Build the run's index, or `None` where the plan declines.
@@ -357,6 +366,8 @@ where
                 numeric_text: std::sync::OnceLock::new(),
             })
             .collect();
+        #[cfg(test)]
+        INDEX_BUILDS_FOR_TEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Some(CriteriaIndex {
             rows,
             chunks,

@@ -216,6 +216,16 @@ fn job_priority_finishes_viewport_before_background() {
         },
     );
     e.add_sheet("Visible").unwrap();
+    {
+        let mut ingest = e.begin_bulk_ingest_arrow();
+        ingest.add_sheet("Facts", 1, 256);
+        for row in 1..=200 {
+            ingest
+                .append_row("Facts", &[LiteralValue::Number(row as f64)])
+                .unwrap();
+        }
+        ingest.finish().unwrap();
+    }
     for c in 1..=200 {
         for r in 1..=250 {
             e.set_cell_formula("Sheet1", r, c, parse(format!("=ROW()*{c}")).unwrap())
@@ -223,13 +233,11 @@ fn job_priority_finishes_viewport_before_background() {
         }
     }
     for r in 1..=200 {
-        e.set_cell_value("Visible", r, 1, LiteralValue::Number(r as f64))
-            .unwrap();
         e.set_cell_formula(
             "Visible",
             r,
             2,
-            parse(format!("=SUMIFS($A$1:$A$200,$A$1:$A$200,\">0\")+A{r}")).unwrap(),
+            parse("=SUMIFS(Facts!$A$1:$A$200,Facts!$A$1:$A$200,MOD(ROW(),100))").unwrap(),
         )
         .unwrap();
     }
@@ -250,7 +258,27 @@ fn job_priority_finishes_viewport_before_background() {
     assert!(!e.has_pending_in_rect(sheet, 0, 1, 9, 2));
     assert!(report.step_computed_vertices >= 200);
     assert!(report.step_computed_vertices < 1000);
+    let priority_kernel_members = e.criteria_kernel_members_for_test();
+    assert_eq!(
+        e.criteria_index_builds_for_test(),
+        1,
+        "priority builds the criteria index once"
+    );
+    assert!(
+        (199..=200).contains(&priority_kernel_members),
+        "whole physical criteria run must execute in priority stage"
+    );
     let result = finish(&mut e).result.unwrap();
+    assert_eq!(
+        e.criteria_index_builds_for_test(),
+        1,
+        "full schedule must reuse the installed priority run"
+    );
+    assert_eq!(
+        e.criteria_kernel_members_for_test(),
+        priority_kernel_members,
+        "full schedule must not rebuild/re-execute the criteria run"
+    );
     assert_eq!(
         result.computed_vertices, 50201,
         "priority must not re-execute a family"
