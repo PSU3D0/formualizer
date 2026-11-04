@@ -149,8 +149,11 @@ impl<R: EvaluationContext> Engine<R> {
     ///
     /// Finished/Cancelled take precedence over Break on a terminal step.
     /// Do not begin a replacement job inside the callback. Callback panics
-    /// propagate and leave the between-step job active; custom-function panics
-    /// have the stricter limitations described in [resumable](crate::engine::resumable).
+    /// propagate without additional lifecycle cleanup: the job keeps the state
+    /// it reached before the panic, so an untouched non-terminal job stays
+    /// active while a finished or cancelled job has already ended.
+    /// Custom-function panics have the stricter limitations described in
+    /// [resumable](crate::engine::resumable).
     pub fn recalc_with(
         &mut self,
         options: RecalcJobOptions,
