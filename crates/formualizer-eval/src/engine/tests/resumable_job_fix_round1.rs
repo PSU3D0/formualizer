@@ -108,7 +108,10 @@ fn refusal_matrix(modes: &[usize]) {
                 .unwrap()
                 .request_id;
             assert!(!before_flags[0] && !before_flags[2]);
-            assert!(foreign(&mut e, mode, &plan).is_err());
+            let error = foreign(&mut e, mode, &plan).unwrap_err();
+            assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Value);
+            assert!(matches!(error.extra(), formualizer_common::ExcelErrorExtra::RecalcJobActive),
+                "untyped refusal: mode={mode} family={family}: {error:?}");
             assert!(e.has_active_recalc_job());
             assert_eq!(
                 flags(&e),
@@ -151,7 +154,10 @@ fn refusal_matrix(modes: &[usize]) {
             );
             e.begin_recalc(Default::default()).unwrap();
             job_step(&mut e);
-            assert!(foreign(&mut e, mode, &plan).is_err());
+            let error = foreign(&mut e, mode, &plan).unwrap_err();
+            assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Value);
+            assert!(matches!(error.extra(), formualizer_common::ExcelErrorExtra::RecalcJobActive),
+                "untyped refusal: mode={mode} family={family}: {error:?}");
             e.cancel_recalc().unwrap();
             e.evaluate_all().unwrap();
             assert_eq!(clock.0.load(Ordering::SeqCst) - clock_before, 3);

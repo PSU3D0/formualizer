@@ -3213,22 +3213,20 @@ impl Workbook {
     pub fn begin_recalc(
         &mut self,
         options: formualizer_eval::engine::RecalcJobOptions,
-    ) -> Result<(), IoError> {
-        self.engine.begin_recalc(options).map_err(IoError::Engine)
+    ) -> Result<(), formualizer_eval::engine::RecalcJobError> {
+        self.engine.begin_recalc(options)
     }
     pub fn step_recalc(
         &mut self,
         stop: formualizer_eval::engine::EvaluationStop,
-    ) -> Result<formualizer_eval::engine::StepReport, IoError> {
-        self.engine.step_recalc(stop).map_err(IoError::Engine)
+    ) -> Result<formualizer_eval::engine::StepReport, formualizer_eval::engine::RecalcJobError> {
+        self.engine.step_recalc(stop)
     }
     pub fn prioritize_recalc(
         &mut self,
         targets: &[formualizer_eval::engine::EvaluationTarget],
-    ) -> Result<(), IoError> {
-        self.engine
-            .prioritize_recalc(targets)
-            .map_err(IoError::Engine)
+    ) -> Result<(), formualizer_eval::engine::RecalcJobError> {
+        self.engine.prioritize_recalc(targets)
     }
     pub fn cancel_recalc(&mut self) -> Option<formualizer_eval::engine::StepReport> {
         self.engine.cancel_recalc()

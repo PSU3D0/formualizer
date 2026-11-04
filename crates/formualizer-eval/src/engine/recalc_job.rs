@@ -61,11 +61,11 @@ impl Walk {
 }
 impl<R: EvaluationContext> Engine<R> {
     /// O(1) setup. Planning and clock sampling happen in the first step.
-    pub fn begin_recalc(&mut self, options: RecalcJobOptions) -> Result<(), ExcelError> {
+    pub fn begin_recalc(&mut self, options: RecalcJobOptions) -> Result<(), RecalcJobError> {
         if self.has_active_recalc_job() || self.resumable.is_some() {
             return Err(Self::job_error(
                 "recalculation already pending; finish it before beginning another job",
-            ));
+            ).into());
         }
         self.recalc_options = Some(options);
         Ok(())
@@ -83,7 +83,7 @@ impl<R: EvaluationContext> Engine<R> {
     pub fn prioritize_recalc(
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
-    ) -> Result<(), ExcelError> {
+    ) -> Result<(), RecalcJobError> {
         let options = self
             .recalc_options
             .as_mut()
@@ -112,9 +112,9 @@ impl<R: EvaluationContext> Engine<R> {
             result: None,
         })
     }
-    pub fn step_recalc(&mut self, stop: EvaluationStop) -> Result<StepReport, ExcelError> {
+    pub fn step_recalc(&mut self, stop: EvaluationStop) -> Result<StepReport, RecalcJobError> {
         if !self.has_active_recalc_job() {
-            return Err(Self::job_error("no active recalculation job"));
+            return Err(Self::job_error("no active recalculation job").into());
         }
         let result = self.drive_recalc_step(stop);
         if result.as_ref().map_or(true, |r| {
@@ -130,7 +130,18 @@ impl<R: EvaluationContext> Engine<R> {
                 self.freshness_begin_request();
             }
         }
-        result
+        result.map_err(Into::into)
+    }
+
+    /// Drive an explicit job, invoking the callback between steps.
+    pub fn recalc_with(
+        &mut self,
+        options: RecalcJobOptions,
+        _stop_per_step: EvaluationStop,
+        _on_step: impl FnMut(&mut Self, &StepReport) -> std::ops::ControlFlow<()>,
+    ) -> Result<RecalcOutcome, RecalcJobError> {
+        self.begin_recalc(options)?;
+        Ok(RecalcOutcome::Paused)
     }
 
     pub(super) fn drive_recalc_step(

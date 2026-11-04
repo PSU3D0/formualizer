@@ -67,13 +67,14 @@ fn job_deadline_accumulates_active_time_and_excludes_idle() {
     loop {
         calls += 1;
         match e.step_recalc(EvaluationStop::after(Duration::ZERO)) {
-            Err(error) => {
+            Err(RecalcJobError::Evaluation(error)) => {
                 assert!(matches!(
                     error.extra(),
                     formualizer_common::ExcelErrorExtra::Resource { .. }
                 ));
                 break;
             }
+            Err(error) => panic!("unexpected job error: {error}"),
             Ok(report) => assert_ne!(report.phase, StepPhase::Finished),
         }
         assert!(calls < 100);

@@ -47,6 +47,53 @@ pub enum StopReason {
     Cancelled,
 }
 
+/// A job lifecycle or evaluation failure.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum RecalcJobError {
+    /// No explicit job exists.
+    NoActiveJob,
+    /// A logical recalculation already exists.
+    AlreadyPending {
+        /// True for an explicit job; false for an implicit continuation.
+        explicit: bool,
+    },
+    /// A step failed. The job has ended; unfinished work remains dirty.
+    Evaluation(formualizer_common::ExcelError),
+}
+impl std::fmt::Display for RecalcJobError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoActiveJob => f.write_str("no active recalculation job"),
+            Self::AlreadyPending { explicit } => write!(f, "recalculation already pending (explicit: {explicit})"),
+            Self::Evaluation(error) => write!(f, "recalculation failed: {error}"),
+        }
+    }
+}
+impl std::error::Error for RecalcJobError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Evaluation(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+impl From<formualizer_common::ExcelError> for RecalcJobError {
+    fn from(error: formualizer_common::ExcelError) -> Self { Self::Evaluation(error) }
+}
+
+/// Terminal or suspended outcome of the closure driver.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum RecalcOutcome {
+    /// All work finished; the job is no longer active.
+    Finished(EvalResult),
+    /// Cancellation ended the job.
+    Cancelled,
+    /// The callback broke; the job remains active for manual stepping.
+    Paused,
+}
+
 /// Options for an engine-owned recalculation job.
 #[derive(Clone, Debug)]
 #[non_exhaustive]

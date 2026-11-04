@@ -87,10 +87,13 @@ fn test_recalc_slice<R: crate::traits::EvaluationContext>(
         return e.evaluate_all_until(stop);
     }
     if !e.has_active_recalc_job() {
-        e.begin_recalc(Default::default())?;
+        e.begin_recalc(Default::default()).unwrap();
     }
     let r = loop {
-        let r = e.step_recalc(stop.clone())?;
+        let r = e.step_recalc(stop.clone()).map_err(|error| match error {
+            RecalcJobError::Evaluation(error) => error,
+            other => panic!("unexpected job lifecycle error: {other}"),
+        })?;
         if !matches!(r.phase, StepPhase::BuildingGraph | StepPhase::Scheduling) {
             break r;
         }

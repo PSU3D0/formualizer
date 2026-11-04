@@ -217,6 +217,9 @@ pub enum ExcelErrorExtra {
     #[default]
     None,
 
+    /// An evaluation request was refused because an explicit recalculation job is active.
+    RecalcJobActive,
+
     /// `#SPILL!` – information about the intended spill size.
     Spill {
         expected_rows: u32,
@@ -497,7 +500,7 @@ impl fmt::Display for ExcelError {
 
         // Optional kind-specific payload - keep it terse for logs.
         match self.extra() {
-            ExcelErrorExtra::None => {}
+            ExcelErrorExtra::None | ExcelErrorExtra::RecalcJobActive => {}
             ExcelErrorExtra::Spill {
                 expected_rows,
                 expected_cols,
