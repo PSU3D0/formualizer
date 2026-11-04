@@ -1,9 +1,9 @@
-#[path = "recalc_job_polish.rs"]
-mod polish;
 #[path = "recalc_job_array_delta.rs"]
 mod array_delta;
 #[path = "recalc_job_invariants.rs"]
 mod invariants;
+#[path = "recalc_job_polish.rs"]
+mod polish;
 #[path = "recalc_job_resources.rs"]
 mod resources;
 use crate::engine::*;

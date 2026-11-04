@@ -1,6 +1,86 @@
 use formualizer_eval::engine::{CancelToken, EvaluationProgress, EvaluationStop};
+use formualizer_eval::engine::{RecalcJobError, RecalcOutcome, StepPhase};
 use formualizer_workbook::{LiteralValue, Workbook, WorkbookConfig};
+use std::ops::ControlFlow;
 use std::time::Duration;
+
+#[test]
+fn workbook_job_types_and_errors() {
+    fn send<T: Send>() {}
+    send::<Workbook>();
+    let mut wb = Workbook::new_with_config(WorkbookConfig::ephemeral());
+    assert!(matches!(
+        wb.step_recalc(EvaluationStop::none()),
+        Err(RecalcJobError::NoActiveJob)
+    ));
+    assert!(matches!(
+        wb.prioritize_recalc(&[]),
+        Err(RecalcJobError::NoActiveJob)
+    ));
+    wb.begin_recalc(Default::default()).unwrap();
+    assert!(matches!(
+        wb.begin_recalc(Default::default()),
+        Err(RecalcJobError::AlreadyPending { explicit: true })
+    ));
+    wb.cancel_recalc();
+}
+#[test]
+fn workbook_closure_receives_workbook_and_can_pause_edit_prioritize() {
+    let mut wb = Workbook::new_with_config(WorkbookConfig::ephemeral());
+    wb.add_sheet("S").unwrap();
+    wb.set_formula("S", 1, 1, "=1").unwrap();
+    wb.set_formula("S", 2, 1, "=A1+1").unwrap();
+    let outcome = wb
+        .recalc_with(
+            Default::default(),
+            EvaluationStop::after(Duration::ZERO),
+            |wb, report| {
+                assert_eq!(report.phase, StepPhase::Scheduling);
+                wb.set_value("S", 1, 1, LiteralValue::Number(10.)).unwrap();
+                wb.prioritize_recalc(&[formualizer_eval::engine::EvaluationTarget::Cell {
+                    sheet: "S".into(),
+                    row: 2,
+                    col: 1,
+                }])
+                .unwrap();
+                ControlFlow::Break(())
+            },
+        )
+        .unwrap();
+    assert!(matches!(outcome, RecalcOutcome::Paused));
+    assert!(wb.has_active_recalc_job());
+    assert_eq!(
+        wb.step_recalc(EvaluationStop::none()).unwrap().phase,
+        StepPhase::Finished
+    );
+    assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Number(11.)));
+    assert!(matches!(
+        wb.recalc_with(Default::default(), EvaluationStop::none(), |_, _| {
+            ControlFlow::Break(())
+        })
+        .unwrap(),
+        RecalcOutcome::Finished(_)
+    ));
+}
+#[test]
+fn workbook_closure_cancel_is_terminal() {
+    let mut wb = Workbook::new_with_config(WorkbookConfig::ephemeral());
+    wb.add_sheet("S").unwrap();
+    wb.set_formula("S", 1, 1, "=1").unwrap();
+    assert!(matches!(
+        wb.recalc_with(
+            Default::default(),
+            EvaluationStop::after(Duration::ZERO),
+            |wb, _| {
+                wb.cancel_recalc().unwrap();
+                ControlFlow::Break(())
+            }
+        )
+        .unwrap(),
+        RecalcOutcome::Cancelled
+    ));
+    assert!(!wb.has_active_recalc_job());
+}
 
 #[test]
 fn workbook_resumable_passthrough_retains_installed_values() {

@@ -48,6 +48,10 @@ Cycles are detected during graph construction. When a circular dependency is fou
 
 This is the default `Static` behavior. Two opt-in modes change it: [runtime cycle detection](/docs/guides/circular-references-and-cycle-detection) lets guarded/routing-switch cycles resolve to values, and [iterative calculation](/docs/guides/iterative-calculation) settles genuinely circular cycles Excel-style. See the [Cycle Configuration Reference](/docs/reference/cycle-config) for the full surface.
 
+## Cooperative recalculation
+
+Rust [interruptible recalculation](/docs/guides/interruptible-recalculation) preserves installed work between calls. Explicit jobs hold their schedule, report progress and changed regions, and allow viewport priority. Reads can mix new installed values with old pending values until completion.
+
 ## Partial recalculation
 
 For a 10,000-row sheet where only one input cell changes, the engine marks only the dependent subgraph dirty. If only 50 cells depend on that input (directly or transitively), only those 50 are re-evaluated rather than all 10,000 rows. The `evaluate_cells` API allows targeting specific cells for even more precise control.

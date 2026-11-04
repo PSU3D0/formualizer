@@ -3216,21 +3216,57 @@ impl Workbook {
     ) -> Result<(), formualizer_eval::engine::RecalcJobError> {
         self.engine.begin_recalc(options)
     }
+    /// Step the explicit job. A returned evaluation error ends the job.
     pub fn step_recalc(
         &mut self,
         stop: formualizer_eval::engine::EvaluationStop,
-    ) -> Result<formualizer_eval::engine::StepReport, formualizer_eval::engine::RecalcJobError> {
+    ) -> Result<formualizer_eval::engine::StepReport, formualizer_eval::engine::RecalcJobError>
+    {
         self.engine.step_recalc(stop)
     }
+    /// Replace the pending viewport priority; families remain indivisible.
     pub fn prioritize_recalc(
         &mut self,
         targets: &[formualizer_eval::engine::EvaluationTarget],
     ) -> Result<(), formualizer_eval::engine::RecalcJobError> {
         self.engine.prioritize_recalc(targets)
     }
+    /// Drive a job with access to this Workbook between steps.
+    ///
+    /// Breaking pauses an active job. Finished and Cancelled are terminal.
+    /// Step failures end the job and are returned without an IoError wrapper.
+    pub fn recalc_with(
+        &mut self,
+        options: formualizer_eval::engine::RecalcJobOptions,
+        stop_per_step: formualizer_eval::engine::EvaluationStop,
+        mut on_step: impl FnMut(
+            &mut Self,
+            &formualizer_eval::engine::StepReport,
+        ) -> std::ops::ControlFlow<()>,
+    ) -> Result<formualizer_eval::engine::RecalcOutcome, formualizer_eval::engine::RecalcJobError>
+    {
+        use formualizer_eval::engine::{RecalcOutcome, StepPhase};
+        self.begin_recalc(options)?;
+        loop {
+            let report = self.step_recalc(stop_per_step.clone())?;
+            let flow = on_step(self, &report);
+            if let Some(result) = report.result {
+                return Ok(RecalcOutcome::Finished(result));
+            }
+            if report.phase == StepPhase::Cancelled || !self.has_active_recalc_job() {
+                return Ok(RecalcOutcome::Cancelled);
+            }
+            if flow.is_break() {
+                return Ok(RecalcOutcome::Paused);
+            }
+        }
+    }
+
+    /// End an explicit job, keeping installed work and pending dirtiness.
     pub fn cancel_recalc(&mut self) -> Option<formualizer_eval::engine::StepReport> {
         self.engine.cancel_recalc()
     }
+    /// Whether this Workbook owns an active explicit job.
     pub fn has_active_recalc_job(&self) -> bool {
         self.engine.has_active_recalc_job()
     }

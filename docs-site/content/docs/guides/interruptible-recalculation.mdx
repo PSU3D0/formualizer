@@ -1,0 +1,127 @@
+---
+title: Interruptible Recalculation
+description: Spread Rust recalculation over calls with progress, viewport priority and cooperative cancellation.
+---
+
+Rust hosts can yield between recalculation steps while preserving installed results. These APIs are currently Rust only; Python, JavaScript and worker bindings follow separately.
+
+## Choose an API
+
+`Engine::evaluate_all_until(EvaluationStop)` returns `EvaluationProgress::Complete(EvalResult)` or `Incomplete`. Repeated calls continue one logical recalculation, with one clock sample, random epoch and diagnostics collection. A different evaluation request safely ends this implicit continuation.
+
+Explicit jobs add a held schedule, formula progress, changed regions and viewport priority. Call `begin_recalc`, then `step_recalc` until Finished or Cancelled. A returned step error also ends the job. `recalc_with` drives the same lifecycle and calls your closure between steps; Break returns Paused and leaves an active job for later manual stepping. Engine and Workbook expose both APIs.
+
+## Soft budgets and installed values
+
+An evaluation step stops at an atomic unit boundary after its soft budget. A family run or cycle is never split, and the unit that observes cancellation is not installed. Only committed and flushed results become clean. The phases are BuildingGraph, Scheduling, Evaluating, Finished and Cancelled. Graph construction and scheduling remain indivisible, so a step can exceed its budget.
+
+Jobs currently evaluate single-threaded, including when ordinary parallel evaluation is enabled. Use a native worker thread to keep a UI responsive during long units.
+
+## Progress callback
+
+This Workbook example prints pass-local progress. A changed pass invalidates the old denominator; `total_exact == false` means the total is conservative or unknown. The callback also receives the terminal report.
+
+```rust
+use formualizer_eval::engine::{EvaluationStop, RecalcOutcome};
+use formualizer_workbook::{Workbook, WorkbookConfig};
+use std::{ops::ControlFlow, time::Duration};
+
+let mut wb = Workbook::new_with_config(WorkbookConfig::ephemeral());
+wb.add_sheet("S")?;
+wb.set_formula("S", 1, 1, "=1")?;
+wb.set_formula("S", 2, 1, "=A1+1")?;
+let outcome = wb.recalc_with(
+    Default::default(), EvaluationStop::after(Duration::from_millis(5)),
+    |_, report| {
+        let p = &report.progress;
+        println!("pass {}: {} / {} (exact: {})",
+            p.pass, p.completed_in_pass, p.scheduled_in_pass, p.total_exact);
+        ControlFlow::Continue(())
+    },
+)?;
+assert!(matches!(outcome, RecalcOutcome::Finished(_)));
+```
+
+The callback may read, edit, prioritize or cancel the owner. Finished and Cancelled take precedence over Break on a terminal step. Begin replacement jobs after the driver returns.
+
+## Viewport priority
+
+Priority affects order only. The last request wins; dirty precedents and whole touched family runs run first. If expansion exceeds 65,536 formulas, the job falls back to its full schedule without losing work.
+
+```rust
+use formualizer_eval::engine::{EvaluationStop, EvaluationTarget};
+
+wb.begin_recalc(Default::default())?;
+wb.prioritize_recalc(&[EvaluationTarget::Cell {
+    sheet: "S".into(), row: 2, col: 1, // targets are one-based
+}])?;
+let sheet = wb.engine().sheet_id("S").unwrap();
+while wb.has_active_recalc_job() {
+    let report = wb.step_recalc(EvaluationStop::after(std::time::Duration::ZERO))?;
+    if !wb.has_pending_in_rect(sheet, 0, 0, 1, 0) {
+        // Viewport coordinates are zero-based and inclusive.
+        println!("{:?}", wb.get_value("S", 2, 1));
+    }
+    println!("{:?}", report.changed);
+}
+```
+
+Reads between steps mix newly installed values and old pending values. Pending queries visit only viewport coordinates and report raw dirtiness; combine them with job phase, since completion can re-dirty volatile or iterative formulas for the next request. `pending_cells_in_rect` returns pending formula regions, not values.
+
+`report.changed.delta` conservatively covers changed regions, possibly including unchanged cells in an installed run. With more than `max_delta_records` coalesced records (default 1,024), records are replaced by `overflow_sheets`; repaint visible cells on those sheets. The cap bounds returned records, not all temporary collector allocation.
+
+## Worker thread and cancellation
+
+This moves the owning engine to a native thread, sends small report summaries over a channel, and cancels from the owning thread. The handshake makes the example deterministic; production hosts can cancel at any time.
+
+```rust
+use formualizer_eval::engine::{
+    CancelToken, Engine, EvalConfig, EvaluationStop, RecalcOutcome,
+};
+use formualizer_workbook::workbook::WBResolver;
+use formualizer_parse::parser::parse;
+use std::{ops::ControlFlow, sync::mpsc, thread};
+
+let mut engine = Engine::new(WBResolver::default(), EvalConfig::default());
+engine.set_cell_formula("S", 1, 1, parse("=1")?)?;
+let token = CancelToken::new();
+let worker_token = token.clone();
+let (tx, rx) = mpsc::channel();
+let (go_tx, go_rx) = mpsc::channel();
+let worker = thread::spawn(move || {
+    go_rx.recv().unwrap();
+    engine.recalc_with(Default::default(), EvaluationStop::cancel(worker_token),
+        |_, report| {
+            tx.send((report.phase, report.step_computed_vertices)).unwrap();
+            ControlFlow::Continue(())
+        })
+});
+token.cancel();
+go_tx.send(())?;
+assert!(matches!(worker.join().unwrap()?, RecalcOutcome::Cancelled));
+for (phase, computed) in rx { println!("{phase:?}: {computed}"); }
+```
+
+A cross-thread token does not interrupt an indivisible builtin immediately. Builtin polling is tracked as FORM-000321.
+
+## Typed errors and lifecycle
+
+Job methods return `RecalcJobError` directly, including on Workbook:
+
+- `NoActiveJob`: step or priority without a job.
+- `AlreadyPending { explicit }`: begin or drive while an explicit job or implicit continuation exists.
+- `Evaluation(ExcelError)`: evaluation failed; the job has ended. Inspect `source()` or the inner error for resource details, remove the cause, then begin again.
+
+Existing evaluation APIs retain their signatures. During an explicit job they refuse work without changing job state; match the error's `ExcelErrorExtra::RecalcJobActive` payload, with kind Value. Workbook's existing evaluation methods keep their `IoError::Engine` wrapping.
+
+Custom-function panics propagate and can leave the job active with request state uncleared. Catching such a panic is not supported recovery: discard that engine. This is different from a returned evaluation error.
+
+## Limits and carve-outs
+
+Work and hard-deadline limits accumulate across active steps, excluding idle time between calls. Scratch memory resets per step; owned held schedules count as retained memory unless shared with the engine cache. Soft deadlines do not replace hard resource limits.
+
+Supported edits fold into the job and invalidate its held schedule when needed. Iterative cycles created by edits start from current values, including earlier installed results; they may differ from fresh evaluation. Existing cycles retain their original seeds. Unversioned providers are assumed stable: bump a semantic revision or dirty affected cells if behavior changes.
+
+Raw store mutations and load-time bulk-finish paths are unsupported during a pending recalculation. Live-spill user writes retain the known FORM-000319 limitation. Graph slicing, cost-weighted progress and parallel jobs (FORM-000323) remain future work.
+
+See [Dependency Graph and Recalculation](/docs/core-concepts/dependency-graph-and-recalc) and [Large Workbook Performance](/docs/guides/large-workbook-performance).

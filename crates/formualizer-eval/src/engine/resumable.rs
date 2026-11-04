@@ -1,4 +1,4 @@
-//! Cooperative, installed-work-preserving full recalculation.
+#![doc = include_str!("resumable.md")]
 use super::{CancelToken, EvalResult};
 use std::time::Duration;
 
@@ -6,22 +6,28 @@ use std::time::Duration;
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct EvaluationStop {
+    /// Soft time allowance for this call, excluding time between calls.
     pub soft_deadline: Option<Duration>,
+    /// Cooperative cancellation checked at installation boundaries.
     pub cancel: Option<CancelToken>,
 }
 impl EvaluationStop {
+    /// Stop at the first eligible boundary after this duration.
     pub fn after(duration: Duration) -> Self {
         Self {
             soft_deadline: Some(duration),
             cancel: None,
         }
     }
+    /// Stop when this token is cancelled.
     pub fn cancel(token: CancelToken) -> Self {
         Self::none().with_cancel(token)
     }
+    /// Run without a soft deadline or cancellation token.
     pub fn none() -> Self {
         Self::default()
     }
+    /// Add cancellation to an existing deadline policy.
     pub fn with_cancel(mut self, token: CancelToken) -> Self {
         self.cancel = Some(token);
         self
@@ -29,21 +35,29 @@ impl EvaluationStop {
 }
 #[derive(Debug)]
 #[non_exhaustive]
+/// Result of an implicit cooperative recalculation call.
 pub enum EvaluationProgress {
+    /// The logical recalculation finished.
     Complete(EvalResult),
+    /// Installed work is preserved for another call.
     Incomplete(IncompleteEvaluation),
 }
 #[derive(Debug)]
 #[non_exhaustive]
+/// Telemetry for an unfinished implicit recalculation.
 pub struct IncompleteEvaluation {
+    /// Cooperative stop that ended this call.
     pub reason: StopReason,
     /// Vertices computed during this call.
     pub computed_vertices: usize,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
+/// Why an implicit call stopped before completion.
 pub enum StopReason {
+    /// The soft duration expired.
     Deadline,
+    /// The cancellation token was set.
     Cancelled,
 }
 
@@ -65,7 +79,9 @@ impl std::fmt::Display for RecalcJobError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoActiveJob => f.write_str("no active recalculation job"),
-            Self::AlreadyPending { explicit } => write!(f, "recalculation already pending (explicit: {explicit})"),
+            Self::AlreadyPending { explicit } => {
+                write!(f, "recalculation already pending (explicit: {explicit})")
+            }
             Self::Evaluation(error) => write!(f, "recalculation failed: {error}"),
         }
     }
@@ -79,7 +95,9 @@ impl std::error::Error for RecalcJobError {
     }
 }
 impl From<formualizer_common::ExcelError> for RecalcJobError {
-    fn from(error: formualizer_common::ExcelError) -> Self { Self::Evaluation(error) }
+    fn from(error: formualizer_common::ExcelError) -> Self {
+        Self::Evaluation(error)
+    }
 }
 
 /// Terminal or suspended outcome of the closure driver.
@@ -117,30 +135,42 @@ impl Default for RecalcJobOptions {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
+/// Phase reached at the end of a step.
 pub enum StepPhase {
+    /// Staged formulas were built into the graph.
     BuildingGraph,
+    /// The full or priority schedule was prepared.
     Scheduling,
+    /// One or more atomic evaluation units ran.
     Evaluating,
+    /// The job finished and carries an EvalResult.
     Finished,
+    /// Cancellation ended the explicit job.
     Cancelled,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
+/// Formula counts for the current schedule pass and logical recalculation.
 pub struct StepProgress {
     /// One-based schedule pass; changes invalidate the previous denominator.
     pub pass: u32,
     /// Full-schedule formula vertices visited, including clean priority work.
     pub completed_in_pass: usize,
+    /// Formula vertices scheduled in this pass.
     pub scheduled_in_pass: usize,
+    /// Formulas computed across all passes, including recomputed formulas.
     pub cumulative_computed_vertices: usize,
     /// Conservative proof of a fixed total. False also means unknown:
     /// proofs are limited to 1,024 scalar arithmetic templates in v1.
     pub total_exact: bool,
+    /// Formulas still awaiting graph construction.
     pub staged_formulas_remaining: usize,
+    /// Priority work is queued, unfinished, or deferred by the expansion cap.
     pub priority_pending: bool,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
+/// Conservative changed regions for one step.
 pub struct StepDelta {
     /// Changed regions; scalar bulk commits conservatively include the whole
     /// installed run, so a region can also contain cells with unchanged values.
@@ -150,19 +180,30 @@ pub struct StepDelta {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
+/// Kind of indivisible work measured by a step.
 pub enum SlowUnitKind {
+    /// Build the graph from staged formulas.
     GraphBuild,
+    /// Construct or restrict a schedule.
     ScheduleBuild,
+    /// Evaluate one cell.
     SingleCell,
+    /// Evaluate one whole physical family run.
     FamilyRun,
+    /// Evaluate one strongly connected component.
     Cycle,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
+/// Longest indivisible unit observed in this step.
 pub struct SlowUnitReport {
+    /// Category of work.
     pub kind: SlowUnitKind,
+    /// One zero-based cell in the unit, when available.
     pub representative_cell: Option<formualizer_common::PackedSheetCell>,
+    /// Number of formula vertices in the unit.
     pub vertex_count: usize,
+    /// Time spent in this unit.
     pub elapsed: Duration,
 }
 #[derive(Debug)]
@@ -171,12 +212,19 @@ pub struct SlowUnitReport {
 /// new values alongside old values for still-pending cells. Only Finished
 /// carries a result; Cancelled is terminal for explicit jobs.
 pub struct StepReport {
+    /// Phase reached at return.
     pub phase: StepPhase,
+    /// Formula progress, with a pass-specific denominator.
     pub progress: StepProgress,
+    /// Formulas computed during this step.
     pub step_computed_vertices: usize,
+    /// Active elapsed time in this step.
     pub step_elapsed: Duration,
+    /// Regions changed by installed work in this step.
     pub changed: StepDelta,
+    /// Longest atomic unit, if any ran.
     pub longest_unit: Option<SlowUnitReport>,
+    /// Present only when phase is Finished.
     pub result: Option<EvalResult>,
 }
 

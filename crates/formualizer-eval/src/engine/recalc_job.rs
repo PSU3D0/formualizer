@@ -60,18 +60,23 @@ impl Walk {
     }
 }
 impl<R: EvaluationContext> Engine<R> {
-    /// O(1) setup. Planning and clock sampling happen in the first step.
+    /// Start an explicit job in O(1). Planning and clock sampling happen in
+    /// the first step. Returns AlreadyPending for either kind of continuation.
     pub fn begin_recalc(&mut self, options: RecalcJobOptions) -> Result<(), RecalcJobError> {
         if self.has_active_recalc_job() || self.resumable.is_some() {
-            return Err(Self::job_error(
-                "recalculation already pending; finish it before beginning another job",
-            ).into());
+            return Err(RecalcJobError::AlreadyPending {
+                explicit: self.has_active_recalc_job(),
+            });
         }
         self.recalc_options = Some(options);
         Ok(())
     }
-    fn job_error(message: &str) -> ExcelError {
-        ExcelError::new(ExcelErrorKind::Value).with_message(message)
+    pub(super) fn active_recalc_job_error() -> ExcelError {
+        ExcelError::new(ExcelErrorKind::Value)
+            .with_message(
+                "recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc",
+            )
+            .with_extra(formualizer_common::ExcelErrorExtra::RecalcJobActive)
     }
     /// True only for an explicit job. Implicit Phase 1 continuations are
     /// reported by has_pending_resumable_evaluation.
@@ -87,7 +92,7 @@ impl<R: EvaluationContext> Engine<R> {
         let options = self
             .recalc_options
             .as_mut()
-            .ok_or_else(|| Self::job_error("no active recalculation job"))?;
+            .ok_or(RecalcJobError::NoActiveJob)?;
         options.initial_priority = targets.to_vec();
         if let Some(held) = self.resumable.as_mut().and_then(|s| s.held.as_mut()) {
             held.priority = None;
@@ -112,9 +117,14 @@ impl<R: EvaluationContext> Engine<R> {
             result: None,
         })
     }
+    /// Execute the next soft-budgeted step. Only installed units become clean.
+    ///
+    /// A returned evaluation error ends the job and leaves unfinished work dirty.
+    /// A custom-function panic propagates; unwind recovery is unsupported (see
+    /// [the module documentation](crate::engine::resumable)).
     pub fn step_recalc(&mut self, stop: EvaluationStop) -> Result<StepReport, RecalcJobError> {
         if !self.has_active_recalc_job() {
-            return Err(Self::job_error("no active recalculation job").into());
+            return Err(RecalcJobError::NoActiveJob);
         }
         let result = self.drive_recalc_step(stop);
         if result.as_ref().map_or(true, |r| {
@@ -133,15 +143,34 @@ impl<R: EvaluationContext> Engine<R> {
         result.map_err(Into::into)
     }
 
-    /// Drive an explicit job, invoking the callback between steps.
+    /// Drive an explicit job, invoking the callback after every successful step,
+    /// including the terminal report. The callback may read, edit, prioritize or
+    /// cancel the engine. Break pauses an active job; step errors end it.
+    ///
+    /// Finished/Cancelled take precedence over Break on a terminal step.
+    /// Do not begin a replacement job inside the callback. Callback panics
+    /// propagate and leave the between-step job active; custom-function panics
+    /// have the stricter limitations described in [resumable](crate::engine::resumable).
     pub fn recalc_with(
         &mut self,
         options: RecalcJobOptions,
-        _stop_per_step: EvaluationStop,
-        _on_step: impl FnMut(&mut Self, &StepReport) -> std::ops::ControlFlow<()>,
+        stop_per_step: EvaluationStop,
+        mut on_step: impl FnMut(&mut Self, &StepReport) -> std::ops::ControlFlow<()>,
     ) -> Result<RecalcOutcome, RecalcJobError> {
         self.begin_recalc(options)?;
-        Ok(RecalcOutcome::Paused)
+        loop {
+            let report = self.step_recalc(stop_per_step.clone())?;
+            let flow = on_step(self, &report);
+            if let Some(result) = report.result {
+                return Ok(RecalcOutcome::Finished(result));
+            }
+            if report.phase == StepPhase::Cancelled || !self.has_active_recalc_job() {
+                return Ok(RecalcOutcome::Cancelled);
+            }
+            if flow.is_break() {
+                return Ok(RecalcOutcome::Paused);
+            }
+        }
     }
 
     pub(super) fn drive_recalc_step(
@@ -848,6 +877,8 @@ impl<R: EvaluationContext> Engine<R> {
         }
         false
     }
+    /// Pending formula cells in a zero-based inclusive viewport, including staged
+    /// formulas. Work is O(viewport area); reads may still return old values.
     pub fn pending_cells_in_rect(
         &self,
         sheet: SheetId,

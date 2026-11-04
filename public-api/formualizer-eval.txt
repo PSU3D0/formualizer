@@ -1370,13 +1370,14 @@ pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, 
 pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
 pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
-pub fn formualizer_eval::engine::eval::Engine<R>::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_eval::engine::eval::Engine<R>::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
 pub fn formualizer_eval::engine::eval::Engine<R>::has_active_recalc_job(&self) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::pending_cells_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
-pub fn formualizer_eval::engine::eval::Engine<R>::prioritize_recalc(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::eval::Engine<R>::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::prioritize_recalc(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::recalc_with(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions, formualizer_eval::engine::resumable::EvaluationStop, impl core::ops::function::FnMut(&mut Self, &formualizer_eval::engine::resumable::StepReport) -> core::ops::control_flow::ControlFlow<()>) -> core::result::Result<formualizer_eval::engine::resumable::RecalcOutcome, formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_eval::engine::resumable::RecalcJobError>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::current_read_affected_closure(&self, &[AffectedRoot], ClosureLimits) -> core::result::Result<CurrentReadClosure<'_>, ClosureError>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
@@ -4479,6 +4480,25 @@ pub formualizer_eval::engine::resumable::EvaluationProgress::Complete(formualize
 pub formualizer_eval::engine::resumable::EvaluationProgress::Incomplete(formualizer_eval::engine::resumable::IncompleteEvaluation)
 impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationProgress
 pub fn formualizer_eval::engine::resumable::EvaluationProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::RecalcJobError
+pub formualizer_eval::engine::resumable::RecalcJobError::AlreadyPending
+pub formualizer_eval::engine::resumable::RecalcJobError::AlreadyPending::explicit: bool
+pub formualizer_eval::engine::resumable::RecalcJobError::Evaluation(formualizer_common::error::ExcelError)
+pub formualizer_eval::engine::resumable::RecalcJobError::NoActiveJob
+impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::from(formualizer_common::error::ExcelError) -> Self
+impl core::error::Error for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::RecalcOutcome
+pub formualizer_eval::engine::resumable::RecalcOutcome::Cancelled
+pub formualizer_eval::engine::resumable::RecalcOutcome::Finished(formualizer_eval::engine::eval::EvalResult)
+pub formualizer_eval::engine::resumable::RecalcOutcome::Paused
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcOutcome
+pub fn formualizer_eval::engine::resumable::RecalcOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum formualizer_eval::engine::resumable::SlowUnitKind
 pub formualizer_eval::engine::resumable::SlowUnitKind::Cycle
 pub formualizer_eval::engine::resumable::SlowUnitKind::FamilyRun
@@ -5680,6 +5700,25 @@ pub fn formualizer_eval::engine::PrepareScope::fmt(&self, &mut core::fmt::Format
 impl core::hash::Hash for formualizer_eval::engine::PrepareScope
 pub fn formualizer_eval::engine::PrepareScope::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::PrepareScope
+#[non_exhaustive] pub enum formualizer_eval::engine::RecalcJobError
+pub formualizer_eval::engine::RecalcJobError::AlreadyPending
+pub formualizer_eval::engine::RecalcJobError::AlreadyPending::explicit: bool
+pub formualizer_eval::engine::RecalcJobError::Evaluation(formualizer_common::error::ExcelError)
+pub formualizer_eval::engine::RecalcJobError::NoActiveJob
+impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::from(formualizer_common::error::ExcelError) -> Self
+impl core::error::Error for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum formualizer_eval::engine::RecalcOutcome
+pub formualizer_eval::engine::RecalcOutcome::Cancelled
+pub formualizer_eval::engine::RecalcOutcome::Finished(formualizer_eval::engine::eval::EvalResult)
+pub formualizer_eval::engine::RecalcOutcome::Paused
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcOutcome
+pub fn formualizer_eval::engine::resumable::RecalcOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum formualizer_eval::engine::ResourceLedgerError
 pub formualizer_eval::engine::ResourceLedgerError::Exhausted(formualizer_common::error::ResourceExhaustionDetail)
 pub formualizer_eval::engine::ResourceLedgerError::ReleaseUnderflow
@@ -6247,13 +6286,14 @@ pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, 
 pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
 pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
-pub fn formualizer_eval::engine::eval::Engine<R>::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_eval::engine::eval::Engine<R>::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
 pub fn formualizer_eval::engine::eval::Engine<R>::has_active_recalc_job(&self) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::pending_cells_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
-pub fn formualizer_eval::engine::eval::Engine<R>::prioritize_recalc(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<(), formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::eval::Engine<R>::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::prioritize_recalc(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::recalc_with(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions, formualizer_eval::engine::resumable::EvaluationStop, impl core::ops::function::FnMut(&mut Self, &formualizer_eval::engine::resumable::StepReport) -> core::ops::control_flow::ControlFlow<()>) -> core::result::Result<formualizer_eval::engine::resumable::RecalcOutcome, formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_eval::engine::resumable::RecalcJobError>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::current_read_affected_closure(&self, &[AffectedRoot], ClosureLimits) -> core::result::Result<CurrentReadClosure<'_>, ClosureError>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>

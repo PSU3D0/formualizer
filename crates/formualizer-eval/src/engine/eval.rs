@@ -3353,9 +3353,7 @@ where
     ) -> Result<T, ExcelError> {
         let outermost = self.evaluation_resource_request_depth == 0;
         if outermost && !self.resumable_call && self.has_active_recalc_job() {
-            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
-                "recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc",
-            ));
+            return Err(Self::active_recalc_job_error());
         }
         // Foreign requests settle the logical recalculation before any early
         // admission/cancellation exit. Every resumable pass is already settled.
@@ -15608,9 +15606,7 @@ where
         // Refusal must precede the scope and its failure cleanup: redirtying
         // volatiles here would invalidate values installed by the active job.
         if self.has_active_recalc_job() {
-            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
-                "recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc",
-            ));
+            return Err(Self::active_recalc_job_error());
         }
         /// Leaves snapshot mode even when evaluation unwinds. A panic
         /// keeps the deferred volatile redirty pending, so the next request
@@ -15662,8 +15658,7 @@ where
         stop: super::EvaluationStop,
     ) -> Result<super::EvaluationProgress, ExcelError> {
         if self.has_active_recalc_job() {
-            return Err(ExcelError::new(ExcelErrorKind::Value)
-                .with_message("recalculation job is active; use step_recalc"));
+            return Err(Self::active_recalc_job_error());
         }
         let report = self.drive_recalc_step(stop)?;
         Ok(match report.result {

@@ -4,6 +4,14 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+- Added typed `RecalcJobError` lifecycle errors and `recalc_with` closure drivers on Engine and Workbook, with Finished, Cancelled and resumable Paused outcomes. Existing evaluation signatures are unchanged; active-job refusals now carry `ExcelErrorExtra::RecalcJobActive`.
+
+### Fixed
+
+- Fixed ordinary recalculation dirtiness routing through observed dynamic reads: an `INDIRECT` into an empty cell later filled by a spill now recalculates instead of keeping its earlier value.
+
+### Added
+
 - Added engine-owned recalculation jobs with held schedules, formula progress, changed regions, viewport priority and pending queries. Explicit jobs refuse foreign evaluation requests and apply work/deadline limits across steps; cancellation preserves installed units without advancing the random epoch.
 
 - Added `Engine::evaluate_all_until` and its `Workbook` passthrough for cooperative recalculation with soft deadlines and cancellation, preserving installed work and one clock, random epoch and diagnostics collection across calls. Results are independent of call boundaries except for iterative cycles created by edits during a pending recalculation: new cycles start from current cell values, including results installed by earlier calls; existing SCCs retain their original recalculation seeds.

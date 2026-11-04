@@ -11,8 +11,9 @@ pub mod authority;
 pub mod cancel;
 pub mod resumable;
 pub use resumable::{
-    EvaluationProgress, EvaluationStop, IncompleteEvaluation, RecalcJobError, RecalcJobOptions, RecalcOutcome, SlowUnitKind,
-    SlowUnitReport, StepDelta, StepPhase, StepProgress, StepReport, StopReason,
+    EvaluationProgress, EvaluationStop, IncompleteEvaluation, RecalcJobError, RecalcJobOptions,
+    RecalcOutcome, SlowUnitKind, SlowUnitReport, StepDelta, StepPhase, StepProgress, StepReport,
+    StopReason,
 };
 /// Bounded relation facts for source publication policy, not all-read certification.
 #[doc(hidden)]

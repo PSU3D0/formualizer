@@ -369,6 +369,7 @@ pub formualizer_common::error::ExcelErrorExtra::PlanStale
 pub formualizer_common::error::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
 pub formualizer_common::error::ExcelErrorExtra::PreparationStale
 pub formualizer_common::error::ExcelErrorExtra::PreparationStale::reason: formualizer_common::PreparationStaleReason
+pub formualizer_common::error::ExcelErrorExtra::RecalcJobActive
 pub formualizer_common::error::ExcelErrorExtra::Resource
 pub formualizer_common::error::ExcelErrorExtra::Resource::detail: alloc::boxed::Box<formualizer_common::ResourceExhaustionDetail>
 pub formualizer_common::error::ExcelErrorExtra::Spill
@@ -931,6 +932,7 @@ pub formualizer_common::ExcelErrorExtra::PlanStale
 pub formualizer_common::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
 pub formualizer_common::ExcelErrorExtra::PreparationStale
 pub formualizer_common::ExcelErrorExtra::PreparationStale::reason: formualizer_common::PreparationStaleReason
+pub formualizer_common::ExcelErrorExtra::RecalcJobActive
 pub formualizer_common::ExcelErrorExtra::Resource
 pub formualizer_common::ExcelErrorExtra::Resource::detail: alloc::boxed::Box<formualizer_common::ResourceExhaustionDetail>
 pub formualizer_common::ExcelErrorExtra::Spill
