@@ -567,6 +567,8 @@ impl<R: EvaluationContext> Engine<R> {
                 let pending =
                     self.freshness_finish_interrupted_pass(&completed_cycles, &mut installed);
                 self.resumable.as_mut().unwrap().installed = installed;
+                let (pending, fr5_replan) = pending?;
+                barrier |= fr5_replan;
                 for v in changed {
                     self.graph.set_dirty(v, true);
                 }

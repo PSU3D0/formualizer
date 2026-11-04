@@ -42,11 +42,12 @@
 //! before a first-request numeric value can be committed.
 
 use super::Engine;
-use crate::engine::authority::geom::SYMBOL_SHEET;
+use crate::engine::authority::geom::{Rect, SYMBOL_SHEET};
 use crate::engine::live_edges::{ReadLog, ReadRect, RecordingContext};
 use crate::engine::scheduler::{Schedule, ScheduleUnit};
 use crate::engine::vertex::VertexId;
 use crate::interpreter::Interpreter;
+use crate::reference::CellRef;
 use crate::traits::EvaluationContext;
 use formualizer_common::{ExcelError, LiteralValue};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -175,6 +176,8 @@ pub(crate) struct Freshness {
     /// A spill existed when the pass began (it may have been cleared
     /// since): only then can a spill re-dirty a committed vertex (FR5).
     had_spills: bool,
+    // Changed spill regions in this slice, never the cumulative installed set.
+    spill_changes: smallvec::SmallVec<[(u16, Rect); 2]>,
     /// Stale readers dropped over the request (tests, telemetry).
     stale_total: u64,
     /// Passes stopped at a barrier over the request.
@@ -197,6 +200,7 @@ impl<R: EvaluationContext> Engine<R> {
         f.barrier = false;
         f.skipped.clear();
         f.committed.clear();
+        f.spill_changes.clear();
         f.stale_this_pass.clear();
         f.group_dropped.clear();
         f.stale.get_mut().unwrap().clear();
@@ -590,15 +594,43 @@ impl<R: EvaluationContext> Engine<R> {
             }
     }
 
+    /// Journal successful spill publications and clears while the held-schedule
+    /// driver is armed. Ordinary evaluation keeps its existing FR5 path. The
+    /// regions cover both the old and new extents, including a shrinking tail.
+    /// Resolve their reader closure at settlement, after observed-read commits.
+    pub(super) fn freshness_note_spill_change(&mut self, old: &[CellRef], new: &[CellRef]) {
+        if !self.freshness.armed || self.resumable.is_none() {
+            return;
+        }
+        for cells in [old, new] {
+            let Some(first) = cells.first() else { continue };
+            let mut rect = Rect::new(
+                first.coord.row(),
+                first.coord.col(),
+                first.coord.row(),
+                first.coord.col(),
+            );
+            for cell in cells.iter().skip(1) {
+                debug_assert_eq!(cell.sheet_id, first.sheet_id);
+                rect.r0 = rect.r0.min(cell.coord.row());
+                rect.r1 = rect.r1.max(cell.coord.row());
+                rect.c0 = rect.c0.min(cell.coord.col());
+                rect.c1 = rect.c1.max(cell.coord.col());
+            }
+            self.freshness.spill_changes.push((first.sheet_id, rect));
+        }
+    }
+
     /// Settle a partial pass without clearing unreached candidates. The caller
     /// only supplies completed cycles (which use write-through installation).
     /// Ordinary members are already cleared by commit. Buffered values still
-    /// awaiting installation must be dirty before FR5 propagation.
+    /// awaiting installation must be dirty before FR5 propagation. Returns
+    /// (dirty work remains, the held order must be replanned).
     pub(super) fn freshness_finish_interrupted_pass(
         &mut self,
         completed_cycles: &[VertexId],
         installed_earlier: &mut crate::engine::idset::DenseIdSet,
-    ) -> bool {
+    ) -> Result<(bool, bool), ExcelError> {
         // SCC tasks write through but do not mark their vertices committed.
         // Match full-pass completion for these atomic, completed tasks only.
         self.graph.clear_dirty_flags(completed_cycles);
@@ -613,15 +645,38 @@ impl<R: EvaluationContext> Engine<R> {
                 .filter(|v| !self.freshness.unflushed.contains(v)),
         );
         installed_earlier.extend(completed_cycles.iter().copied());
-        // Only spills can re-dirty earlier installed readers (FR5).
-        if self.freshness.had_spills || self.graph.has_spill_anchors() {
+        // FR5 is output-sensitive: with no spill publication or clear this
+        // slice, there is no cumulative settlement work, even if the workbook
+        // contains other spills. Query the authority's indexed reader closure
+        // for changed regions only. A previously installed reader can still be
+        // dirty after a later spill write; its descendants may have committed
+        // and cleared themselves in between, so propagate from those roots.
+        let mut replan = false;
+        let regions = std::mem::take(&mut self.freshness.spill_changes);
+        if !regions.is_empty() {
+            self.require_unified_authority()?;
+            let affected = self.graph.authority_closure_of_rects(&regions);
             #[cfg(test)]
-            { self.freshness.resumable_fr5_examined += installed_earlier.len(); }
-            self.freshness.committed.extend(installed_earlier.iter());
+            {
+                self.freshness.resumable_fr5_examined += affected.len();
+            }
+            let redirtied: Vec<_> = affected
+                .into_iter()
+                .filter(|v| installed_earlier.contains(v) && self.graph.is_dirty(*v))
+                .collect();
+            if !redirtied.is_empty() {
+                self.graph.mark_dirty_many(&redirtied);
+                // A later slice of the old walk could otherwise publish a
+                // descendant using this dirty reader's previous value, then
+                // clear its dirty flag. Reorder at this spill boundary once,
+                // rather than rescanning earlier installations on every slice.
+                replan = true;
+            }
         }
-        let pending = self.freshness_finish_pass(completed_cycles, &[], true);
+        self.freshness.armed = false;
+        self.freshness.committed.clear();
         self.freshness.unflushed.clear();
-        pending
+        Ok((self.graph.has_dirty_evaluation_vertices(), replan))
     }
 
     /// A request failed with a pass still armed (a commit preflight, a
@@ -633,6 +688,7 @@ impl<R: EvaluationContext> Engine<R> {
             return;
         }
         self.freshness.armed = false;
+        self.freshness.spill_changes.clear();
         let committed: Vec<VertexId> = self.freshness.committed.iter().collect();
         self.freshness.committed.clear();
         for v in committed {

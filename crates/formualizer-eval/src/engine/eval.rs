@@ -14721,6 +14721,7 @@ where
                             }
                         }
                         self.graph.clear_spill_region(vertex_id);
+                        self.freshness_note_spill_change(&spill_cells, &[]);
                         if let Some(scope) = Self::structural_scope_from_cells(&spill_cells) {
                             self.record_structural_change(scope);
                         }
@@ -14803,6 +14804,7 @@ where
                     }
                 }
                 self.graph.clear_spill_region(vertex_id);
+                self.freshness_note_spill_change(&spill_cells, &[]);
                 if let Some(scope) = Self::structural_scope_from_cells(&spill_cells) {
                     self.record_structural_change(scope);
                 }
@@ -15603,6 +15605,13 @@ where
         &mut self,
         cancel: Option<crate::engine::CancelToken>,
     ) -> Result<EvalResult, ExcelError> {
+        // Refusal must precede the scope and its failure cleanup: redirtying
+        // volatiles here would invalidate values installed by the active job.
+        if self.has_active_recalc_job() {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                "recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc",
+            ));
+        }
         /// Leaves snapshot mode even when evaluation unwinds. A panic
         /// keeps the deferred volatile redirty pending, so the next request
         /// restores volatile work without touching the graph mid-unwind.
@@ -19842,6 +19851,7 @@ where
         }
 
         self.graph.clear_spill_region(anchor_vertex);
+        self.freshness_note_spill_change(&spill_cells, &[]);
         if let Some(scope) = Self::structural_scope_from_cells(&spill_cells) {
             self.record_structural_change(scope);
         }
@@ -20985,6 +20995,7 @@ where
             },
         )?;
 
+        self.freshness_note_spill_change(&prev_spill_cells, targets);
         self.blocked_pending_spills
             .retain(|entry| entry.0 != anchor_vertex);
         self.spill_blocker_waiters.forget(anchor_vertex);
@@ -21563,6 +21574,7 @@ where
         }
 
         self.graph.clear_spill_region(anchor_vertex);
+        self.freshness_note_spill_change(&spill_cells, &[]);
         if let Some(scope) = Self::structural_scope_from_cells(&spill_cells) {
             self.record_structural_change(scope);
         }
