@@ -260,9 +260,20 @@ impl<R: EvaluationContext> Engine<R> {
         let cancelled =
             |stop: &EvaluationStop| stop.cancel.as_ref().is_some_and(|t| t.is_cancelled());
         let expired = || stop_at.is_some_and(|t| crate::instant::FzInstant::now() >= t);
-        if self.config.defer_graph_building && self.has_staged_formulas() {
+        if explicit && cancelled(&stop) {
+            phase = StepPhase::Cancelled;
+        }
+        if phase != StepPhase::Cancelled
+            && self.config.defer_graph_building
+            && self.has_staged_formulas()
+        {
             let t = crate::instant::FzInstant::now();
-            self.build_graph_all()?;
+            // Graph construction is one atomic unit in v1. A soft token
+            // cannot discard it mid-build; hard ledger checks stay armed.
+            let saved_cancel = self.active_cancel_flag.take();
+            let built = self.build_graph_all();
+            self.active_cancel_flag = saved_cancel;
+            built?;
             // Parsing staged formulas introduces function names after admission.
             // Refresh dispatch here without restarting the logical clock/collector.
             self.refresh_resolution_snapshots();
@@ -274,12 +285,16 @@ impl<R: EvaluationContext> Engine<R> {
                 &self.graph,
             );
             self.resumable.as_mut().unwrap().held = None;
-            if explicit && expired() {
+            if explicit && cancelled(&stop) {
+                phase = StepPhase::Cancelled;
+            } else if explicit && expired() {
                 phase = StepPhase::BuildingGraph;
             }
         }
-        self.require_unified_authority()?;
-        if phase != StepPhase::BuildingGraph {
+        if phase != StepPhase::Cancelled {
+            self.require_unified_authority()?;
+        }
+        if phase == StepPhase::Evaluating {
             loop {
                 if self.resumable.as_ref().unwrap().held.is_none() {
                     let candidates: Vec<_> = self

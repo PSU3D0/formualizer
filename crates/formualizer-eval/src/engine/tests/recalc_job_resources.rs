@@ -82,6 +82,48 @@ fn job_deadline_accumulates_active_time_and_excludes_idle() {
     assert!(!e.has_active_recalc_job());
 }
 #[test]
+fn job_staged_cancel_is_a_soft_stop() {
+    if isolated_test("resources::job_staged_cancel_is_a_soft_stop") {
+        return;
+    }
+    crate::builtins::load_builtins();
+    for explicit in [false, true] {
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                defer_graph_building: true,
+                ..Default::default()
+            },
+        );
+        e.stage_formula_text("Sheet1", 1, 1, "=ABS(-1)".into());
+        let token = CancelToken::new();
+        token.cancel();
+        if explicit {
+            e.begin_recalc(Default::default()).unwrap();
+            let report = e
+                .step_recalc(EvaluationStop::after(Duration::ZERO).with_cancel(token))
+                .unwrap();
+            assert_eq!(report.phase, StepPhase::Cancelled);
+            assert!(report.result.is_none());
+            assert!(!e.has_active_recalc_job());
+        } else {
+            assert!(matches!(
+                e.evaluate_all_until(EvaluationStop::cancel(token)).unwrap(),
+                EvaluationProgress::Incomplete(_)
+            ));
+            assert!(matches!(
+                e.evaluate_all_until(EvaluationStop::none()).unwrap(),
+                EvaluationProgress::Complete(_)
+            ));
+            assert_eq!(
+                e.get_cell_value("Sheet1", 1, 1),
+                Some(LiteralValue::Number(1.))
+            );
+        }
+    }
+}
+
+#[test]
 fn job_graph_build_and_scheduling_have_separate_boundaries() {
     if isolated_test("resources::job_graph_build_and_scheduling_have_separate_boundaries") {
         return;
@@ -95,7 +137,16 @@ fn job_graph_build_and_scheduling_have_separate_boundaries() {
         },
     );
     for r in 1..=10 {
-        e.stage_formula_text("Sheet1", r, 1, if r == 1 { "=ABS(-1)".into() } else { format!("={r}") });
+        e.stage_formula_text(
+            "Sheet1",
+            r,
+            1,
+            if r == 1 {
+                "=ABS(-1)".into()
+            } else {
+                format!("={r}")
+            },
+        );
     }
     let sheet = e.graph.sheet_id("Sheet1").unwrap();
     e.begin_recalc(Default::default()).unwrap();
@@ -114,7 +165,11 @@ fn job_graph_build_and_scheduling_have_separate_boundaries() {
     assert_eq!(plan.progress.scheduled_in_pass, 10);
     assert!(!plan.progress.total_exact);
     while e.has_active_recalc_job() {
-        e.step_recalc(EvaluationStop::after(Duration::ZERO)).unwrap();
+        e.step_recalc(EvaluationStop::after(Duration::ZERO))
+            .unwrap();
     }
-    assert_eq!(e.get_cell_value("Sheet1",1,1),Some(LiteralValue::Number(1.)));
+    assert_eq!(
+        e.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(1.))
+    );
 }
