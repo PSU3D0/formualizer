@@ -3209,6 +3209,56 @@ impl Workbook {
             .map_err(IoError::Engine)
     }
 
+    /// Start an explicit recalculation job; evaluate_* calls are refused until it ends.
+    pub fn begin_recalc(
+        &mut self,
+        options: formualizer_eval::engine::RecalcJobOptions,
+    ) -> Result<(), IoError> {
+        self.engine.begin_recalc(options).map_err(IoError::Engine)
+    }
+    pub fn step_recalc(
+        &mut self,
+        stop: formualizer_eval::engine::EvaluationStop,
+    ) -> Result<formualizer_eval::engine::StepReport, IoError> {
+        self.engine.step_recalc(stop).map_err(IoError::Engine)
+    }
+    pub fn prioritize_recalc(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+    ) -> Result<(), IoError> {
+        self.engine
+            .prioritize_recalc(targets)
+            .map_err(IoError::Engine)
+    }
+    pub fn cancel_recalc(&mut self) -> Option<formualizer_eval::engine::StepReport> {
+        self.engine.cancel_recalc()
+    }
+    pub fn has_active_recalc_job(&self) -> bool {
+        self.engine.has_active_recalc_job()
+    }
+    /// Zero-based inclusive viewport coordinates.
+    pub fn has_pending_in_rect(
+        &self,
+        sheet: formualizer_common::SheetId,
+        r0: u32,
+        c0: u32,
+        r1: u32,
+        c1: u32,
+    ) -> bool {
+        self.engine.has_pending_in_rect(sheet, r0, c0, r1, c1)
+    }
+    /// Zero-based inclusive viewport coordinates.
+    pub fn pending_cells_in_rect(
+        &self,
+        sheet: formualizer_common::SheetId,
+        r0: u32,
+        c0: u32,
+        r1: u32,
+        c1: u32,
+    ) -> formualizer_eval::engine::TargetEvalDelta {
+        self.engine.pending_cells_in_rect(sheet, r0, c0, r1, c1)
+    }
+
     pub fn evaluate_all_cancellable(
         &mut self,
         cancel: formualizer_eval::engine::CancelToken,

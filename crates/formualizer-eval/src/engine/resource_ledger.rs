@@ -491,6 +491,8 @@ pub(crate) struct ResourceLedger {
     deadline_checkpoints: u64,
     exhaustion: Option<ResourceExhaustionReason>,
     elapsed: ElapsedClock,
+    active_elapsed_before_step: Duration,
+    recalc_retained_current: u64,
 }
 
 impl fmt::Debug for ResourceLedger {
@@ -526,6 +528,8 @@ impl ResourceLedger {
             deadline_checkpoints: 0,
             exhaustion: None,
             elapsed,
+            active_elapsed_before_step: Duration::ZERO,
+            recalc_retained_current: 0,
         }
     }
 
@@ -536,6 +540,22 @@ impl ResourceLedger {
         elapsed: ElapsedClock,
     ) -> Self {
         Self::with_elapsed_clock(request_id, budgets, elapsed)
+    }
+
+    pub(crate) fn account_recalc_retained(
+        &mut self,
+        bytes: u64,
+    ) -> Result<(), ResourceLedgerError> {
+        self.release_retained(self.recalc_retained_current)?;
+        self.recalc_retained_current = 0;
+        self.reserve_retained(bytes)?;
+        self.recalc_retained_current = bytes;
+        Ok(())
+    }
+
+    pub(crate) fn resume_job(&mut self, work: u64, elapsed: Duration) {
+        self.work_charged = work;
+        self.active_elapsed_before_step = elapsed;
     }
 
     fn exhausted(
@@ -784,7 +804,7 @@ impl ResourceLedger {
         let Some(limit) = self.budgets.deadline.max_elapsed else {
             return Ok(());
         };
-        let elapsed = (self.elapsed)();
+        let elapsed = (self.elapsed)().saturating_add(self.active_elapsed_before_step);
         let projected = elapsed.checked_add(estimate).unwrap_or(Duration::MAX);
         if projected >= limit {
             let limit_ns = u64::try_from(limit.as_nanos()).unwrap_or(u64::MAX);

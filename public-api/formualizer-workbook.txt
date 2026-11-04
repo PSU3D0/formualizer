@@ -2014,12 +2014,14 @@ pub fn formualizer_workbook::workbook::Workbook::attach_wasm_module_bytes(&mut s
 pub fn formualizer_workbook::workbook::Workbook::attach_wasm_module_file(&mut self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::attach_wasm_modules_dir(&mut self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::begin_action(&mut self, impl core::convert::Into<alloc::string::String>)
+pub fn formualizer_workbook::workbook::Workbook::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::begin_tx<'a, W: formualizer_workbook::traits::SpreadsheetWriter>(&'a mut self, &'a mut W) -> formualizer_workbook::transaction::WriteTransaction<'a, W>
 pub fn formualizer_workbook::workbook::Workbook::bind_wasm_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, formualizer_workbook::workbook::WasmFunctionSpec) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan(&self) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::cached_external_link_indices(&self) -> &[usize]
+pub fn formualizer_workbook::workbook::Workbook::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
 pub fn formualizer_workbook::workbook::Workbook::changelog(&self) -> &formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_workbook::workbook::Workbook::define_named_range(&mut self, &str, &formualizer_common::range::RangeAddress, formualizer_workbook::traits::NamedRangeScope) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::define_table(&mut self, &str, &str, (u32, u32, u32, u32), alloc::vec::Vec<alloc::string::String>, bool, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -2059,7 +2061,9 @@ pub fn formualizer_workbook::workbook::Workbook::get_eval_plan(&self, &[(&str, u
 pub fn formualizer_workbook::workbook::Workbook::get_eval_plan_with_options(&mut self, &[(&str, u32, u32)], bool) -> core::result::Result<formualizer_eval::engine::eval::EvalPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::get_formula(&self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_workbook::workbook::Workbook::get_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
+pub fn formualizer_workbook::workbook::Workbook::has_active_recalc_job(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_name(&self, &str, core::option::Option<&str>) -> bool
+pub fn formualizer_workbook::workbook::Workbook::has_pending_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_sheet(&self, &str) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_staged_formulas(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_bytes(&self, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
@@ -2075,11 +2079,13 @@ pub fn formualizer_workbook::workbook::Workbook::named_range_address(&self, &str
 pub fn formualizer_workbook::workbook::Workbook::new() -> Self
 pub fn formualizer_workbook::workbook::Workbook::new_with_config(formualizer_workbook::workbook::WorkbookConfig) -> Self
 pub fn formualizer_workbook::workbook::Workbook::new_with_mode(formualizer_workbook::workbook::WorkbookMode) -> Self
+pub fn formualizer_workbook::workbook::Workbook::pending_cells_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_all(&mut self) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_cells(&mut self, &[(&str, u32, u32)]) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_ranges(&mut self, &[formualizer_common::range::RangeAddress]) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_sheets<'a, I: core::iter::traits::collect::IntoIterator<Item = &'a str>>(&mut self, I) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::prioritize_recalc(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::read_range(&self, &formualizer_common::range::RangeAddress) -> alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>
 pub fn formualizer_workbook::workbook::Workbook::redo(&mut self) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::register_custom_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, alloc::sync::Arc<dyn formualizer_workbook::workbook::CustomFnHandler>) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -2101,6 +2107,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
 pub fn formualizer_workbook::workbook::Workbook::sheet_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn formualizer_workbook::workbook::Workbook::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::table_metadata(&self, &str) -> core::option::Option<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_workbook::workbook::Workbook::tables(&self) -> alloc::vec::Vec<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_workbook::workbook::Workbook::to_xlsx_bytes(&self) -> core::result::Result<alloc::vec::Vec<u8>, formualizer_workbook::error::IoError>
@@ -3406,12 +3413,14 @@ pub fn formualizer_workbook::workbook::Workbook::attach_wasm_module_bytes(&mut s
 pub fn formualizer_workbook::workbook::Workbook::attach_wasm_module_file(&mut self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::attach_wasm_modules_dir(&mut self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::begin_action(&mut self, impl core::convert::Into<alloc::string::String>)
+pub fn formualizer_workbook::workbook::Workbook::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::begin_tx<'a, W: formualizer_workbook::traits::SpreadsheetWriter>(&'a mut self, &'a mut W) -> formualizer_workbook::transaction::WriteTransaction<'a, W>
 pub fn formualizer_workbook::workbook::Workbook::bind_wasm_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, formualizer_workbook::workbook::WasmFunctionSpec) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan(&self) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::cached_external_link_indices(&self) -> &[usize]
+pub fn formualizer_workbook::workbook::Workbook::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
 pub fn formualizer_workbook::workbook::Workbook::changelog(&self) -> &formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_workbook::workbook::Workbook::define_named_range(&mut self, &str, &formualizer_common::range::RangeAddress, formualizer_workbook::traits::NamedRangeScope) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::define_table(&mut self, &str, &str, (u32, u32, u32, u32), alloc::vec::Vec<alloc::string::String>, bool, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -3451,7 +3460,9 @@ pub fn formualizer_workbook::workbook::Workbook::get_eval_plan(&self, &[(&str, u
 pub fn formualizer_workbook::workbook::Workbook::get_eval_plan_with_options(&mut self, &[(&str, u32, u32)], bool) -> core::result::Result<formualizer_eval::engine::eval::EvalPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::get_formula(&self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_workbook::workbook::Workbook::get_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
+pub fn formualizer_workbook::workbook::Workbook::has_active_recalc_job(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_name(&self, &str, core::option::Option<&str>) -> bool
+pub fn formualizer_workbook::workbook::Workbook::has_pending_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_sheet(&self, &str) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_staged_formulas(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_bytes(&self, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
@@ -3467,11 +3478,13 @@ pub fn formualizer_workbook::workbook::Workbook::named_range_address(&self, &str
 pub fn formualizer_workbook::workbook::Workbook::new() -> Self
 pub fn formualizer_workbook::workbook::Workbook::new_with_config(formualizer_workbook::workbook::WorkbookConfig) -> Self
 pub fn formualizer_workbook::workbook::Workbook::new_with_mode(formualizer_workbook::workbook::WorkbookMode) -> Self
+pub fn formualizer_workbook::workbook::Workbook::pending_cells_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_all(&mut self) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_cells(&mut self, &[(&str, u32, u32)]) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_ranges(&mut self, &[formualizer_common::range::RangeAddress]) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_sheets<'a, I: core::iter::traits::collect::IntoIterator<Item = &'a str>>(&mut self, I) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::prioritize_recalc(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::read_range(&self, &formualizer_common::range::RangeAddress) -> alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>
 pub fn formualizer_workbook::workbook::Workbook::redo(&mut self) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::register_custom_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, alloc::sync::Arc<dyn formualizer_workbook::workbook::CustomFnHandler>) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -3493,6 +3506,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
 pub fn formualizer_workbook::workbook::Workbook::sheet_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn formualizer_workbook::workbook::Workbook::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::table_metadata(&self, &str) -> core::option::Option<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_workbook::workbook::Workbook::tables(&self) -> alloc::vec::Vec<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_workbook::workbook::Workbook::to_xlsx_bytes(&self) -> core::result::Result<alloc::vec::Vec<u8>, formualizer_workbook::error::IoError>

@@ -611,7 +611,10 @@ impl<R: EvaluationContext> Engine<R> {
                 .filter(|v| !self.freshness.unflushed.contains(v)),
         );
         installed_earlier.extend(completed_cycles.iter().copied());
-        self.freshness.committed.extend(installed_earlier.iter());
+        // Only spills can re-dirty earlier installed readers (FR5).
+        if self.freshness.had_spills || self.graph.has_spill_anchors() {
+            self.freshness.committed.extend(installed_earlier.iter());
+        }
         let pending = self.freshness_finish_pass(completed_cycles, &[], true);
         self.freshness.unflushed.clear();
         pending

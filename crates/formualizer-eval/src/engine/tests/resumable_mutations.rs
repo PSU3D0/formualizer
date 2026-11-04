@@ -89,7 +89,7 @@ fn copy_current_formula_values(from: &Engine<TestWorkbook>, to: &mut Engine<Test
     }
     review_compare(from, to, "current-value oracle before edit");
 }
-fn run_review_mutation_matrix(modes: &[usize]) {
+fn run_review_mutation_matrix(modes: &[usize], job: bool) {
     let mut failures = Vec::new();
     for family in [false, true] {
         for parallel in [false, true] {
@@ -127,7 +127,7 @@ fn run_review_mutation_matrix(modes: &[usize]) {
                     let mut e = make();
                     let mut reference = make();
                     e.resumable_stop_after_units_for_test = Some(cut);
-                    let _ = e.evaluate_all_until(EvaluationStop::none()).unwrap();
+                    let _ = test_recalc_slice(&mut e, EvaluationStop::none(), job).unwrap();
                     if mode == 11 {
                         // F3 decision: a cycle created during the logical
                         // calculation starts from current values, not a fresh
@@ -136,7 +136,7 @@ fn run_review_mutation_matrix(modes: &[usize]) {
                     }
                     review_mutate(&mut e, mode);
                     review_mutate(&mut reference, mode);
-                    let a = e.evaluate_all_until(EvaluationStop::none());
+                    let a = test_recalc_slice(&mut e, EvaluationStop::none(), job);
                     let b = reference.evaluate_all();
                     let label =
                         format!("mutation {mode} family {family} parallel {parallel} cut {cut}");
@@ -146,7 +146,10 @@ fn run_review_mutation_matrix(modes: &[usize]) {
                                 review_compare(&e, &reference, &label)
                             }
                             (Ok(EvaluationProgress::Incomplete(_)), Ok(_)) => {
-                                drain(&mut e);
+                                while matches!(
+                                    test_recalc_slice(&mut e, EvaluationStop::none(), job).unwrap(),
+                                    EvaluationProgress::Incomplete(_)
+                                ) {}
                                 review_compare(&e, &reference, &label);
                             }
                             (Err(a), Err(b)) => assert_eq!(a, b, "{label}"),
@@ -213,7 +216,7 @@ fn review_min_formula_dynamic() {
 
 #[test]
 fn review_min_new_builtin_after_slice() {
-    for family in [false, true] {
+    for (family, job) in [(false, false), (true, false), (false, true), (true, true)] {
         let make = || {
             let mut e = chain(family);
             e.set_cell_value("Sheet1", 1, 2, LiteralValue::Number(-5.))
@@ -222,13 +225,13 @@ fn review_min_new_builtin_after_slice() {
         };
         let mut e = make();
         let mut b = make();
-        incomplete(
-            e.evaluate_all_until(EvaluationStop::after(Duration::ZERO))
-                .unwrap(),
-        );
+        incomplete(test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap());
         f(&mut e, 20, 1, "=ABS(B1)");
         f(&mut b, 20, 1, "=ABS(B1)");
-        drain(&mut e);
+        while matches!(
+            test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap(),
+            EvaluationProgress::Incomplete(_)
+        ) {}
         b.evaluate_all().unwrap();
         println!(
             "NEWFUNCTION actual={:?} expected={:?}",
@@ -275,12 +278,19 @@ fn review_min_dynamic_value_edit() {
 #[test]
 fn review_mutation_matrix() {
     // These 156 cases retain the strict fresh-uninterrupted oracle.
-    run_review_mutation_matrix(&(0..14).filter(|&mode| mode != 11).collect::<Vec<_>>());
+    run_review_mutation_matrix(
+        &(0..14).filter(|&mode| mode != 11).collect::<Vec<_>>(),
+        false,
+    );
 }
 #[test]
 fn review_mutation_matrix_cycle_creation_f3() {
     // The twelve F3 cases use the maintainer-approved current-value oracle.
-    run_review_mutation_matrix(&[11]);
+    run_review_mutation_matrix(&[11], false);
+}
+#[test]
+fn job_review_mutation_matrix() {
+    run_review_mutation_matrix(&(0..14).collect::<Vec<_>>(), true);
 }
 #[derive(Debug)]
 struct Replacement {
@@ -304,7 +314,7 @@ fn review_min_registry_dirty() {
     if isolated_test("mutations::review_min_registry_dirty") {
         return;
     }
-    for family in [false, true] {
+    for (family, job) in [(false, false), (true, false), (false, true), (true, true)] {
         const NAME: &str = "RESUMABLE_REPLACE_PENDING";
         crate::function_registry::register_function(Arc::new(Replacement {
             name: NAME,
@@ -314,16 +324,16 @@ fn review_min_registry_dirty() {
         f(&mut e, 1, 1, "=1");
         f(&mut e, 2, 1, "=A1+RESUMABLE_REPLACE_PENDING()");
         f(&mut e, 3, 1, "=A2+1");
-        incomplete(
-            e.evaluate_all_until(EvaluationStop::after(Duration::ZERO))
-                .unwrap(),
-        );
+        incomplete(test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap());
         assert_eq!(v(&e, 2, 1), None);
         crate::function_registry::register_function(Arc::new(Replacement {
             name: NAME,
             value: 9.,
         }));
-        drain(&mut e);
+        while matches!(
+            test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap(),
+            EvaluationProgress::Incomplete(_)
+        ) {}
         assert_eq!(v(&e, 2, 1), Some(LiteralValue::Number(10.)));
     }
 }
@@ -332,7 +342,7 @@ fn review_custom_registration_between_calls() {
     if isolated_test("mutations::review_custom_registration_between_calls") {
         return;
     }
-    for family in [false, true] {
+    for (family, job) in [(false, false), (true, false), (false, true), (true, true)] {
         const NAME: &str = "RESUMABLE_REPLACE_INSTALLED";
         crate::function_registry::register_function(Arc::new(Replacement {
             name: NAME,
@@ -340,10 +350,7 @@ fn review_custom_registration_between_calls() {
         }));
         let mut e = chain(family);
         f(&mut e, 1, 1, "=RESUMABLE_REPLACE_INSTALLED()");
-        incomplete(
-            e.evaluate_all_until(EvaluationStop::after(Duration::ZERO))
-                .unwrap(),
-        );
+        incomplete(test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap());
         assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
         crate::function_registry::register_function(Arc::new(Replacement {
             name: NAME,
@@ -353,7 +360,10 @@ fn review_custom_registration_between_calls() {
         // pending recalculation must retain its own epoch for invalidation.
         e.set_cell_value("Sheet1", 1, 12, LiteralValue::Number(1.))
             .unwrap();
-        drain(&mut e);
+        while matches!(
+            test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap(),
+            EvaluationProgress::Incomplete(_)
+        ) {}
         assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(9.)));
         assert_eq!(v(&e, 20, 1), Some(LiteralValue::Number(28.)));
         assert_eq!(e.recalc_epoch, 1);
@@ -378,7 +388,7 @@ impl Function for ProviderValue {
 }
 #[test]
 fn review_provider_revision_invalidates_installed_work() {
-    for family in [false, true] {
+    for (family, job) in [(false, false), (true, false), (false, true), (true, true)] {
         let value = Arc::new(AtomicUsize::new(1));
         let provider = TestWorkbook::new().with_function(Arc::new(ProviderValue(value.clone())));
         let revision = provider.planning_revision_handle();
@@ -393,23 +403,23 @@ fn review_provider_revision_invalidates_installed_work() {
         for r in 2..=20 {
             f(&mut e, r, 1, &format!("=A{}+1", r - 1));
         }
-        incomplete(
-            e.evaluate_all_until(EvaluationStop::after(Duration::ZERO))
-                .unwrap(),
-        );
+        incomplete(test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap());
         assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(1.)));
         value.store(9, Ordering::SeqCst);
         revision.fetch_add(1, Ordering::SeqCst);
         e.set_cell_value("Sheet1", 1, 12, LiteralValue::Number(1.))
             .unwrap();
-        drain(&mut e);
+        while matches!(
+            test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap(),
+            EvaluationProgress::Incomplete(_)
+        ) {}
         assert_eq!(v(&e, 1, 1), Some(LiteralValue::Number(9.)));
         assert_eq!(v(&e, 20, 1), Some(LiteralValue::Number(28.)));
     }
 }
 #[test]
 fn review_mutations_preserve_clock_and_rand_epoch() {
-    for family in [false, true] {
+    for (family, job) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut e = chain(family);
         let clock = Arc::new(Clock(AtomicUsize::new(0)));
         e.set_clock(clock.clone());
@@ -417,13 +427,16 @@ fn review_mutations_preserve_clock_and_rand_epoch() {
         f(&mut e, 2, 2, "=RAND()");
         e.resumable_stop_after_units_for_test = Some(3);
         let before = clock.0.load(Ordering::SeqCst);
-        incomplete(e.evaluate_all_until(EvaluationStop::none()).unwrap());
+        incomplete(test_recalc_slice(&mut e, EvaluationStop::none(), job).unwrap());
         let now = v(&e, 1, 2).expect("NOW installed");
         let rand = v(&e, 2, 2).expect("RAND installed");
         assert_eq!(e.recalc_epoch, 0);
         e.set_cell_value("Sheet1", 1, 4, LiteralValue::Number(99.))
             .unwrap();
-        drain(&mut e);
+        while matches!(
+            test_recalc_slice(&mut e, EvaluationStop::after(Duration::ZERO), job).unwrap(),
+            EvaluationProgress::Incomplete(_)
+        ) {}
         assert_eq!(v(&e, 1, 2), Some(now));
         assert_eq!(v(&e, 2, 2), Some(rand));
         assert_eq!(clock.0.load(Ordering::SeqCst) - before, 1);

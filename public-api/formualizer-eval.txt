@@ -1370,6 +1370,14 @@ pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, 
 pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
 pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_active_recalc_job(&self) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::pending_cells_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
+pub fn formualizer_eval::engine::eval::Engine<R>::prioritize_recalc(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_common::error::ExcelError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::current_read_affected_closure(&self, &[AffectedRoot], ClosureLimits) -> core::result::Result<CurrentReadClosure<'_>, ClosureError>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
@@ -4471,6 +4479,36 @@ pub formualizer_eval::engine::resumable::EvaluationProgress::Complete(formualize
 pub formualizer_eval::engine::resumable::EvaluationProgress::Incomplete(formualizer_eval::engine::resumable::IncompleteEvaluation)
 impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationProgress
 pub fn formualizer_eval::engine::resumable::EvaluationProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::SlowUnitKind
+pub formualizer_eval::engine::resumable::SlowUnitKind::Cycle
+pub formualizer_eval::engine::resumable::SlowUnitKind::FamilyRun
+pub formualizer_eval::engine::resumable::SlowUnitKind::GraphBuild
+pub formualizer_eval::engine::resumable::SlowUnitKind::ScheduleBuild
+pub formualizer_eval::engine::resumable::SlowUnitKind::SingleCell
+impl core::clone::Clone for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::clone(&self) -> formualizer_eval::engine::resumable::SlowUnitKind
+impl core::cmp::Eq for formualizer_eval::engine::resumable::SlowUnitKind
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::eq(&self, &formualizer_eval::engine::resumable::SlowUnitKind) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::SlowUnitKind
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::SlowUnitKind
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::StepPhase
+pub formualizer_eval::engine::resumable::StepPhase::BuildingGraph
+pub formualizer_eval::engine::resumable::StepPhase::Cancelled
+pub formualizer_eval::engine::resumable::StepPhase::Evaluating
+pub formualizer_eval::engine::resumable::StepPhase::Finished
+pub formualizer_eval::engine::resumable::StepPhase::Scheduling
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::clone(&self) -> formualizer_eval::engine::resumable::StepPhase
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepPhase
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::eq(&self, &formualizer_eval::engine::resumable::StepPhase) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StepPhase
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepPhase
 #[non_exhaustive] pub enum formualizer_eval::engine::resumable::StopReason
 pub formualizer_eval::engine::resumable::StopReason::Cancelled
 pub formualizer_eval::engine::resumable::StopReason::Deadline
@@ -4502,6 +4540,71 @@ pub formualizer_eval::engine::resumable::IncompleteEvaluation::computed_vertices
 pub formualizer_eval::engine::resumable::IncompleteEvaluation::reason: formualizer_eval::engine::resumable::StopReason
 impl core::fmt::Debug for formualizer_eval::engine::resumable::IncompleteEvaluation
 pub fn formualizer_eval::engine::resumable::IncompleteEvaluation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::RecalcJobOptions
+pub formualizer_eval::engine::resumable::RecalcJobOptions::collect_deltas: bool
+pub formualizer_eval::engine::resumable::RecalcJobOptions::initial_priority: alloc::vec::Vec<formualizer_eval::engine::EvaluationTarget>
+pub formualizer_eval::engine::resumable::RecalcJobOptions::max_delta_records: usize
+impl core::clone::Clone for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::clone(&self) -> formualizer_eval::engine::resumable::RecalcJobOptions
+impl core::default::Default for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::SlowUnitReport
+pub formualizer_eval::engine::resumable::SlowUnitReport::elapsed: core::time::Duration
+pub formualizer_eval::engine::resumable::SlowUnitReport::kind: formualizer_eval::engine::resumable::SlowUnitKind
+pub formualizer_eval::engine::resumable::SlowUnitReport::representative_cell: core::option::Option<formualizer_common::address::PackedSheetCell>
+pub formualizer_eval::engine::resumable::SlowUnitReport::vertex_count: usize
+impl core::clone::Clone for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::clone(&self) -> formualizer_eval::engine::resumable::SlowUnitReport
+impl core::cmp::Eq for formualizer_eval::engine::resumable::SlowUnitReport
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::eq(&self, &formualizer_eval::engine::resumable::SlowUnitReport) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::SlowUnitReport
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::StepDelta
+pub formualizer_eval::engine::resumable::StepDelta::delta: formualizer_eval::engine::eval_delta::TargetEvalDelta
+pub formualizer_eval::engine::resumable::StepDelta::overflow_sheets: alloc::vec::Vec<formualizer_common::address::SheetId>
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::clone(&self) -> formualizer_eval::engine::resumable::StepDelta
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepDelta
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::eq(&self, &formualizer_eval::engine::resumable::StepDelta) -> bool
+impl core::default::Default for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::default() -> formualizer_eval::engine::resumable::StepDelta
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepDelta
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::StepProgress
+pub formualizer_eval::engine::resumable::StepProgress::completed_in_pass: usize
+pub formualizer_eval::engine::resumable::StepProgress::cumulative_computed_vertices: usize
+pub formualizer_eval::engine::resumable::StepProgress::pass: u32
+pub formualizer_eval::engine::resumable::StepProgress::priority_pending: bool
+pub formualizer_eval::engine::resumable::StepProgress::scheduled_in_pass: usize
+pub formualizer_eval::engine::resumable::StepProgress::staged_formulas_remaining: usize
+pub formualizer_eval::engine::resumable::StepProgress::total_exact: bool
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::clone(&self) -> formualizer_eval::engine::resumable::StepProgress
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepProgress
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::eq(&self, &formualizer_eval::engine::resumable::StepProgress) -> bool
+impl core::default::Default for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::default() -> formualizer_eval::engine::resumable::StepProgress
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StepProgress
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepProgress
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::StepReport
+pub formualizer_eval::engine::resumable::StepReport::changed: formualizer_eval::engine::resumable::StepDelta
+pub formualizer_eval::engine::resumable::StepReport::longest_unit: core::option::Option<formualizer_eval::engine::resumable::SlowUnitReport>
+pub formualizer_eval::engine::resumable::StepReport::phase: formualizer_eval::engine::resumable::StepPhase
+pub formualizer_eval::engine::resumable::StepReport::progress: formualizer_eval::engine::resumable::StepProgress
+pub formualizer_eval::engine::resumable::StepReport::result: core::option::Option<formualizer_eval::engine::eval::EvalResult>
+pub formualizer_eval::engine::resumable::StepReport::step_computed_vertices: usize
+pub formualizer_eval::engine::resumable::StepReport::step_elapsed: core::time::Duration
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepReport
+pub fn formualizer_eval::engine::resumable::StepReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod formualizer_eval::engine::row_visibility
 pub enum formualizer_eval::engine::row_visibility::RowVisibilitySource
 pub formualizer_eval::engine::row_visibility::RowVisibilitySource::Filter
@@ -5632,6 +5735,21 @@ impl core::fmt::Debug for formualizer_eval::engine::SheetIndexMode
 pub fn formualizer_eval::engine::SheetIndexMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::SheetIndexMode
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::SheetIndexMode
+#[non_exhaustive] pub enum formualizer_eval::engine::SlowUnitKind
+pub formualizer_eval::engine::SlowUnitKind::Cycle
+pub formualizer_eval::engine::SlowUnitKind::FamilyRun
+pub formualizer_eval::engine::SlowUnitKind::GraphBuild
+pub formualizer_eval::engine::SlowUnitKind::ScheduleBuild
+pub formualizer_eval::engine::SlowUnitKind::SingleCell
+impl core::clone::Clone for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::clone(&self) -> formualizer_eval::engine::resumable::SlowUnitKind
+impl core::cmp::Eq for formualizer_eval::engine::resumable::SlowUnitKind
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::eq(&self, &formualizer_eval::engine::resumable::SlowUnitKind) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::SlowUnitKind
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::SlowUnitKind
 pub enum formualizer_eval::engine::SpillBoundsPolicy
 pub formualizer_eval::engine::SpillBoundsPolicy::Strict
 pub formualizer_eval::engine::SpillBoundsPolicy::Truncate
@@ -5706,6 +5824,21 @@ impl core::fmt::Debug for formualizer_eval::engine::SpillVisibility
 pub fn formualizer_eval::engine::SpillVisibility::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::SpillVisibility
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::SpillVisibility
+#[non_exhaustive] pub enum formualizer_eval::engine::StepPhase
+pub formualizer_eval::engine::StepPhase::BuildingGraph
+pub formualizer_eval::engine::StepPhase::Cancelled
+pub formualizer_eval::engine::StepPhase::Evaluating
+pub formualizer_eval::engine::StepPhase::Finished
+pub formualizer_eval::engine::StepPhase::Scheduling
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::clone(&self) -> formualizer_eval::engine::resumable::StepPhase
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepPhase
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::eq(&self, &formualizer_eval::engine::resumable::StepPhase) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StepPhase
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepPhase
 #[non_exhaustive] pub enum formualizer_eval::engine::StopReason
 pub formualizer_eval::engine::StopReason::Cancelled
 pub formualizer_eval::engine::StopReason::Deadline
@@ -6113,6 +6246,14 @@ pub fn formualizer_eval::engine::eval::Engine<R>::begin_bulk_ingest(&mut self) -
 pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, &formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
 pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_active_recalc_job(&self) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::pending_cells_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
+pub fn formualizer_eval::engine::eval::Engine<R>::prioritize_recalc(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_common::error::ExcelError>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::current_read_affected_closure(&self, &[AffectedRoot], ClosureLimits) -> core::result::Result<CurrentReadClosure<'_>, ClosureError>
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
@@ -6980,6 +7121,16 @@ impl core::default::Default for formualizer_eval::engine::graph::editor::vertex_
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary::default() -> formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::RecalcJobOptions
+pub formualizer_eval::engine::RecalcJobOptions::collect_deltas: bool
+pub formualizer_eval::engine::RecalcJobOptions::initial_priority: alloc::vec::Vec<formualizer_eval::engine::EvaluationTarget>
+pub formualizer_eval::engine::RecalcJobOptions::max_delta_records: usize
+impl core::clone::Clone for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::clone(&self) -> formualizer_eval::engine::resumable::RecalcJobOptions
+impl core::default::Default for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::RecalcPlan
 impl formualizer_eval::engine::eval::RecalcPlan
 pub fn formualizer_eval::engine::eval::RecalcPlan::has_dynamic_refs(&self) -> bool
@@ -7099,6 +7250,19 @@ impl core::default::Default for formualizer_eval::engine::graph::editor::vertex_
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary::default() -> formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::SlowUnitReport
+pub formualizer_eval::engine::SlowUnitReport::elapsed: core::time::Duration
+pub formualizer_eval::engine::SlowUnitReport::kind: formualizer_eval::engine::resumable::SlowUnitKind
+pub formualizer_eval::engine::SlowUnitReport::representative_cell: core::option::Option<formualizer_common::address::PackedSheetCell>
+pub formualizer_eval::engine::SlowUnitReport::vertex_count: usize
+impl core::clone::Clone for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::clone(&self) -> formualizer_eval::engine::resumable::SlowUnitReport
+impl core::cmp::Eq for formualizer_eval::engine::resumable::SlowUnitReport
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::eq(&self, &formualizer_eval::engine::resumable::SlowUnitReport) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::SlowUnitReport
 pub struct formualizer_eval::engine::SpillConfig
 pub formualizer_eval::engine::SpillConfig::bounds_policy: formualizer_eval::engine::SpillBoundsPolicy
 pub formualizer_eval::engine::SpillConfig::buffer_mode: formualizer_eval::engine::SpillBufferMode
@@ -7119,6 +7283,48 @@ impl core::fmt::Debug for formualizer_eval::engine::SpillConfig
 pub fn formualizer_eval::engine::SpillConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::SpillConfig
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::SpillConfig
+#[non_exhaustive] pub struct formualizer_eval::engine::StepDelta
+pub formualizer_eval::engine::StepDelta::delta: formualizer_eval::engine::eval_delta::TargetEvalDelta
+pub formualizer_eval::engine::StepDelta::overflow_sheets: alloc::vec::Vec<formualizer_common::address::SheetId>
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::clone(&self) -> formualizer_eval::engine::resumable::StepDelta
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepDelta
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::eq(&self, &formualizer_eval::engine::resumable::StepDelta) -> bool
+impl core::default::Default for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::default() -> formualizer_eval::engine::resumable::StepDelta
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepDelta
+#[non_exhaustive] pub struct formualizer_eval::engine::StepProgress
+pub formualizer_eval::engine::StepProgress::completed_in_pass: usize
+pub formualizer_eval::engine::StepProgress::cumulative_computed_vertices: usize
+pub formualizer_eval::engine::StepProgress::pass: u32
+pub formualizer_eval::engine::StepProgress::priority_pending: bool
+pub formualizer_eval::engine::StepProgress::scheduled_in_pass: usize
+pub formualizer_eval::engine::StepProgress::staged_formulas_remaining: usize
+pub formualizer_eval::engine::StepProgress::total_exact: bool
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::clone(&self) -> formualizer_eval::engine::resumable::StepProgress
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepProgress
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::eq(&self, &formualizer_eval::engine::resumable::StepProgress) -> bool
+impl core::default::Default for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::default() -> formualizer_eval::engine::resumable::StepProgress
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StepProgress
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepProgress
+#[non_exhaustive] pub struct formualizer_eval::engine::StepReport
+pub formualizer_eval::engine::StepReport::changed: formualizer_eval::engine::resumable::StepDelta
+pub formualizer_eval::engine::StepReport::longest_unit: core::option::Option<formualizer_eval::engine::resumable::SlowUnitReport>
+pub formualizer_eval::engine::StepReport::phase: formualizer_eval::engine::resumable::StepPhase
+pub formualizer_eval::engine::StepReport::progress: formualizer_eval::engine::resumable::StepProgress
+pub formualizer_eval::engine::StepReport::result: core::option::Option<formualizer_eval::engine::eval::EvalResult>
+pub formualizer_eval::engine::StepReport::step_computed_vertices: usize
+pub formualizer_eval::engine::StepReport::step_elapsed: core::time::Duration
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepReport
+pub fn formualizer_eval::engine::resumable::StepReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::StripeKey
 pub formualizer_eval::engine::StripeKey::index: u32
 pub formualizer_eval::engine::StripeKey::sheet_id: formualizer_eval::reference::SheetId

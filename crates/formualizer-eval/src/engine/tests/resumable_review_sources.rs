@@ -204,21 +204,29 @@ use formualizer_parse::parser::parse;
 
 #[test]
 fn source_change_after_installed_dynamic_reader() {
-    source_change_matrix(false, false);
+    source_change_matrix(false, false, false);
 }
 #[test]
 fn table_source_change_after_installed_dynamic_reader() {
-    source_change_matrix(true, false);
+    source_change_matrix(true, false, false);
 }
 #[test]
 fn named_source_change_after_installed_dynamic_reader() {
-    source_change_matrix(false, true);
+    source_change_matrix(false, true, false);
 }
 #[test]
 fn named_table_source_change_after_installed_dynamic_reader() {
-    source_change_matrix(true, true);
+    source_change_matrix(true, true, false);
 }
-fn source_change_matrix(table: bool, named: bool) {
+#[test]
+fn job_source_change_matrix() {
+    for table in [false, true] {
+        for named in [false, true] {
+            source_change_matrix(table, named, true);
+        }
+    }
+}
+fn source_change_matrix(table: bool, named: bool, job: bool) {
     crate::builtins::load_builtins();
     let mut failures = Vec::new();
     let mut exercised = 0;
@@ -299,7 +307,8 @@ fn source_change_matrix(table: bool, named: bool) {
                 let mut e = make();
                 let mut ordinary = make();
                 e.resumable_stop_after_units_for_test = Some(cut);
-                let progress = e.evaluate_all_until(EvaluationStop::none()).unwrap();
+                let progress =
+                    super::test_recalc_slice(&mut e, EvaluationStop::none(), job).unwrap();
                 if !matches!(progress, EvaluationProgress::Incomplete(_))
                     || e.get_cell_value("Sheet1", 1, 2) != Some(LiteralValue::Number(3.))
                 {
@@ -321,7 +330,7 @@ fn source_change_matrix(table: bool, named: bool) {
                 e.resumable_stop_after_units_for_test = None;
                 for call in 0..100 {
                     if matches!(
-                        e.evaluate_all_until(EvaluationStop::none()).unwrap(),
+                        super::test_recalc_slice(&mut e, EvaluationStop::none(), job).unwrap(),
                         EvaluationProgress::Complete(_)
                     ) {
                         break;

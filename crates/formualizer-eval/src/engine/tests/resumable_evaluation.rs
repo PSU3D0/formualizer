@@ -72,6 +72,35 @@ fn chain(family: bool) -> Engine<TestWorkbook> {
     }
     e
 }
+fn test_recalc_slice<R: crate::traits::EvaluationContext>(
+    e: &mut Engine<R>,
+    stop: EvaluationStop,
+    job: bool,
+) -> Result<EvaluationProgress, ExcelError> {
+    if !job {
+        return e.evaluate_all_until(stop);
+    }
+    if !e.has_active_recalc_job() {
+        e.begin_recalc(Default::default())?;
+    }
+    let r = loop {
+        let r = e.step_recalc(stop.clone())?;
+        if !matches!(r.phase, StepPhase::BuildingGraph | StepPhase::Scheduling) {
+            break r;
+        }
+    };
+    Ok(match r.result {
+        Some(result) => EvaluationProgress::Complete(result),
+        None => EvaluationProgress::Incomplete(IncompleteEvaluation {
+            reason: if r.phase == StepPhase::Cancelled {
+                StopReason::Cancelled
+            } else {
+                StopReason::Deadline
+            },
+            computed_vertices: r.step_computed_vertices,
+        }),
+    })
+}
 fn incomplete(p: EvaluationProgress) -> IncompleteEvaluation {
     match p {
         EvaluationProgress::Incomplete(i) => i,
@@ -437,6 +466,15 @@ fn hard_errors_are_errors() {
 }
 #[test]
 fn seeded_random_workbooks_and_edits() {
+    random_workbooks_and_edits(false);
+}
+
+#[test]
+fn job_random_priority_workbooks_and_edits() {
+    random_workbooks_and_edits(true);
+}
+
+fn random_workbooks_and_edits(job: bool) {
     for family in [false, true] {
         for seed in 1..=256u64 {
             let mut rng = seed;
@@ -472,12 +510,17 @@ fn seeded_random_workbooks_and_edits() {
                 f(&mut e, 1, 9, "=INDIRECT(\"C6\")+OFFSET(B1,4,0)+RAND()");
                 e.set_clock(Arc::new(Clock(AtomicUsize::new(0))));
                 f(&mut e, 1, 11, "=NOW()+I1");
+                e.enable_operation_diagnostics(20);
+                f(&mut e, 12, 11, "=IFERROR(JOB_PROPERTY_MISSING(),7)");
                 // F3: existing SCC only; edits below never create a new cycle.
                 e
             };
             let mut e = make();
             let mut reference = make();
             let mut complete = false;
+            if job {
+                e.begin_recalc(Default::default()).unwrap();
+            }
             for call in 0..600 {
                 if call < 16 && next() % 2 == 0 {
                     let x = (next() % 6 + 1) as f64;
@@ -530,15 +573,47 @@ fn seeded_random_workbooks_and_edits() {
                     }
                 }
                 e.resumable_stop_after_units_for_test = Some((next() % 4) as usize);
-                if let EvaluationProgress::Complete(_) =
-                    e.evaluate_all_until(EvaluationStop::none()).unwrap()
-                {
+                let finished = if job {
+                    if next() % 2 == 0 {
+                        e.prioritize_recalc(&[EvaluationTarget::Cell {
+                            sheet: "Sheet1".into(),
+                            row: (next() % 12 + 1) as u32,
+                            col: (next() % 11 + 1) as u32,
+                        }])
+                        .unwrap();
+                    }
+                    e.step_recalc(EvaluationStop::none()).unwrap().phase == StepPhase::Finished
+                } else {
+                    matches!(
+                        e.evaluate_all_until(EvaluationStop::none()).unwrap(),
+                        EvaluationProgress::Complete(_)
+                    )
+                };
+                if finished {
                     complete = true;
                     break;
                 }
             }
             assert!(complete, "seed {seed} family {family}");
             reference.evaluate_all().unwrap();
+            assert_eq!(e.recalc_epoch, reference.recalc_epoch);
+            let anchor = |x: &Engine<TestWorkbook>| {
+                x.graph
+                    .get_vertex_id_for_address(&x.graph.make_cell_ref("Sheet1", 1, 2))
+                    .unwrap()
+            };
+            assert_eq!(
+                e.graph.spill_extent_for_anchor(anchor(&e)),
+                reference.graph.spill_extent_for_anchor(anchor(&reference))
+            );
+            let mut actual_roots = e.operation_diagnostics().unwrap().unwrap().roots;
+            let mut expected_roots = reference.operation_diagnostics().unwrap().unwrap().roots;
+            actual_roots.sort();
+            expected_roots.sort();
+            assert_eq!(
+                actual_roots, expected_roots,
+                "diagnostics seed {seed} family {family}"
+            );
             for r in 1..=12 {
                 for c in 1..=11 {
                     assert_eq!(

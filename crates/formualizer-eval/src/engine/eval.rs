@@ -2220,7 +2220,11 @@ mod vertex_id_runs_tests {
 }
 
 /// Uncacheable requests keep their schedule inline without a shared allocation.
-enum EvaluationSchedule {
+#[path = "recalc_job.rs"]
+mod job_driver;
+pub(super) use job_driver::HeldRecalcSchedule;
+
+pub(super) enum EvaluationSchedule {
     Owned(crate::engine::scheduler::Schedule),
     Shared(Arc<crate::engine::scheduler::Schedule>),
 }
@@ -3348,6 +3352,11 @@ where
         evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
     ) -> Result<T, ExcelError> {
         let outermost = self.evaluation_resource_request_depth == 0;
+        if outermost && !self.resumable_call && self.has_active_recalc_job() {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                "recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc",
+            ));
+        }
         // Foreign requests settle the logical recalculation before any early
         // admission/cancellation exit. Every resumable pass is already settled.
         if outermost && !self.resumable_call && self.resumable.take().is_some() {
@@ -3414,10 +3423,14 @@ where
             self.evaluation_resource_baseline.record_started(request_id);
             self.evaluation_resource_request_started_at = Some(crate::instant::FzInstant::now());
             self.source_cache_accounted = 0;
-            self.active_resource_ledger = Some(ResourceLedger::new(
-                Some(request_id),
-                self.evaluation_resource_budgets.clone(),
-            ));
+            let mut ledger =
+                ResourceLedger::new(Some(request_id), self.evaluation_resource_budgets.clone());
+            if self.resumable_call
+                && let Some(state) = &self.resumable
+            {
+                ledger.resume_job(state.work_units, state.active_elapsed);
+            }
+            self.active_resource_ledger = Some(ledger);
         }
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_add(1);
@@ -3459,6 +3472,12 @@ where
                 .take()
                 .expect("outer evaluation resource request has active ledger");
             ledger.release_all_scratch();
+            if self.resumable_call
+                && let Some(state) = &mut self.resumable
+            {
+                state.work_units = ledger.snapshot().work_charged;
+                state.active_elapsed += std::time::Duration::from_nanos(total_ns);
+            }
             stats.ledger.update(ledger.snapshot());
             stats.outcome = match &result {
                 Ok(_) => EvaluationRequestOutcome::Success,
@@ -15633,294 +15652,27 @@ where
         &mut self,
         stop: super::EvaluationStop,
     ) -> Result<super::EvaluationProgress, ExcelError> {
-        self.resumable_call = true;
-        self.active_cancel_flag = stop.cancel.clone();
-        let result = self.observe_evaluation_resource_request(
-            EvaluationRequestKind::FullCancellable,
-            |engine| engine.evaluate_all_until_impl(stop),
-        );
-        self.active_cancel_flag = None;
-        self.resumable_call = false;
-        if result.is_err() {
-            self.resumable = None;
-            self.redirty_for_next_recalc();
+        if self.has_active_recalc_job() {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("recalculation job is active; use step_recalc"));
         }
-        result
-    }
-
-    pub fn begin_recalc(&mut self, options: super::RecalcJobOptions) -> Result<(), ExcelError> {
-        if self.recalc_options.is_some() {
-            return Err(ExcelError::new(ExcelErrorKind::Value).with_message("recalculation job already active"));
-        }
-        self.recalc_options = Some(options);
-        Ok(())
-    }
-    pub fn has_active_recalc_job(&self) -> bool { self.recalc_options.is_some() }
-    pub fn prioritize_recalc(&mut self, targets: &[super::EvaluationTarget]) -> Result<(), ExcelError> {
-        let options = self.recalc_options.as_mut().ok_or_else(|| ExcelError::new(ExcelErrorKind::Value).with_message("no active recalculation job"))?;
-        options.initial_priority = targets.to_vec();
-        Ok(())
-    }
-    pub fn cancel_recalc(&mut self) -> Option<super::StepReport> {
-        self.recalc_options.take()?;
-        self.resumable = None;
-        self.redirty_for_next_recalc();
-        Some(super::StepReport { phase: super::StepPhase::Cancelled, progress: Default::default(), step_computed_vertices: 0, step_elapsed: std::time::Duration::ZERO, changed: Default::default(), longest_unit: None, result: None })
-    }
-    pub fn step_recalc(&mut self, stop: super::EvaluationStop) -> Result<super::StepReport, ExcelError> {
-        if self.recalc_options.is_none() {
-            return Err(ExcelError::new(ExcelErrorKind::Value).with_message("no active recalculation job"));
-        }
-        let start = crate::instant::FzInstant::now();
-        let p = self.evaluate_all_until(stop)?;
-        let (phase, n, result) = match p {
-            super::EvaluationProgress::Complete(r) => (super::StepPhase::Finished, r.computed_vertices, Some(r)),
-            super::EvaluationProgress::Incomplete(i) => (super::StepPhase::Evaluating, i.computed_vertices, None),
-        };
-        if result.is_some() { self.recalc_options = None; }
-        Ok(super::StepReport { phase, progress: Default::default(), step_computed_vertices: n, step_elapsed: start.elapsed(), changed: Default::default(), longest_unit: None, result })
+        let report = self.drive_recalc_step(stop)?;
+        Ok(match report.result {
+            Some(result) => super::EvaluationProgress::Complete(result),
+            None => super::EvaluationProgress::Incomplete(super::IncompleteEvaluation {
+                reason: if report.phase == super::StepPhase::Cancelled {
+                    super::StopReason::Cancelled
+                } else {
+                    super::StopReason::Deadline
+                },
+                computed_vertices: report.step_computed_vertices,
+            }),
+        })
     }
 
     /// Whether a logical recalculation is awaiting another resumable call.
     pub fn has_pending_resumable_evaluation(&self) -> bool {
         self.resumable.is_some()
-    }
-
-    fn evaluate_all_until_impl(
-        &mut self,
-        stop: super::EvaluationStop,
-    ) -> Result<super::EvaluationProgress, ExcelError> {
-        use super::{EvaluationProgress, IncompleteEvaluation, StopReason};
-        debug_assert!(!self.graph.deferred_dirty_active());
-        let start = crate::instant::FzInstant::now();
-        let stop_at = stop.soft_deadline.and_then(|d| start.checked_add(d));
-        let function_epoch = crate::function_registry::semantic_epoch();
-        let provider_revision = self.resolver.planning_semantic_revision();
-        self.observe_function_semantic_epoch()?;
-        self.lookup_index_cache.reset_counters();
-        let _source_cache = self.source_cache_session();
-        self.validate_deterministic_mode()?;
-        if self.config.defer_graph_building {
-            self.build_graph_all()?;
-        }
-        self.require_unified_authority()?;
-        let mut initial = self.resumable.is_none();
-        if initial {
-            self.begin_evaluation_request();
-            let mut state = super::resumable::LogicalRecalculation::default();
-            // Clean retained SCCs may not be included in the dirty schedule.
-            let mut retained: FxHashMap<u64, Vec<VertexId>> = FxHashMap::default();
-            for (&vertex, &scc) in &self.retained_scc_members {
-                retained.entry(scc).or_default().push(vertex);
-            }
-            for mut key in retained.into_values() {
-                key.sort_unstable();
-                let seeds = self.capture_original_cycle_seeds(&key);
-                state.cycle_seeds.insert(key.clone(), seeds);
-                state.original_cycles.insert(key);
-            }
-            self.resumable = Some(state);
-        } else {
-            // Dispatch/name/sheet snapshots are per-call, unlike the logical
-            // clock, diagnostics, hints and random epoch. Newly introduced
-            // names and replaced providers must be visible before any work.
-            self.refresh_resolution_snapshots();
-        }
-        let mutation_revision = self.inspection_mutation_revision();
-        let state = self.resumable.as_ref().unwrap();
-        let semantics_changed = !initial
-            && (state.function_epoch != function_epoch
-                || state.provider_revision != provider_revision);
-        let mutated = !initial
-            && (state.mutation_revision != mutation_revision
-                || state.source_mutation_generation != self.source_mutation_generation);
-        if semantics_changed || mutated {
-            let invalidated: Vec<_> = state
-                .installed
-                .iter()
-                .filter(|&v| {
-                    self.graph.is_live_formula_vertex(v)
-                        && (semantics_changed
-                            || self.graph.is_volatile(v)
-                            || self.graph.is_dynamic(v))
-                })
-                .collect();
-            self.graph.mark_dirty_many(&invalidated);
-        }
-        let state = self.resumable.as_mut().unwrap();
-        state.function_epoch = function_epoch;
-        state.provider_revision = provider_revision;
-        state.mutation_revision = mutation_revision;
-        state.source_mutation_generation = self.source_mutation_generation;
-        self.reset_virtual_dep_telemetry_if_disabled();
-        let mut computed = 0;
-        let mut cycles = 0;
-        let mut units = 0;
-        let mut reason = None;
-        loop {
-            let candidates: Vec<_> = self
-                .graph
-                .get_evaluation_vertices()
-                .into_iter()
-                .filter(|&v| initial || self.graph.is_dirty(v))
-                .collect();
-            initial = false;
-            if candidates.is_empty() {
-                break;
-            }
-            if stop.cancel.as_ref().is_some_and(|t| t.is_cancelled())
-                && self.resumable.as_ref().unwrap().original_cycles_recorded
-            {
-                reason = Some(StopReason::Cancelled);
-                break;
-            }
-            // Identifying original SCCs is metadata-only, and must precede
-            // edits even when the initial token is already cancelled. Finish
-            // this atomic planning step with cancellation masked; keep all
-            // hard resource/deadline checks and restore the token before work.
-            let cancelled_initial_plan = stop.cancel.as_ref().is_some_and(|t| t.is_cancelled())
-                && !self.resumable.as_ref().unwrap().original_cycles_recorded;
-            let saved_cancel = cancelled_initial_plan.then(|| self.active_cancel_flag.take());
-            let planned = self.create_evaluation_schedule(&candidates);
-            if let Some(saved_cancel) = saved_cancel {
-                self.active_cancel_flag = saved_cancel;
-            }
-            let (schedule, old_vdeps, _) = planned?;
-            self.record_original_cycle_seeds(&schedule);
-            // Even a pre-cancelled initial call must identify original SCCs
-            // before edits can create indistinguishable new memberships.
-            if stop.cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
-                reason = Some(StopReason::Cancelled);
-                break;
-            }
-            self.begin_pass(&schedule);
-            let mut completed_cycles = Vec::new();
-            let mut barrier = false;
-            'walk: for (index, &unit) in schedule.units.iter().enumerate() {
-                match unit {
-                    ScheduleUnit::Cycle(i) => {
-                        match self.handle_cycle_unit(
-                            schedule.unit_cycle(i),
-                            None,
-                            None,
-                            stop.cancel.as_ref().map(|t| &**t.as_flag()),
-                        ) {
-                            Ok(n) => {
-                                cycles += usize::from(n > 0);
-                                completed_cycles.extend_from_slice(schedule.unit_cycle(i));
-                                units += 1;
-                            }
-                            Err(e) if e.kind == ExcelErrorKind::Cancelled => {
-                                reason = Some(StopReason::Cancelled);
-                                break 'walk;
-                            }
-                            Err(e) => return Err(e),
-                        }
-                    }
-                    ScheduleUnit::Layer(i) => {
-                        let layer = schedule.unit_layer(i);
-                        // Keep family runs whole. Flush each installed unit so a
-                        // slice never attests a merely planned buffered result.
-                        for unit in layer_units(layer) {
-                            let (lo, hi) = match unit {
-                                LayerUnit::Cell(i) => (i, i + 1),
-                                LayerUnit::Run(r) => (r.start as usize, (r.start + r.len) as usize),
-                            };
-                            let part = layer.sub_layer(lo, hi);
-                            self.resource_checkpoint(part.vertices.len() as u64)?;
-                            self.resumable
-                                .as_mut()
-                                .unwrap()
-                                .forget_dissolved_new_cycles(&part.vertices);
-                            match self.evaluate_layer_units_until(
-                                &part,
-                                None,
-                                None,
-                                None,
-                                buffer_layer_writes(&part),
-                                None,
-                            ) {
-                                Ok(n) => {
-                                    computed += n;
-                                    units += 1;
-                                }
-                                Err(e) if e.kind == ExcelErrorKind::Cancelled => {
-                                    reason = Some(StopReason::Cancelled);
-                                    break 'walk;
-                                }
-                                Err(e) => return Err(e),
-                            }
-                            if self.stop_after_unit(&schedule, index) {
-                                barrier = true;
-                                break 'walk;
-                            }
-                            if self.resumable_should_stop(units, stop_at) {
-                                reason = Some(StopReason::Deadline);
-                                break 'walk;
-                            }
-                        }
-                    }
-                }
-                if self.stop_after_unit(&schedule, index) {
-                    barrier = true;
-                    break;
-                }
-                if self.resumable_should_stop(units, stop_at) {
-                    reason = Some(StopReason::Deadline);
-                    break;
-                }
-            }
-            let changed = self.changed_virtual_dep_vertices(&candidates, &old_vdeps);
-            self.resource_checkpoint(0)?;
-            let state = self.resumable.as_mut().unwrap();
-            // Taking the bitmap avoids borrowing self during freshness settlement.
-            let mut installed = std::mem::take(&mut state.installed);
-            let pending = self.freshness_finish_interrupted_pass(&completed_cycles, &mut installed);
-            self.resumable.as_mut().unwrap().installed = installed;
-            for v in changed {
-                self.graph.set_dirty(v, true);
-            }
-            if !pending && !self.graph.has_dirty_evaluation_vertices() {
-                reason = None;
-                break;
-            }
-            if barrier || reason.is_none() {
-                let state = self.resumable.as_mut().unwrap();
-                if state.replans >= 5 {
-                    return Err(self.replan_exhausted_error(5, "dynamic dependency evaluation"));
-                }
-                state.replans += 1;
-            }
-            if reason.is_some() {
-                break;
-            }
-        }
-        // Snapshot after installation too: internal graph maintenance in this
-        // call must not look like an external edit on the next admission.
-        let mutation_revision = self.inspection_mutation_revision();
-        let state = self.resumable.as_mut().unwrap();
-        state.mutation_revision = mutation_revision;
-        state.source_mutation_generation = self.source_mutation_generation;
-        // Empty workbooks have no schedule, and therefore no original SCCs.
-        state.original_cycles_recorded = true;
-        state.computed_vertices += computed;
-        state.cycle_errors += cycles;
-        state.elapsed += start.elapsed();
-        if let Some(reason) = reason {
-            Ok(EvaluationProgress::Incomplete(IncompleteEvaluation {
-                reason,
-                computed_vertices: computed,
-            }))
-        } else {
-            let state = self.resumable.take().unwrap();
-            self.redirty_for_next_recalc();
-            self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
-            Ok(EvaluationProgress::Complete(EvalResult {
-                computed_vertices: state.computed_vertices,
-                cycle_errors: state.cycle_errors,
-                elapsed: state.elapsed,
-            }))
-        }
     }
 
     /// Capture original values before a return or an acyclic installation can
@@ -15970,7 +15722,9 @@ where
             // Retained SCCs were captured already at logical admission.
             state.cycle_seeds.entry(key).or_insert(seeds);
         }
-        self.resumable.as_mut().unwrap().original_cycles_recorded = true;
+        let state = self.resumable.as_mut().unwrap();
+        state.original_cycles_recorded = true;
+        state.refresh_seed_retained_bytes();
     }
 
     fn resumable_should_stop(
@@ -20388,10 +20142,14 @@ where
             if !state.original_cycles.contains(&key) {
                 state.new_cycle_members.extend(cycle.iter().copied());
             }
+            let seed_memory_changed = !state.original_cycles.contains(&key);
             let seeds = state.cycle_seeds.entry(key).or_default();
             for (member, value) in members.iter().zip(&mut snapshot) {
                 let seed = seeds.entry(member.vertex).or_insert_with(|| value.clone());
                 *value = seed.clone();
+            }
+            if seed_memory_changed {
+                state.refresh_seed_retained_bytes();
             }
             for (member, value) in members.iter().zip(&snapshot) {
                 self.graph.update_vertex_value_ref(member.vertex, value);

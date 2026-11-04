@@ -51,25 +51,43 @@ pub enum StopReason {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct RecalcJobOptions {
+    /// Collect changed regions on each step (default true).
     pub collect_deltas: bool,
+    /// Maximum coalesced records returned per step (default 1,024).
+    /// Overflow returns sheet identities instead; collection itself is per-step.
     pub max_delta_records: usize,
+    /// Initial viewport targets, materialized lazily after full planning.
     pub initial_priority: Vec<super::EvaluationTarget>,
 }
 impl Default for RecalcJobOptions {
     fn default() -> Self {
-        Self { collect_deltas: true, max_delta_records: 1024, initial_priority: Vec::new() }
+        Self {
+            collect_deltas: true,
+            max_delta_records: 1024,
+            initial_priority: Vec::new(),
+        }
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum StepPhase { BuildingGraph, Scheduling, Evaluating, Finished, Cancelled }
+pub enum StepPhase {
+    BuildingGraph,
+    Scheduling,
+    Evaluating,
+    Finished,
+    Cancelled,
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct StepProgress {
+    /// One-based schedule pass; changes invalidate the previous denominator.
     pub pass: u32,
+    /// Full-schedule formula vertices visited, including clean priority work.
     pub completed_in_pass: usize,
     pub scheduled_in_pass: usize,
     pub cumulative_computed_vertices: usize,
+    /// Conservative proof of a fixed total. False also means unknown:
+    /// proofs are limited to 1,024 scalar arithmetic templates in v1.
     pub total_exact: bool,
     pub staged_formulas_remaining: usize,
     pub priority_pending: bool,
@@ -77,12 +95,21 @@ pub struct StepProgress {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct StepDelta {
+    /// Changed regions; scalar bulk commits conservatively include the whole
+    /// installed run, so a region can also contain cells with unchanged values.
     pub delta: super::TargetEvalDelta,
+    /// Repaint visible cells on these sheets. When populated, delta is empty.
     pub overflow_sheets: Vec<formualizer_common::SheetId>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum SlowUnitKind { GraphBuild, ScheduleBuild, SingleCell, FamilyRun, Cycle }
+pub enum SlowUnitKind {
+    GraphBuild,
+    ScheduleBuild,
+    SingleCell,
+    FamilyRun,
+    Cycle,
+}
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct SlowUnitReport {
@@ -93,6 +120,9 @@ pub struct SlowUnitReport {
 }
 #[derive(Debug)]
 #[non_exhaustive]
+/// Per-step locations and telemetry. Reads between steps observe installed
+/// new values alongside old values for still-pending cells. Only Finished
+/// carries a result; Cancelled is terminal for explicit jobs.
 pub struct StepReport {
     pub phase: StepPhase,
     pub progress: StepProgress,
@@ -103,10 +133,21 @@ pub struct StepReport {
     pub result: Option<EvalResult>,
 }
 
-/// Logical state only; no schedule/cursor survives a call. The engine's clock,
-/// freshness hints, collector and pending iterative re-dirties share this lifetime.
+/// Held pass, clock, hints, collector and pending iterative re-dirties.
 #[derive(Default)]
 pub(super) struct LogicalRecalculation {
+    pub held: Option<super::eval::HeldRecalcSchedule>,
+    pub pass: u32,
+    pub pass_completed: usize,
+    pub pass_scheduled: usize,
+    pub pass_exact: bool,
+    pub priority_targets: Vec<super::EvaluationTarget>,
+    pub priority_deferred: bool,
+    pub work_units: u64,
+    pub active_elapsed: Duration,
+    pub seed_retained_bytes: u64,
+    pub topology_epoch: u64,
+    pub authority_revision: (u64, u64),
     pub computed_vertices: usize,
     pub cycle_errors: usize,
     pub elapsed: Duration,
@@ -133,6 +174,46 @@ pub(super) struct LogicalRecalculation {
 }
 
 impl LogicalRecalculation {
+    pub fn refresh_seed_retained_bytes(&mut self) {
+        use formualizer_common::LiteralValue;
+        use std::mem::size_of;
+        fn payload(value: &LiteralValue) -> usize {
+            match value {
+                LiteralValue::Text(s) => s.capacity(),
+                LiteralValue::Array(rows) => {
+                    rows.capacity() * size_of::<Vec<LiteralValue>>()
+                        + rows
+                            .iter()
+                            .map(|r| {
+                                r.capacity() * size_of::<LiteralValue>()
+                                    + r.iter().map(payload).sum::<usize>()
+                            })
+                            .sum::<usize>()
+                }
+                _ => 0,
+            }
+        }
+        self.seed_retained_bytes = (self.cycle_seeds.capacity()
+            * size_of::<(
+                Vec<super::VertexId>,
+                rustc_hash::FxHashMap<super::VertexId, LiteralValue>,
+            )>()
+            + self
+                .cycle_seeds
+                .iter()
+                .map(|(key, values)| {
+                    key.capacity() * size_of::<super::VertexId>()
+                        + values.capacity() * size_of::<(super::VertexId, LiteralValue)>()
+                        + values.values().map(payload).sum::<usize>()
+                })
+                .sum::<usize>()
+            + self.original_cycles.capacity() * size_of::<Vec<super::VertexId>>()
+            + self
+                .original_cycles
+                .iter()
+                .map(|k| k.capacity() * size_of::<super::VertexId>())
+                .sum::<usize>()) as u64;
+    }
     pub fn forget_dissolved_new_cycles(&mut self, vertices: &[super::VertexId]) {
         if self.new_cycle_members.is_empty()
             || !vertices.iter().any(|v| self.new_cycle_members.contains(v))
@@ -141,9 +222,13 @@ impl LogicalRecalculation {
         }
         // A new cycle that dissolved and ran acyclically must start from its
         // then-current values if it forms again. Original SCC seeds survive.
+        let before = self.cycle_seeds.len();
         self.cycle_seeds.retain(|key, _| {
             self.original_cycles.contains(key)
                 || !vertices.iter().any(|v| key.binary_search(v).is_ok())
         });
+        if before != self.cycle_seeds.len() {
+            self.refresh_seed_retained_bytes();
+        }
     }
 }
