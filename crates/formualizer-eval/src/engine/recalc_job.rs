@@ -204,8 +204,6 @@ impl<R: EvaluationContext> Engine<R> {
             }
             state.refresh_seed_retained_bytes();
             self.resumable = Some(state);
-        } else {
-            self.refresh_resolution_snapshots();
         }
         let mutation_revision = self.inspection_mutation_revision();
         let state = self.resumable.as_ref().unwrap();
@@ -234,6 +232,9 @@ impl<R: EvaluationContext> Engine<R> {
             self.graph.mark_dirty_many(&vertices);
         }
         if invalidated {
+            // Supported edits and semantic changes publish one of these keys.
+            // Stable steps must not scan the resolution snapshot's sheet names.
+            self.refresh_resolution_snapshots();
             let state = self.resumable.as_mut().unwrap();
             state.held = None;
             if let Some(options) = &mut self.recalc_options
@@ -262,6 +263,9 @@ impl<R: EvaluationContext> Engine<R> {
         if self.config.defer_graph_building && self.has_staged_formulas() {
             let t = crate::instant::FzInstant::now();
             self.build_graph_all()?;
+            // Parsing staged formulas introduces function names after admission.
+            // Refresh dispatch here without restarting the logical clock/collector.
+            self.refresh_resolution_snapshots();
             Self::note_slow_unit(
                 &mut longest,
                 SlowUnitKind::GraphBuild,
