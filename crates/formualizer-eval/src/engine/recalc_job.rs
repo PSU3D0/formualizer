@@ -477,8 +477,14 @@ impl<R: EvaluationContext> Engine<R> {
                                 // report the whole installed run instead.
                                 let run_delta = collect
                                     && run.is_some()
-                                    && self.resumable.as_ref().unwrap().pass_exact
-                                    && !self.graph.has_spill_anchors();
+                                    && !self.graph.has_spill_anchors()
+                                    && (self.resumable.as_ref().unwrap().pass_exact
+                                        || self
+                                            .graph
+                                            .get_formula(vertices[0])
+                                            .is_some_and(|ast| Self::recalc_scalar_ast(&ast)));
+                                // Local run proof is independent of the bounded
+                                // whole-pass progress proof on heterogeneous books.
                                 match self.evaluate_layer_units_until(
                                     &part,
                                     (collect && !run_delta).then_some(&mut delta),
