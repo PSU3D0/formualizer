@@ -47,6 +47,62 @@ pub enum StopReason {
     Cancelled,
 }
 
+/// Options for an engine-owned recalculation job.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct RecalcJobOptions {
+    pub collect_deltas: bool,
+    pub max_delta_records: usize,
+    pub initial_priority: Vec<super::EvaluationTarget>,
+}
+impl Default for RecalcJobOptions {
+    fn default() -> Self {
+        Self { collect_deltas: true, max_delta_records: 1024, initial_priority: Vec::new() }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum StepPhase { BuildingGraph, Scheduling, Evaluating, Finished, Cancelled }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StepProgress {
+    pub pass: u32,
+    pub completed_in_pass: usize,
+    pub scheduled_in_pass: usize,
+    pub cumulative_computed_vertices: usize,
+    pub total_exact: bool,
+    pub staged_formulas_remaining: usize,
+    pub priority_pending: bool,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct StepDelta {
+    pub delta: super::TargetEvalDelta,
+    pub overflow_sheets: Vec<formualizer_common::SheetId>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SlowUnitKind { GraphBuild, ScheduleBuild, SingleCell, FamilyRun, Cycle }
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SlowUnitReport {
+    pub kind: SlowUnitKind,
+    pub representative_cell: Option<formualizer_common::PackedSheetCell>,
+    pub vertex_count: usize,
+    pub elapsed: Duration,
+}
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct StepReport {
+    pub phase: StepPhase,
+    pub progress: StepProgress,
+    pub step_computed_vertices: usize,
+    pub step_elapsed: Duration,
+    pub changed: StepDelta,
+    pub longest_unit: Option<SlowUnitReport>,
+    pub result: Option<EvalResult>,
+}
+
 /// Logical state only; no schedule/cursor survives a call. The engine's clock,
 /// freshness hints, collector and pending iterative re-dirties share this lifetime.
 #[derive(Default)]

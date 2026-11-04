@@ -10,7 +10,7 @@ pub mod arrow_ingest;
 pub mod authority;
 pub mod cancel;
 pub mod resumable;
-pub use resumable::{EvaluationProgress, EvaluationStop, IncompleteEvaluation, StopReason};
+pub use resumable::{EvaluationProgress, EvaluationStop, IncompleteEvaluation, StopReason, RecalcJobOptions, StepPhase, StepProgress, StepDelta, SlowUnitKind, SlowUnitReport, StepReport};
 /// Bounded relation facts for source publication policy, not all-read certification.
 #[doc(hidden)]
 pub mod affected_closure;

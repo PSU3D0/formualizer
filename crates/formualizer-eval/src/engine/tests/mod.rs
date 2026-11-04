@@ -38,6 +38,7 @@ mod perf_ranges;
 mod perf_tranche;
 mod provider_optimized_evidence;
 mod resumable_evaluation;
+mod recalc_job;
 mod unverified_providers;
 mod wildcard_escapes;
 //mod mark_dirty_benchmarks;

@@ -1036,6 +1036,7 @@ pub struct Engine<R> {
     pub recalc_epoch: u64,
     resumable: Option<super::resumable::LogicalRecalculation>,
     resumable_call: bool,
+    recalc_options: Option<super::RecalcJobOptions>,
     #[cfg(test)]
     pub(crate) resumable_stop_after_units_for_test: Option<usize>,
     snapshot_id: std::sync::atomic::AtomicU64,
@@ -2937,6 +2938,7 @@ where
             recalc_epoch: 0,
             resumable: None,
             resumable_call: false,
+            recalc_options: None,
             #[cfg(test)]
             resumable_stop_after_units_for_test: None,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
@@ -3118,6 +3120,7 @@ where
             recalc_epoch: 0,
             resumable: None,
             resumable_call: false,
+            recalc_options: None,
             #[cfg(test)]
             resumable_stop_after_units_for_test: None,
             snapshot_id: std::sync::atomic::AtomicU64::new(1),
@@ -15643,6 +15646,39 @@ where
             self.redirty_for_next_recalc();
         }
         result
+    }
+
+    pub fn begin_recalc(&mut self, options: super::RecalcJobOptions) -> Result<(), ExcelError> {
+        if self.recalc_options.is_some() {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message("recalculation job already active"));
+        }
+        self.recalc_options = Some(options);
+        Ok(())
+    }
+    pub fn has_active_recalc_job(&self) -> bool { self.recalc_options.is_some() }
+    pub fn prioritize_recalc(&mut self, targets: &[super::EvaluationTarget]) -> Result<(), ExcelError> {
+        let options = self.recalc_options.as_mut().ok_or_else(|| ExcelError::new(ExcelErrorKind::Value).with_message("no active recalculation job"))?;
+        options.initial_priority = targets.to_vec();
+        Ok(())
+    }
+    pub fn cancel_recalc(&mut self) -> Option<super::StepReport> {
+        self.recalc_options.take()?;
+        self.resumable = None;
+        self.redirty_for_next_recalc();
+        Some(super::StepReport { phase: super::StepPhase::Cancelled, progress: Default::default(), step_computed_vertices: 0, step_elapsed: std::time::Duration::ZERO, changed: Default::default(), longest_unit: None, result: None })
+    }
+    pub fn step_recalc(&mut self, stop: super::EvaluationStop) -> Result<super::StepReport, ExcelError> {
+        if self.recalc_options.is_none() {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message("no active recalculation job"));
+        }
+        let start = crate::instant::FzInstant::now();
+        let p = self.evaluate_all_until(stop)?;
+        let (phase, n, result) = match p {
+            super::EvaluationProgress::Complete(r) => (super::StepPhase::Finished, r.computed_vertices, Some(r)),
+            super::EvaluationProgress::Incomplete(i) => (super::StepPhase::Evaluating, i.computed_vertices, None),
+        };
+        if result.is_some() { self.recalc_options = None; }
+        Ok(super::StepReport { phase, progress: Default::default(), step_computed_vertices: n, step_elapsed: start.elapsed(), changed: Default::default(), longest_unit: None, result })
     }
 
     /// Whether a logical recalculation is awaiting another resumable call.
