@@ -1,9 +1,51 @@
 ---
 title: Interruptible Recalculation
-description: Spread Rust recalculation over calls with progress, viewport priority and cooperative cancellation.
+description: Spread Rust and Python recalculation over calls with progress, viewport priority and cooperative cancellation.
 ---
 
-Rust hosts can yield between recalculation steps while preserving installed results. These APIs are currently Rust only; Python, JavaScript and worker bindings follow separately.
+Rust and Python hosts can yield between recalculation steps while preserving installed results. JavaScript and worker bindings follow separately.
+
+## Python
+
+Use an explicit job when your host owns the loop. All Python rectangles use **1-based, inclusive** coordinates. Values are read separately from reports.
+
+```python
+import formualizer as fz
+
+wb = fz.Workbook()
+wb.add_sheet("S")
+wb.set_formula("S", 1, 1, "=1")
+wb.set_formula("S", 2, 1, "=A1+1")
+
+with wb.begin_recalc(priority=[("S", 2, 1, 2, 1)]) as job:
+    for report in job.iter(budget_ms=5):
+        p = report.progress
+        print(report.phase, p.completed_in_pass, p.scheduled_in_pass, p.total_exact)
+        if not wb.has_pending_in_rect("S", 1, 1, 2, 1):
+            print(wb.get_value("S", 2, 1))
+```
+
+`job.step(budget_ms=None, *, cancel=None)` runs one step. `None` has no soft deadline, while zero still permits progress at an atomic boundary. `job.prioritize(rectangles)` replaces the queued priority request; `job.cancel()` ends the current job. Context exit cancels if it is still active. A job handle owns its workbook and generation: an old handle cannot step or cancel a replacement job.
+
+`wb.recalc(5, on_step=callback)` drives the loop synchronously. The callback receives every report, including Finished, without an engine lock, so it can read or edit the workbook. Return exactly `False` to pause. The returned `RecalcOutcome` has `status` (Finished, Cancelled or Paused), `result` on Finished, and `job` on Paused for later stepping. Callback exceptions preserve the reached synchronous lifecycle state; use manual job ownership when you need explicit exception cleanup.
+
+In an asyncio application:
+
+```python
+async def calculate(wb):
+    result = await wb.evaluate_async(
+        budget_ms=5,
+        on_progress=lambda report: print(report.phase, report.progress.cumulative),
+        priority=[("S", 1, 1, 20, 10)],
+    )
+    return result
+```
+
+Native steps run through `asyncio.to_thread` with the GIL released under the workbook write lock. Progress callbacks execute on the event loop thread, between steps. Other threads may read or edit the workbook; reads mix installed values and old pending values. Task cancellation trips a cooperative token, waits for the running native step, cancels the remaining job, and re-raises `asyncio.CancelledError`. A long indivisible unit can delay this cleanup. A second async calculation on an already-active workbook raises `RecalcAlreadyPendingError`. On Pyodide, the loop runs in-thread and uses `await asyncio.sleep(0)` between steps; individual units still block that thread. Async progress callback exceptions cancel the remaining job and propagate.
+
+`StepReport` is frozen. It includes phase/progress, step counts and milliseconds, conservative `changed` rectangles, `overflow_sheets`, the longest indivisible unit, and a result only on Finished. Pending queries report raw dirtiness: completion can re-dirty volatile or iterative formulas for the next request. Progress totals can change after edits; `total_exact=False` means conservative or unknown. Existing evaluation methods raise typed `RecalcJobActiveError` during an active job. Python UDF exceptions keep their existing error behavior; calls back into the same workbook still raise the reentrancy guard. `Workbook.cancel()` and `CancelToken.cancel()` remain safe inside a UDF. `job.cancel()` takes the engine lock and is guarded against UDF reentrancy. Internal Rust panics retain workbook lock poisoning; discard that workbook.
+
+See the [Python API reference](/docs/reference/python-api-map) for exact signatures, report fields and exception classes. The limits and carve-outs below also apply to Python.
 
 ## Choose an API
 

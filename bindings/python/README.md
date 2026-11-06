@@ -32,6 +32,25 @@ pip install formualizer
 
 Prebuilt stable-ABI (`abi3`) wheels are published for Python 3.10 and newer on Linux (glibc and musl), macOS, and Windows. No Rust toolchain required.
 
+## Cooperative recalculation
+
+`Workbook.begin_recalc()` returns a job with `step(budget_ms=None)`, `iter(budget_ms=5)`, `prioritize(rectangles)`, `cancel()` and `active`. Use it as a context manager to cancel unfinished work on exit. Step reports include progress, changed rectangles and timing; read cell values separately. Rectangles are `(sheet_name, r0, c0, r1, c1)`, **1-based and inclusive**.
+
+```python
+with wb.begin_recalc(priority=[("Summary", 1, 1, 20, 10)]) as job:
+    for report in job.iter(budget_ms=5):
+        print(report.phase, report.progress.cumulative)
+
+# In an async function:
+result = await wb.evaluate_async(
+    budget_ms=5, on_progress=lambda report: print(report.phase)
+)
+```
+
+Native async steps run on a worker thread with the GIL released; callbacks run on the event loop. Task cancellation waits for the current step to stop, cancels the job and re-raises. Pyodide yields between in-thread steps. Budgets are soft: families, cycles, graph construction and scheduling are indivisible. `None` means unlimited; zero still allows progress.
+
+`wb.recalc(5, on_step=callback)` is the synchronous driver; return `False` to pause and resume through the returned `outcome.job`. Existing `evaluate_*` calls raise `RecalcJobActiveError` while a job is active. Reads and edits between steps are allowed; use `has_pending_in_rect` / `pending_cells_in_rect` with `has_active_recalc_job` to interpret old values. See the [interruptible recalculation guide](https://www.formualizer.dev/docs/guides/interruptible-recalculation) for lifecycle, exceptions and limits.
+
 ## Command line
 
 Native wheels include the `formualizer` command, which recalculates the cached formula values in an `.xlsx` after another tool has edited it:

@@ -22,6 +22,28 @@ The `Workbook` class is the primary entry point for managing spreadsheet state a
 - `set_values_batch(row: int, col: int, grid: List[List[Any]])`: Efficiently set a block of values.
 - `set_formulas_batch(row: int, col: int, grid: List[List[str]])`: Efficiently set a block of formulas.
 
+## Interruptible recalculation
+
+- `Workbook.begin_recalc(*, collect_deltas=True, max_delta_records=1024, priority=None) -> RecalcJob`
+- `RecalcJob.step(budget_ms=None, *, cancel=None) -> StepReport`
+- `RecalcJob.prioritize(ranges)`, `cancel() -> StepReport | None`, and `active` (property)
+- `RecalcJob.iter(budget_ms=5)` yields reports through the terminal report; the job is also a context manager that cancels on exit.
+- `Workbook.recalc(budget_ms=5, *, on_step=None, priority=None) -> RecalcOutcome`
+- `Workbook.evaluate_async(budget_ms=5, *, on_progress=None, priority=None)` returns an awaitable yielding `RecalcResult | None` (None on cooperative cancellation).
+- `Workbook.has_active_recalc_job` (property), `has_pending_in_rect(sheet, r0, c0, r1, c1)` and `pending_cells_in_rect(sheet, r0, c0, r1, c1)`
+
+All coordinates are **1-based and inclusive**, including priority, changed and pending rectangles: `(sheet_name, r0, c0, r1, c1)`. Pass a list of these rectangles as `priority` or `ranges`. `None` means no soft deadline; zero still permits an atomic unit to finish.
+
+`StepReport` is immutable and contains `phase` (BuildingGraph, Scheduling, Evaluating, Finished, Cancelled), `progress`, `step_computed`, `step_elapsed_ms`, `changed`, `overflow_sheets`, `longest_unit` and `result`. Progress has `pass_` (Python's `pass` is reserved), `completed_in_pass`, `scheduled_in_pass`, `cumulative`, `total_exact`, `staged_remaining` and `priority_pending`. Changed/pending rectangles are conservative; overflow identifies sheets to repaint. Pending queries expose raw dirtiness; volatile and iterative formulas may be dirty again after Finished. Only Finished carries a result (`computed_vertices`, `cycle_errors`, `elapsed_ms`). A longest unit carries `kind`, `representative_cell`, `vertex_count` and `elapsed_ms`.
+
+`RecalcOutcome.status` is Finished, Cancelled or Paused. A paused outcome carries `job` for later stepping; only Finished carries `result`. Returning exactly `False` from `on_step(report)` pauses, unless the report is terminal. Callback exceptions propagate; a synchronous callback exception leaves the reached lifecycle state intact. Keep the job API for explicit ownership when callbacks can fail. Async callback exceptions cancel any remaining job before propagation.
+
+`CancelToken()` provides `cancel()` and `cancelled`. Cancellation is cooperative at installation boundaries. Stale job handles raise `NoActiveJobError` when driven, even if another job has begun; their `active` property is False. A step evaluation error ends the job and keeps the existing `ExcelEvaluationError` fields.
+
+`RecalcJobError` has subclasses `NoActiveJobError`, `RecalcAlreadyPendingError` (`explicit` attribute), and `EnginePoisonedError`. Existing `evaluate_all`, `evaluate_cell` and `evaluate_cells` raise `RecalcJobActiveError` (a subclass of `ExcelEvaluationError`) while a job is active. Internal Rust unwinds preserve workbook lock poisoning; discard the workbook. A contained host panic has `extra={"kind": "FunctionPanicked", "function": ..., "message": ...}` on `ExcelError`, `ExcelEvaluationError` and error dictionaries returned from cells; `LiteralValue.error_extra` exposes the same payload. The function name also identifies source resolvers (for example `resolver:resolve_source_scalar:Sales`). Ordinary raising Python functions keep their existing Value-error behavior.
+
+See [Interruptible Recalculation](/docs/guides/interruptible-recalculation) for sync and async examples and budget limits.
+
 ## Custom Functions
 
 - `register_function(name: str, callback: Callable, options: dict)`: Register a Python function for use in formulas.
