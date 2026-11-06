@@ -73,7 +73,10 @@ pub(super) fn pure_listed_function(
         .iter()
         .any(|f| f.eq_ignore_ascii_case(name))
         && functions.get_named(name).is_some_and(|fun| {
-            let caps = fun.caps();
+            let caps =
+                crate::external_callbacks::metadata(fun, crate::function::FnCaps::empty, || {
+                    fun.caps()
+                });
             caps.contains(FnCaps::PURE)
                 && !caps.intersects(
                     FnCaps::VOLATILE
@@ -374,7 +377,8 @@ impl LiftProgram {
                 // `None`), with the arities its `eval` accepts.
                 let fun = functions.get_for_optimized_call(*name_id, evidence)?;
                 use crate::function::FamilyKernel as K;
-                let kernel = fun.family_kernel()?;
+                let kernel =
+                    crate::external_callbacks::metadata(fun, || None, || fun.family_kernel())?;
                 let args = ds.get_args(id)?;
                 let arity_ok = match kernel {
                     K::If => (2..=3).contains(&args.len()),

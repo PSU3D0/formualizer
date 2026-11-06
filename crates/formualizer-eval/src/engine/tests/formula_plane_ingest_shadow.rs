@@ -1183,13 +1183,18 @@ fn deferred_poisoned_lock_failure_restores_package_without_publication() {
         ..EvalConfig::default()
     };
     let mut engine = Engine::new(TestWorkbook::default(), cfg);
-    engine
-        .source_formula_ingress()
-        .stage_deferred(deferred_package("1+1", false, true));
+    let package = deferred_package("1+1", false, false);
+    let spool = package.replay.clone();
+    engine.source_formula_ingress().stage_deferred(package);
+    // External replay panics are now caught inside the spool guard. This
+    // regression exercises a genuinely poisoned engine-owned lock instead.
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        engine.stage_formula_text("Sheet1", 1, 1, "=2+2".to_string());
+        let _guard = spool.lock().unwrap();
+        panic!("injected engine spool-lock failure");
     }));
     assert!(panic.is_err());
+    assert!(spool.is_poisoned());
+    engine.stage_formula_text("Sheet1", 1, 1, "=2+2".to_string());
     let before = engine.formula_ingest_report_total().clone();
 
     for _ in 0..2 {

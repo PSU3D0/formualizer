@@ -189,6 +189,7 @@ where
         let chunks: Result<Vec<_>, ExcelError> = split
             .par_iter()
             .map(|&(unit, memo)| {
+                let _callbacks = crate::external_callbacks::enter(self.resolver.callbacks.clone());
                 if cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                     return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
                         "Parallel evaluation cancelled during execution".to_string(),

@@ -992,6 +992,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 let _origin = self.interp.reference_diagnostic_scope();
                 Some(self.interp.diagnostic_dispatch(
                     name,
+                    &*fun,
                     fun.reports_known_limitations(),
                     || fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()),
                     crate::operation_diagnostics::is_unimplemented_resolution,
@@ -1050,6 +1051,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 let _origin = self.interp.reference_diagnostic_scope();
                 Some(self.interp.diagnostic_dispatch(
                     name,
+                    &*fun,
                     fun.reports_known_limitations(),
                     || fun.resolve_reference_or_value(&handles, &ctx, &|| self.value()),
                     crate::operation_diagnostics::is_unimplemented_resolution,
@@ -2095,7 +2097,13 @@ pub trait FunctionProvider: Send + Sync {
 
     #[doc(hidden)]
     fn function_capabilities(&self, ns: &str, name: &str) -> Option<crate::function::FnCaps> {
-        self.get_function(ns, name).map(|function| function.caps())
+        self.get_function(ns, name).map(|function| {
+            crate::external_callbacks::metadata(
+                function.as_ref(),
+                crate::function::FnCaps::empty,
+                || function.caps(),
+            )
+        })
     }
 
     fn function_semantic_identity(

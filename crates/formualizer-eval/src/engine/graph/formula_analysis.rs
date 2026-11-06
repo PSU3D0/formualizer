@@ -431,7 +431,12 @@ impl DependencyGraph {
         match &ast.node_type {
             ASTNodeType::Function { name, args } => {
                 if let Some(func) = crate::function_registry::get("", name)
-                    && func.caps().contains(crate::function::FnCaps::VOLATILE)
+                    && crate::external_callbacks::metadata(
+                        func.as_ref(),
+                        crate::function::FnCaps::empty,
+                        || func.caps(),
+                    )
+                    .contains(crate::function::FnCaps::VOLATILE)
                 {
                     return true;
                 }
@@ -457,9 +462,12 @@ impl DependencyGraph {
         match &ast.node_type {
             ASTNodeType::Function { name, args } => {
                 if let Some(func) = crate::function_registry::get("", name)
-                    && func
-                        .caps()
-                        .contains(crate::function::FnCaps::DYNAMIC_DEPENDENCY)
+                    && crate::external_callbacks::metadata(
+                        func.as_ref(),
+                        crate::function::FnCaps::empty,
+                        || func.caps(),
+                    )
+                    .contains(crate::function::FnCaps::DYNAMIC_DEPENDENCY)
                 {
                     return true;
                 }

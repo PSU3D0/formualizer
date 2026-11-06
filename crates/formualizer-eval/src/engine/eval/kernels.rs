@@ -324,16 +324,17 @@ impl AggregateKernel {
         let fun = engine
             .resolved_functions
             .get_for_optimized_call(*name_id, engine.operation_diagnostic_collector.is_some())?;
-        let kind = fun.family_kernel().filter(|k| {
-            matches!(
-                k,
-                FamilyKernel::Sum
-                    | FamilyKernel::Average
-                    | FamilyKernel::Min
-                    | FamilyKernel::Max
-                    | FamilyKernel::Count
-            )
-        })?;
+        let kind = crate::external_callbacks::metadata(fun, || None, || fun.family_kernel())
+            .filter(|k| {
+                matches!(
+                    k,
+                    FamilyKernel::Sum
+                        | FamilyKernel::Average
+                        | FamilyKernel::Min
+                        | FamilyKernel::Max
+                        | FamilyKernel::Count
+                )
+            })?;
         let args = ds.get_args(template)?;
         if args.is_empty() {
             return None;

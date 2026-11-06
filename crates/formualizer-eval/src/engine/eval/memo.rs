@@ -30,7 +30,7 @@ impl MemoPlan {
         };
         let fun = functions.get(*name_id)?;
         if !matches!(
-            fun.family_kernel(),
+            crate::external_callbacks::metadata(fun, || None, || fun.family_kernel()),
             Some(FamilyKernel::CriteriaAggregate | FamilyKernel::Lookup)
         ) {
             return Self::plan_general(functions, ds, template);

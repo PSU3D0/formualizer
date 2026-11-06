@@ -1019,6 +1019,8 @@ struct TraceEvaluationCounters {
     cycles: usize,
 }
 
+use crate::traits::{NamedRangeResolver as _, SourceResolver as _};
+
 pub struct Engine<R> {
     poisoned: Arc<std::sync::atomic::AtomicBool>,
     #[cfg(test)]
@@ -1027,10 +1029,10 @@ pub struct Engine<R> {
     pub(crate) panic_kernel_after_member: std::sync::atomic::AtomicUsize,
     criteria_mask_cache: criteria_mask_cache::CriteriaMaskCache,
     pub(crate) graph: DependencyGraph,
-    resolver: R,
+    resolver: crate::guarded_resolver::GuardedResolver<R>,
     pub(super) resolved_functions: crate::interpreter::ResolvedFunctions,
     pub(super) operation_diagnostic_collector:
-        Option<crate::operation_diagnostics::OperationDiagnosticCollector>,
+        Option<Arc<crate::operation_diagnostics::OperationDiagnosticCollector>>,
     resolved_sheet_names:
         FxHashMap<crate::engine::arena::StringId, (crate::SheetId, Option<usize>)>,
     resolution_sheet_revision: Option<(u64, u64, usize)>,
@@ -2886,6 +2888,7 @@ where
     /// rejects these at build; this re-validates configs assembled via
     /// struct literals.
     pub fn new(resolver: R, config: EvalConfig) -> Self {
+        let resolver = crate::guarded_resolver::GuardedResolver::new(resolver);
         // Under the unified authority the FormulaPlane mode is accepted and
         // ignored (design §10). Normalizing the stored mode keeps external
         // readers of `config` (loaders choosing a span-preparation route) on
@@ -3105,6 +3108,7 @@ where
         config: EvalConfig,
         thread_pool: Arc<rayon::ThreadPool>,
     ) -> Self {
+        let resolver = crate::guarded_resolver::GuardedResolver::new(resolver);
         if let Err(msg) = config.cycle.validate() {
             panic!("invalid CycleConfig: {msg}");
         }
@@ -3415,6 +3419,12 @@ where
         }
         // Resumable calls have per-call resource ledgers, but one collector.
         let continuing = self.resumable_call && self.resumable.is_some();
+        if outermost {
+            self.resolver
+                .callbacks
+                .begin(self.operation_diagnostic_collector.as_ref(), !continuing);
+        }
+        let _callbacks = crate::external_callbacks::enter(self.resolver.callbacks.clone());
         // Request evidence starts here, before cancellation/admission can exit.
         // Nested entry points and internal replans retain the outer union.
         if outermost
@@ -3495,6 +3505,11 @@ where
         } else {
             evaluate(self)
         };
+        let result = if let Some(error) = crate::external_callbacks::pending() {
+            Err(error)
+        } else {
+            result
+        };
         if outermost && result.is_err() {
             self.freshness_abort_pass();
         }
@@ -3567,6 +3582,9 @@ where
                     Err(error) if error.kind == ExcelErrorKind::Cancelled
                 )
             );
+        }
+        if self.resolver.callbacks.failed() && self.resumable.is_none() {
+            self.resolved_functions = Default::default();
         }
         result
     }
@@ -3895,6 +3913,9 @@ where
     }
 
     fn refresh_resolution_snapshots(&mut self) {
+        if self.resolver.callbacks.failed() {
+            self.resolved_functions = Default::default();
+        }
         self.resolved_functions
             .refresh(self.graph.data_store(), &self.resolver);
         let named_asts = self
@@ -3994,8 +4015,9 @@ where
         options: crate::operation_diagnostics::OperationDiagnosticOptions,
     ) {
         self.assert_not_poisoned();
-        self.operation_diagnostic_collector =
-            Some(crate::operation_diagnostics::OperationDiagnosticCollector::with_options(options));
+        self.operation_diagnostic_collector = Some(Arc::new(
+            crate::operation_diagnostics::OperationDiagnosticCollector::with_options(options),
+        ));
     }
 
     ///
@@ -4022,7 +4044,7 @@ where
         self.ensure_not_poisoned()?;
         self.operation_diagnostic_collector
             .as_mut()
-            .map(|collector| collector.take_snapshot())
+            .map(|collector| collector.take_shared_snapshot())
             .transpose()
     }
 
@@ -4431,6 +4453,19 @@ where
     }
 
     fn source_table_to_range_view(
+        &self,
+        table: &dyn crate::traits::Table,
+        spec: &Option<formualizer_parse::parser::TableSpecifier>,
+    ) -> Result<RangeView<'static>, ExcelError> {
+        let result = self.source_table_to_range_view_inner(table, spec);
+        if let Some(error) = crate::external_callbacks::pending() {
+            Err(error)
+        } else {
+            result
+        }
+    }
+
+    fn source_table_to_range_view_inner(
         &self,
         table: &dyn crate::traits::Table,
         spec: &Option<formualizer_parse::parser::TableSpecifier>,
@@ -17867,7 +17902,12 @@ where
                 if let Some(func) = self
                     .get_function("", name)
                     .or_else(|| crate::function_registry::get("", name))
-                    && func.caps().contains(crate::function::FnCaps::VOLATILE)
+                    && crate::external_callbacks::metadata(
+                        func.as_ref(),
+                        crate::function::FnCaps::empty,
+                        || func.caps(),
+                    )
+                    .contains(crate::function::FnCaps::VOLATILE)
                 {
                     return true;
                 }
@@ -18036,6 +18076,7 @@ where
 
     /// Evaluate a single vertex without mutating the graph (for parallel evaluation)
     fn evaluate_vertex_immutable(&self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
+        let _callbacks = crate::external_callbacks::enter_if_missing(&self.resolver.callbacks);
         // Check if vertex exists
         if !self.graph.vertex_exists(vertex_id) {
             return Err(ExcelError::new(formualizer_common::ExcelErrorKind::Ref)
@@ -19107,7 +19148,7 @@ where
     fn operation_diagnostic_collector(
         &self,
     ) -> Option<&crate::operation_diagnostics::OperationDiagnosticCollector> {
-        self.operation_diagnostic_collector.as_ref()
+        self.operation_diagnostic_collector.as_deref()
     }
 
     fn clock(&self) -> &dyn crate::timezone::ClockProvider {

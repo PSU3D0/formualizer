@@ -52,6 +52,38 @@ Source recalculation enables that evidence: coverage is Partial and
 their existing completeness behavior. A panicking aggregate kernel discards
 its buffer and fails every member of that run; no partial values are installed.
 
+Function metadata and resolver callbacks are host code, too. Runtime hooks
+(`caps`, reporting/semantic/dependency contracts, schemas/arity, family-kernel
+selection and format metadata) are caught at their invocation sites. A planning
+panic declines optimization with conservative capabilities and marks that
+function instance for the rest of the logical request, including later job
+steps. Every executed root of that instance receives the typed function-panic
+error and diagnostic. Untaken calls do not create execution diagnostics.
+A subsequent request retries the metadata; no function metadata panic poisons
+the engine.
+
+Resolver failures reuse `FunctionPanicked` with explicit names such as
+`resolver:resolve_source_scalar:ReviewSource` and
+`resolver:resolve_source_table:Sales`. The source attribution is retained inside
+`ABS(ReviewSource)`; it is not attributed to ABS. Version/provider callbacks
+and returned table/range methods have the same narrow containment. The catch
+finishes inside source-cache guards, and failed values are not cached.
+Ordinary returned errors retain their existing behavior.
+
+A panicking clock provider freezes a failed sample for that logical
+recalculation. Only roots reading the clock (including NOW/TODAY) receive
+`FunctionPanicked` attributed to `resolver:clock` and the diagnostic; unrelated
+formulas are unaffected. IFERROR can catch the value. Jobs do not resample a
+failed clock mid-job; the next request samples again. Deterministic clocks keep
+their existing behavior.
+
+Deferred source replay callbacks are also contained inside their spool guards.
+Legacy replay failures return a typed request error; engine checkpoint panics
+still unwind and trigger the internal backstop. CalcObserver is currently a
+dormant trait without any engine registration or invocation path, so no observer
+notifications are delivered. Progress callbacks still run between steps; their
+panics propagate without poisoning or changing the already-reached job state.
+
 An engine-internal unwind through a request or job step still propagates.
 The engine then permanently refuses work: job APIs return
 `RecalcJobError::Poisoned`, and existing fallible mutation/evaluation APIs return

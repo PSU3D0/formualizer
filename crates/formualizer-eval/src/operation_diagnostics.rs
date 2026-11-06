@@ -408,6 +408,9 @@ impl OperationDiagnosticCollector {
     /// Consume exact roots after the request's scopes/workers have finished.
     /// A second drain cannot look like clean empty evidence.
     pub fn take_snapshot(&mut self) -> Result<OperationDiagnostics, ExcelError> {
+        self.take_shared_snapshot()
+    }
+    pub(crate) fn take_shared_snapshot(&self) -> Result<OperationDiagnostics, ExcelError> {
         let mut state = self.state.lock().unwrap();
         Self::validate_state(&state)?;
         let roots = std::mem::take(&mut state.roots);

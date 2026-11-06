@@ -622,7 +622,10 @@ impl<R: EvaluationContext> Engine<R> {
     }
 }
 
-/// 🔮 Scalability Hook: Performance monitoring trait for calculation observability
+/// Scalability hook reserved for calculation observability.
+/// No engine registration or invocation path currently delivers these notifications.
+/// Future delivery must catch observer panics and drop that notification without
+/// affecting values, completeness diagnostics or engine poison.
 pub trait CalcObserver: Send + Sync {
     fn on_eval_start(&self, vertex_id: VertexId);
     fn on_eval_complete(&self, vertex_id: VertexId, duration: std::time::Duration);

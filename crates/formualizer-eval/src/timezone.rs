@@ -168,42 +168,83 @@ impl ClockProvider for FixedClock {
 /// The engine wraps its configured clock in `SnapshotClock` and calls
 /// [`SnapshotClock::refresh`] once at the start of every evaluation request;
 /// builtins then read the frozen sample via the normal `ClockProvider` API.
-#[derive(Debug)]
 pub struct SnapshotClock {
     inner: std::sync::Arc<dyn ClockProvider>,
     /// Timezone cloned from `inner` at construction so `timezone()` can hand
     /// out a reference without locking.
     timezone: TimeZoneSpec,
+    timezone_failed: bool,
     /// The frozen per-recalc sample. RwLock (not Cell) because evaluation may
     /// read the clock from rayon worker threads.
-    sample: std::sync::RwLock<NaiveDateTime>,
+    sample: std::sync::RwLock<Result<NaiveDateTime, formualizer_common::ExcelError>>,
 }
 
 impl SnapshotClock {
     /// Wrap `inner`, taking an initial sample immediately.
     pub fn new(inner: std::sync::Arc<dyn ClockProvider>) -> Self {
-        let timezone = inner.timezone().clone();
-        let sample = inner.now();
+        let timezone = crate::function::catch_function_panic("resolver:clock", || inner.timezone());
+        let timezone_failed = timezone.is_err();
+        let now = crate::function::catch_function_panic("resolver:clock", || inner.now());
+        let sample = timezone.as_ref().map_err(Clone::clone).and(now);
+        let timezone = timezone.cloned().unwrap_or(TimeZoneSpec::Utc);
         Self {
             inner,
             timezone,
+            timezone_failed,
             sample: std::sync::RwLock::new(sample),
         }
     }
 
-    /// Re-sample the underlying clock. Called once per evaluation request.
+    /// Re-sample once per logical recalculation. Host panics freeze a failed
+    /// sample; clock-reading formula roots receive a typed error and diagnostic.
     pub fn refresh(&self) {
-        let now = self.inner.now();
+        // The external call completes (or is caught) before acquiring the lock.
+        let now = crate::function::catch_function_panic("resolver:clock", || self.inner.now());
+        let now = if self.timezone_failed {
+            crate::function::catch_function_panic("resolver:clock", || self.inner.timezone())
+                .and(now)
+        } else {
+            now
+        };
         *self.sample.write().expect("clock sample lock poisoned") = now;
     }
 }
 
+impl std::fmt::Debug for SnapshotClock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SnapshotClock")
+            .field("timezone", &self.timezone)
+            .finish_non_exhaustive()
+    }
+}
 impl ClockProvider for SnapshotClock {
     fn timezone(&self) -> &TimeZoneSpec {
-        &self.timezone
+        if self.timezone_failed {
+            match crate::function::catch_function_panic("resolver:clock", || self.inner.timezone())
+            {
+                Ok(timezone) => timezone,
+                Err(error) => {
+                    crate::external_callbacks::clock_failure(error);
+                    &self.timezone
+                }
+            }
+        } else {
+            &self.timezone
+        }
     }
 
     fn now(&self) -> NaiveDateTime {
-        *self.sample.read().expect("clock sample lock poisoned")
+        let sample = self
+            .sample
+            .read()
+            .expect("clock sample lock poisoned")
+            .clone();
+        match sample {
+            Ok(now) => now,
+            Err(error) => {
+                crate::external_callbacks::clock_failure(error);
+                chrono::DateTime::UNIX_EPOCH.naive_utc()
+            }
+        }
     }
 }

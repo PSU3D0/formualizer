@@ -106,12 +106,14 @@ impl CriteriaPlan {
             return None;
         };
         let fun = functions.get_for_optimized_call(*name_id, evidence)?;
-        if fun.family_kernel() != Some(FamilyKernel::CriteriaAggregate) {
+        if crate::external_callbacks::metadata(fun, || None, || fun.family_kernel())
+            != Some(FamilyKernel::CriteriaAggregate)
+        {
             return None;
         }
         let args: smallvec::SmallVec<[AstNodeId; 8]> =
             ds.get_args(template)?.iter().copied().collect();
-        let (agg, single) = match fun.name() {
+        let (agg, single) = match crate::external_callbacks::metadata(fun, || "", || fun.name()) {
             "COUNTIF" => (Agg::Count, true),
             "SUMIF" => (Agg::Sum, true),
             "AVERAGEIF" => (Agg::Average, true),

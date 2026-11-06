@@ -232,7 +232,13 @@ impl ResolvedFunctions {
             } else {
                 provider.get_function("", name)
             };
-            let caps = function.as_ref().map(|function| function.caps());
+            let caps = function.as_ref().map(|function| {
+                crate::external_callbacks::metadata(
+                    function.as_ref(),
+                    crate::function::FnCaps::empty,
+                    || function.caps(),
+                )
+            });
             let reporting = function
                 .as_ref()
                 .map_or(ProviderReporting::Unverified, |function| {
@@ -334,7 +340,13 @@ impl ResolvedFunctions {
                 .entry(name.into_boxed_str())
                 .or_insert_with_key(|name| {
                     let function = provider.get_function("", name);
-                    let caps = function.as_ref().map(|function| function.caps());
+                    let caps = function.as_ref().map(|function| {
+                        crate::external_callbacks::metadata(
+                            function.as_ref(),
+                            crate::function::FnCaps::empty,
+                            || function.caps(),
+                        )
+                    });
                     let reporting =
                         function
                             .as_ref()
@@ -352,6 +364,9 @@ impl ResolvedFunctions {
     /// Runtime snapshot lookup for run planners; intentionally not the provider's
     /// potentially distinct `get_function_for_planning` contract.
     pub(crate) fn get_named(&self, name: &str) -> Option<&dyn crate::function::Function> {
+        if crate::external_callbacks::planning_failed() {
+            return None;
+        }
         self.ast_functions.get(name)?.0.as_deref()
     }
 
@@ -359,6 +374,9 @@ impl ResolvedFunctions {
         &self,
         id: crate::engine::arena::StringId,
     ) -> Option<&dyn crate::function::Function> {
+        if crate::external_callbacks::planning_failed() {
+            return None;
+        }
         self.get_with_reporting(id).map(|(function, _)| function)
     }
 
@@ -370,8 +388,13 @@ impl ResolvedFunctions {
         id: crate::engine::arena::StringId,
         evidence: bool,
     ) -> Option<&dyn crate::function::Function> {
+        if crate::external_callbacks::planning_failed() {
+            return None;
+        }
         let (function, reporting) = self.get_with_reporting(id)?;
-        (!evidence || reporting == ProviderReporting::SealedBuiltin).then_some(function)
+        (crate::external_callbacks::metadata_error(function, "").is_none()
+            && (!evidence || reporting == ProviderReporting::SealedBuiltin))
+            .then_some(function)
     }
 
     fn get_with_reporting(
@@ -461,7 +484,7 @@ impl<'a> Interpreter<'a> {
         run: impl FnOnce() -> T,
     ) -> T {
         match crate::function::catch_function_panic(name, run) {
-            Ok(result) => result,
+            Ok(result) => crate::external_callbacks::pending().map_or(result, T::panicked),
             Err(error) => {
                 self.unavailable(
                     crate::operation_diagnostics::UnavailableOperation::FunctionPanicked {
@@ -476,6 +499,7 @@ impl<'a> Interpreter<'a> {
     pub(crate) fn diagnostic_dispatch<T: crate::function::PanicResult>(
         &self,
         name: &str,
+        function: &dyn crate::function::Function,
         reporting: bool,
         run: impl FnOnce() -> T,
         unimplemented: impl FnOnce(&T) -> bool,
@@ -485,7 +509,42 @@ impl<'a> Interpreter<'a> {
             collector.dispatch_started();
         }
         let scope = collector.map(|c| c.scope(crate::operation_diagnostics::Mode::Inherit));
-        let result = self.function_call(name, run);
+        let result = if let Some(error) = crate::external_callbacks::named_error(name)
+            .or_else(|| crate::external_callbacks::metadata_error(function, name))
+        {
+            let operation_name = match error.extra() {
+                formualizer_common::ExcelErrorExtra::FunctionPanicked { function, .. } => {
+                    function.clone()
+                }
+                _ => name.to_ascii_uppercase(),
+            };
+            self.unavailable(
+                crate::operation_diagnostics::UnavailableOperation::FunctionPanicked {
+                    name: operation_name,
+                },
+            );
+            T::panicked(error)
+        } else {
+            let value = self.function_call(name, run);
+            if let Some(error) = crate::external_callbacks::named_error(name)
+                .or_else(|| crate::external_callbacks::metadata_error(function, name))
+            {
+                let operation_name = match error.extra() {
+                    formualizer_common::ExcelErrorExtra::FunctionPanicked { function, .. } => {
+                        function.clone()
+                    }
+                    _ => name.to_ascii_uppercase(),
+                };
+                self.unavailable(
+                    crate::operation_diagnostics::UnavailableOperation::FunctionPanicked {
+                        name: operation_name,
+                    },
+                );
+                T::panicked(error)
+            } else {
+                value
+            }
+        };
         if let Some(scope) = scope {
             if !scope.tainted() && unimplemented(&result) {
                 self.unavailable(
@@ -766,6 +825,11 @@ impl<'a> Interpreter<'a> {
     /// and spill planning. Functions that can return references must set
     /// `FnCaps::RETURNS_REFERENCE` and override `eval_reference`.
     pub fn evaluate_ast_as_reference(&self, node: &ASTNode) -> Result<ReferenceType, ExcelError> {
+        let _root = crate::external_callbacks::root(self.current_cell);
+        if let Some(error) = crate::external_callbacks::pending() {
+            return Err(error);
+        }
+
         match &node.node_type {
             ASTNodeType::Reference { reference, .. } => {
                 self.reference_for_current_offset(reference)
@@ -783,6 +847,7 @@ impl<'a> Interpreter<'a> {
                     let _origin = self.reference_diagnostic_scope();
                     if let Some(res) = self.diagnostic_dispatch(
                         name,
+                        &*fun,
                         fun.reports_known_limitations(),
                         || fun.eval_reference(&handles, &fctx),
                         crate::operation_diagnostics::is_unimplemented_reference,
@@ -839,6 +904,7 @@ impl<'a> Interpreter<'a> {
         let _origin = self.reference_diagnostic_scope();
         self.diagnostic_dispatch(
             name,
+            &*fun,
             fun.reports_known_limitations(),
             || fun.eval_reference(&handles, &fctx),
             crate::operation_diagnostics::is_unimplemented_reference,
@@ -851,6 +917,11 @@ impl<'a> Interpreter<'a> {
         data_store: &DataStore,
         sheet_registry: &SheetRegistry,
     ) -> Result<ReferenceType, ExcelError> {
+        let _root = crate::external_callbacks::root(self.current_cell);
+        if let Some(error) = crate::external_callbacks::pending() {
+            return Err(error);
+        }
+
         let node = data_store.get_node(node_id).ok_or_else(|| {
             ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
         })?;
@@ -892,6 +963,7 @@ impl<'a> Interpreter<'a> {
                 let _origin = self.reference_diagnostic_scope();
                 self.diagnostic_dispatch(
                     data_store.resolve_ast_string(*name_id),
+                    &*fun,
                     fun.reports_known_limitations(),
                     || fun.eval_reference(&handles, &fctx),
                     crate::operation_diagnostics::is_unimplemented_reference,
@@ -1028,6 +1100,7 @@ impl<'a> Interpreter<'a> {
         let _origin = self.reference_diagnostic_scope();
         self.diagnostic_dispatch(
             data_store.resolve_ast_string(*name_id),
+            &*fun,
             fun.reports_known_limitations(),
             || fun.eval_reference(&handles, &fctx),
             crate::operation_diagnostics::is_unimplemented_reference,
@@ -1036,6 +1109,11 @@ impl<'a> Interpreter<'a> {
 
     /* ===================  public  =================== */
     pub fn evaluate_ast(&self, node: &ASTNode) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        let _root = crate::external_callbacks::root(self.current_cell);
+        if let Some(error) = crate::external_callbacks::pending() {
+            return Err(error);
+        }
+
         self.evaluate_ast_uncached(node)
     }
 
@@ -1327,6 +1405,11 @@ impl<'a> Interpreter<'a> {
         data_store: &DataStore,
         sheet_registry: &SheetRegistry,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        let _root = crate::external_callbacks::root(self.current_cell);
+        if let Some(error) = crate::external_callbacks::pending() {
+            return Err(error);
+        }
+
         let node = data_store.get_node(node_id).ok_or_else(|| {
             ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
         })?;
@@ -1531,6 +1614,7 @@ impl<'a> Interpreter<'a> {
 
                     return self.diagnostic_dispatch(
                         data_store.resolve_ast_string(*name_id),
+                        &*fun,
                         fun.reports_known_limitations(),
                         || fun.dispatch(&handles, &fctx),
                         crate::operation_diagnostics::is_unimplemented,
@@ -1568,6 +1652,11 @@ impl<'a> Interpreter<'a> {
         &self,
         node: &ASTNode,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        let _root = crate::external_callbacks::root(self.current_cell);
+        if let Some(error) = crate::external_callbacks::pending() {
+            return Err(error);
+        }
+
         if self.disable_ast_planner {
             return self.eval_tree_uncached(node);
         }
@@ -1633,7 +1722,11 @@ impl<'a> Interpreter<'a> {
                 if let Some(fun) = self.ast_function(name) {
                     use crate::function::FnCaps;
                     use crate::planner::ExecStrategy;
-                    let caps = fun.caps();
+                    let caps = crate::external_callbacks::metadata(
+                        &*fun,
+                        crate::function::FnCaps::empty,
+                        || fun.caps(),
+                    );
 
                     // Short-circuit or volatile: always sequential
                     if caps.contains(FnCaps::SHORT_CIRCUIT) || caps.contains(FnCaps::VOLATILE) {
@@ -2045,6 +2138,7 @@ impl<'a> Interpreter<'a> {
             );
             return self.diagnostic_dispatch(
                 name,
+                &*fun,
                 fun.reports_known_limitations(),
                 || fun.dispatch(&handles, &fctx),
                 crate::operation_diagnostics::is_unimplemented,
@@ -2892,7 +2986,13 @@ mod resolved_function_tests {
             Some(self.generation.load(Ordering::Acquire))
         }
         fn function_capabilities(&self, _: &str, _: &str) -> Option<crate::function::FnCaps> {
-            self.function.read().unwrap().as_ref().map(|f| f.caps())
+            self.function.read().unwrap().as_ref().map(|f| {
+                crate::external_callbacks::metadata(
+                    f.as_ref(),
+                    crate::function::FnCaps::empty,
+                    || f.caps(),
+                )
+            })
         }
         fn get_function(&self, _: &str, _: &str) -> Option<Arc<dyn Function>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
