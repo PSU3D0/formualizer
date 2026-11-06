@@ -12253,7 +12253,25 @@ where
                     new,
                 } => {
                     let sheet = self.graph.sheet_name(*sheet_id).to_string();
-                    let v = if undo { old.clone() } else { new.clone() };
+                    // Graph undo has already restored projection ownership.
+                    // A prior write in the same action may have cleared the
+                    // spill before this cell's old delta was captured. Such
+                    // deltas (including Empty) must not mask its snapshot.
+                    let restored_projection = undo
+                        && self
+                            .graph
+                            .spill_registry_anchor_for_cell(CellRef::new(
+                                *sheet_id,
+                                Coord::new(*row0, *col0, true, true),
+                            ))
+                            .is_some();
+                    let v = if restored_projection {
+                        None
+                    } else if undo {
+                        old.clone()
+                    } else {
+                        new.clone()
+                    };
                     self.set_delta_overlay_cell_raw(&sheet, row0 + 1, col0 + 1, v);
                 }
                 ArrowOp::SetComputedCell {

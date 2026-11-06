@@ -2326,6 +2326,51 @@ impl Workbook {
         }
     }
 
+    // Projection edits need graph history even in deferred mode. Also cover
+    // later cells in the same action after its first edit cleared the spill.
+    fn formula_needs_spill_history(&self, sheet: &str, row: u32, col: u32) -> bool {
+        if !self.enable_changelog {
+            return false;
+        }
+        let address = formualizer_common::CellAddress {
+            sheet: sheet.to_string(),
+            row,
+            column: col,
+        };
+        if self
+            .engine
+            .inspect_cell_result(&address)
+            .is_ok_and(|state| state.spill.is_some())
+        {
+            return true;
+        }
+        if self.log.compound_depth() == 0 {
+            return false;
+        }
+        let Some(sheet_id) = self.engine.sheet_id(sheet) else {
+            return false;
+        };
+        let cell = formualizer_eval::reference::CellRef::new(
+            sheet_id,
+            formualizer_eval::reference::Coord::from_excel(row, col, true, true),
+        );
+        self.log
+            .events()
+            .iter()
+            .rev()
+            .take_while(|event| {
+                !matches!(
+                    event,
+                    formualizer_eval::engine::ChangeEvent::CompoundStart { depth: 1, .. }
+                )
+            })
+            .any(|event| {
+                matches!(event,
+                    formualizer_eval::engine::ChangeEvent::SpillCleared { old, .. }
+                    if old.target_cells.contains(&cell))
+            })
+    }
+
     pub fn set_formula(
         &mut self,
         sheet: &str,
@@ -2341,7 +2386,9 @@ impl Workbook {
             .enable_changelog
             .then(|| self.staged_formula_cell(sheet, row, col));
         if self.engine.config.defer_graph_building {
-            if self.engine.get_cell(sheet, row, col).is_some() {
+            if self.engine.get_cell(sheet, row, col).is_some()
+                || self.formula_needs_spill_history(sheet, row, col)
+            {
                 let with_eq = if formula.starts_with('=') {
                     formula.to_string()
                 } else {
@@ -2531,7 +2578,10 @@ impl Workbook {
                 .engine
                 .sheet_id(sheet)
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
-            let defer_graph_building = self.engine.config.defer_graph_building;
+            let defer_graph_building = self.engine.config.defer_graph_building
+                && !cells.iter().any(|(&(r, c), d)| {
+                    d.formula.is_some() && self.formula_needs_spill_history(sheet, r, c)
+                });
 
             // Capture per-cell old state from Arrow truth BEFORE applying the bulk edit.
             // In canonical mode the graph value cache is empty, so the editor cannot see
@@ -2838,7 +2888,17 @@ impl Workbook {
             self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
         }
 
-        if self.engine.config.defer_graph_building {
+        let spill_history = self.enable_changelog
+            && rows.iter().enumerate().any(|(ri, forms)| {
+                forms.iter().enumerate().any(|(ci, _)| {
+                    self.formula_needs_spill_history(
+                        sheet,
+                        start_row + ri as u32,
+                        start_col + ci as u32,
+                    )
+                })
+            });
+        if self.engine.config.defer_graph_building && !spill_history {
             // Per-cell staged-formula deltas (see #126). Capture each cell's prior
             // staged text before overwriting so undo/redo can replay precisely.
             for (ri, rforms) in rows.iter().enumerate() {

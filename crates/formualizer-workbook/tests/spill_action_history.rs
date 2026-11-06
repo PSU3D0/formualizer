@@ -77,8 +77,26 @@ fn exercise(route: usize) {
                                         a.set_formula("S", 4, 2, "=88")?;
                                     }
                                     6 => {
+                                        a.set_values(
+                                            "S",
+                                            3,
+                                            2,
+                                            &[vec![V::Number(99.)], vec![V::Number(88.)]],
+                                        )?;
+                                        a.set_values(
+                                            "S",
+                                            3,
+                                            5,
+                                            &[vec![V::Number(66.)], vec![V::Number(55.)]],
+                                        )?;
+                                    }
+                                    9 => {
+                                        a.set_formula("S", 3, 2, "=99")?;
+                                        a.set_formula("S", 4, 2, "=88")?;
+                                    }
+                                    10 => {
                                         a.set_value("S", 3, 2, V::Number(99.))?;
-                                        a.set_value("S", 4, 5, V::Number(88.))?;
+                                        a.set_formula("S", 4, 2, "=88")?;
                                     }
                                     7 | 8 => {
                                         a.set_value("S", 3, 2, V::Number(99.))?;
@@ -118,8 +136,28 @@ fn exercise(route: usize) {
                                     )
                                     .unwrap(),
                                 6 => {
+                                    w.set_values(
+                                        "S",
+                                        3,
+                                        2,
+                                        &[vec![V::Number(99.)], vec![V::Number(88.)]],
+                                    )
+                                    .unwrap();
+                                    w.set_values(
+                                        "S",
+                                        3,
+                                        5,
+                                        &[vec![V::Number(66.)], vec![V::Number(55.)]],
+                                    )
+                                    .unwrap();
+                                }
+                                9 => {
+                                    w.set_formula("S", 3, 2, "=99").unwrap();
+                                    w.set_formula("S", 4, 2, "=88").unwrap();
+                                }
+                                10 => {
                                     w.set_value("S", 3, 2, V::Number(99.)).unwrap();
-                                    w.set_value("S", 4, 5, V::Number(88.)).unwrap();
+                                    w.set_formula("S", 4, 2, "=88").unwrap();
                                 }
                                 7 | 8 => {
                                     w.set_value("S", 3, 2, V::Number(99.)).unwrap();
@@ -147,18 +185,40 @@ fn exercise(route: usize) {
                             Some(V::Number(99.)),
                             "redo: {context}"
                         );
-                        let (row, col, value) = if route == 6 {
-                            (4, 5, 88.)
-                        } else if route >= 7 {
-                            (1, 2, 77.)
-                        } else {
-                            (4, 2, 88.)
-                        };
-                        assert_eq!(
-                            w.get_value("S", row, col),
-                            Some(V::Number(value)),
-                            "redo: {context}"
-                        );
+                        for col in [2, 5] {
+                            for row in 1..=5 {
+                                let value = w.get_value("S", row, col);
+                                let expected = if col == 5 && route != 6 {
+                                    Some(row as f64)
+                                } else if row == 1 && !(col == 2 && matches!(route, 7 | 8)) {
+                                    assert!(
+                                        matches!(value, Some(V::Error(ref e)) if e.kind == formualizer_common::ExcelErrorKind::Spill),
+                                        "redo anchor: {context}"
+                                    );
+                                    continue;
+                                } else {
+                                    match (col, row) {
+                                        (2, 1) => Some(77.),
+                                        (2, 3) => Some(99.),
+                                        (2, 4) if !matches!(route, 7 | 8) => Some(88.),
+                                        (5, 3) => Some(66.),
+                                        (5, 4) => Some(55.),
+                                        _ => None,
+                                    }
+                                };
+                                match expected {
+                                    Some(n) => assert_eq!(
+                                        value,
+                                        Some(V::Number(n)),
+                                        "redo: {context} row={row} col={col}"
+                                    ),
+                                    None => assert!(
+                                        matches!(value, None | Some(V::Empty)),
+                                        "redo emptiness: {context} row={row} col={col}: {value:?}"
+                                    ),
+                                }
+                            }
+                        }
                         w.undo().unwrap();
                         w.evaluate_all().unwrap();
                         assert_eq!(snapshot(&w), original, "second undo: {context}");
@@ -215,4 +275,12 @@ fn child_then_literal_anchor() {
 #[test]
 fn child_then_formula_anchor() {
     exercise(8);
+}
+#[test]
+fn multiple_formulas() {
+    exercise(9);
+}
+#[test]
+fn mixed_cell_calls() {
+    exercise(10);
 }
