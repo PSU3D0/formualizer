@@ -360,10 +360,13 @@ fn custom_function_panic_cycle_consequence() {
                 e.evaluate_all().unwrap();
             }
             assert_eq!(e.request_scope_for_test(), (0, false, false));
-            assert!(matches!(
-                e.get_cell_value("Sheet1", 1, 1),
-                Some(LiteralValue::Error(_))
-            ));
+            let Some(LiteralValue::Error(error)) = e.get_cell_value("Sheet1", 1, 1) else {
+                panic!("missing cycle panic error")
+            };
+            assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Value);
+            assert!(
+                matches!(error.extra(), formualizer_common::ExcelErrorExtra::FunctionPanicked { function, message: Some(message) } if function == "JOB_PANIC_FIFTH" && message.contains("fifth iteration panic"))
+            );
             assert!(
                 e.operation_diagnostics()
                     .unwrap()
