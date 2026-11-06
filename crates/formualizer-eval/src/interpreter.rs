@@ -2986,13 +2986,7 @@ mod resolved_function_tests {
             Some(self.generation.load(Ordering::Acquire))
         }
         fn function_capabilities(&self, _: &str, _: &str) -> Option<crate::function::FnCaps> {
-            self.function.read().unwrap().as_ref().map(|f| {
-                crate::external_callbacks::metadata(
-                    f.as_ref(),
-                    crate::function::FnCaps::empty,
-                    || f.caps(),
-                )
-            })
+            self.function.read().unwrap().as_ref().map(|f| f.caps())
         }
         fn get_function(&self, _: &str, _: &str) -> Option<Arc<dyn Function>> {
             self.calls.fetch_add(1, Ordering::Relaxed);
