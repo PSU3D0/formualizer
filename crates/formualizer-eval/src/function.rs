@@ -232,11 +232,11 @@ pub trait Function: Send + Sync + 'static {
         false
     }
     fn volatile(&self) -> bool {
-        crate::external_callbacks::metadata(self, FnCaps::empty, || self.caps())
+        crate::external_callbacks::dispatch_metadata(self, FnCaps::empty, || self.caps())
             .contains(FnCaps::VOLATILE)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        if crate::external_callbacks::metadata(self, || 0, || self.min_args()) > 0 {
+        if crate::external_callbacks::dispatch_metadata(self, || 0, || self.min_args()) > 0 {
             panic!("Non-zero min_args must have a valid arg_schema");
         } else {
             &[]
@@ -282,13 +282,16 @@ pub trait Function: Send + Sync + 'static {
     fn function_salt(&self) -> u64 {
         // Stable hash of function name + namespace
         let full_name =
-            if crate::external_callbacks::metadata(self, || "", || self.namespace()).is_empty() {
-                crate::external_callbacks::metadata(self, || "", || self.name()).to_string()
+            if crate::external_callbacks::dispatch_metadata(self, || "", || self.namespace())
+                .is_empty()
+            {
+                crate::external_callbacks::dispatch_metadata(self, || "", || self.name())
+                    .to_string()
             } else {
                 format!(
                     "{}::{}",
-                    crate::external_callbacks::metadata(self, || "", || self.namespace()),
-                    crate::external_callbacks::metadata(self, || "", || self.name())
+                    crate::external_callbacks::dispatch_metadata(self, || "", || self.namespace()),
+                    crate::external_callbacks::dispatch_metadata(self, || "", || self.name())
                 )
             };
         crate::rng::fnv1a64(full_name.as_bytes())
@@ -308,8 +311,11 @@ pub trait Function: Send + Sync + 'static {
         &self,
         result: crate::traits::CalcValue<'a>,
     ) -> crate::traits::CalcValue<'a> {
-        let format =
-            crate::external_callbacks::metadata(self, || None, || self.propagate_format(&result));
+        let format = crate::external_callbacks::dispatch_metadata(
+            self,
+            || None,
+            || self.propagate_format(&result),
+        );
         result.with_format(format)
     }
 
@@ -372,15 +378,21 @@ pub trait Function: Send + Sync + 'static {
         // validation cannot fail; only the min-arity check is meaningful.
         // (LET/LAMBDA already bypass validation via `dispatch` overrides for
         // the same reason.)
-        if crate::external_callbacks::metadata(self, FnCaps::empty, || self.caps())
+        if crate::external_callbacks::dispatch_metadata(self, FnCaps::empty, || self.caps())
             .contains(FnCaps::SHORT_CIRCUIT)
         {
-            if args.len() < crate::external_callbacks::metadata(self, || 0, || self.min_args()) {
+            if args.len()
+                < crate::external_callbacks::dispatch_metadata(self, || 0, || self.min_args())
+            {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(formualizer_common::ExcelErrorKind::Value).with_message(
                         format!(
                             "Too few arguments: expected at least {}, got {}",
-                            crate::external_callbacks::metadata(self, || 0, || self.min_args()),
+                            crate::external_callbacks::dispatch_metadata(
+                                self,
+                                || 0,
+                                || self.min_args()
+                            ),
                             args.len()
                         ),
                     ),
@@ -394,7 +406,7 @@ pub trait Function: Send + Sync + 'static {
         // Central argument validation (includes min-arity check)
         {
             use crate::args::{ValidationOptions, validate_and_prepare_inline};
-            let schema = crate::external_callbacks::metadata(
+            let schema = crate::external_callbacks::dispatch_metadata(
                 self,
                 || &[] as &'static [ArgSchema],
                 || self.arg_schema(),
@@ -404,7 +416,11 @@ pub trait Function: Send + Sync + 'static {
                 schema,
                 ValidationOptions {
                     warn_only: false,
-                    min_args: crate::external_callbacks::metadata(self, || 0, || self.min_args()),
+                    min_args: crate::external_callbacks::dispatch_metadata(
+                        self,
+                        || 0,
+                        || self.min_args(),
+                    ),
                 },
             ) {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));

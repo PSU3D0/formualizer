@@ -88,7 +88,7 @@ pub(crate) fn root(cell: Option<CellRef>) -> RootScope {
         }
     })
 }
-fn active() -> Option<Arc<CallbackState>> {
+pub(crate) fn active() -> Option<Arc<CallbackState>> {
     ACTIVE.with(|a| a.borrow().clone())
 }
 fn key<F: Function + ?Sized>(f: &F) -> usize {
@@ -111,6 +111,32 @@ impl CallbackState {
             .insert(name.into(), error.clone());
         self.failed.store(true, Ordering::Release);
     }
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn execution_error(
+        &self,
+        function: &dyn Function,
+        name: &str,
+    ) -> Option<ExcelError> {
+        if !self.failed() {
+            return None;
+        }
+        let pending = self.pending().inspect(|error| self.report(error));
+        if let Some(error) = self.named.lock().unwrap().get(name).cloned() {
+            return Some(error);
+        }
+        let Some(mut error) = self.metadata.lock().unwrap().get(&key(function)).cloned() else {
+            return pending;
+        };
+        if let ExcelErrorExtra::FunctionPanicked { message, .. } = error.extra() {
+            error = error.clone().with_extra(ExcelErrorExtra::FunctionPanicked {
+                function: name.into(),
+                message: message.clone(),
+            });
+        }
+        Some(error)
+    }
+    #[inline]
     pub(crate) fn failed(&self) -> bool {
         self.failed.load(Ordering::Acquire)
     }
@@ -131,10 +157,16 @@ impl CallbackState {
             );
         }
     }
+    #[inline]
     pub(crate) fn pending(&self) -> Option<ExcelError> {
         if !self.failed() {
             return None;
         }
+        self.pending_cold()
+    }
+    #[cold]
+    #[inline(never)]
+    fn pending_cold(&self) -> Option<ExcelError> {
         let root = ROOT.with(|r| *r.borrow());
         let mut pending = self.pending.lock().unwrap();
         // A global planning/provider failure affects every executed root.
@@ -212,6 +244,35 @@ pub(crate) fn named_error(name: &str) -> Option<ExcelError> {
         }
         state.named.lock().unwrap().get(name).cloned()
     })
+}
+/// Metadata inside already-guarded dispatch needs no healthy preflight read.
+/// The outer dispatch checks sticky failures before invoking the function.
+#[inline]
+pub(crate) fn dispatch_metadata<T, F: Function + ?Sized>(
+    function: &F,
+    fallback: impl FnOnce() -> T,
+    run: impl FnOnce() -> T,
+) -> T {
+    match crate::function::catch_function_panic("function metadata", run) {
+        Ok(value) => value,
+        Err(error) => {
+            record_dispatch_metadata_failure(function, error);
+            fallback()
+        }
+    }
+}
+#[cold]
+#[inline(never)]
+fn record_dispatch_metadata_failure<F: Function + ?Sized>(function: &F, error: ExcelError) {
+    if let Some(state) = active() {
+        state
+            .metadata
+            .lock()
+            .unwrap()
+            .entry(key(function))
+            .or_insert(error);
+        state.failed.store(true, Ordering::Release);
+    }
 }
 /// A metadata fault is sticky only within the current logical request.
 pub(crate) fn metadata<T, F: Function + ?Sized>(
@@ -291,4 +352,15 @@ pub(crate) fn clock_failure(error: ExcelError) {
             .unwrap()
             .insert(ROOT.with(|r| *r.borrow()), error);
     }
+}
+
+pub(crate) fn execution_error(function: &dyn Function, name: &str) -> Option<ExcelError> {
+    ACTIVE.with(|a| {
+        let a = a.borrow();
+        let state = a.as_ref()?;
+        if !state.failed() {
+            return None;
+        }
+        state.execution_error(function, name)
+    })
 }

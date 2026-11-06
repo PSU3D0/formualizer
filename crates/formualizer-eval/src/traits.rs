@@ -686,7 +686,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::Omitted => {
                     Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
                 }
-                _ => self.interp.evaluate_ast(node),
+                _ => self.interp.evaluate_ast_uncached(node),
             },
             ArgumentExpr::Arena {
                 id,
@@ -700,7 +700,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
                 } else {
                     self.interp
-                        .evaluate_arena_ast(*id, data_store, sheet_registry)
+                        .evaluate_arena_ast_inner(*id, data_store, sheet_registry)
                 }
             }
         }
@@ -717,7 +717,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ASTNodeType::Omitted => {
                     Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
                 }
-                _ => scoped.evaluate_ast(node),
+                _ => scoped.evaluate_ast_uncached(node),
             },
             ArgumentExpr::Arena {
                 id,
@@ -730,7 +730,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                 ) {
                     Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)))
                 } else {
-                    scoped.evaluate_arena_ast(*id, data_store, sheet_registry)
+                    scoped.evaluate_arena_ast_inner(*id, data_store, sheet_registry)
                 }
             }
         };
@@ -1339,7 +1339,8 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                     for row in rows {
                         let mut materialized_row = Vec::new();
                         for cell in row {
-                            materialized_row.push(self.interp.evaluate_ast(cell)?.into_literal());
+                            materialized_row
+                                .push(self.interp.evaluate_ast_uncached(cell)?.into_literal());
                         }
                         materialized.push(materialized_row);
                     }
@@ -1391,7 +1392,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                                     ExcelError::new(ExcelErrorKind::Value)
                                         .with_message("Invalid array")
                                 })?;
-                                let v = self.interp.evaluate_arena_ast(
+                                let v = self.interp.evaluate_arena_ast_inner(
                                     elem_id,
                                     data_store,
                                     self.sheet_registry(),
@@ -1569,7 +1570,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                             }
                             self.r = r;
                             self.c = c;
-                            match self.interp.evaluate_ast(node) {
+                            match self.interp.evaluate_ast_uncached(node) {
                                 Ok(cv) => Some(cv.into_literal()),
                                 Err(e) => Some(LiteralValue::Error(e)),
                             }
@@ -1620,7 +1621,7 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                             fn next(&mut self) -> Option<Self::Item> {
                                 let id = self.elements.get(self.idx).copied()?;
                                 self.idx += 1;
-                                match self.interp.evaluate_arena_ast(
+                                match self.interp.evaluate_arena_ast_inner(
                                     id,
                                     self.data_store,
                                     self.sheet_registry,
@@ -1642,9 +1643,11 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
                         Ok(Box::new(it))
                     }
                     _ => {
-                        let v = self
-                            .interp
-                            .evaluate_arena_ast(*id, data_store, sheet_registry)?;
+                        let v = self.interp.evaluate_arena_ast_inner(
+                            *id,
+                            data_store,
+                            sheet_registry,
+                        )?;
                         Ok(Box::new(std::iter::once(v.into_literal())))
                     }
                 }

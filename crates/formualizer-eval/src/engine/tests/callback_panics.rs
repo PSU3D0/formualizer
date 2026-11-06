@@ -147,6 +147,52 @@ fn runtime_metadata_faults_are_request_scoped_cell_failures() {
     }
 }
 
+#[test]
+fn metadata_faults_without_evidence_remain_request_scoped() {
+    for mode in 0..7 {
+        for family in [false, true] {
+            for job in [false, true] {
+                if mode == 2 && !family {
+                    continue;
+                }
+                let armed = Arc::new(AtomicBool::new(false));
+                let mut e = Engine::new(
+                    TestWorkbook::new().with_function(Arc::new(Metadata {
+                        mode,
+                        armed: armed.clone(),
+                    })),
+                    EvalConfig {
+                        family_execution: family,
+                        enable_parallel: false,
+                        ..Default::default()
+                    },
+                );
+                for row in 1..=32 {
+                    e.set_cell_formula("Sheet1", row, 1, parse("=FAULT_METADATA()").unwrap())
+                        .unwrap();
+                }
+                armed.store(true, Ordering::SeqCst);
+                run(&mut e, job);
+                for row in 1..=32 {
+                    check_error(&e, row, "FAULT_METADATA");
+                }
+                armed.store(false, Ordering::SeqCst);
+                for row in 1..=32 {
+                    e.set_cell_formula("Sheet1", row, 1, parse("=FAULT_METADATA()").unwrap())
+                        .unwrap();
+                }
+                run(&mut e, job);
+                for row in 1..=32 {
+                    assert_eq!(
+                        e.get_cell_value("Sheet1", row, 1),
+                        Some(LiteralValue::Number(7.))
+                    );
+                }
+            }
+        }
+    }
+}
+
 struct Sources {
     base: TestWorkbook,
     armed: Arc<AtomicBool>,

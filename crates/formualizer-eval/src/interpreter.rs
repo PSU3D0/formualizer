@@ -193,6 +193,7 @@ type ResolvedCallable = (
 /// Immutable function snapshot shared by every interpreter in one evaluation request.
 #[derive(Default)]
 pub(crate) struct ResolvedFunctions {
+    callback_state: Option<std::sync::Arc<crate::external_callbacks::CallbackState>>,
     functions: Vec<Option<std::sync::Arc<dyn crate::function::Function>>>,
     slots: rustc_hash::FxHashMap<crate::engine::arena::StringId, usize>,
     revision: Option<(u64, Option<u64>, u64)>,
@@ -208,6 +209,7 @@ impl ResolvedFunctions {
         store: &DataStore,
         provider: &dyn crate::traits::FunctionProvider,
     ) {
+        self.callback_state = crate::external_callbacks::active();
         let revision = (
             crate::function_registry::semantic_epoch_lock_free(),
             provider.planning_semantic_revision(),
@@ -483,8 +485,26 @@ impl<'a> Interpreter<'a> {
         name: &str,
         run: impl FnOnce() -> T,
     ) -> T {
+        let result = self.function_catch(name, run);
+        // Custom callables have no resolved Function instance for the combined
+        // dispatch check. Avoid TLS unless the owning snapshot saw a fault.
+        let failed = self
+            .resolved_functions
+            .and_then(|t| t.callback_state.as_deref())
+            .is_none_or(crate::external_callbacks::CallbackState::failed);
+        if failed {
+            crate::external_callbacks::pending().map_or(result, T::panicked)
+        } else {
+            result
+        }
+    }
+    fn function_catch<T: crate::function::PanicResult>(
+        &self,
+        name: &str,
+        run: impl FnOnce() -> T,
+    ) -> T {
         match crate::function::catch_function_panic(name, run) {
-            Ok(result) => crate::external_callbacks::pending().map_or(result, T::panicked),
+            Ok(result) => result,
             Err(error) => {
                 self.unavailable(
                     crate::operation_diagnostics::UnavailableOperation::FunctionPanicked {
@@ -496,6 +516,22 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    #[inline(always)]
+    fn execution_error(
+        &self,
+        function: &dyn crate::function::Function,
+        name: &str,
+    ) -> Option<ExcelError> {
+        match self
+            .resolved_functions
+            .and_then(|table| table.callback_state.as_deref())
+        {
+            Some(state) if !state.failed() => None,
+            Some(state) => state.execution_error(function, name),
+            None => crate::external_callbacks::execution_error(function, name),
+        }
+    }
+
     pub(crate) fn diagnostic_dispatch<T: crate::function::PanicResult>(
         &self,
         name: &str,
@@ -504,14 +540,30 @@ impl<'a> Interpreter<'a> {
         run: impl FnOnce() -> T,
         unimplemented: impl FnOnce(&T) -> bool,
     ) -> T {
+        // Ordinary evaluation has no evidence scope. Keep healthy dispatch to
+        // the required invocation catch and two borrowed request-fault checks;
+        // materialize attribution only after a callback actually failed.
+        if self.diagnostics.is_none()
+            && let Some(state) = self
+                .resolved_functions
+                .and_then(|table| table.callback_state.as_deref())
+            && !state.failed()
+        {
+            let value = self.function_catch(name, run);
+            return if state.failed() {
+                state
+                    .execution_error(function, name)
+                    .map_or(value, T::panicked)
+            } else {
+                value
+            };
+        }
         let collector = self.diagnostics;
         if let Some(collector) = collector {
             collector.dispatch_started();
         }
         let scope = collector.map(|c| c.scope(crate::operation_diagnostics::Mode::Inherit));
-        let result = if let Some(error) = crate::external_callbacks::named_error(name)
-            .or_else(|| crate::external_callbacks::metadata_error(function, name))
-        {
+        let result = if let Some(error) = self.execution_error(function, name) {
             let operation_name = match error.extra() {
                 formualizer_common::ExcelErrorExtra::FunctionPanicked { function, .. } => {
                     function.clone()
@@ -526,9 +578,7 @@ impl<'a> Interpreter<'a> {
             T::panicked(error)
         } else {
             let value = self.function_call(name, run);
-            if let Some(error) = crate::external_callbacks::named_error(name)
-                .or_else(|| crate::external_callbacks::metadata_error(function, name))
-            {
+            if let Some(error) = self.execution_error(function, name) {
                 let operation_name = match error.extra() {
                     formualizer_common::ExcelErrorExtra::FunctionPanicked { function, .. } => {
                         function.clone()
@@ -1114,7 +1164,8 @@ impl<'a> Interpreter<'a> {
             return Err(error);
         }
 
-        self.evaluate_ast_uncached(node)
+        let result = self.evaluate_ast_uncached(node);
+        crate::external_callbacks::pending().map_or(result, Err)
     }
 
     pub(crate) fn evaluate_ast_with_offset(
@@ -1136,7 +1187,7 @@ impl<'a> Interpreter<'a> {
             disable_ast_planner: true,
             parameter_bindings: self.parameter_bindings,
         };
-        offset.evaluate_ast_uncached(node)
+        offset.evaluate_ast(node)
     }
 
     pub(crate) fn reference_for_current_offset(
@@ -1410,6 +1461,16 @@ impl<'a> Interpreter<'a> {
             return Err(error);
         }
 
+        let result = self.evaluate_arena_ast_inner(node_id, data_store, sheet_registry);
+        crate::external_callbacks::pending().map_or(result, Err)
+    }
+
+    pub(crate) fn evaluate_arena_ast_inner(
+        &self,
+        node_id: AstNodeId,
+        data_store: &DataStore,
+        sheet_registry: &SheetRegistry,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         let node = data_store.get_node(node_id).ok_or_else(|| {
             ExcelError::new(ExcelErrorKind::Value).with_message("Missing AST node")
         })?;
@@ -1513,11 +1574,12 @@ impl<'a> Interpreter<'a> {
                         return Ok(crate::traits::CalcValue::Scalar(v));
                     }
 
-                    let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
+                    let expr =
+                        self.evaluate_arena_ast_inner(*expr_id, data_store, sheet_registry)?;
                     let v = self.eval_implicit_intersection_calc(expr);
                     return Ok(crate::traits::CalcValue::Scalar(v));
                 }
-                let expr = self.evaluate_arena_ast(*expr_id, data_store, sheet_registry)?;
+                let expr = self.evaluate_arena_ast_inner(*expr_id, data_store, sheet_registry)?;
                 self.apply_unary_op(op, expr)
             }
             AstNodeData::BinaryOp {
@@ -1544,10 +1606,12 @@ impl<'a> Interpreter<'a> {
                     };
                 }
 
-                let left_calc = self.evaluate_arena_ast(*left_id, data_store, sheet_registry)?;
+                let left_calc =
+                    self.evaluate_arena_ast_inner(*left_id, data_store, sheet_registry)?;
                 let left_format = left_calc.format_id();
                 let left = left_calc.into_literal();
-                let right_calc = self.evaluate_arena_ast(*right_id, data_store, sheet_registry)?;
+                let right_calc =
+                    self.evaluate_arena_ast_inner(*right_id, data_store, sheet_registry)?;
                 let right_format = right_calc.format_id();
                 let right = right_calc.into_literal();
                 self.apply_binary_op(op, left, left_format, right, right_format)
@@ -1567,7 +1631,7 @@ impl<'a> Interpreter<'a> {
                         let idx = r * cols_usize + c;
                         if let Some(&elem_id) = elements.get(idx) {
                             row.push(
-                                self.evaluate_arena_ast(elem_id, data_store, sheet_registry)?
+                                self.evaluate_arena_ast_inner(elem_id, data_store, sheet_registry)?
                                     .into_literal(),
                             );
                         }
@@ -1632,7 +1696,7 @@ impl<'a> Interpreter<'a> {
                                 .bound_reference_in_env(&self.local_env),
                         );
                         eval_args.push(
-                            self.evaluate_arena_ast(*arg_id, data_store, sheet_registry)?
+                            self.evaluate_arena_ast_inner(*arg_id, data_store, sheet_registry)?
                                 .into_literal(),
                         );
                     }
@@ -1648,15 +1712,10 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn evaluate_ast_uncached(
+    pub(crate) fn evaluate_ast_uncached(
         &self,
         node: &ASTNode,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
-        let _root = crate::external_callbacks::root(self.current_cell);
-        if let Some(error) = crate::external_callbacks::pending() {
-            return Err(error);
-        }
-
         if self.disable_ast_planner {
             return self.eval_tree_uncached(node);
         }
@@ -1750,7 +1809,7 @@ impl<'a> Interpreter<'a> {
                                     }
                                 }
                                 _ => {
-                                    let _ = self.evaluate_ast(arg);
+                                    let _ = self.evaluate_ast_uncached(arg);
                                 }
                             }
                         }
@@ -1841,11 +1900,11 @@ impl<'a> Interpreter<'a> {
                 return Ok(self.implicit_intersection_from_reference(&reference));
             }
 
-            let cv = self.evaluate_ast(expr)?;
+            let cv = self.evaluate_ast_uncached(expr)?;
             return Ok(self.eval_implicit_intersection_calc(cv));
         }
 
-        let v = self.evaluate_ast(expr)?.into_literal();
+        let v = self.evaluate_ast_uncached(expr)?.into_literal();
         match v {
             LiteralValue::Array(arr) => {
                 self.map_array(arr, |cell| self.eval_unary_scalar(op, cell))
@@ -2103,10 +2162,10 @@ impl<'a> Interpreter<'a> {
         left_node: &ASTNode,
         right_node: &ASTNode,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
-        let left_calc = self.evaluate_ast(left_node)?;
+        let left_calc = self.evaluate_ast_uncached(left_node)?;
         let left_format = left_calc.format_id();
         let left = left_calc.into_literal();
-        let right_calc = self.evaluate_ast(right_node)?;
+        let right_calc = self.evaluate_ast_uncached(right_node)?;
         let right_format = right_calc.format_id();
         let right = right_calc.into_literal();
         if op == BinaryOperator::Range {
@@ -2154,7 +2213,7 @@ impl<'a> Interpreter<'a> {
                 // carries a bound reference; nothing else.
                 arg_references
                     .push(ArgumentHandle::new(arg, self).bound_reference_in_env(&self.local_env));
-                eval_args.push(self.evaluate_ast(arg)?.into_literal());
+                eval_args.push(self.evaluate_ast_uncached(arg)?.into_literal());
             }
             return self.function_call(name, || {
                 callable.invoke_with_references(self, &eval_args, &arg_references)
@@ -2186,7 +2245,7 @@ impl<'a> Interpreter<'a> {
         for row in rows {
             let mut r = Vec::with_capacity(row.len());
             for cell in row {
-                r.push(self.evaluate_ast(cell)?.into_literal());
+                r.push(self.evaluate_ast_uncached(cell)?.into_literal());
             }
             out.push(r);
         }

@@ -65,9 +65,13 @@ fn formula(e: &mut Engine<TestWorkbook>, row: u32, text: &str) {
 
 #[test]
 fn panic_payloads_are_typed_and_dependents_propagate() {
-    for payload in 0..3 {
+    for payload_and_evidence in 0..6 {
+        let payload = payload_and_evidence % 3;
         for family in [false, true] {
             let mut e = engine(payload, false, family, false);
+            if payload_and_evidence < 3 {
+                e.disable_operation_diagnostics();
+            }
             formula(&mut e, 1, "=PANIC_TEST()");
             formula(&mut e, 2, "=A1+1");
             e.evaluate_all().unwrap();
