@@ -37,6 +37,7 @@ mod errors;
 mod inspect;
 mod parser;
 mod reference;
+mod recalc;
 mod sheet; // retain for compatibility
 mod sheetport;
 mod source_calculation;
@@ -613,6 +614,7 @@ fn formualizer_py(m: &Bound<'_, PyModule>) -> PyResult<()> {
     value::register(m)?;
     engine::register(m)?;
     workbook::register(m)?;
+    recalc::register(m)?;
     sheet::register(m)?;
     sheetport::register(m)?;
     // Convenience functions

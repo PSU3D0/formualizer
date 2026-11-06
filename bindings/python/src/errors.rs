@@ -14,6 +14,11 @@ pyo3::create_exception!(formualizer, ParserError, PyException);
 pyo3::create_exception!(formualizer, FormualizerHostError, PyException);
 // Raised when evaluating a cell returns an Excel error value
 pyo3::create_exception!(formualizer, ExcelEvaluationError, PyException);
+pyo3::create_exception!(formualizer, RecalcJobError, PyException);
+pyo3::create_exception!(formualizer, NoActiveJobError, RecalcJobError);
+pyo3::create_exception!(formualizer, RecalcAlreadyPendingError, RecalcJobError);
+pyo3::create_exception!(formualizer, EnginePoisonedError, RecalcJobError);
+pyo3::create_exception!(formualizer, RecalcJobActiveError, ExcelEvaluationError);
 pyo3::create_exception!(formualizer, InspectionError, PyException);
 pyo3::create_exception!(formualizer, SheetNotFoundError, InspectionError);
 pyo3::create_exception!(formualizer, InvalidInspectionAddressError, InspectionError);
@@ -66,6 +71,13 @@ fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject
         ExcelErrorExtra::PreparationStale { reason } => {
             let _ = dict.set_item("preparation_stale_reason", reason.as_str());
         }
+        ExcelErrorExtra::FunctionPanicked { function, message } => {
+            let _ = dict.set_item("kind", "FunctionPanicked");
+            let _ = dict.set_item("function", function);
+            let _ = dict.set_item("message", message);
+        }
+        ExcelErrorExtra::RecalcJobActive => { let _ = dict.set_item("kind", "RecalcJobActive"); }
+        ExcelErrorExtra::EnginePoisoned => { let _ = dict.set_item("kind", "EnginePoisoned"); }
         ExcelErrorExtra::PlanStale { reason } => {
             let _ = dict.set_item("plan_stale_reason", reason.as_str());
         }
@@ -77,7 +89,11 @@ fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject
 /// Map a canonical engine error to the Python evaluation exception without
 /// flattening its structured Excel-domain fields.
 pub(crate) fn excel_error_to_pyerr(error: RustExcelError) -> PyErr {
-    let pyerr = ExcelEvaluationError::new_err(error.to_string());
+    let pyerr = match error.extra() {
+        ExcelErrorExtra::RecalcJobActive => RecalcJobActiveError::new_err(error.to_string()),
+        ExcelErrorExtra::EnginePoisoned => EnginePoisonedError::new_err(error.to_string()),
+        _ => ExcelEvaluationError::new_err(error.to_string()),
+    };
     Python::attach(|py| {
         let value = pyerr.value(py);
         let kind = format!("{:?}", error.kind);
@@ -559,7 +575,27 @@ impl From<RustExcelError> for PyExcelError {
     }
 }
 
+pub(crate) fn recalc_error_to_pyerr(error: formualizer::eval::engine::RecalcJobError) -> PyErr {
+    use formualizer::eval::engine::RecalcJobError as E;
+    match error {
+        E::NoActiveJob => NoActiveJobError::new_err(error.to_string()),
+        E::AlreadyPending { explicit } => {
+            let exc = RecalcAlreadyPendingError::new_err(error.to_string());
+            Python::attach(|py| { let _ = exc.value(py).setattr("explicit", explicit); });
+            exc
+        }
+        E::Poisoned => EnginePoisonedError::new_err(error.to_string()),
+        E::Evaluation(e) => excel_error_to_pyerr(e),
+        _ => RecalcJobError::new_err(error.to_string()),
+    }
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("RecalcJobError", m.py().get_type::<RecalcJobError>())?;
+    m.add("NoActiveJobError", m.py().get_type::<NoActiveJobError>())?;
+    m.add("RecalcAlreadyPendingError", m.py().get_type::<RecalcAlreadyPendingError>())?;
+    m.add("EnginePoisonedError", m.py().get_type::<EnginePoisonedError>())?;
+    m.add("RecalcJobActiveError", m.py().get_type::<RecalcJobActiveError>())?;
     m.add(
         "CalculationDeferred",
         m.py().get_type::<CalculationDeferred>(),

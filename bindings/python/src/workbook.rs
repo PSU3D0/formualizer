@@ -300,7 +300,8 @@ pub struct PyWorkbook {
     pub(crate) inner: std::sync::Arc<std::sync::RwLock<formualizer::workbook::Workbook>>,
     // Compatibility cache for old sheet API used by some wrappers
     pub(crate) sheets: std::sync::Arc<std::sync::RwLock<SheetCache>>,
-    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) job_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
@@ -1041,6 +1042,58 @@ impl PyWorkbook {
         Ok(())
     }
 
+    /// Start a cooperative recalculation. Priority uses 1-based inclusive rectangles.
+    #[pyo3(signature = (*, collect_deltas=true, max_delta_records=1024, priority=None))]
+    pub fn begin_recalc(
+        &self, py: Python<'_>, collect_deltas: bool, max_delta_records: usize,
+        priority: Option<Vec<crate::recalc::Rect>>,
+    ) -> PyResult<crate::recalc::PyRecalcJob> {
+        self.check_reentrancy()?;
+        let priority = crate::recalc::targets(priority.unwrap_or_default())?;
+        py.detach(|| {
+            let mut wb = self.write_inner_detached().map_err(workbook_error_to_pyerr)?;
+            let mut options = formualizer::eval::engine::RecalcJobOptions::default();
+            options.collect_deltas = collect_deltas;
+            options.max_delta_records = max_delta_records;
+            options.initial_priority = priority;
+            wb.begin_recalc(options).map_err(crate::errors::recalc_error_to_pyerr)?;
+            self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+            let generation = self.job_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Ok(crate::recalc::PyRecalcJob { workbook: self.clone(), generation })
+        })
+    }
+
+    #[getter]
+    pub fn has_active_recalc_job(&self, py: Python<'_>) -> PyResult<bool> {
+        self.check_reentrancy()?;
+        py.detach(|| {
+            let wb = self.inner.read().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
+            Ok(wb.has_active_recalc_job())
+        })
+    }
+
+    /// Raw formula dirtiness in a 1-based inclusive viewport.
+    pub fn has_pending_in_rect(&self, py: Python<'_>, sheet: &str, r0: u32, c0: u32, r1: u32, c1: u32) -> PyResult<bool> {
+        self.check_reentrancy()?;
+        crate::recalc::validate_rect(r0,c0,r1,c1)?;
+        py.detach(|| {
+            let wb = self.inner.read().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
+            let id = wb.engine().sheet_id(sheet).ok_or_else(|| crate::errors::SheetNotFoundError::new_err(sheet.to_owned()))?;
+            Ok(wb.has_pending_in_rect(id,r0-1,c0-1,r1-1,c1-1))
+        })
+    }
+
+    /// Conservative pending rectangles; coordinates are 1-based inclusive.
+    pub fn pending_cells_in_rect(&self, py: Python<'_>, sheet: &str, r0: u32, c0: u32, r1: u32, c1: u32) -> PyResult<Vec<crate::recalc::Rect>> {
+        self.check_reentrancy()?;
+        crate::recalc::validate_rect(r0,c0,r1,c1)?;
+        py.detach(|| {
+            let wb = self.inner.read().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
+            let id = wb.engine().sheet_id(sheet).ok_or_else(|| crate::errors::SheetNotFoundError::new_err(sheet.to_owned()))?;
+            Ok(crate::recalc::rectangles(&wb,&wb.pending_cells_in_rect(id,r0-1,c0-1,r1-1,c1-1)))
+        })
+    }
+
     pub fn evaluate_all(&self, py: Python<'_>) -> PyResult<()> {
         // Ensure flag is reset before starting
         self.cancel_flag
@@ -1616,6 +1669,7 @@ impl PyWorkbook {
             inner: std::sync::Arc::new(std::sync::RwLock::new(inner)),
             sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
             cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            job_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
