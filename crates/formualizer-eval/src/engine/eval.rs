@@ -5187,7 +5187,10 @@ where
                 }
                 if !journal.graph.is_empty() || !journal.arrow.is_empty() {
                     for event in &journal.graph.events {
-                        self.record_change_for_event(event);
+                        // Rollback restored projection ownership just like undo.
+                        // Notify dependents without treating restored cells as
+                        // new user writes that release that ownership again.
+                        self.record_inverse_change_for_event(event);
                     }
                 }
                 Err(e)
