@@ -1676,6 +1676,12 @@ class Workbook:
     def sheet_names(self) -> builtins.list[builtins.str]: ...
     @property
     def has_active_recalc_job(self) -> builtins.bool: ...
+    @property
+    def is_poisoned(self) -> builtins.bool:
+        r"""
+        Engine or workbook-lock poison state. True means discard this workbook.
+        This health query reports a poisoned lock without recovering its contents.
+        """
     def inspect_cell(self, address: builtins.str, *, include_values: builtins.bool = True) -> CellSnapshotReport:
         r"""
         Inspect one cell without evaluating it. Raises `InspectionError`; inspect its `code` attribute for a stable category.

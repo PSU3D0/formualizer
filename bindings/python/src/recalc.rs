@@ -487,6 +487,7 @@ mod tests {
             .is_err()
         );
         Python::attach(|py| {
+            assert!(wb.is_poisoned(py).unwrap());
             assert!(wb.read_inner().is_err());
             assert!(wb.write_inner().is_err());
             assert!(wb.evaluate_all(py).is_err());

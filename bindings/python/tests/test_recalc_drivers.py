@@ -52,6 +52,7 @@ def test_mixed_equivalence(budget, driver):
 
 def test_lifecycle_generations_context_and_iterator():
     wb = chain()
+    assert wb.is_poisoned is False
     first = wb.begin_recalc()
     with pytest.raises(fz.RecalcAlreadyPendingError) as exc:
         wb.begin_recalc()

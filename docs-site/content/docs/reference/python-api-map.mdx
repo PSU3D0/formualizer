@@ -30,7 +30,7 @@ The `Workbook` class is the primary entry point for managing spreadsheet state a
 - `RecalcJob.iter(budget_ms=5)` yields reports through the terminal report; the job is also a context manager that cancels on exit.
 - `Workbook.recalc(budget_ms=5, *, on_step=None, priority=None) -> RecalcOutcome`
 - `Workbook.evaluate_async(budget_ms=5, *, on_progress=None, priority=None)` returns an awaitable yielding `RecalcResult | None` (None on cooperative cancellation).
-- `Workbook.has_active_recalc_job` (property), `has_pending_in_rect(sheet, r0, c0, r1, c1)` and `pending_cells_in_rect(sheet, r0, c0, r1, c1)`
+- `Workbook.has_active_recalc_job` and `Workbook.is_poisoned` (properties), `has_pending_in_rect(sheet, r0, c0, r1, c1)` and `pending_cells_in_rect(sheet, r0, c0, r1, c1)`
 
 All coordinates are **1-based and inclusive**, including priority, changed and pending rectangles: `(sheet_name, r0, c0, r1, c1)`. Pass a list of these rectangles as `priority` or `ranges`. `None` means no soft deadline; zero still permits an atomic unit to finish.
 
@@ -40,7 +40,7 @@ All coordinates are **1-based and inclusive**, including priority, changed and p
 
 `CancelToken()` provides `cancel()` and `cancelled`. Cancellation is cooperative at installation boundaries. Stale job handles raise `NoActiveJobError` when driven, even if another job has begun; their `active` property is False. A step evaluation error ends the job and keeps the existing `ExcelEvaluationError` fields.
 
-`RecalcJobError` has subclasses `NoActiveJobError`, `RecalcAlreadyPendingError` (`explicit` attribute), and `EnginePoisonedError`. Existing `evaluate_all`, `evaluate_cell` and `evaluate_cells` raise `RecalcJobActiveError` (a subclass of `ExcelEvaluationError`) while a job is active. Internal Rust unwinds preserve workbook lock poisoning; discard the workbook. A contained host panic has `extra={"kind": "FunctionPanicked", "function": ..., "message": ...}` on `ExcelError`, `ExcelEvaluationError` and error dictionaries returned from cells; `LiteralValue.error_extra` exposes the same payload. The function name also identifies source resolvers (for example `resolver:resolve_source_scalar:Sales`). Ordinary raising Python functions keep their existing Value-error behavior.
+`RecalcJobError` has subclasses `NoActiveJobError`, `RecalcAlreadyPendingError` (`explicit` attribute), and `EnginePoisonedError`. Existing `evaluate_all`, `evaluate_cell` and `evaluate_cells` raise `RecalcJobActiveError` (a subclass of `ExcelEvaluationError`) while a job is active. Internal Rust unwinds preserve workbook lock poisoning; `is_poisoned` reports this health state without recovering the lock. Discard the workbook. A contained host panic has `extra={"kind": "FunctionPanicked", "function": ..., "message": ...}` on `ExcelError`, `ExcelEvaluationError` and error dictionaries returned from cells; `LiteralValue.error_extra` exposes the same payload. The function name also identifies source resolvers (for example `resolver:resolve_source_scalar:Sales`). Ordinary raising Python functions keep their existing Value-error behavior.
 
 See [Interruptible Recalculation](/docs/guides/interruptible-recalculation) for sync and async examples and budget limits.
 

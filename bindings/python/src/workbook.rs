@@ -1133,6 +1133,17 @@ impl PyWorkbook {
         })
     }
 
+    /// Engine or workbook-lock poison state. True means discard this workbook.
+    /// This health query reports a poisoned lock without recovering its contents.
+    #[getter]
+    pub fn is_poisoned(&self, py: Python<'_>) -> PyResult<bool> {
+        self.check_reentrancy()?;
+        Ok(py.detach(|| match self.inner.read() {
+            Ok(wb) => wb.is_poisoned(),
+            Err(_) => true,
+        }))
+    }
+
     /// Raw formula dirtiness in a 1-based inclusive viewport.
     pub fn has_pending_in_rect(
         &self,
