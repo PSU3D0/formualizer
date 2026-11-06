@@ -9,6 +9,45 @@ use std::sync::atomic::Ordering;
 
 pub(crate) type Rect = (String, u32, u32, u32, u32);
 
+// Shared admission state is independent of the engine lock. The driver bit
+// survives a terminal step until the owning coroutine finishes its callbacks
+// and cleanup; the job bit covers admission and the engine-owned job lifetime.
+pub(crate) const ASYNC_DRIVER: u8 = 1;
+const JOB_ACTIVE: u8 = 2;
+pub(crate) struct JobAdmission<'a> {
+    state: &'a std::sync::atomic::AtomicU8,
+    pub(crate) keep: bool,
+}
+impl<'a> JobAdmission<'a> {
+    pub(crate) fn reserve(
+        state: &'a std::sync::atomic::AtomicU8,
+        async_owner: bool,
+    ) -> PyResult<Self> {
+        let expected = if async_owner { ASYNC_DRIVER } else { 0 };
+        state
+            .compare_exchange(
+                expected,
+                expected | JOB_ACTIVE,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map_err(|_| {
+                recalc_error_to_pyerr(engine::RecalcJobError::AlreadyPending { explicit: true })
+            })?;
+        Ok(Self { state, keep: false })
+    }
+    fn existing(state: &'a std::sync::atomic::AtomicU8) -> Self {
+        Self { state, keep: false }
+    }
+}
+impl Drop for JobAdmission<'_> {
+    fn drop(&mut self) {
+        if !self.keep || std::thread::panicking() {
+            self.state.fetch_and(!JOB_ACTIVE, Ordering::SeqCst);
+        }
+    }
+}
+
 // This mutex protects only a cloned token, never engine or Python execution.
 struct ClearStepToken<'a>(&'a std::sync::Mutex<Option<engine::CancelToken>>);
 impl Drop for ClearStepToken<'_> {
@@ -251,6 +290,7 @@ impl PyRecalcJob {
                 .write_inner_detached()
                 .map_err(crate::errors::workbook_error_to_pyerr)?;
             self.ensure_current(&wb)?;
+            let mut admission = JobAdmission::existing(&self.workbook.recalc_admission);
             // Workbook.cancel() remains safe inside a UDF even when this step
             // was given a separate token (as evaluate_async does).
             *self.workbook.step_cancel.lock().expect("step token lock") = stop.cancel.clone();
@@ -260,7 +300,9 @@ impl PyRecalcJob {
                     token.cancel();
                 }
             }
-            let report = wb.step_recalc(stop).map_err(recalc_error_to_pyerr)?;
+            let result = wb.step_recalc(stop);
+            admission.keep = result.is_ok() && wb.has_active_recalc_job();
+            let report = result.map_err(recalc_error_to_pyerr)?;
             Ok(PyStepReport::from_engine(&wb, report))
         })
     }
@@ -285,6 +327,7 @@ impl PyRecalcJob {
                 .write_inner_detached()
                 .map_err(crate::errors::workbook_error_to_pyerr)?;
             self.ensure_current(&wb)?;
+            let _admission = JobAdmission::existing(&self.workbook.recalc_admission);
             Ok(wb
                 .cancel_recalc()
                 .map(|r| PyStepReport::from_engine(&wb, r)))

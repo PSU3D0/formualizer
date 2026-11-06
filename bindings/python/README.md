@@ -47,7 +47,7 @@ result = await wb.evaluate_async(
 )
 ```
 
-Native async steps run on a worker thread with the GIL released; callbacks run on the event loop. Task cancellation waits for the current step to stop, cancels the job and re-raises. Pyodide yields between in-thread steps. Budgets are soft: families, cycles, graph construction and scheduling are indivisible. `None` means unlimited; zero still allows progress.
+Native async steps run on a worker thread with the GIL released; callbacks run on the event loop. Admission and cancellation cleanup also run on workers. An atomic reservation makes a concurrent async driver fail promptly with `RecalcAlreadyPendingError`, including while a manual job is active or the first driver is still awaiting admission. Task cancellation waits for owned admission or the current step to stop, cancels any admitted job and re-raises. A new driver may begin after the prior driver returns. Pyodide yields between in-thread steps. Budgets are soft: families, cycles, graph construction and scheduling are indivisible. `None` means unlimited; zero still allows progress.
 
 `wb.recalc(5, on_step=callback)` is the synchronous driver; return `False` to pause and resume through the returned `outcome.job`. Existing `evaluate_*` calls raise `RecalcJobActiveError` while a job is active. Reads and edits between steps are allowed; use `has_pending_in_rect` / `pending_cells_in_rect` with `has_active_recalc_job` to interpret old values. See the [interruptible recalculation guide](https://www.formualizer.dev/docs/guides/interruptible-recalculation) for lifecycle, exceptions and limits.
 

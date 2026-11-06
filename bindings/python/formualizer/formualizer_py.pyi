@@ -1971,6 +1971,9 @@ class Workbook:
         r"""
         Start a cooperative recalculation. Priority uses 1-based inclusive rectangles.
         """
+    def _reserve_async_recalc(self) -> None: ...
+    def _release_async_recalc(self) -> None: ...
+    def _begin_async_recalc(self, *, priority: typing.Optional[typing.Sequence[tuple[builtins.str, builtins.int, builtins.int, builtins.int, builtins.int]]] = None) -> RecalcJob: ...
     def has_pending_in_rect(self, sheet: builtins.str, r0: builtins.int, c0: builtins.int, r1: builtins.int, c1: builtins.int) -> builtins.bool:
         r"""
         Raw formula dirtiness in a 1-based inclusive viewport.

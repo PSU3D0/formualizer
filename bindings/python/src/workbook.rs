@@ -302,6 +302,7 @@ pub struct PyWorkbook {
     pub(crate) sheets: std::sync::Arc<std::sync::RwLock<SheetCache>>,
     pub(crate) cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) job_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) recalc_admission: std::sync::Arc<std::sync::atomic::AtomicU8>,
     pub(crate) step_cancel:
         std::sync::Arc<std::sync::Mutex<Option<formualizer::eval::engine::CancelToken>>>,
 }
@@ -1096,29 +1097,42 @@ impl PyWorkbook {
         max_delta_records: usize,
         priority: Option<Vec<crate::recalc::Rect>>,
     ) -> PyResult<crate::recalc::PyRecalcJob> {
+        self.begin_recalc_impl(py, collect_deltas, max_delta_records, priority, false)
+    }
+
+    // Only the Python async driver owns this reservation. These methods never
+    // wait for the engine lock; native admission itself runs on its worker.
+    pub fn _reserve_async_recalc(&self) -> PyResult<()> {
         self.check_reentrancy()?;
-        let priority = crate::recalc::targets(priority.unwrap_or_default())?;
-        py.detach(|| {
-            let mut wb = self
-                .write_inner_detached()
-                .map_err(workbook_error_to_pyerr)?;
-            let mut options = formualizer::eval::engine::RecalcJobOptions::default();
-            options.collect_deltas = collect_deltas;
-            options.max_delta_records = max_delta_records;
-            options.initial_priority = priority;
-            wb.begin_recalc(options)
-                .map_err(crate::errors::recalc_error_to_pyerr)?;
-            self.cancel_flag
-                .store(false, std::sync::atomic::Ordering::SeqCst);
-            let generation = self
-                .job_generation
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                + 1;
-            Ok(crate::recalc::PyRecalcJob {
-                workbook: self.clone(),
-                generation,
-            })
-        })
+        self.recalc_admission
+            .compare_exchange(
+                0,
+                crate::recalc::ASYNC_DRIVER,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .map_err(|_| {
+                crate::errors::recalc_error_to_pyerr(
+                    formualizer::eval::engine::RecalcJobError::AlreadyPending { explicit: true },
+                )
+            })?;
+        Ok(())
+    }
+
+    pub fn _release_async_recalc(&self) {
+        self.recalc_admission.fetch_and(
+            !crate::recalc::ASYNC_DRIVER,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+    }
+
+    #[pyo3(signature = (*, priority=None))]
+    pub fn _begin_async_recalc(
+        &self,
+        py: Python<'_>,
+        priority: Option<Vec<crate::recalc::Rect>>,
+    ) -> PyResult<crate::recalc::PyRecalcJob> {
+        self.begin_recalc_impl(py, true, 1024, priority, true)
     }
 
     #[getter]
@@ -1772,12 +1786,49 @@ impl PyRangeAddress {
 
 // Non-Python methods for internal use
 impl PyWorkbook {
+    fn begin_recalc_impl(
+        &self,
+        py: Python<'_>,
+        collect_deltas: bool,
+        max_delta_records: usize,
+        priority: Option<Vec<crate::recalc::Rect>>,
+        async_owner: bool,
+    ) -> PyResult<crate::recalc::PyRecalcJob> {
+        self.check_reentrancy()?;
+        let priority = crate::recalc::targets(priority.unwrap_or_default())?;
+        let mut admission =
+            crate::recalc::JobAdmission::reserve(&self.recalc_admission, async_owner)?;
+        py.detach(|| {
+            let mut wb = self
+                .write_inner_detached()
+                .map_err(workbook_error_to_pyerr)?;
+            let mut options = formualizer::eval::engine::RecalcJobOptions::default();
+            options.collect_deltas = collect_deltas;
+            options.max_delta_records = max_delta_records;
+            options.initial_priority = priority;
+            wb.begin_recalc(options)
+                .map_err(crate::errors::recalc_error_to_pyerr)?;
+            self.cancel_flag
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            let generation = self
+                .job_generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            admission.keep = true;
+            Ok(crate::recalc::PyRecalcJob {
+                workbook: self.clone(),
+                generation,
+            })
+        })
+    }
+
     fn from_inner_workbook(inner: formualizer::workbook::Workbook) -> Self {
         Self {
             inner: std::sync::Arc::new(std::sync::RwLock::new(inner)),
             sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
             cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             job_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            recalc_admission: std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0)),
             step_cancel: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }

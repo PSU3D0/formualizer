@@ -8,6 +8,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Kept the Python event loop responsive during asynchronous recalculation admission and cleanup. Concurrent drivers now refuse promptly without waiting for a running step, and cancellation during admission cleans up any job admitted by the worker.
 - Contained runtime function metadata, source/table/version/provider resolver, returned range/table and clock-provider panics at their host boundaries. Planning faults decline optimization and become typed errors at executed roots; resolver errors preserve source attribution, while failed clock samples affect only clock-reading roots and remain frozen through a job. Deferred replay faults no longer poison spool locks.
 - Converted native Rust function panics into typed `#VALUE!` cell errors and completeness diagnostics, including Workbook callbacks and optimized kernels. `IFERROR` may catch the value while source `requireComplete` still refuses incomplete calculation. Engine-internal unwinds now permanently refuse further evaluation and mutation; `is_poisoned()` lets hosts detect the state.
 - Fixed ordinary recalculation dirtiness routing through observed dynamic reads: an `INDIRECT` into an empty cell later filled by a spill now recalculates instead of keeping its earlier value.
