@@ -38,6 +38,7 @@ mod observed_dirty_routing;
 mod perf_ranges;
 mod perf_tranche;
 mod provider_optimized_evidence;
+mod spill_structural_328;
 mod spill_user_values;
 mod unverified_providers;
 mod wildcard_escapes;
