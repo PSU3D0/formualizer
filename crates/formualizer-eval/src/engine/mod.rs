@@ -3,6 +3,9 @@
 //! Provides incremental formula evaluation with dependency tracking.
 
 pub mod addr;
+/// Bounded relation facts for source publication policy, not all-read certification.
+#[doc(hidden)]
+pub mod affected_closure;
 pub mod arrow_ingest;
 /// The dependency authority's internals. Public only for the benchmark and
 /// probe binaries (`formualizer-bench-core`); not a stable API.
@@ -22,9 +25,6 @@ pub mod ingest;
 pub mod ingest_builder;
 pub(crate) mod ingest_pipeline;
 pub mod inspect;
-/// Bounded relation facts for source publication policy, not all-read certification.
-#[doc(hidden)]
-pub mod affected_closure;
 pub mod journal;
 pub mod live_edges;
 pub mod live_graph;

@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed stale dynamic readers, including `INDIRECT` into a cell populated by a later spill, by routing dirty propagation through observed reads.
+
 ### Practical workbook recalculation
 
 - Added a workbook-aware source recalculation profile that applies saved calculation settings and preserves useful independent results when an executed feature is unsupported or unverified. The low-level strict profile remains available and is still the Rust default.

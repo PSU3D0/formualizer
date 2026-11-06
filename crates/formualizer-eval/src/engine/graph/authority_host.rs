@@ -1284,7 +1284,35 @@ impl DependencyGraph {
         if rects.is_empty() {
             return Vec::new();
         }
-        let (cover, _) = self.authority.store.dependents(rects, TagFilter::All);
+        // Observations are planner hints as well as runtime reverse routes.
+        // Query their geometric index alongside static relations; a producer
+        // need not exist yet (e.g. the first publication into an empty spill
+        // child). Coverage differences bound the traversal to affected pieces.
+        let cover = if !self.authority.has_observed_routes() {
+            self.authority.store.dependents(rects, TagFilter::All).0
+        } else {
+            let mut cover = Cover::new();
+            let mut frontier = rects.to_vec();
+            let mut hits = Vec::new();
+            let mut readers = Vec::new();
+            while let Some((sheet, rect)) = frontier.pop() {
+                hits.clear();
+                readers.clear();
+                self.authority
+                    .store
+                    .direct_dependents(sheet, &rect, TagFilter::All, &mut hits);
+                self.authority.observed_readers(sheet, &rect, &mut readers);
+                for &reader in &readers {
+                    if let Some((s, r, c)) = self.authority_cell_of_vertex(reader) {
+                        hits.push((s, Rect::cell(r, c)));
+                    }
+                }
+                for &(s, r) in &hits {
+                    cover.insert_rect_fresh(s, &r, &mut frontier);
+                }
+            }
+            cover
+        };
         let ids = self.authority.store.ids();
         let mut out = Vec::new();
         let mut runs = Vec::new();
