@@ -6,6 +6,9 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Fixed spill shrink and teardown erasing literal values written into an old spill extent; user edits now retain their own cells and block a live spill.
+- Fixed removing literal spill blockers leaving anchors stuck at `#SPILL!`; only anchors waiting on the edited blocker are recalculated.
+
 - Fixed stale dynamic readers, including `INDIRECT` into a cell populated by a later spill, by routing dirty propagation through observed reads.
 
 ### Practical workbook recalculation

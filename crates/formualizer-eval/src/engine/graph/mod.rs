@@ -674,10 +674,10 @@ pub struct DependencyGraph {
     pub(crate) fixed_array_shapes: FxHashMap<VertexId, (u32, u32)>,
     spill_cell_to_anchor: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
     spill_cells_by_sheet: FxHashMap<SheetId, std::collections::BTreeMap<(u32, u32), VertexId>>,
-    /// Anchors whose committed spill may hold a formula placed after the
-    /// spill was committed (or moved there by a structural edit). A spill
+    /// Anchors whose committed extent may hold a later user write (or a
+    /// formula moved there by a structural edit). A spill
     /// child is a value cell, so only these anchors probe their own cells
-    /// for formulas when they re-plan, commit or clear; every other anchor
+    /// for ownership or formulas when they commit or clear; every other anchor
     /// re-spills over its cells without a per-cell lookup (see
     /// [`Self::spill_may_be_intruded`]). Filled when the authority syncs
     /// the formula map's touched journal, which every formula write reaches
@@ -5031,10 +5031,9 @@ impl DependencyGraph {
         }
         let mut ops: Vec<Op> = Vec::new();
 
-        // Clears for cells no longer used; a formula entered into the spill
-        // stays.
+        // Clears for cells no longer used; later user writes stay.
         let probe_owned = self.spill_may_be_intruded(anchor);
-        let entered = |cell: &CellRef| probe_owned && self.is_foreign_formula_cell(cell, anchor);
+        let entered = |cell: &CellRef| probe_owned && self.is_foreign_spill_cell(cell, anchor);
         for cell in prev_cells.iter() {
             if !new_set.contains(cell) && !entered(cell) {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
@@ -5326,9 +5325,8 @@ impl DependencyGraph {
             .map(|()| yielding)
     }
 
-    /// The anchor's registered spill cells that clearing the spill empties:
-    /// every cell except a formula entered into the spill after it was
-    /// committed, which keeps its own value.
+    /// Cells still owned by the projection. Later literal writes relinquish
+    /// ownership; formulas entered into the spill retain their own values.
     pub(crate) fn spill_cells_to_clear(&self, anchor: VertexId) -> Vec<CellRef> {
         let Some(cells) = self.spill_cells_for_anchor(anchor) else {
             return Vec::new();
@@ -5339,7 +5337,7 @@ impl DependencyGraph {
         cells
             .iter()
             .copied()
-            .filter(|cell| !self.is_foreign_formula_cell(cell, anchor))
+            .filter(|cell| !self.is_foreign_spill_cell(cell, anchor))
             .collect()
     }
 
@@ -5395,6 +5393,29 @@ impl DependencyGraph {
         self.spill_intruded_anchors.len()
     }
 
+    /// A user value write relinquishes projection ownership; the old extent
+    /// remains registered until the anchor re-plans. Formula intrusions keep
+    /// their existing protection by formula identity.
+    pub(crate) fn note_spill_child_edit(&mut self, cell: CellRef) -> Option<VertexId> {
+        let owner = self.spill_registry_anchor_for_cell(cell)?;
+        if self.get_cell_ref(owner) == Some(cell) {
+            return None;
+        }
+        self.spill_intruded_anchors.insert(owner);
+        if !self.is_foreign_formula_cell(&cell, owner) {
+            self.spill_cell_to_anchor.remove(&cell);
+            if let Some(sheet) = self.spill_cells_by_sheet.get_mut(&cell.sheet_id) {
+                sheet.remove(&(cell.coord.row(), cell.coord.col()));
+            }
+        }
+        Some(owner)
+    }
+
+    fn is_foreign_spill_cell(&self, cell: &CellRef, anchor: VertexId) -> bool {
+        self.spill_registry_anchor_for_cell(*cell) != Some(anchor)
+            || self.is_foreign_formula_cell(cell, anchor)
+    }
+
     /// Whether `cell` holds a formula vertex other than `anchor`.
     pub(crate) fn is_foreign_formula_cell(&self, cell: &CellRef, anchor: VertexId) -> bool {
         self.cell_vertex(cell).is_some_and(|vid| {
@@ -5421,10 +5442,12 @@ impl DependencyGraph {
     /// want to mirror/record deltas.
     pub fn clear_spill_region_bulk(&mut self, anchor: VertexId) -> Vec<CellRef> {
         let anchor_cell = self.get_cell_ref(anchor);
+        let cells_to_clear = self
+            .spill_may_be_intruded(anchor)
+            .then(|| self.spill_cells_to_clear(anchor));
         let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) else {
             return Vec::new();
         };
-        let probe_owned = self.spill_may_be_intruded(anchor);
         if !self.spill_intruded_anchors.is_empty() {
             self.spill_intruded_anchors.remove(&anchor);
         }
@@ -5447,11 +5470,9 @@ impl DependencyGraph {
         // Clear all spill children (excluding the anchor cell). A child is a
         // value cell: no vertex (decision 27); one it still has leaves.
         let mut changed: Vec<crate::engine::authority::geom::Cell> = Vec::new();
-        for cell in cells.iter().copied() {
+        for cell in cells_to_clear.as_deref().unwrap_or(&cells).iter().copied() {
             let is_anchor = anchor_cell.map(|a| a == cell).unwrap_or(false);
-            // A formula entered into the spill after it was committed is the
-            // user's cell, not a child: it stays.
-            if is_anchor || (probe_owned && self.is_foreign_formula_cell(&cell, anchor)) {
+            if is_anchor {
                 continue;
             }
             self.vacate_cell(&cell);

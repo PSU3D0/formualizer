@@ -279,9 +279,8 @@ fn blocker_added_then_removed() {
         assert_ref(get(&e, "Sheet1", 1, 2), "blocked spill, # spelling");
         assert_ref(get(&e, "Sheet1", 1, 4), "blocked spill, ANCHORARRAY");
 
-        // Clearing a value blocker does not by itself re-dirty the anchor
-        // (pre-existing engine behavior, unrelated to spill references); the
-        // next anchor recompute spills and the readers follow.
+        // Removing the blocker wakes the anchor; the precedent edit also
+        // grows the recovered spill, and both readers follow.
         set(&mut e, "Sheet1", 3, 1, LiteralValue::Empty);
         set(&mut e, "Sheet1", 1, 3, LiteralValue::Number(4.0));
         e.evaluate_all().unwrap();
@@ -291,14 +290,10 @@ fn blocker_added_then_removed() {
     }
 }
 
-/// Known limitation (pre-existing child-overwrite policy, not the
-/// resolver): a user write into a cell the spill owns leaves the anchor
-/// clean and the registry still owning the cell. A `SUM(A1:A3)` reader has
-/// an edge to the written cell and recomputes; a `SUM(A1#)` reader has only
-/// the anchor edge and keeps its value until the anchor next recomputes.
-/// Excel would publish `#SPILL!` at the anchor instead.
+/// A literal entered into a live spill becomes a blocker and invalidates both
+/// ordinary-range and spill-reference readers (FORM-000319).
 #[test]
-fn spill_ref_child_overwrite_is_stale_until_anchor_recomputes_known_limitation() {
+fn spill_ref_child_overwrite_blocks_anchor_and_invalidates_readers() {
     let mut e = engine(false);
     set(&mut e, "Sheet1", 1, 4, LiteralValue::Number(3.0));
     f(&mut e, "Sheet1", 1, 1, "=SEQUENCE($D$1)");
@@ -306,33 +301,18 @@ fn spill_ref_child_overwrite_is_stale_until_anchor_recomputes_known_limitation()
     f(&mut e, "Sheet1", 1, 3, "=SUM(A1:A3)");
     e.evaluate_all().unwrap();
     assert_eq!(get(&e, "Sheet1", 1, 2), n(6.0));
-    assert_eq!(get(&e, "Sheet1", 1, 3), n(6.0));
 
     set(&mut e, "Sheet1", 3, 1, LiteralValue::Number(50.0));
     e.evaluate_all().unwrap();
-    assert_eq!(get(&e, "Sheet1", 1, 1), n(1.0), "anchor not re-dirtied");
-    assert_eq!(get(&e, "Sheet1", 1, 3), n(53.0), "range reader is fresh");
-    assert_eq!(
-        get(&e, "Sheet1", 1, 2),
-        n(6.0),
-        "spill reader is stale (limitation)"
-    );
+    assert!(matches!(get(&e, "Sheet1", 1, 1),
+        Some(LiteralValue::Error(err)) if err.kind == ExcelErrorKind::Spill));
+    assert_ref(get(&e, "Sheet1", 1, 2), "blocked spill");
+    assert_eq!(get(&e, "Sheet1", 3, 1), n(50.0));
 
-    // The staleness is bounded by the next anchor recompute.
-    set(&mut e, "Sheet1", 1, 4, LiteralValue::Number(4.0));
+    set(&mut e, "Sheet1", 3, 1, LiteralValue::Empty);
     e.evaluate_all().unwrap();
-    let fresh: f64 = (1..=4)
-        .map(|row| match get(&e, "Sheet1", row, 1) {
-            Some(LiteralValue::Number(x)) => x,
-            other => panic!("A{row}: {other:?}"),
-        })
-        .sum();
-    assert_eq!(
-        get(&e, "Sheet1", 1, 2),
-        n(fresh),
-        "spill reader agrees again"
-    );
-    assert_eq!(fresh, 10.0);
+    assert_eq!(get(&e, "Sheet1", 1, 2), n(6.0));
+    assert_eq!(get(&e, "Sheet1", 1, 3), n(6.0));
 }
 
 #[test]
