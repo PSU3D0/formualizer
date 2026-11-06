@@ -3342,6 +3342,11 @@ where
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn request_scope_for_test(&self) -> (usize, bool, bool) {
+        (self.evaluation_resource_request_depth, self.resumable_call, self.active_cancel_flag.is_some())
+    }
+
     fn duration_ns(duration: std::time::Duration) -> u64 {
         u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
     }
