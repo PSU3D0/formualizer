@@ -455,6 +455,7 @@ pub struct ChangeLog {
     /// Track compound operations for atomic rollback
     compound_depth: usize,
     next_seq: u64,
+    spill_clear_revision: u64,
     /// Stack of active group ids for nested compounds
     group_stack: Vec<u64>,
     next_group_id: u64,
@@ -612,6 +613,7 @@ impl ChangeLog {
             max_changelog_events: None,
             compound_depth: 0,
             next_seq: 0,
+            spill_clear_revision: 0,
             group_stack: Vec::new(),
             next_group_id: 1,
             current_meta: ChangeEventMeta::default(),
@@ -675,6 +677,7 @@ impl ChangeLog {
         let seq = self.next_seq;
         self.next_seq += 1;
         if retain {
+            self.note_spill_clear(&event);
             let group = self.group_stack.last().copied();
             self.retained.push(event, meta.clone(), seq, group);
         }
@@ -750,8 +753,21 @@ impl ChangeLog {
         self.replay_capture(capture, false);
     }
 
+    /// Monotonic revision of published spill-clear events. Retention, undo and
+    /// truncation do not rewind it; consumers can skip unchanged spill history.
+    pub fn spill_clear_revision(&self) -> u64 {
+        self.spill_clear_revision
+    }
+
+    fn note_spill_clear(&mut self, event: &ChangeEvent) {
+        if matches!(event, ChangeEvent::SpillCleared { .. }) {
+            self.spill_clear_revision = self.spill_clear_revision.wrapping_add(1);
+        }
+    }
+
     pub fn record(&mut self, event: ChangeEvent) {
         if self.enabled {
+            self.note_spill_clear(&event);
             let seq = self.next_seq;
             self.next_seq += 1;
             let current_group = self.group_stack.last().copied();
@@ -764,6 +780,7 @@ impl ChangeLog {
     /// Record an event with explicit metadata (used for replay/redo).
     pub fn record_with_meta(&mut self, event: ChangeEvent, meta: ChangeEventMeta) {
         if self.enabled {
+            self.note_spill_clear(&event);
             let seq = self.next_seq;
             self.next_seq += 1;
             let current_group = self.group_stack.last().copied();

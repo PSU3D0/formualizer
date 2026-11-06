@@ -4920,6 +4920,25 @@ where
         self.graph.get_cell_value(sheet, row, col)
     }
 
+    /// Whether a cell belongs to a currently committed spill projection.
+    ///
+    /// This indexed ownership query does not read values, calculate spill
+    /// bounds, prepare formulas, or evaluate the workbook.
+    pub fn cell_has_spill_projection(&self, sheet: &str, row: u32, col: u32) -> bool {
+        if self.graph.spill_registry_is_empty() {
+            return false;
+        }
+        let Some(sheet_id) = self.graph.sheet_id(sheet) else {
+            return false;
+        };
+        let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        self.graph.spill_registry_anchor_for_cell(cell).is_some()
+            || self
+                .graph
+                .get_vertex_for_cell(&cell)
+                .is_some_and(|vertex| self.graph.spill_registry_has_anchor(vertex))
+    }
+
     pub fn vertex_for_cell(&self, cell: &CellRef) -> Option<VertexId> {
         self.graph.get_vertex_for_cell(cell)
     }

@@ -5185,6 +5185,10 @@ impl DependencyGraph {
         Some((first, last))
     }
 
+    pub(crate) fn spill_registry_is_empty(&self) -> bool {
+        self.spill_anchor_to_cells.is_empty()
+    }
+
     pub(crate) fn spill_registry_has_anchor(&self, anchor: VertexId) -> bool {
         self.spill_anchor_to_cells.contains_key(&anchor)
     }

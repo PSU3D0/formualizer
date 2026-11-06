@@ -950,6 +950,20 @@ impl formualizer_eval::traits::FunctionProvider for WBResolver {
 impl formualizer_eval::traits::Resolver for WBResolver {}
 impl formualizer_eval::traits::EvaluationContext for WBResolver {}
 
+#[cfg(test)]
+mod spill_history_tests;
+
+/// Incremental index of spill snapshots in the open outer action. Ordinary
+/// history events are visited once; snapshot cells are indexed once per clear.
+#[derive(Default)]
+struct SpillActionHistory {
+    next_event: usize,
+    spill_clear_revision: u64,
+    cells: std::collections::HashSet<formualizer_eval::reference::CellRef>,
+    #[cfg(test)]
+    events_inspected: usize,
+}
+
 /// Engine-backed workbook facade.
 pub struct Workbook {
     engine: formualizer_eval::engine::Engine<WBResolver>,
@@ -958,6 +972,7 @@ pub struct Workbook {
     wasm_plugins: WasmPluginManager,
     enable_changelog: bool,
     log: formualizer_eval::engine::ChangeLog,
+    spill_action_history: SpillActionHistory,
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
     /// Workbook-level `<calcPr>` settings parsed at load (spec §9). The
     /// `iterate*` attributes are authoritative on the live engine config, but
@@ -1222,6 +1237,7 @@ impl Workbook {
             wasm_plugins: WasmPluginManager::default(),
             enable_changelog: config.enable_changelog,
             log,
+            spill_action_history: SpillActionHistory::default(),
             undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
             calc_settings: None,
             name_import_diagnostics: Vec::new(),
@@ -1757,12 +1773,21 @@ impl Workbook {
 
     pub fn begin_action(&mut self, description: impl Into<String>) {
         if self.enable_changelog {
+            if self.log.compound_depth() == 0 {
+                let history = &mut self.spill_action_history;
+                history.cells.clear();
+                history.next_event = self.log.len();
+                history.spill_clear_revision = self.log.spill_clear_revision();
+            }
             self.log.begin_compound(description.into());
         }
     }
     pub fn end_action(&mut self) {
         if self.enable_changelog {
             self.log.end_compound();
+            if self.log.compound_depth() == 0 {
+                self.spill_action_history.cells.clear();
+            }
         }
     }
 
@@ -2328,23 +2353,40 @@ impl Workbook {
 
     // Projection edits need graph history even in deferred mode. Also cover
     // later cells in the same action after its first edit cleared the spill.
-    fn formula_needs_spill_history(&self, sheet: &str, row: u32, col: u32) -> bool {
+    fn formula_needs_spill_history(&mut self, sheet: &str, row: u32, col: u32) -> bool {
         if !self.enable_changelog {
             return false;
         }
-        let address = formualizer_common::CellAddress {
-            sheet: sheet.to_string(),
-            row,
-            column: col,
-        };
-        if self
-            .engine
-            .inspect_cell_result(&address)
-            .is_ok_and(|state| state.spill.is_some())
-        {
+        if self.engine.cell_has_spill_projection(sheet, row, col) {
             return true;
         }
         if self.log.compound_depth() == 0 {
+            return false;
+        }
+        let history = &mut self.spill_action_history;
+        let revision = self.log.spill_clear_revision();
+        if history.spill_clear_revision != revision {
+            let events = self.log.events();
+            for event in &events[history.next_event..] {
+                #[cfg(test)]
+                {
+                    history.events_inspected += 1;
+                }
+                match event {
+                    formualizer_eval::engine::ChangeEvent::CompoundStart { depth: 1, .. }
+                    | formualizer_eval::engine::ChangeEvent::CompoundEnd { depth: 1 } => {
+                        history.cells.clear();
+                    }
+                    formualizer_eval::engine::ChangeEvent::SpillCleared { old, .. } => {
+                        history.cells.extend(old.target_cells.iter().copied());
+                    }
+                    _ => {}
+                }
+            }
+            history.next_event = events.len();
+            history.spill_clear_revision = revision;
+        }
+        if history.cells.is_empty() {
             return false;
         }
         let Some(sheet_id) = self.engine.sheet_id(sheet) else {
@@ -2354,21 +2396,7 @@ impl Workbook {
             sheet_id,
             formualizer_eval::reference::Coord::from_excel(row, col, true, true),
         );
-        self.log
-            .events()
-            .iter()
-            .rev()
-            .take_while(|event| {
-                !matches!(
-                    event,
-                    formualizer_eval::engine::ChangeEvent::CompoundStart { depth: 1, .. }
-                )
-            })
-            .any(|event| {
-                matches!(event,
-                    formualizer_eval::engine::ChangeEvent::SpillCleared { old, .. }
-                    if old.target_cells.contains(&cell))
-            })
+        history.cells.contains(&cell)
     }
 
     pub fn set_formula(
