@@ -563,12 +563,30 @@ where
                         Some(k) => take(&mut columns, *k),
                         None => Column::Const(Ok((LiteralValue::Boolean(false), None))),
                     };
-                    Column::Lane(Lane::choose(cond, then, otherwise, n))
+                    match crate::function::catch_function_panic("IF", || {
+                        Lane::choose(cond, then, otherwise, n)
+                    }) {
+                        Ok(lane) => Column::Lane(lane),
+                        Err(error) => {
+                            self.panicked_run(run, n, error.clone());
+                            Column::Const(Err(error))
+                        }
+                    }
                 }
                 LiftNode::Builtin { kernel, args } => {
                     let args: smallvec::SmallVec<[Column; 4]> =
                         args.iter().map(|&k| take(&mut columns, k)).collect();
-                    Column::Lane(Lane::builtin(*kernel, &args, n, self.config.date_system))
+                    match crate::function::catch_function_panic(kernel.name(), || {
+                        Lane::builtin(*kernel, &args, n, self.config.date_system)
+                    }) {
+                        Ok(lane) => Column::Lane(lane),
+                        Err(error) => {
+                            // Per-member error values; caller's speculative scope
+                            // requests logical walks before publishing any result.
+                            self.panicked_run(run, n, error.clone());
+                            Column::Const(Err(error))
+                        }
+                    }
                 }
                 // Once per run, exactly as the walk evaluates it for the
                 // first member (every member sees the same cells).

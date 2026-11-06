@@ -679,8 +679,17 @@ impl formualizer_eval::function::Function for WorkbookCustomFunction {
                 unwrap_scalar_array(value),
             )),
             Ok(Err(err)) => Err(err),
-            Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
-                .with_message("Custom function callback panicked")),
+            Err(payload) => {
+                _ctx.report_unavailable_operation(
+                    formualizer_eval::operation_diagnostics::UnavailableOperation::FunctionPanicked {
+                        name: self.canonical_name.clone(),
+                    },
+                );
+                Err(ExcelError::from_function_panic(
+                    &self.canonical_name,
+                    &*payload,
+                ))
+            }
         }
     }
 }
@@ -781,8 +790,17 @@ impl formualizer_eval::function::Function for WorkbookWasmFunction {
                 unwrap_scalar_array(value),
             )),
             Ok(Err(err)) => Err(err),
-            Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
-                .with_message("WASM function runtime panicked")),
+            Err(payload) => {
+                _ctx.report_unavailable_operation(
+                    formualizer_eval::operation_diagnostics::UnavailableOperation::FunctionPanicked {
+                        name: self.canonical_name.clone(),
+                    },
+                );
+                Err(ExcelError::from_function_panic(
+                    &self.canonical_name,
+                    &*payload,
+                ))
+            }
         }
     }
 }
@@ -1666,6 +1684,12 @@ impl Workbook {
     pub fn changelog(&self) -> &formualizer_eval::engine::ChangeLog {
         &self.log
     }
+    /// Whether an internal engine panic has permanently disabled work.
+    /// Reads may expose stale values; discard the workbook when true.
+    pub fn is_poisoned(&self) -> bool {
+        self.engine.is_poisoned()
+    }
+
     pub fn eval_config(&self) -> &formualizer_eval::engine::EvalConfig {
         &self.engine.config
     }

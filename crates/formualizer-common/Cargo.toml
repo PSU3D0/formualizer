@@ -18,3 +18,6 @@ serde = ["dep:serde"]
 [dependencies]
 chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, optional = true, features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

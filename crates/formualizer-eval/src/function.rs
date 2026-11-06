@@ -11,6 +11,30 @@ use crate::{
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_parse::parser::ReferenceType;
 
+/// Function code is an unwind boundary; engine bookkeeping stays outside it.
+pub(crate) fn catch_function_panic<T>(
+    name: &str,
+    run: impl FnOnce() -> T,
+) -> Result<T, ExcelError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))
+        .map_err(|payload| ExcelError::from_function_panic(name, &*payload))
+}
+
+/// Dispatch supports both ordinary values and optional reference results.
+pub(crate) trait PanicResult {
+    fn panicked(error: ExcelError) -> Self;
+}
+impl<T> PanicResult for Result<T, ExcelError> {
+    fn panicked(error: ExcelError) -> Self {
+        Err(error)
+    }
+}
+impl<T> PanicResult for Option<Result<T, ExcelError>> {
+    fn panicked(error: ExcelError) -> Self {
+        Some(Err(error))
+    }
+}
+
 /// One-pass result for a function used where either a reference or a value is valid.
 #[doc(hidden)]
 #[derive(Clone)]
@@ -143,6 +167,37 @@ pub enum FamilyKernel {
     Month,
     Day,
     Weekday,
+}
+
+impl FamilyKernel {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Sum => "SUM",
+            Self::Average => "AVERAGE",
+            Self::If => "IF",
+            Self::CriteriaAggregate => "CRITERIA",
+            Self::Lookup => "LOOKUP",
+            Self::Round => "ROUND",
+            Self::Abs => "ABS",
+            Self::Min => "MIN",
+            Self::Max => "MAX",
+            Self::And => "AND",
+            Self::Or => "OR",
+            Self::IfError => "IFERROR",
+            Self::Count => "COUNT",
+            Self::IsNumber => "ISNUMBER",
+            Self::IsText => "ISTEXT",
+            Self::IsLogical => "ISLOGICAL",
+            Self::IsBlank => "ISBLANK",
+            Self::IsError => "ISERROR",
+            Self::IsErr => "ISERR",
+            Self::IsNa => "ISNA",
+            Self::Year => "YEAR",
+            Self::Month => "MONTH",
+            Self::Day => "DAY",
+            Self::Weekday => "WEEKDAY",
+        }
+    }
 }
 
 pub trait Function: Send + Sync + 'static {

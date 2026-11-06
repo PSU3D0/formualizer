@@ -296,7 +296,14 @@ fn panic_during_snapshot_evaluation_does_not_leave_snapshot_mode_active() {
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _ = e.evaluate_all_for_snapshot(None);
     }));
-    assert!(caught.is_err(), "the test function must panic");
+    assert!(
+        caught.is_ok(),
+        "the function panic must become a cell error"
+    );
+    assert!(!e.is_poisoned());
+    assert!(
+        matches!(e.get_cell_value("Sheet1", 1, 2), Some(formualizer_common::LiteralValue::Error(error)) if matches!(error.extra(), formualizer_common::ExcelErrorExtra::FunctionPanicked { .. }))
+    );
     // A caller that keeps the engine and evaluates normally must get the
     // ordinary next-cycle volatile redirty again.
     e.set_cell_formula("Sheet1", 1, 2, parse("=1").unwrap())

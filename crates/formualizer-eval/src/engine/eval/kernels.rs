@@ -409,6 +409,10 @@ impl AggregateKernel {
         Some(Self { kind, args: out })
     }
 
+    pub(super) fn name(&self) -> &'static str {
+        self.kind.name()
+    }
+
     /// Values of the run's members (rows `row0..`, fixed column offset), or
     /// `None` to decline the whole run.
     pub(super) fn run<R: EvaluationContext>(
@@ -441,6 +445,19 @@ impl AggregateKernel {
         }
         let mut out = Vec::with_capacity(len);
         for i in 0..len {
+            #[cfg(test)]
+            if engine
+                .panic_kernel_after_member
+                .compare_exchange(
+                    i,
+                    usize::MAX,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_ok()
+            {
+                panic!("injected aggregate kernel panic");
+            }
             let row_delta = first + i as i64;
             let mut total = 0.0f64;
             let mut count = 0i64;

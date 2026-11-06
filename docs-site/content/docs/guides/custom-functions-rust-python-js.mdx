@@ -95,3 +95,14 @@ cd bindings/wasm && npm run build && node examples/custom-function-registration.
 - [Values, Coercion, and Errors](../core-concepts/values-coercion-and-errors)
 - [Workbook Edits and Batching](/docs/guides/workbook-edits-and-batching)
 - [WASM Plugins: Inspect, Attach, Bind](/docs/guides/wasm-plugins-inspect-attach-bind)
+
+
+## Rust panic handling
+
+On native builds with unwinding enabled, a Rust panic in a builtin or registered function becomes `#VALUE!` with `ExcelErrorExtra::FunctionPanicked { function, message }`. The canonical function name and a string panic payload are retained; non-string payloads have no message. Workbook callbacks use the same payload and the message "Function callback panicked". An ordinary returned error keeps its existing behavior.
+
+`IFERROR(PANICKING(), 0)` may return 0, while operation diagnostics still report the executed panic. Source recalculation therefore reports Partial coverage and rejects `requireComplete`, even when the final cell value hides the error. Function panics leave the engine usable; dependent cells see the ordinary error and a later edit can recalculate normally.
+
+Engine-internal panics propagate and permanently poison the engine. Check `Engine::is_poisoned()` or `Workbook::is_poisoned()`; reads may be stale, and further evaluation or mutation is refused. Discard that engine. See [interruptible recalculation](./interruptible-recalculation) for the refusal payloads.
+
+Python exceptions and JavaScript throws already become ordinary callback errors. Rust panics on `wasm32-unknown-unknown` trap instead of unwinding, so these native catches do not provide recovery there; discard the affected workbook/worker or instance after a trap.

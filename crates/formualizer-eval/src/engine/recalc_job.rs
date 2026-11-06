@@ -63,6 +63,9 @@ impl<R: EvaluationContext> Engine<R> {
     /// Start an explicit job in O(1). Planning and clock sampling happen in
     /// the first step. Returns AlreadyPending for either kind of continuation.
     pub fn begin_recalc(&mut self, options: RecalcJobOptions) -> Result<(), RecalcJobError> {
+        if self.is_poisoned() {
+            return Err(RecalcJobError::Poisoned);
+        }
         if self.has_active_recalc_job() || self.resumable.is_some() {
             return Err(RecalcJobError::AlreadyPending {
                 explicit: self.has_active_recalc_job(),
@@ -89,6 +92,9 @@ impl<R: EvaluationContext> Engine<R> {
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
     ) -> Result<(), RecalcJobError> {
+        if self.is_poisoned() {
+            return Err(RecalcJobError::Poisoned);
+        }
         let options = self
             .recalc_options
             .as_mut()
@@ -101,7 +107,11 @@ impl<R: EvaluationContext> Engine<R> {
     }
 
     /// Preserve installed values and dirtiness; cancellation never advances the epoch.
+    /// Returns None without touching state when the engine is poisoned.
     pub fn cancel_recalc(&mut self) -> Option<StepReport> {
+        if self.is_poisoned() {
+            return None;
+        }
         self.recalc_options.take()?;
         let progress = self.recalc_progress();
         self.resumable = None;
@@ -120,9 +130,13 @@ impl<R: EvaluationContext> Engine<R> {
     /// Execute the next soft-budgeted step. Only installed units become clean.
     ///
     /// A returned evaluation error ends the job and leaves unfinished work dirty.
-    /// A custom-function panic propagates; unwind recovery is unsupported (see
+    /// Function panics become typed cell errors and operation diagnostics.
+    /// Engine-internal unwinds propagate and permanently poison the engine (see
     /// [the module documentation](crate::engine::resumable)).
     pub fn step_recalc(&mut self, stop: EvaluationStop) -> Result<StepReport, RecalcJobError> {
+        if self.is_poisoned() {
+            return Err(RecalcJobError::Poisoned);
+        }
         if !self.has_active_recalc_job() {
             return Err(RecalcJobError::NoActiveJob);
         }
@@ -152,7 +166,7 @@ impl<R: EvaluationContext> Engine<R> {
     /// propagate without additional lifecycle cleanup: the job keeps the state
     /// it reached before the panic, so an untouched non-terminal job stays
     /// active while a finished or cancelled job has already ended.
-    /// Custom-function panics have the stricter limitations described in
+    /// Function panics become typed cell errors as described in
     /// [resumable](crate::engine::resumable).
     pub fn recalc_with(
         &mut self,
@@ -160,6 +174,9 @@ impl<R: EvaluationContext> Engine<R> {
         stop_per_step: EvaluationStop,
         mut on_step: impl FnMut(&mut Self, &StepReport) -> std::ops::ControlFlow<()>,
     ) -> Result<RecalcOutcome, RecalcJobError> {
+        if self.is_poisoned() {
+            return Err(RecalcJobError::Poisoned);
+        }
         self.begin_recalc(options)?;
         loop {
             let report = self.step_recalc(stop_per_step.clone())?;
@@ -180,6 +197,8 @@ impl<R: EvaluationContext> Engine<R> {
         &mut self,
         stop: EvaluationStop,
     ) -> Result<StepReport, ExcelError> {
+        self.ensure_not_poisoned()?;
+        let _unwind_poison = crate::engine::poison::UnwindPoisonGuard(self.poisoned.clone());
         self.resumable_call = true;
         self.active_cancel_flag = stop.cancel.clone();
         let result = self.observe_evaluation_resource_request(

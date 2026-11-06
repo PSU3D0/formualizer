@@ -89,6 +89,7 @@ pub formualizer_eval::arrow_store::OverlayValue::DateTime(f64)
 pub formualizer_eval::arrow_store::OverlayValue::Duration(f64)
 pub formualizer_eval::arrow_store::OverlayValue::Empty
 pub formualizer_eval::arrow_store::OverlayValue::Error(u8)
+pub formualizer_eval::arrow_store::OverlayValue::FunctionPanicked(alloc::sync::Arc<formualizer_common::error::ExcelError>)
 pub formualizer_eval::arrow_store::OverlayValue::Number(f64)
 pub formualizer_eval::arrow_store::OverlayValue::Pending
 pub formualizer_eval::arrow_store::OverlayValue::Text(alloc::sync::Arc<str>)
@@ -1387,6 +1388,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell_result(&self, &fo
 pub fn formualizer_eval::engine::eval::Engine<R>::precedents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::PrecedentOptions) -> core::result::Result<formualizer_eval::engine::inspect::PrecedentReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::range_page(&self, &formualizer_common::grid_address::RangeArea, &formualizer_eval::engine::inspect::RangePageOptions) -> core::result::Result<formualizer_eval::engine::inspect::RangePage, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::trace(&self, &[formualizer_common::grid_address::CellAddress], &formualizer_eval::engine::inspect::TraceOptions) -> core::result::Result<formualizer_eval::engine::inspect::TraceGraph, formualizer_eval::engine::inspect::InspectError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::is_poisoned(&self) -> bool
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::action<T>(&mut self, impl core::convert::AsRef<str>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::action_atomic<T>(&mut self, impl core::convert::Into<alloc::string::String>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -4485,6 +4488,7 @@ pub formualizer_eval::engine::resumable::RecalcJobError::AlreadyPending
 pub formualizer_eval::engine::resumable::RecalcJobError::AlreadyPending::explicit: bool
 pub formualizer_eval::engine::resumable::RecalcJobError::Evaluation(formualizer_common::error::ExcelError)
 pub formualizer_eval::engine::resumable::RecalcJobError::NoActiveJob
+pub formualizer_eval::engine::resumable::RecalcJobError::Poisoned
 impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_eval::engine::resumable::RecalcJobError
 pub fn formualizer_eval::engine::resumable::RecalcJobError::from(formualizer_common::error::ExcelError) -> Self
 impl core::error::Error for formualizer_eval::engine::resumable::RecalcJobError
@@ -5705,6 +5709,7 @@ pub formualizer_eval::engine::RecalcJobError::AlreadyPending
 pub formualizer_eval::engine::RecalcJobError::AlreadyPending::explicit: bool
 pub formualizer_eval::engine::RecalcJobError::Evaluation(formualizer_common::error::ExcelError)
 pub formualizer_eval::engine::RecalcJobError::NoActiveJob
+pub formualizer_eval::engine::RecalcJobError::Poisoned
 impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_eval::engine::resumable::RecalcJobError
 pub fn formualizer_eval::engine::resumable::RecalcJobError::from(formualizer_common::error::ExcelError) -> Self
 impl core::error::Error for formualizer_eval::engine::resumable::RecalcJobError
@@ -6303,6 +6308,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell_result(&self, &fo
 pub fn formualizer_eval::engine::eval::Engine<R>::precedents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::PrecedentOptions) -> core::result::Result<formualizer_eval::engine::inspect::PrecedentReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::range_page(&self, &formualizer_common::grid_address::RangeArea, &formualizer_eval::engine::inspect::RangePageOptions) -> core::result::Result<formualizer_eval::engine::inspect::RangePage, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::trace(&self, &[formualizer_common::grid_address::CellAddress], &formualizer_eval::engine::inspect::TraceOptions) -> core::result::Result<formualizer_eval::engine::inspect::TraceGraph, formualizer_eval::engine::inspect::InspectError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::is_poisoned(&self) -> bool
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::action<T>(&mut self, impl core::convert::AsRef<str>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::action_atomic<T>(&mut self, impl core::convert::Into<alloc::string::String>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -8170,6 +8177,8 @@ pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticScope::fmt(&s
 impl core::marker::Copy for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
 impl core::marker::StructuralPartialEq for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
 pub enum formualizer_eval::operation_diagnostics::UnavailableOperation
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::FunctionPanicked
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::FunctionPanicked::name: alloc::string::String
 pub formualizer_eval::operation_diagnostics::UnavailableOperation::PostfixInvocation
 pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnimplementedFunction
 pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnimplementedFunction::name: alloc::string::String

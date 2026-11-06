@@ -38,6 +38,7 @@ pub mod lookup_index_cache;
 pub mod plan;
 #[cfg(test)]
 mod plan_legacy_tests;
+mod poison;
 pub mod range_view;
 pub(crate) mod refs;
 pub mod resource_ledger;
@@ -508,11 +509,19 @@ use formualizer_common::error::{ExcelError, ExcelErrorKind};
 use std::collections::HashMap;
 
 impl<R: EvaluationContext> Engine<R> {
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn begin_bulk_ingest(&mut self) -> ingest_builder::BulkIngestBuilder<'_> {
+        self.assert_not_poisoned();
         ingest_builder::BulkIngestBuilder::new(&mut self.graph)
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn intern_formula_ast(&mut self, ast: &formualizer_parse::parser::ASTNode) -> AstNodeId {
+        self.assert_not_poisoned();
         self.graph.store_ast(ast)
     }
 
@@ -524,6 +533,9 @@ impl<R: EvaluationContext> Engine<R> {
     /// interned as usual. Formulas of one sheet must be staged through one
     /// grouper, in any order (only adjacent cells are compared). With
     /// `EvalConfig::formula_compression` off every formula is interned.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn stage_formula_ast(
         &mut self,
         grouper: &mut FormulaFamilyGrouper,
@@ -532,6 +544,7 @@ impl<R: EvaluationContext> Engine<R> {
         ast: &formualizer_parse::parser::ASTNode,
         formula_text: Option<std::sync::Arc<str>>,
     ) -> FormulaIngestRecord {
+        self.assert_not_poisoned();
         let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
         if self.config.formula_compression
             && let Some(family) = self.graph.group_formula_member(grouper, row0, col0, ast)
@@ -555,7 +568,11 @@ impl<R: EvaluationContext> Engine<R> {
     }
 
     #[doc(hidden)]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_source_family_mode(&mut self, mode: SourceFamilyMode) {
+        self.assert_not_poisoned();
         self.source_family_mode = mode;
     }
 
@@ -568,7 +585,11 @@ impl<R: EvaluationContext> Engine<R> {
     /// Fold a finished sheet's staging counters into this engine's (and
     /// the process') totals, and reset them.
     #[doc(hidden)]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn finish_family_grouper(&mut self, grouper: &mut FormulaFamilyGrouper) {
+        self.assert_not_poisoned();
         let counters = std::mem::take(&mut grouper.counters);
         counters.publish();
         self.source_family_counters.accumulate(&counters);
@@ -576,6 +597,9 @@ impl<R: EvaluationContext> Engine<R> {
 
     /// Record a formula interned without [`Self::stage_formula_ast`] (for
     /// example a parse-cache hit) as a family template candidate.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn note_staged_formula(
         &mut self,
         grouper: &mut FormulaFamilyGrouper,
@@ -583,6 +607,7 @@ impl<R: EvaluationContext> Engine<R> {
         col: u32,
         ast_id: AstNodeId,
     ) {
+        self.assert_not_poisoned();
         let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
         grouper.note(
             row0,

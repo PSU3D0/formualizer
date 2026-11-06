@@ -8,6 +8,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Converted native Rust function panics into typed `#VALUE!` cell errors and completeness diagnostics, including Workbook callbacks and optimized kernels. `IFERROR` may catch the value while source `requireComplete` still refuses incomplete calculation. Engine-internal unwinds now permanently refuse further evaluation and mutation; `is_poisoned()` lets hosts detect the state.
 - Fixed ordinary recalculation dirtiness routing through observed dynamic reads: an `INDIRECT` into an empty cell later filled by a spill now recalculates instead of keeping its earlier value.
 
 ### Added

@@ -334,7 +334,9 @@ impl Function for PanicFifth {
 }
 #[test]
 fn custom_function_panic_cycle_consequence() {
-    if isolated_test("polish::custom_function_panic_cycle_consequence") { return; }
+    if isolated_test("polish::custom_function_panic_cycle_consequence") {
+        return;
+    }
     for family in [false, true] {
         for job in [false, true] {
             crate::function_registry::register_function(Arc::new(PanicFifth(
@@ -346,23 +348,49 @@ fn custom_function_panic_cycle_consequence() {
             );
             e.config.family_execution = family;
             e.configure_operation_diagnostics(Default::default());
-            e.set_cell_formula("Sheet1", 1, 1, parse("=A1+JOB_PANIC_FIFTH()").unwrap()).unwrap();
+            e.set_cell_formula("Sheet1", 1, 1, parse("=A1+JOB_PANIC_FIFTH()").unwrap())
+                .unwrap();
             if job {
                 e.begin_recalc(Default::default()).unwrap();
-                assert_eq!(e.step_recalc(EvaluationStop::none()).unwrap().phase, StepPhase::Finished);
-            } else { e.evaluate_all().unwrap(); }
+                assert_eq!(
+                    e.step_recalc(EvaluationStop::none()).unwrap().phase,
+                    StepPhase::Finished
+                );
+            } else {
+                e.evaluate_all().unwrap();
+            }
             assert_eq!(e.request_scope_for_test(), (0, false, false));
-            assert!(matches!(e.get_cell_value("Sheet1", 1, 1), Some(LiteralValue::Error(_))));
-            assert!(e.operation_diagnostics().unwrap().unwrap().logical_cell_reason_count > 0);
-            // Replace the panic source and compare a fresh uninterrupted oracle.
-            e.set_cell_formula("Sheet1", 1, 1, parse("=MIN(A1+1,10)").unwrap()).unwrap();
+            assert!(matches!(
+                e.get_cell_value("Sheet1", 1, 1),
+                Some(LiteralValue::Error(_))
+            ));
+            assert!(
+                e.operation_diagnostics()
+                    .unwrap()
+                    .unwrap()
+                    .logical_cell_reason_count
+                    > 0
+            );
+            // Reset the iterative seed as well as the source: edit-created cycles
+            // intentionally retain current-value seeds (the Phase 1 carve-out).
+            e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(0.))
+                .unwrap();
+            e.set_cell_formula("Sheet1", 1, 1, parse("=MIN(A1+1,10)").unwrap())
+                .unwrap();
             e.evaluate_all().unwrap();
-            let mut oracle = Engine::new(TestWorkbook::new(),
-                EvalConfig::default().with_cycle(CycleConfig::iterate(100, 0.)));
+            let mut oracle = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig::default().with_cycle(CycleConfig::iterate(100, 0.)),
+            );
             oracle.config.family_execution = family;
-            oracle.set_cell_formula("Sheet1", 1, 1, parse("=MIN(A1+1,10)").unwrap()).unwrap();
+            oracle
+                .set_cell_formula("Sheet1", 1, 1, parse("=MIN(A1+1,10)").unwrap())
+                .unwrap();
             oracle.evaluate_all().unwrap();
-            assert_eq!(e.get_cell_value("Sheet1", 1, 1), oracle.get_cell_value("Sheet1", 1, 1));
+            assert_eq!(
+                e.get_cell_value("Sheet1", 1, 1),
+                oracle.get_cell_value("Sheet1", 1, 1)
+            );
         }
     }
 }
@@ -387,38 +415,83 @@ impl Function for PanicOnce {
 }
 #[test]
 fn custom_function_panic_characterization() {
-    if isolated_test("polish::custom_function_panic_characterization") { return; }
+    if isolated_test("polish::custom_function_panic_characterization") {
+        return;
+    }
     for family in [false, true] {
         for job in [false, true] {
             crate::function_registry::register_function(Arc::new(PanicOnce(AtomicBool::new(true))));
-            let mut e = Engine::new(TestWorkbook::new(), EvalConfig {
-                family_execution: family, enable_parallel: false, ..Default::default()
-            });
+            let mut e = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig {
+                    family_execution: family,
+                    enable_parallel: false,
+                    ..Default::default()
+                },
+            );
             e.configure_operation_diagnostics(Default::default());
-            e.set_cell_formula("Sheet1", 1, 1, parse("=JOB_PANIC_ONCE()").unwrap()).unwrap();
-            e.set_cell_formula("Sheet1", 2, 1, parse("=A1+1").unwrap()).unwrap();
+            e.set_cell_formula("Sheet1", 1, 1, parse("=JOB_PANIC_ONCE()").unwrap())
+                .unwrap();
+            e.set_cell_formula("Sheet1", 2, 1, parse("=A1+1").unwrap())
+                .unwrap();
             if job {
                 e.begin_recalc(Default::default()).unwrap();
-                assert_eq!(e.step_recalc(EvaluationStop::none()).unwrap().phase, StepPhase::Finished);
-            } else { e.evaluate_all().unwrap(); }
+                assert_eq!(
+                    e.step_recalc(EvaluationStop::none()).unwrap().phase,
+                    StepPhase::Finished
+                );
+            } else {
+                e.evaluate_all().unwrap();
+            }
             assert_eq!(e.request_scope_for_test(), (0, false, false));
-            let Some(LiteralValue::Error(error)) = e.get_cell_value("Sheet1", 1, 1) else { panic!("missing panic error") };
+            let Some(LiteralValue::Error(error)) = e.get_cell_value("Sheet1", 1, 1) else {
+                panic!("missing panic error")
+            };
             assert_eq!(error.kind, formualizer_common::ExcelErrorKind::Value);
             assert!(format!("{:?}", error.extra()).contains("FunctionPanicked"));
-            assert_eq!(e.get_cell_value("Sheet1", 2, 1), Some(LiteralValue::Error(error)));
-            assert!(e.operation_diagnostics().unwrap().unwrap().logical_cell_reason_count > 0);
+            assert_eq!(
+                e.get_cell_value("Sheet1", 2, 1),
+                Some(LiteralValue::Error(error))
+            );
+            assert!(
+                e.operation_diagnostics()
+                    .unwrap()
+                    .unwrap()
+                    .logical_cell_reason_count
+                    > 0
+            );
             e.begin_recalc(Default::default()).unwrap();
-            assert!(e.evaluate_all().is_err(), "active job refusal must survive function panic");
+            assert!(
+                e.evaluate_all().is_err(),
+                "active job refusal must survive function panic"
+            );
             e.cancel_recalc();
-            e.set_cell_formula("Sheet1", 1, 1, parse("=7").unwrap()).unwrap();
+            e.set_cell_formula("Sheet1", 1, 1, parse("=7").unwrap())
+                .unwrap();
             e.evaluate_all().unwrap();
-            let mut oracle = Engine::new(TestWorkbook::new(), EvalConfig { family_execution: family, ..Default::default() });
-            oracle.set_cell_formula("Sheet1", 1, 1, parse("=7").unwrap()).unwrap();
-            oracle.set_cell_formula("Sheet1", 2, 1, parse("=A1+1").unwrap()).unwrap();
+            let mut oracle = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig {
+                    family_execution: family,
+                    ..Default::default()
+                },
+            );
+            oracle
+                .set_cell_formula("Sheet1", 1, 1, parse("=7").unwrap())
+                .unwrap();
+            oracle
+                .set_cell_formula("Sheet1", 2, 1, parse("=A1+1").unwrap())
+                .unwrap();
             oracle.evaluate_all().unwrap();
-            assert_eq!(e.get_cell_value("Sheet1", 2, 1), oracle.get_cell_value("Sheet1", 2, 1));
+            assert_eq!(
+                e.get_cell_value("Sheet1", 2, 1),
+                oracle.get_cell_value("Sheet1", 2, 1)
+            );
             e.begin_recalc(Default::default()).unwrap();
-            assert_eq!(e.step_recalc(EvaluationStop::none()).unwrap().phase, StepPhase::Finished);
+            assert_eq!(
+                e.step_recalc(EvaluationStop::none()).unwrap().phase,
+                StepPhase::Finished
+            );
         }
     }
 }

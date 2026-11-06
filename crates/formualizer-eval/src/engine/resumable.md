@@ -41,10 +41,35 @@ Raw store and load-time bulk-finish mutations are unsupported during a job.
 Live-spill user writes retain the known FORM-000319 limitation. Builtin polling
 (FORM-000321), graph slicing and parallel jobs (FORM-000323) are separate work.
 
-Custom-function panics propagate rather than returning RecalcJobError. They can
-leave the job active and request state uncleared; catching the panic is not a
-supported recovery path. Discard that engine after unwind. This differs from
-returned step errors, which end the job safely.
+Rust function panics are caught at dispatch and become `#VALUE!` with
+`ExcelErrorExtra::FunctionPanicked { function, message }`. String payloads are
+retained; other payloads have no message. Builtins, direct registrations,
+Workbook callbacks, reference paths and parallel calls share this policy.
+`IFERROR` can replace the cell error, but the executed root still records
+`UnavailableOperation::FunctionPanicked` when operation diagnostics are enabled.
+Source recalculation enables that evidence: coverage is Partial and
+`requireComplete` refuses publication. Ordinary returned Excel errors keep
+their existing completeness behavior. A panicking aggregate kernel discards
+its buffer and fails every member of that run; no partial values are installed.
+
+An engine-internal unwind through a request or job step still propagates.
+The engine then permanently refuses work: job APIs return
+`RecalcJobError::Poisoned`, and existing fallible mutation/evaluation APIs return
+a Value error with `ExcelErrorExtra::EnginePoisoned` (editor APIs preserve it in
+`EditorError::Excel`). Check `Engine::is_poisoned` or `Workbook::is_poisoned`.
+Infallible mutators panic before mutation with
+"formualizer engine is poisoned by an earlier internal panic; discard it".
+`cancel_recalc` returns None without touching state. Reads and queries remain
+available but may expose stale or partially installed values. Discard the
+engine; no recovery is attempted. Raw mutable storage and direct public config
+fields cannot be revoked, and must never be used to resume a poisoned engine.
+
+On `wasm32-unknown-unknown`, Rust panics trap instead of unwinding:
+`catch_unwind` and unwind guards cannot recover or mark an instance after a
+trap. Discard that workbook/worker or instance. Python exceptions and JS throws
+already return ordinary function errors; Rust-side internal panics retain
+Python's workbook-lock poison behavior. Progress callbacks run between steps;
+their panics retain the already-reached lifecycle state.
 
 ## Progress callback
 

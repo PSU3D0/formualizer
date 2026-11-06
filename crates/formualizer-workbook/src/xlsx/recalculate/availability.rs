@@ -133,6 +133,9 @@ fn incidence(
 }
 fn source_operation(operation: &UnavailableOperation) -> SourceUnavailableOperation {
     match operation {
+        UnavailableOperation::FunctionPanicked { name } => {
+            SourceUnavailableOperation::FunctionPanicked { name: name.clone() }
+        }
         UnavailableOperation::UnknownFunction { name } => {
             SourceUnavailableOperation::UnknownFunction { name: name.clone() }
         }
@@ -189,7 +192,8 @@ pub(super) fn collect(
         checkpoint(&options.cancel)?;
         let operation = root.operation.as_ref();
         let name = match operation {
-            UnavailableOperation::UnknownFunction { name }
+            UnavailableOperation::FunctionPanicked { name }
+            | UnavailableOperation::UnknownFunction { name }
             | UnavailableOperation::UnimplementedFunction { name }
             | UnavailableOperation::UnimplementedFunctionMode { name, .. }
             | UnavailableOperation::UnverifiedFunctionMode { name, .. }

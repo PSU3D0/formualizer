@@ -1960,3 +1960,56 @@ fn unparseable_stored_formula_is_a_refusal_naming_the_cell() {
     *sheet = sheet.replace("SUM((A1", "SUM((A1))");
     assert!(recalculate_xlsx_bytes(&pack(&p), Default::default()).is_ok());
 }
+
+#[test]
+fn source_policy_boundary_function_panic_is_partial_and_require_complete_refuses() {
+    use formualizer_workbook::{
+        CalculationDeferredReason, IoError, SourceCalculationCoverage, SourceUnavailableOperation,
+    };
+    const CASE: &str =
+        "source_policy_boundary_function_panic_is_partial_and_require_complete_refuses";
+    if std::env::var("FZ_SOURCE_PROVIDER_CHILD").ok().as_deref() != Some(CASE) {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", CASE, "--nocapture"])
+            .env("FZ_SOURCE_PROVIDER_CHILD", CASE)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    struct Provider;
+    impl formualizer_eval::function::Function for Provider {
+        fn name(&self) -> &'static str {
+            "SOURCE_TEST_PANIC_PROVIDER"
+        }
+        fn eval<'a, 'b, 'c>(
+            &self,
+            _: &'c [formualizer_eval::traits::ArgumentHandle<'a, 'b>],
+            _: &dyn formualizer_eval::traits::FunctionContext<'b>,
+        ) -> Result<formualizer_eval::traits::CalcValue<'b>, formualizer_common::ExcelError>
+        {
+            panic!("source panic payload")
+        }
+    }
+    formualizer_eval::function_registry::try_register_function(std::sync::Arc::new(Provider))
+        .unwrap();
+    let input = fixture("SOURCE_TEST_PANIC_PROVIDER()", "99");
+    let result = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::workbook()).unwrap();
+    assert_eq!(result.coverage, SourceCalculationCoverage::Partial);
+    assert!(result.operation_diagnostics.samples.iter().any(|sample|matches!(
+        &sample.operation,SourceUnavailableOperation::FunctionPanicked{name} if name=="SOURCE_TEST_PANIC_PROVIDER"
+    )));
+    assert!(matches!(
+        recalculate_xlsx_bytes(
+            &input,
+            XlsxRecalculateOptions {
+                require_complete: true,
+                ..XlsxRecalculateOptions::workbook()
+            }
+        ),
+        Err(IoError::CalculationDeferred {
+            reason: CalculationDeferredReason::KnownCoverageIncomplete,
+            ..
+        })
+    ));
+}

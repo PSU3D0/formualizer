@@ -364,6 +364,10 @@ pub fn formualizer_common::date_serial::try_serial_to_display_date_parts_for(for
 pub fn formualizer_common::date_serial::validate_excel_serial(formualizer_common::DateSystem, f64) -> core::result::Result<(), formualizer_common::ExcelError>
 pub mod formualizer_common::error
 #[non_exhaustive] pub enum formualizer_common::error::ExcelErrorExtra
+pub formualizer_common::error::ExcelErrorExtra::EnginePoisoned
+pub formualizer_common::error::ExcelErrorExtra::FunctionPanicked
+pub formualizer_common::error::ExcelErrorExtra::FunctionPanicked::function: alloc::string::String
+pub formualizer_common::error::ExcelErrorExtra::FunctionPanicked::message: core::option::Option<alloc::string::String>
 pub formualizer_common::error::ExcelErrorExtra::None
 pub formualizer_common::error::ExcelErrorExtra::PlanStale
 pub formualizer_common::error::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
@@ -538,6 +542,7 @@ impl formualizer_common::ExcelError
 pub fn formualizer_common::ExcelError::context(&self) -> core::option::Option<&formualizer_common::ErrorContext>
 pub fn formualizer_common::ExcelError::extra(&self) -> &formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelError::from_error_string(&str) -> Self
+pub fn formualizer_common::ExcelError::from_function_panic(&str, &(dyn core::any::Any + core::marker::Send)) -> Self
 pub fn formualizer_common::ExcelError::message(&self) -> core::option::Option<&str>
 pub fn formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind) -> Self
 pub fn formualizer_common::ExcelError::new_circ() -> Self
@@ -927,6 +932,10 @@ pub fn formualizer_common::DateSystem::hash<__H: core::hash::Hasher>(&self, &mut
 impl core::marker::Copy for formualizer_common::DateSystem
 impl core::marker::StructuralPartialEq for formualizer_common::DateSystem
 #[non_exhaustive] pub enum formualizer_common::ExcelErrorExtra
+pub formualizer_common::ExcelErrorExtra::EnginePoisoned
+pub formualizer_common::ExcelErrorExtra::FunctionPanicked
+pub formualizer_common::ExcelErrorExtra::FunctionPanicked::function: alloc::string::String
+pub formualizer_common::ExcelErrorExtra::FunctionPanicked::message: core::option::Option<alloc::string::String>
 pub formualizer_common::ExcelErrorExtra::None
 pub formualizer_common::ExcelErrorExtra::PlanStale
 pub formualizer_common::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
@@ -1375,6 +1384,7 @@ impl formualizer_common::ExcelError
 pub fn formualizer_common::ExcelError::context(&self) -> core::option::Option<&formualizer_common::ErrorContext>
 pub fn formualizer_common::ExcelError::extra(&self) -> &formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelError::from_error_string(&str) -> Self
+pub fn formualizer_common::ExcelError::from_function_panic(&str, &(dyn core::any::Any + core::marker::Send)) -> Self
 pub fn formualizer_common::ExcelError::message(&self) -> core::option::Option<&str>
 pub fn formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind) -> Self
 pub fn formualizer_common::ExcelError::new_circ() -> Self

@@ -487,6 +487,7 @@ where
         sheet_name: &str,
         families: &[crate::engine::SourceFormulaFamily],
     ) -> Result<crate::engine::FormulaCompressedPreparation, ExcelError> {
+        self.engine.ensure_not_poisoned()?;
         self.engine.observe_function_semantic_epoch()?;
         Ok(self
             .engine
@@ -501,6 +502,7 @@ where
         formula_record_count: u64,
         replay: Box<dyn crate::engine::DeferredFormulaReplay>,
     ) -> Result<crate::engine::FormulaCompressedPreparation, ExcelError> {
+        self.engine.ensure_not_poisoned()?;
         self.engine.observe_function_semantic_epoch()?;
         let replay = Arc::new(std::sync::Mutex::new(replay));
         self.engine.prepare_source_formula_proposals(
@@ -516,7 +518,11 @@ where
         )
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn stage_deferred(&mut self, package: crate::engine::DeferredFormulaPackage) {
+        self.engine.assert_not_poisoned();
         self.engine.stage_deferred_formula_package(package);
     }
 
@@ -527,6 +533,7 @@ where
             crate::engine::FormulaCompressedSourceBatch,
         )>,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        self.engine.ensure_not_poisoned()?;
         self.engine
             .ingest_compressed_formula_source_batches(batches)
     }
@@ -539,6 +546,7 @@ where
             crate::engine::FormulaCompressedPreparation,
         )>,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        self.engine.ensure_not_poisoned()?;
         self.engine.finish_compressed_formula_sources(batches)
     }
 }
@@ -1012,6 +1020,11 @@ struct TraceEvaluationCounters {
 }
 
 pub struct Engine<R> {
+    poisoned: Arc<std::sync::atomic::AtomicBool>,
+    #[cfg(test)]
+    pub(crate) panic_internal_once: bool,
+    #[cfg(test)]
+    pub(crate) panic_kernel_after_member: std::sync::atomic::AtomicUsize,
     criteria_mask_cache: criteria_mask_cache::CriteriaMaskCache,
     pub(crate) graph: DependencyGraph,
     resolver: R,
@@ -1328,6 +1341,7 @@ where
         col: u32,
         value: LiteralValue,
     ) -> Result<(), crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         if self.capture.is_some() {
             let old_value = self.engine.read_cell_value(sheet, row, col);
             let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
@@ -1413,6 +1427,7 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         if self.capture.is_some() {
             let old_value = self.engine.read_cell_value(sheet, row, col);
             let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
@@ -1510,6 +1525,7 @@ where
         hidden: bool,
         source: RowVisibilitySource,
     ) -> Result<(), crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         if self.capture.is_some() {
             let sheet_id = self.engine.ensure_known_sheet_id(sheet)?;
             let row0 = Engine::<R>::normalize_row_1based(row_1based)?;
@@ -1556,6 +1572,7 @@ where
         hidden: bool,
         source: RowVisibilitySource,
     ) -> Result<(), crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         if self.capture.is_some() {
             let sheet_id = self.engine.ensure_known_sheet_id(sheet)?;
             let (start_row0, end_row0) =
@@ -1606,6 +1623,7 @@ where
         before: u32,
         count: u32,
     ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         if count == 0 {
             return Ok(crate::engine::ShiftSummary::default());
         }
@@ -1664,6 +1682,7 @@ where
         start: u32,
         count: u32,
     ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         if count == 0 {
             return Ok(crate::engine::ShiftSummary::default());
         }
@@ -1684,6 +1703,7 @@ where
         before: u32,
         count: u32,
     ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         if count == 0 {
             return Ok(crate::engine::ShiftSummary::default());
         }
@@ -1739,6 +1759,7 @@ where
         start: u32,
         count: u32,
     ) -> Result<crate::engine::ShiftSummary, crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         if count == 0 {
             return Ok(crate::engine::ShiftSummary::default());
         }
@@ -1762,6 +1783,7 @@ where
         name: impl AsRef<str>,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<T, crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
         self.engine.action(name, f)
     }
 }
@@ -3011,6 +3033,11 @@ where
             virtual_dep_fallback_activations: 0,
             last_cycle_telemetry: CycleTelemetry::default(),
             next_evaluation_resource_request_id: 1,
+            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            panic_internal_once: false,
+            #[cfg(test)]
+            panic_kernel_after_member: std::sync::atomic::AtomicUsize::new(usize::MAX),
             evaluation_resource_request_depth: 0,
             active_evaluation_resource_request: None,
             last_evaluation_resource_request: None,
@@ -3193,6 +3220,11 @@ where
             virtual_dep_fallback_activations: 0,
             last_cycle_telemetry: CycleTelemetry::default(),
             next_evaluation_resource_request_id: 1,
+            poisoned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            #[cfg(test)]
+            panic_internal_once: false,
+            #[cfg(test)]
+            panic_kernel_after_member: std::sync::atomic::AtomicUsize::new(usize::MAX),
             evaluation_resource_request_depth: 0,
             active_evaluation_resource_request: None,
             last_evaluation_resource_request: None,
@@ -3255,7 +3287,11 @@ where
         &self.workbook_load_limits
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_workbook_load_limits(&mut self, limits: crate::engine::WorkbookLoadLimits) {
+        self.assert_not_poisoned();
         self.workbook_load_limits = limits;
     }
 
@@ -3300,7 +3336,11 @@ where
     }
 
     /// Reset accumulated and last-request observations without reusing request IDs.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn reset_evaluation_resource_telemetry(&mut self) {
+        self.assert_not_poisoned();
         self.evaluation_resource_baseline = EvaluationResourceBaselineStats::default();
         self.last_evaluation_resource_request = None;
     }
@@ -3344,7 +3384,11 @@ where
 
     #[cfg(test)]
     pub(crate) fn request_scope_for_test(&self) -> (usize, bool, bool) {
-        (self.evaluation_resource_request_depth, self.resumable_call, self.active_cancel_flag.is_some())
+        (
+            self.evaluation_resource_request_depth,
+            self.resumable_call,
+            self.active_cancel_flag.is_some(),
+        )
     }
 
     fn duration_ns(duration: std::time::Duration) -> u64 {
@@ -3356,7 +3400,10 @@ where
         kind: EvaluationRequestKind,
         evaluate: impl FnOnce(&mut Self) -> Result<T, ExcelError>,
     ) -> Result<T, ExcelError> {
+        self.ensure_not_poisoned()?;
         let outermost = self.evaluation_resource_request_depth == 0;
+        let _unwind_poison =
+            outermost.then(|| super::poison::UnwindPoisonGuard(self.poisoned.clone()));
         if outermost && !self.resumable_call && self.has_active_recalc_job() {
             return Err(Self::active_recalc_job_error());
         }
@@ -3437,6 +3484,10 @@ where
         }
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_add(1);
+        #[cfg(test)]
+        if outermost && std::mem::take(&mut self.panic_internal_once) {
+            panic!("injected internal evaluation panic");
+        }
         let result = if outermost {
             self.reconcile_source_cache_footprints()
                 .and_then(|()| self.resource_checkpoint(0))
@@ -3520,7 +3571,11 @@ where
         result
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_evaluation_resource_budgets(&mut self, budgets: crate::engine::EvaluationBudgets) {
+        self.assert_not_poisoned();
         self.evaluation_resource_budgets = budgets.clone();
         self.config.evaluation_budgets = budgets.clone();
         self.graph.set_evaluation_budgets(budgets);
@@ -3917,7 +3972,11 @@ where
 
     /// Enable request-operation evidence before ingestion/evaluation.
     /// Each evaluation request resets events; this is not retained-result coverage.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn enable_operation_diagnostics(&mut self, sample_limit: usize) {
+        self.assert_not_poisoned();
         self.configure_operation_diagnostics(
             crate::operation_diagnostics::OperationDiagnosticOptions {
                 sample_limit,
@@ -3927,15 +3986,23 @@ where
         );
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn configure_operation_diagnostics(
         &mut self,
         options: crate::operation_diagnostics::OperationDiagnosticOptions,
     ) {
+        self.assert_not_poisoned();
         self.operation_diagnostic_collector =
             Some(crate::operation_diagnostics::OperationDiagnosticCollector::with_options(options));
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn disable_operation_diagnostics(&mut self) {
+        self.assert_not_poisoned();
         self.operation_diagnostic_collector = None;
     }
 
@@ -3952,6 +4019,7 @@ where
     pub fn take_operation_diagnostics(
         &mut self,
     ) -> Result<Option<crate::operation_diagnostics::OperationDiagnostics>, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.operation_diagnostic_collector
             .as_mut()
             .map(|collector| collector.take_snapshot())
@@ -4464,17 +4532,29 @@ where
     }
 
     /// Update the workbook seed for deterministic RNGs in functions.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_workbook_seed(&mut self, seed: u64) {
+        self.assert_not_poisoned();
         self.config.workbook_seed = seed;
     }
 
     /// Set the volatile level policy (Always/OnRecalc/OnOpen)
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_volatile_level(&mut self, level: crate::traits::VolatileLevel) {
+        self.assert_not_poisoned();
         self.config.volatile_level = level;
     }
 
     /// Set public temporal materialisation to native values or raw serials.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_temporal_egress(&mut self, policy: crate::engine::TemporalEgress) {
+        self.assert_not_poisoned();
         self.config.temporal_egress = policy;
     }
 
@@ -4487,6 +4567,7 @@ where
         &mut self,
         mode: crate::engine::DeterministicMode,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         let clock = mode.build_clock()?;
         self.config.deterministic_mode = mode;
         self.clock = crate::timezone::SnapshotClock::new(clock);
@@ -4500,7 +4581,11 @@ where
     /// it once at the start of every evaluation request and all reads within
     /// that recalc (including SCC iteration passes) observe the frozen
     /// sample.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_clock(&mut self, clock: Arc<dyn crate::timezone::ClockProvider>) {
+        self.assert_not_poisoned();
         self.clock = crate::timezone::SnapshotClock::new(clock);
     }
 
@@ -4512,7 +4597,11 @@ where
         self.graph.sheet_id(name)
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn sheet_id_mut(&mut self, name: &str) -> SheetId {
+        self.assert_not_poisoned();
         self.add_sheet(name)
             .unwrap_or_else(|_| self.graph.sheet_id_mut(name))
     }
@@ -4571,6 +4660,7 @@ where
     }
 
     pub fn add_sheet(&mut self, name: &str) -> Result<SheetId, ExcelError> {
+        self.ensure_not_poisoned()?;
         let id = self.graph.add_sheet(name)?;
         self.ensure_arrow_sheet(name);
         self.mark_topology_edited();
@@ -4578,6 +4668,7 @@ where
     }
 
     pub fn duplicate_sheet(&mut self, source: &str, new_name: &str) -> Result<SheetId, ExcelError> {
+        self.ensure_not_poisoned()?;
         let source_id = self.graph.sheet_id(source).ok_or_else(|| {
             ExcelError::new(ExcelErrorKind::Value).with_message("Source sheet does not exist")
         })?;
@@ -4632,6 +4723,7 @@ where
     }
 
     pub fn remove_sheet(&mut self, sheet_id: SheetId) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         let name = self.graph.sheet_name(sheet_id).to_string();
         self.purge_derived_formats_for_sheet(sheet_id);
         self.graph.remove_sheet(sheet_id)?;
@@ -4666,6 +4758,7 @@ where
     }
 
     pub fn rename_sheet(&mut self, sheet_id: SheetId, new_name: &str) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         let old_name = self.graph.sheet_name(sheet_id).to_string();
 
         // Speculative Storage Update
@@ -4864,6 +4957,7 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph.validate_define_name(name, scope)?;
         self.graph.define_name(name, definition, scope)?;
         self.record_structural_change(StructuralScope::AllSheets);
@@ -4879,6 +4973,7 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph.validate_existing_name(name, scope)?;
         self.graph.update_name(name, definition, scope)?;
         self.record_structural_change(StructuralScope::AllSheets);
@@ -4889,6 +4984,7 @@ where
     }
 
     pub fn delete_name(&mut self, name: &str, scope: NameScope) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph.validate_existing_name(name, scope)?;
         self.graph.delete_name(name, scope)?;
         self.record_structural_change(StructuralScope::AllSheets);
@@ -4906,6 +5002,7 @@ where
         headers: Vec<String>,
         totals_row: bool,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph
             .define_table(name, range, header_row, headers, totals_row)?;
         self.record_structural_change(StructuralScope::AllSheets);
@@ -4918,6 +5015,7 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph.define_source_scalar(name, version)?;
         self.record_structural_change(StructuralScope::OpaqueGlobal);
         self.mark_topology_edited();
@@ -4929,6 +5027,7 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph.define_source_table(name, version)?;
         self.record_structural_change(StructuralScope::OpaqueGlobal);
         self.mark_topology_edited();
@@ -4940,6 +5039,7 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph.set_source_scalar_version(name, version)?;
         self.source_mutation_generation = self.source_mutation_generation.wrapping_add(1);
         Ok(())
@@ -4950,12 +5050,14 @@ where
         name: &str,
         version: Option<u64>,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph.set_source_table_version(name, version)?;
         self.source_mutation_generation = self.source_mutation_generation.wrapping_add(1);
         Ok(())
     }
 
     pub fn invalidate_source(&mut self, name: &str) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.graph.invalidate_source(name)?;
         self.source_mutation_generation = self.source_mutation_generation.wrapping_add(1);
         Ok(())
@@ -5044,7 +5146,11 @@ where
             .unwrap_or((0, 0, 0, 0))
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_first_load_assume_new(&mut self, enabled: bool) {
+        self.assert_not_poisoned();
         self.graph.set_first_load_assume_new(enabled);
     }
 
@@ -5052,17 +5158,29 @@ where
         self.graph.first_load_assume_new()
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn reset_ensure_touched(&mut self) {
+        self.assert_not_poisoned();
         self.graph.reset_ensure_touched();
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn finalize_sheet_index(&mut self, sheet: &str) {
+        self.assert_not_poisoned();
         self.graph.finalize_sheet_index(sheet);
     }
 
     /// Rebuild the requested sheet indexes in a single coordinate-map pass.
     #[doc(hidden)]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn finalize_all_sheet_indexes<'a>(&mut self, sheets: impl IntoIterator<Item = &'a str>) {
+        self.assert_not_poisoned();
         self.graph.finalize_all_sheet_indexes(sheets);
     }
 
@@ -5079,6 +5197,7 @@ where
         name: impl AsRef<str>,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<T, crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         if self.action_depth != 0 {
             return Err(crate::engine::EditorError::TransactionFailed {
                 reason: "Nested Engine::action calls are not supported (ticket 614: commit-only surface)"
@@ -5111,6 +5230,7 @@ where
         name: impl Into<String>,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<T, crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         let (v, _j) = self.action_atomic_journal(name, f)?;
         Ok(v)
     }
@@ -5121,6 +5241,7 @@ where
         name: impl Into<String>,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         if self.action_depth != 0 {
             return Err(crate::engine::EditorError::TransactionFailed {
                 reason: "Nested Engine::action calls are not supported (deterministic rule)"
@@ -5237,6 +5358,7 @@ where
         name: impl AsRef<str>,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<T, crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         if self.action_depth != 0 {
             return Err(crate::engine::EditorError::TransactionFailed {
                 reason: "Nested Engine::action calls are not supported (deterministic rule)"
@@ -5377,6 +5499,7 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         self.graph
             .validate_define_name(name, scope)
             .map_err(crate::engine::EditorError::Excel)?;
@@ -5399,6 +5522,7 @@ where
         definition: NamedDefinition,
         scope: NameScope,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         self.graph
             .validate_existing_name(name, scope)
             .map_err(crate::engine::EditorError::Excel)?;
@@ -5419,6 +5543,7 @@ where
         name: &str,
         scope: NameScope,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         self.graph
             .validate_existing_name(name, scope)
             .map_err(crate::engine::EditorError::Excel)?;
@@ -5438,6 +5563,7 @@ where
         log: &mut crate::engine::ChangeLog,
         f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
     ) -> Result<T, crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         let mut capture = MutationCapture::new(log.current_meta());
         let result = self.edit_with_capture(&mut capture, f);
         capture.close_compounds();
@@ -5652,6 +5778,7 @@ where
         undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
         log: &mut crate::engine::ChangeLog,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         let pending_events = log
             .last_group_indices()
             .into_iter()
@@ -5700,6 +5827,7 @@ where
         undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
         log: &mut crate::engine::ChangeLog,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         let pending_events = undo.pending_redo_events();
         self.preflight_replay_admission(&pending_events, true)?;
         let invalidation_baseline = self.invalidation_baseline();
@@ -5744,6 +5872,7 @@ where
         &mut self,
         undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         let Some(journal) = undo.pop_undo_action() else {
             return Ok(());
         };
@@ -5788,6 +5917,7 @@ where
         &mut self,
         undo: &mut crate::engine::graph::editor::undo_engine::UndoEngine,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         let Some(journal) = undo.pop_redo_action() else {
             return Ok(());
         };
@@ -5965,21 +6095,37 @@ where
         }
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_default_sheet_by_name(&mut self, name: &str) {
+        self.assert_not_poisoned();
         self.graph.set_default_sheet_by_name(name);
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_default_sheet_by_id(&mut self, id: SheetId) {
+        self.assert_not_poisoned();
         self.graph.set_default_sheet_by_id(id);
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_sheet_index_mode(&mut self, mode: crate::engine::SheetIndexMode) {
+        self.assert_not_poisoned();
         self.graph.set_sheet_index_mode(mode);
     }
 
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn mark_all_formulas_dirty_for_test(&mut self) {
+        self.assert_not_poisoned();
         self.mark_all_formula_vertices_dirty();
     }
 
@@ -5997,7 +6143,11 @@ where
 
     #[cfg(any(test, feature = "benchmark_internal"))]
     #[doc(hidden)]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn reset_recalc_reuse_probe(&mut self) {
+        self.assert_not_poisoned();
         *self.recalc_reuse_probe.get_mut().unwrap() = RecalcReuseProbe::default();
     }
 
@@ -6199,7 +6349,11 @@ where
 
     /// Mark data edited: bump snapshot and set edited flag.
     /// Value-only edits keep the stable-topology schedule cache alive.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn mark_data_edited(&mut self) {
+        self.assert_not_poisoned();
         self.lookup_index_cache.clear();
         self.snapshot_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -6207,7 +6361,11 @@ where
     }
 
     /// Mark a topology-changing edit: bump snapshot + topology epoch and invalidate cached schedules.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn mark_topology_edited(&mut self) {
+        self.assert_not_poisoned();
         self.arrow_sheet_index.take();
         self.lookup_index_cache.clear();
         self.snapshot_id
@@ -6256,7 +6414,11 @@ where
     }
 
     /// Access Arrow sheet store (mutable)
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn sheet_store_mut(&mut self) -> &mut SheetStore {
+        self.assert_not_poisoned();
         self.arrow_sheet_index.take();
         &mut self.arrow_sheets
     }
@@ -6270,7 +6432,11 @@ where
     }
 
     /// Stage a formula text instead of inserting into the graph (used when deferring is enabled).
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn stage_formula_text(&mut self, sheet: &str, row: u32, col: u32, text: String) {
+        self.assert_not_poisoned();
         self.staged_formulas
             .entry(sheet.to_string())
             .or_default()
@@ -6299,7 +6465,11 @@ where
     }
 
     #[doc(hidden)]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn source_formula_ingress(&mut self) -> SourceFormulaIngress<'_, R> {
+        self.assert_not_poisoned();
         SourceFormulaIngress { engine: self }
     }
 
@@ -6308,10 +6478,14 @@ where
     /// integration tests in sibling crates can fail a commit at an exact point.
     #[doc(hidden)]
     #[cfg(any(test, feature = "test-support"))]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_before_prepared_span_commit_hook(
         &mut self,
         hook: impl FnOnce() + Send + Sync + 'static,
     ) {
+        self.assert_not_poisoned();
         self.before_prepared_span_commit_hook = Some(Box::new(hook));
     }
 
@@ -6367,7 +6541,11 @@ where
         }
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn clear_staged_formula_text(&mut self, sheet: &str, row: u32, col: u32) -> Option<String> {
+        self.assert_not_poisoned();
         let mut removed = None;
         let mut remove_sheet = false;
         let mut had_package = false;
@@ -6396,7 +6574,11 @@ where
         removed
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn clear_staged_formulas_for_sheet(&mut self, sheet: &str) {
+        self.assert_not_poisoned();
         if self.staged_formulas.remove(sheet).is_some() {
             self.staged_formula_index.clear_sheet(sheet);
             if let Some(sheet_id) = self.graph.sheet_id(sheet) {
@@ -6405,7 +6587,11 @@ where
         }
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn rename_staged_formula_sheet(&mut self, old: &str, new: &str) {
+        self.assert_not_poisoned();
         let Some(entries) = self.staged_formulas.remove(old) else {
             return;
         };
@@ -6433,11 +6619,19 @@ where
         &self.formula_parse_diagnostics
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn take_formula_parse_diagnostics(&mut self) -> Vec<FormulaParseDiagnostic> {
+        self.assert_not_poisoned();
         std::mem::take(&mut self.formula_parse_diagnostics)
     }
 
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn clear_formula_parse_diagnostics(&mut self) {
+        self.assert_not_poisoned();
         self.formula_parse_diagnostics.clear();
     }
 
@@ -7632,6 +7826,7 @@ where
         &mut self,
         batches: Vec<FormulaIngestBatch>,
     ) -> Result<FormulaIngestReport, ExcelError> {
+        self.ensure_not_poisoned()?;
         let has_formulas = batches.iter().any(|batch| !batch.formulas.is_empty());
         let report = self.ingest_formula_batches_inner(
             batches,
@@ -7884,6 +8079,7 @@ where
         formula: &str,
         message: String,
     ) -> Result<Option<ASTNode>, ExcelError> {
+        self.ensure_not_poisoned()?;
         let policy = self.config.formula_parse_policy;
 
         if policy == FormulaParsePolicy::Strict {
@@ -8519,6 +8715,7 @@ where
         targets: &[crate::engine::EvaluationTarget],
         options: crate::engine::TargetEvalOptions<'_>,
     ) -> Result<crate::engine::PreparedTargetGraphReport, ExcelError> {
+        self.ensure_not_poisoned()?;
         let previous_budgets = self.evaluation_resource_budgets.clone();
         let diagnostics_len = self.formula_parse_diagnostics.len();
         let previous_report = self.last_formula_ingest_report.clone();
@@ -10282,6 +10479,7 @@ where
 
     /// Build graph for all staged formulas.
     pub fn build_graph_all(&mut self) -> Result<(), formualizer_parse::ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::Full, |engine| {
             engine.build_graph_all_unobserved()
         })
@@ -10309,6 +10507,7 @@ where
         &mut self,
         sheets: I,
     ) -> Result<(), formualizer_parse::ExcelError> {
+        self.ensure_not_poisoned()?;
         let mut sheets = sheets.into_iter();
         self.observe_evaluation_resource_request(EvaluationRequestKind::Targeted, move |engine| {
             let name_scratch = (sheets.size_hint().0 as u64).saturating_mul(64);
@@ -10780,16 +10979,24 @@ where
     }
 
     /// Begin bulk Arrow ingest for base values (Phase A)
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn begin_bulk_ingest_arrow(
         &mut self,
     ) -> crate::engine::arrow_ingest::ArrowBulkIngestBuilder<'_, R> {
+        self.assert_not_poisoned();
         crate::engine::arrow_ingest::ArrowBulkIngestBuilder::new(self)
     }
 
     /// Begin bulk updates to Arrow store (Phase C)
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn begin_bulk_update_arrow(
         &mut self,
     ) -> crate::engine::arrow_ingest::ArrowBulkUpdateBuilder<'_, R> {
+        self.assert_not_poisoned();
         crate::engine::arrow_ingest::ArrowBulkUpdateBuilder::new(self)
     }
 
@@ -11014,6 +11221,7 @@ where
         hidden: bool,
         source: RowVisibilitySource,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         self.observe_function_semantic_epoch()
             .map_err(crate::engine::EditorError::Excel)?;
         self.observe_function_semantic_epoch()
@@ -11037,6 +11245,7 @@ where
         hidden: bool,
         source: RowVisibilitySource,
     ) -> Result<(), crate::engine::EditorError> {
+        self.ensure_not_poisoned()?;
         let sheet_id = self.ensure_known_sheet_id(sheet)?;
         let (start_row0, end_row0) =
             Self::normalize_row_range_1based(start_row_1based, end_row_1based)?;
@@ -11386,6 +11595,7 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.ensure_not_poisoned()?;
         if count == 0 {
             return Ok(crate::engine::graph::editor::vertex_editor::ShiftSummary::default());
         }
@@ -11424,6 +11634,7 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.ensure_not_poisoned()?;
         if count == 0 {
             return Ok(crate::engine::graph::editor::vertex_editor::ShiftSummary::default());
         }
@@ -11461,6 +11672,7 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.ensure_not_poisoned()?;
         if count == 0 {
             return Ok(crate::engine::graph::editor::vertex_editor::ShiftSummary::default());
         }
@@ -11503,6 +11715,7 @@ where
         count: u32,
     ) -> Result<crate::engine::graph::editor::vertex_editor::ShiftSummary, crate::engine::EditorError>
     {
+        self.ensure_not_poisoned()?;
         if count == 0 {
             return Ok(crate::engine::graph::editor::vertex_editor::ShiftSummary::default());
         }
@@ -13545,6 +13758,7 @@ where
         col: u32,
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_function_semantic_epoch()?;
         let sheet_existed = self.graph.sheet_id(sheet).is_some();
         let sheet_id = self.graph.sheet_id_mut(sheet);
@@ -13707,6 +13921,7 @@ where
         current_sheet: &str,
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         let owned = cell.into_owned();
         let sheet_id = self.resolve_sheet_locator_for_write(owned.sheet, current_sheet)?;
         let sheet_name = self.graph.sheet_name(sheet_id).to_string();
@@ -13724,6 +13939,7 @@ where
         current_sheet: &str,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         let owned = cell.into_owned();
         let sheet_id = self.resolve_sheet_locator_for_write(owned.sheet, current_sheet)?;
         let sheet_name = self.graph.sheet_name(sheet_id).to_string();
@@ -13793,6 +14009,7 @@ where
         col: u32,
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_function_semantic_epoch()?;
         let sheet_id = self.graph.sheet_id_mut(sheet);
         let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
@@ -13828,6 +14045,7 @@ where
     where
         I: IntoIterator<Item = (u32, u32, ASTNode)>,
     {
+        self.ensure_not_poisoned()?;
         let collected: Vec<(u32, u32, ASTNode)> = items.into_iter().collect();
         let edited_cells: Vec<(u32, u32)> = collected.iter().map(|(r, c, _)| (*r, *c)).collect();
         let sheet_id = self.graph.sheet_id_mut(sheet);
@@ -13897,6 +14115,7 @@ where
         row: u32,
         col: u32,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         let not_a_formula = || {
             ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Declared dynamic array anchor must be a formula cell")
@@ -13936,6 +14155,7 @@ where
         rows: u32,
         cols: u32,
     ) -> Result<(), ExcelError> {
+        self.ensure_not_poisoned()?;
         if self.config.family_execution {
             return Err(ExcelError::new(ExcelErrorKind::Ref)
                 .with_message("Fixed arrays require family_execution = false"));
@@ -14231,12 +14451,20 @@ where
     }
 
     /// Begin batch operations - defer CSR rebuilds for better performance
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn begin_batch(&mut self) {
+        self.assert_not_poisoned();
         self.graph.begin_batch();
     }
 
     /// End batch operations and trigger CSR rebuild
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn end_batch(&mut self) {
+        self.assert_not_poisoned();
         self.graph.end_batch();
     }
 
@@ -14248,13 +14476,21 @@ where
     ///
     /// Callers MUST run `end_deferred_dirty` on every exit path, including
     /// error returns; evaluation entry points `debug_assert` no scope leaked.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn begin_deferred_dirty(&mut self) {
+        self.assert_not_poisoned();
         self.graph.begin_deferred_dirty();
     }
 
     /// End a deferred-dirty scope, flushing the queued propagation when the
     /// outermost scope closes. See `Engine::begin_deferred_dirty`.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn end_deferred_dirty(&mut self) {
+        self.assert_not_poisoned();
         let _ = self.graph.end_deferred_dirty();
     }
 
@@ -14280,6 +14516,7 @@ where
     }
 
     pub fn evaluate_vertex(&mut self, vertex_id: VertexId) -> Result<LiteralValue, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::Vertex, |engine| {
             engine.observe_function_semantic_epoch()?;
             // A direct request selects exactly one vertex, regardless of its formula kind.
@@ -15180,6 +15417,7 @@ where
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
     ) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::Targeted, |engine| {
             engine.observe_function_semantic_epoch()?;
             engine.validate_deterministic_mode()?;
@@ -15193,6 +15431,7 @@ where
         targets: &[crate::engine::EvaluationTarget],
         options: crate::engine::TargetEvalOptions<'_>,
     ) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::Targeted, |engine| {
             engine.active_cancel_flag = options.cancel.clone();
             engine.active_evaluation_deadline = options.deadline;
@@ -15214,6 +15453,7 @@ where
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
     ) -> Result<(EvalResult, crate::engine::TargetEvalDelta), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::CellsWithDelta, |engine| {
             engine.observe_function_semantic_epoch()?;
             engine.validate_deterministic_mode()?;
@@ -15228,6 +15468,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::Targeted, |engine| {
             engine.evaluate_until_unobserved(targets)
         })
@@ -15358,6 +15599,7 @@ where
 
     /// Build a revision-bound compatibility plan covering every prepared formula vertex.
     pub fn build_recalc_plan(&self) -> Result<RecalcPlan, ExcelError> {
+        self.ensure_not_poisoned()?;
         if self.has_staged_formulas() || self.staged_formula_index.has_packages() {
             return Err(
                 Self::plan_stale(formualizer_common::PlanStaleReason::Staged).with_message(
@@ -15393,6 +15635,7 @@ where
         &mut self,
         targets: &[crate::engine::EvaluationTarget],
     ) -> Result<RecalcPlan, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.build_recalc_plan_for_targets_with_options(
             targets,
             crate::engine::TargetEvalOptions::default(),
@@ -15404,6 +15647,7 @@ where
         targets: &[crate::engine::EvaluationTarget],
         options: crate::engine::TargetEvalOptions<'_>,
     ) -> Result<RecalcPlan, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
             engine.observe_function_semantic_epoch()?;
             engine.validate_deterministic_mode()?;
@@ -15433,6 +15677,7 @@ where
 
     /// Evaluate using a previously constructed compatibility or target plan.
     pub fn evaluate_recalc_plan(&mut self, plan: &RecalcPlan) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
             engine.evaluate_recalc_plan_unobserved(plan)
         })
@@ -15444,6 +15689,7 @@ where
         cancel: Option<crate::engine::CancelToken>,
         deadline: Option<Instant>,
     ) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::RecalcPlan, |engine| {
             engine.active_cancel_flag = cancel.clone();
             engine.active_evaluation_deadline = deadline;
@@ -15608,6 +15854,7 @@ where
         &mut self,
         cancel: Option<crate::engine::CancelToken>,
     ) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         // Refusal must precede the scope and its failure cleanup: redirtying
         // volatiles here would invalidate values installed by the active job.
         if self.has_active_recalc_job() {
@@ -15662,6 +15909,7 @@ where
         &mut self,
         stop: super::EvaluationStop,
     ) -> Result<super::EvaluationProgress, ExcelError> {
+        self.ensure_not_poisoned()?;
         if self.has_active_recalc_job() {
             return Err(Self::active_recalc_job_error());
         }
@@ -15753,6 +16001,7 @@ where
 
     /// Evaluate all dirty/volatile vertices.
     pub fn evaluate_all(&mut self) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         // `evaluate_all_unobserved` owns the `observe_function_semantic_epoch` guard.
         self.observe_evaluation_resource_request(EvaluationRequestKind::Full, |engine| {
             engine.evaluate_all_unobserved()
@@ -15907,6 +16156,7 @@ where
     pub fn evaluate_all_with_target_delta(
         &mut self,
     ) -> Result<(EvalResult, crate::engine::TargetEvalDelta), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::FullWithDelta, |engine| {
             engine.observe_function_semantic_epoch()?;
             let mut collector = DeltaCollector::new(DeltaMode::Cells);
@@ -15916,6 +16166,7 @@ where
     }
 
     pub fn evaluate_all_with_delta(&mut self) -> Result<(EvalResult, EvalDelta), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.evaluate_all_with_delta_policy(EvalDeltaCompatibilityPolicy::Unlimited)
     }
 
@@ -15923,6 +16174,7 @@ where
         &mut self,
         policy: EvalDeltaCompatibilityPolicy,
     ) -> Result<(EvalResult, EvalDelta), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::FullWithDelta, |engine| {
             engine.observe_function_semantic_epoch()?;
             let mut collector = DeltaCollector::new(DeltaMode::Cells);
@@ -16058,6 +16310,7 @@ where
         row: u32,
         col: u32,
     ) -> Result<Option<LiteralValue>, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::Cell, |engine| {
             engine.evaluate_cell_unobserved(sheet, row, col)
         })
@@ -16096,6 +16349,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::Cells, |engine| {
             engine.evaluate_cells_unobserved(targets)
         })
@@ -16128,6 +16382,7 @@ where
         targets: &[(&str, u32, u32)],
         cancel: crate::engine::CancelToken,
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(
             EvaluationRequestKind::CellsCancellable,
             |engine| {
@@ -16165,6 +16420,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<(Vec<Option<LiteralValue>>, crate::engine::TargetEvalDelta), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::CellsWithDelta, |engine| {
             engine.observe_function_semantic_epoch()?;
             engine.validate_deterministic_mode()?;
@@ -16185,6 +16441,7 @@ where
         &mut self,
         targets: &[(&str, u32, u32)],
     ) -> Result<(Vec<Option<LiteralValue>>, EvalDelta), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.evaluate_cells_with_delta_policy(targets, EvalDeltaCompatibilityPolicy::Unlimited)
     }
 
@@ -16193,6 +16450,7 @@ where
         targets: &[(&str, u32, u32)],
         policy: EvalDeltaCompatibilityPolicy,
     ) -> Result<(Vec<Option<LiteralValue>>, EvalDelta), ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::CellsWithDelta, |engine| {
             engine.evaluate_cells_with_delta_unobserved(targets, policy)
         })
@@ -16219,6 +16477,7 @@ where
 
     /// Get the evaluation plan for target cells without actually evaluating them
     pub fn get_eval_plan(&self, targets: &[(&str, u32, u32)]) -> Result<EvalPlan, ExcelError> {
+        self.ensure_not_poisoned()?;
         if targets.is_empty() {
             return Ok(EvalPlan {
                 total_vertices_to_evaluate: 0,
@@ -17360,6 +17619,7 @@ where
         &mut self,
         cancel: crate::engine::CancelToken,
     ) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::FullCancellable, |engine| {
             engine.observe_function_semantic_epoch()?;
             engine.active_cancel_flag = Some(cancel.clone());
@@ -17524,6 +17784,7 @@ where
         targets: &[&str],
         cancel: crate::engine::CancelToken,
     ) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(
             EvaluationRequestKind::TargetedCancellable,
             |engine| {
@@ -22390,6 +22651,7 @@ where
     /// This is the same flow as `evaluate_all` but threads a ChangeLog through
     /// every effect application so that spill commits/clears are captured.
     pub fn evaluate_all_logged(&mut self, log: &mut ChangeLog) -> Result<EvalResult, ExcelError> {
+        self.ensure_not_poisoned()?;
         self.observe_evaluation_resource_request(EvaluationRequestKind::FullLogged, |engine| {
             engine.evaluate_all_logged_unobserved(log)
         })
@@ -22519,5 +22781,35 @@ where
     ) -> Result<usize, ExcelError> {
         self.resource_checkpoint(layer.vertices.len() as u64)?;
         self.evaluate_layer_units(layer, None, Some(log), None, true)
+    }
+}
+
+impl<R: EvaluationContext> Engine<R> {
+    /// Whether an engine-internal panic has permanently disabled work.
+    ///
+    /// Reads and inspection remain available, but may expose stale or partially
+    /// installed values. Discard a poisoned engine; there is no recovery API.
+    ///
+    /// # Panics
+    ///
+    /// Infallible mutation methods linked here panic before doing work when
+    /// poisoned, with "formualizer engine is poisoned by an earlier internal panic; discard it".
+    /// Fallible methods return a typed EnginePoisoned error instead.
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(crate) fn ensure_not_poisoned(&self) -> Result<(), ExcelError> {
+        if self.is_poisoned() {
+            Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message(super::poison::POISON_MESSAGE)
+                .with_extra(formualizer_common::ExcelErrorExtra::EnginePoisoned))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn assert_not_poisoned(&self) {
+        assert!(!self.is_poisoned(), "{}", super::poison::POISON_MESSAGE);
     }
 }

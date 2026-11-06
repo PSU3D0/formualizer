@@ -1206,6 +1206,8 @@ impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome:
 impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceModeVerification
 pub fn formualizer_workbook::source_outcome::SourceModeVerification::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 pub enum formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::FunctionPanicked
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::FunctionPanicked::name: alloc::string::String
 pub formualizer_workbook::source_outcome::SourceUnavailableOperation::InternalResult
 pub formualizer_workbook::source_outcome::SourceUnavailableOperation::InternalResult::token: alloc::string::String
 pub formualizer_workbook::source_outcome::SourceUnavailableOperation::PostfixInvocation
@@ -2069,6 +2071,7 @@ pub fn formualizer_workbook::workbook::Workbook::has_staged_formulas(&self) -> b
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_bytes(&self, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_file(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_modules_dir(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
+pub fn formualizer_workbook::workbook::Workbook::is_poisoned(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::is_row_hidden(&self, &str, u32) -> core::result::Result<bool, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::last_formula_ingest_report(&self) -> core::option::Option<formualizer_eval::engine::formula_ingest::FormulaIngestReport>
 pub fn formualizer_workbook::workbook::Workbook::list_custom_functions(&self) -> alloc::vec::Vec<formualizer_workbook::workbook::CustomFnInfo>
@@ -2448,6 +2451,8 @@ impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome:
 impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceModeVerification
 pub fn formualizer_workbook::source_outcome::SourceModeVerification::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 pub enum formualizer_workbook::SourceUnavailableOperation
+pub formualizer_workbook::SourceUnavailableOperation::FunctionPanicked
+pub formualizer_workbook::SourceUnavailableOperation::FunctionPanicked::name: alloc::string::String
 pub formualizer_workbook::SourceUnavailableOperation::InternalResult
 pub formualizer_workbook::SourceUnavailableOperation::InternalResult::token: alloc::string::String
 pub formualizer_workbook::SourceUnavailableOperation::PostfixInvocation
@@ -3469,6 +3474,7 @@ pub fn formualizer_workbook::workbook::Workbook::has_staged_formulas(&self) -> b
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_bytes(&self, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_file(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_modules_dir(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
+pub fn formualizer_workbook::workbook::Workbook::is_poisoned(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::is_row_hidden(&self, &str, u32) -> core::result::Result<bool, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::last_formula_ingest_report(&self) -> core::option::Option<formualizer_eval::engine::formula_ingest::FormulaIngestReport>
 pub fn formualizer_workbook::workbook::Workbook::list_custom_functions(&self) -> alloc::vec::Vec<formualizer_workbook::workbook::CustomFnInfo>

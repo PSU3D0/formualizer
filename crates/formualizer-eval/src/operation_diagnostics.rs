@@ -16,6 +16,10 @@ use std::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum UnavailableOperation {
+    /// Executed function code unwound instead of producing a result.
+    FunctionPanicked {
+        name: String,
+    },
     UnknownFunction {
         name: String,
     },
@@ -40,7 +44,8 @@ pub enum UnavailableOperation {
 impl UnavailableOperation {
     fn owned_text_bytes(&self) -> usize {
         match self {
-            Self::UnknownFunction { name }
+            Self::FunctionPanicked { name }
+            | Self::UnknownFunction { name }
             | Self::UnimplementedFunction { name }
             | Self::UnimplementedFunctionMode { name, .. }
             | Self::UnverifiedFunctionMode { name, .. }

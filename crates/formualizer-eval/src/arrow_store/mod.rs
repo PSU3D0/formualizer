@@ -1173,6 +1173,8 @@ pub enum OverlayValue {
     Boolean(bool),
     Text(Arc<str>),
     Error(u8),
+    /// Exceptional Rust function failure; retain its typed payload through reads.
+    FunctionPanicked(Arc<ExcelError>),
     Pending,
 }
 
@@ -1187,6 +1189,14 @@ impl OverlayValue {
             LiteralValue::Number(n) => OverlayValue::Number(*n),
             LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
             LiteralValue::Text(s) => OverlayValue::Text(Arc::from(s.clone())),
+            LiteralValue::Error(e)
+                if matches!(
+                    e.extra(),
+                    formualizer_common::ExcelErrorExtra::FunctionPanicked { .. }
+                ) =>
+            {
+                OverlayValue::FunctionPanicked(Arc::new(e.clone()))
+            }
             LiteralValue::Error(e) => OverlayValue::Error(map_error_code(e.kind)),
             LiteralValue::Date(d) => {
                 let dt = d.and_hms_opt(0, 0, 0).unwrap();
@@ -1213,6 +1223,15 @@ impl OverlayValue {
             }
             OverlayValue::Boolean(_) => core::mem::size_of::<bool>(),
             OverlayValue::Error(_) => core::mem::size_of::<u8>(),
+            OverlayValue::FunctionPanicked(e) => {
+                let text = match e.extra() {
+                    formualizer_common::ExcelErrorExtra::FunctionPanicked { function, message } => {
+                        function.capacity() + message.as_ref().map_or(0, String::capacity)
+                    }
+                    _ => 0,
+                };
+                core::mem::size_of::<ExcelError>() + text
+            }
             // Deterministic estimate: count string bytes only.
             OverlayValue::Text(s) => s.len(),
         }
@@ -1227,7 +1246,7 @@ impl OverlayValue {
             OverlayValue::Duration(_) => TypeTag::Duration,
             OverlayValue::Boolean(_) => TypeTag::Boolean,
             OverlayValue::Text(_) => TypeTag::Text,
-            OverlayValue::Error(_) => TypeTag::Error,
+            OverlayValue::Error(_) | OverlayValue::FunctionPanicked(_) => TypeTag::Error,
             OverlayValue::Pending => TypeTag::Pending,
         }
     }
@@ -1262,6 +1281,7 @@ impl OverlayValue {
     pub(crate) fn error_lane_value(&self) -> Option<u8> {
         match self {
             OverlayValue::Error(code) => Some(*code),
+            OverlayValue::FunctionPanicked(e) => Some(map_error_code(e.kind)),
             _ => None,
         }
     }
@@ -1273,7 +1293,10 @@ impl OverlayValue {
                 Some(n.to_string())
             }
             OverlayValue::Boolean(b) => Some(if *b { "true" } else { "false" }.to_string()),
-            OverlayValue::Empty | OverlayValue::Error(_) | OverlayValue::Pending => None,
+            OverlayValue::Empty
+            | OverlayValue::Error(_)
+            | OverlayValue::FunctionPanicked(_)
+            | OverlayValue::Pending => None,
         }
     }
 
@@ -1287,6 +1310,7 @@ impl OverlayValue {
             }
             OverlayValue::Boolean(b) => LiteralValue::Boolean(*b),
             OverlayValue::Text(s) => LiteralValue::Text((**s).to_string()),
+            OverlayValue::FunctionPanicked(e) => LiteralValue::Error((**e).clone()),
             OverlayValue::Error(code) => {
                 LiteralValue::Error(ExcelError::new(unmap_error_code(*code)))
             }
@@ -1366,6 +1390,7 @@ const OVERLAY_FRAGMENT_BASE_BYTES: usize = 48;
 #[derive(Debug, Clone)]
 pub(crate) struct OverlayFragmentPayload {
     type_tags: Arc<UInt8Array>,
+    panic_errors: Option<Box<FxHashMap<usize, Arc<ExcelError>>>>,
     numbers: Option<Arc<Float64Array>>,
     booleans: Option<Arc<BooleanArray>>,
     text: Option<ArrayRef>,
@@ -1417,6 +1442,15 @@ impl OverlayFragmentPayload {
         let own = self.len().max(1);
         Self {
             type_tags: cut(&self.type_tags, offset, len),
+            panic_errors: self.panic_errors.as_ref().map(|errors| {
+                Box::new(
+                    errors
+                        .iter()
+                        .filter(|(i, _)| **i >= offset && **i < offset + len)
+                        .map(|(i, e)| (*i - offset, e.clone()))
+                        .collect(),
+                )
+            }),
             numbers: self.numbers.as_ref().map(|a| cut(a, offset, len)),
             booleans: self.booleans.as_ref().map(|a| cut(a, offset, len)),
             text: self.text.as_ref().map(|a| a.slice(offset, len)),
@@ -1440,7 +1474,16 @@ impl OverlayFragmentPayload {
         let mut non_text = 0usize;
         let mut non_err = 0usize;
 
-        for value in &values {
+        let mut panic_errors = None;
+        let mut panic_bytes = 0usize;
+        for (i, value) in values.iter().enumerate() {
+            if let OverlayValue::FunctionPanicked(error) = value {
+                panic_errors
+                    .get_or_insert_with(|| Box::new(FxHashMap::default()))
+                    .insert(i, error.clone());
+                panic_bytes = panic_bytes
+                    .saturating_add(value.estimated_payload_bytes() + OVERLAY_ENTRY_BASE_BYTES);
+            }
             append_overlay_value_to_lane_builders(
                 value,
                 &mut tag_b,
@@ -1501,11 +1544,12 @@ impl OverlayFragmentPayload {
 
         Self {
             type_tags,
+            panic_errors,
             numbers,
             booleans,
             text,
             errors,
-            estimated_bytes,
+            estimated_bytes: estimated_bytes.saturating_add(panic_bytes),
             root_len: len,
         }
     }
@@ -1521,7 +1565,13 @@ impl OverlayFragmentPayload {
             TypeTag::Duration => Some(OverlayValue::Duration(self.number_at(idx)?)),
             TypeTag::Boolean => Some(OverlayValue::Boolean(self.boolean_at(idx)?)),
             TypeTag::Text => Some(OverlayValue::Text(Arc::from(self.text_at(idx)?))),
-            TypeTag::Error => Some(OverlayValue::Error(self.error_at(idx)?)),
+            TypeTag::Error => Some(
+                self.panic_errors
+                    .as_ref()
+                    .and_then(|errors| errors.get(&idx))
+                    .map(|e| OverlayValue::FunctionPanicked(e.clone()))
+                    .unwrap_or(OverlayValue::Error(self.error_at(idx)?)),
+            ),
             TypeTag::Pending => Some(OverlayValue::Pending),
         }
     }
@@ -4252,6 +4302,20 @@ fn append_overlay_value_to_lane_builders(
             *non_text += 1;
             eb.append_null();
         }
+        OverlayValue::FunctionPanicked(error) => {
+            append_overlay_value_to_lane_builders(
+                &OverlayValue::Error(map_error_code(error.kind)),
+                tag_b,
+                nb,
+                bb,
+                sb,
+                eb,
+                non_num,
+                non_bool,
+                non_text,
+                non_err,
+            );
+        }
         OverlayValue::Error(code) => {
             tag_b.append_value(TypeTag::Error as u8);
             nb.append_null();
@@ -4805,6 +4869,9 @@ impl ArrowSheet {
                 // If overlay present, use it. Otherwise, use base tag+lane.
                 if let Some(ov) = ch_ref.overlay.get_scalar(i) {
                     let ov = ov.to_overlay_value();
+                    if matches!(ov, OverlayValue::FunctionPanicked(_)) {
+                        return 0;
+                    }
                     append_overlay_value_to_lane_builders(
                         &ov,
                         &mut tag_b,
@@ -4998,6 +5065,9 @@ impl ArrowSheet {
             for i in 0..len {
                 if let Some(ov) = ch_ref.computed_overlay.get_scalar(i) {
                     let ov = ov.to_overlay_value();
+                    if matches!(ov, OverlayValue::FunctionPanicked(_)) {
+                        return 0;
+                    }
                     append_overlay_value_to_lane_builders(
                         &ov,
                         &mut tag_b,
@@ -7018,6 +7088,51 @@ mod tests {
         assert_eq!(sheet.get_cell_value(0, 0), LiteralValue::Empty);
         assert_eq!(sheet.get_cell_value(1, 0), LiteralValue::Empty);
         assert_eq!(sheet.get_cell_value(2, 0), LiteralValue::Empty);
+    }
+
+    #[test]
+    fn function_panic_payload_survives_fragments_splits_and_compaction() {
+        let error = ExcelError::from_function_panic("FN", &"payload");
+        let value = OverlayValue::from_literal_value(
+            &LiteralValue::Error(error.clone()),
+            crate::engine::DateSystem::Excel1900,
+        );
+        for run in [false, true] {
+            let mut overlay = Overlay::new();
+            let values = vec![value.clone(); 128];
+            let fragment = if run {
+                OverlayFragment::run_range(0, values)
+            } else {
+                OverlayFragment::dense_range(0, values)
+            }
+            .unwrap();
+            overlay.apply_fragment(fragment);
+            overlay.remove_range(20..40);
+            for i in [0, 19, 40, 127] {
+                assert_eq!(
+                    overlay.get_scalar(i).unwrap().to_literal(),
+                    LiteralValue::Error(error.clone())
+                );
+            }
+            assert!(overlay.get_scalar(30).is_none());
+        }
+        let mut builder =
+            IngestBuilder::new("Sheet1", 1, 128, crate::engine::DateSystem::Excel1900);
+        for _ in 0..128 {
+            builder.append_row(&[LiteralValue::Number(1.)]).unwrap();
+        }
+        let mut sheet = builder.finish();
+        sheet.columns[0].chunks[0]
+            .computed_overlay
+            .apply_fragment(OverlayFragment::dense_range(0, vec![value.clone(); 128]).unwrap());
+        assert_eq!(sheet.compact_computed_overlay_chunk(0, 0), 0);
+        assert_eq!(
+            sheet.get_cell_value(50, 0),
+            LiteralValue::Error(error.clone())
+        );
+        sheet.columns[0].chunks[0].overlay.set(50, value);
+        assert_eq!(sheet.maybe_compact_chunk(0, 0, 1, 0), 0);
+        assert_eq!(sheet.get_cell_value(50, 0), LiteralValue::Error(error));
     }
 
     #[test]

@@ -454,7 +454,26 @@ impl<'a> Interpreter<'a> {
         call_expression_error()
     }
 
-    pub(crate) fn diagnostic_dispatch<T>(
+    /// Catch function/callable code without changing healthy dispatch telemetry.
+    fn function_call<T: crate::function::PanicResult>(
+        &self,
+        name: &str,
+        run: impl FnOnce() -> T,
+    ) -> T {
+        match crate::function::catch_function_panic(name, run) {
+            Ok(result) => result,
+            Err(error) => {
+                self.unavailable(
+                    crate::operation_diagnostics::UnavailableOperation::FunctionPanicked {
+                        name: name.to_ascii_uppercase(),
+                    },
+                );
+                T::panicked(error)
+            }
+        }
+    }
+
+    pub(crate) fn diagnostic_dispatch<T: crate::function::PanicResult>(
         &self,
         name: &str,
         reporting: bool,
@@ -466,7 +485,7 @@ impl<'a> Interpreter<'a> {
             collector.dispatch_started();
         }
         let scope = collector.map(|c| c.scope(crate::operation_diagnostics::Mode::Inherit));
-        let result = run();
+        let result = self.function_call(name, run);
         if let Some(scope) = scope {
             if !scope.tainted() && unimplemented(&result) {
                 self.unavailable(
@@ -1533,7 +1552,9 @@ impl<'a> Interpreter<'a> {
                                 .into_literal(),
                         );
                     }
-                    return callable.invoke_with_references(self, &eval_args, &arg_references);
+                    return self.function_call(name, || {
+                        callable.invoke_with_references(self, &eval_args, &arg_references)
+                    });
                 }
 
                 self.unknown_function(name);
@@ -2041,7 +2062,9 @@ impl<'a> Interpreter<'a> {
                     .push(ArgumentHandle::new(arg, self).bound_reference_in_env(&self.local_env));
                 eval_args.push(self.evaluate_ast(arg)?.into_literal());
             }
-            return callable.invoke_with_references(self, &eval_args, &arg_references);
+            return self.function_call(name, || {
+                callable.invoke_with_references(self, &eval_args, &arg_references)
+            });
         }
 
         self.unknown_function(name);

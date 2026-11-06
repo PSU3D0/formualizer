@@ -65,6 +65,8 @@ pub enum StopReason {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RecalcJobError {
+    /// An earlier engine-internal unwind permanently disabled this engine.
+    Poisoned,
     /// No explicit job exists.
     NoActiveJob,
     /// A logical recalculation already exists.
@@ -78,6 +80,7 @@ pub enum RecalcJobError {
 impl std::fmt::Display for RecalcJobError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Poisoned => f.write_str(super::poison::POISON_MESSAGE),
             Self::NoActiveJob => f.write_str("no active recalculation job"),
             Self::AlreadyPending { explicit } => {
                 write!(f, "recalculation already pending (explicit: {explicit})")

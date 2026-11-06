@@ -362,16 +362,30 @@ fn evaluation_snapshot_refreshes_on_register_and_unregister() {
 #[test]
 fn callback_panic_is_typed_and_incomplete() {
     let mut wb = workbook();
-    wb.engine_mut().configure_operation_diagnostics(Default::default());
-    wb.register_custom_function("PANIC_CALLBACK", CustomFnOptions::default(),
+    wb.engine_mut()
+        .configure_operation_diagnostics(Default::default());
+    wb.register_custom_function(
+        "PANIC_CALLBACK",
+        CustomFnOptions::default(),
         Arc::new(|_: &[LiteralValue]| -> Result<LiteralValue, ExcelError> {
             panic!("callback payload")
-        })).unwrap();
+        }),
+    )
+    .unwrap();
     wb.set_formula("Sheet1", 1, 1, "=PANIC_CALLBACK()").unwrap();
     wb.set_formula("Sheet1", 2, 1, "=A1+1").unwrap();
     wb.evaluate_all().unwrap();
-    let Some(LiteralValue::Error(error)) = wb.get_value("Sheet1", 1, 1) else { panic!("missing error") };
+    let Some(LiteralValue::Error(error)) = wb.get_value("Sheet1", 1, 1) else {
+        panic!("missing error")
+    };
     assert_eq!(error.kind, ExcelErrorKind::Value);
     assert!(format!("{:?}", error.extra()).contains("FunctionPanicked"));
-    assert!(wb.engine().operation_diagnostics().unwrap().unwrap().logical_cell_reason_count > 0);
+    assert!(
+        wb.engine()
+            .operation_diagnostics()
+            .unwrap()
+            .unwrap()
+            .logical_cell_reason_count
+            > 0
+    );
 }

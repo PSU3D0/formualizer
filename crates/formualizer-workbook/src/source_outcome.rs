@@ -21,6 +21,7 @@ pub enum SourceCoverageScope {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SourceUnavailableOperation {
+    FunctionPanicked { name: String },
     UnknownFunction { name: String },
     UnimplementedFunction { name: String },
     UnimplementedFunctionMode { name: String, mode: String },
