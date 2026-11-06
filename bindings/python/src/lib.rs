@@ -32,12 +32,14 @@ mod ast;
 #[cfg(not(target_arch = "wasm32"))]
 mod cli;
 mod engine;
+// PyO3's from_py_object expansion clones Copy enum wrappers.
+#[allow(clippy::clone_on_copy)]
 mod enums;
 mod errors;
 mod inspect;
 mod parser;
-mod reference;
 mod recalc;
+mod reference;
 mod sheet; // retain for compatibility
 mod sheetport;
 mod source_calculation;
@@ -282,6 +284,7 @@ fn unknown_functions_to_py(
 /// Source-recalc options from the keyword arguments shared with
 /// `SheetPortSession.evaluate_once` (same names, types and defaults), plus
 /// the recalc-only `external_links` policy.
+#[allow(clippy::too_many_arguments)]
 fn xlsx_recalc_options(
     error_location_limit: Option<usize>,
     rng_seed: Option<u64>,
@@ -502,6 +505,7 @@ fn xlsx_result_to_py(
 )]
 #[pyfunction]
 #[pyo3(signature = (data, *, error_location_limit=None, rng_seed=None, deterministic_timestamp_utc=None, deterministic_timezone=None, external_links="cached", profile="strict", calculation=None, require_complete=false, limits=None, physical_telemetry=false))]
+#[allow(clippy::too_many_arguments)]
 fn recalculate_xlsx_bytes(
     py: Python<'_>,
     data: &Bound<'_, PyBytes>,

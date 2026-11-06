@@ -302,6 +302,8 @@ pub struct PyWorkbook {
     pub(crate) sheets: std::sync::Arc<std::sync::RwLock<SheetCache>>,
     pub(crate) cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) job_generation: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) step_cancel:
+        std::sync::Arc<std::sync::Mutex<Option<formualizer::eval::engine::CancelToken>>>,
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
@@ -345,6 +347,7 @@ impl PyWorkbook {
     /// ```
     #[classmethod]
     #[pyo3(signature = (path, strategy=None, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None, load_limits=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn load_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
@@ -1042,24 +1045,79 @@ impl PyWorkbook {
         Ok(())
     }
 
+    /// Recalculate cooperatively. on_step(report) may return False to pause.
+    #[pyo3(signature = (budget_ms=Some(5.0), *, on_step=None, priority=None), text_signature = "($self, budget_ms=5.0, *, on_step=None, priority=None)")]
+    pub fn recalc(
+        &self,
+        py: Python<'_>,
+        budget_ms: Option<f64>,
+        on_step: Option<PyObject>,
+        priority: Option<Vec<crate::recalc::Rect>>,
+    ) -> PyResult<crate::recalc::PyRecalcOutcome> {
+        self.check_reentrancy()?;
+        crate::recalc::stop(budget_ms, formualizer::eval::engine::CancelToken::new())?;
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("on_step", on_step)?;
+        kwargs.set_item("priority", priority)?;
+        Ok(py
+            .import("formualizer._recalc")?
+            .getattr("recalc")?
+            .call((self.clone(), budget_ms), Some(&kwargs))?
+            .extract()?)
+    }
+
+    /// Await cooperative recalculation; progress callbacks run on the event loop.
+    #[pyo3(signature = (budget_ms=Some(5.0), *, on_progress=None, priority=None), text_signature = "($self, budget_ms=5.0, *, on_progress=None, priority=None)")]
+    pub fn evaluate_async(
+        &self,
+        py: Python<'_>,
+        budget_ms: Option<f64>,
+        on_progress: Option<PyObject>,
+        priority: Option<Vec<crate::recalc::Rect>>,
+    ) -> PyResult<PyObject> {
+        self.check_reentrancy()?;
+        crate::recalc::stop(budget_ms, formualizer::eval::engine::CancelToken::new())?;
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("on_progress", on_progress)?;
+        kwargs.set_item("priority", priority)?;
+        Ok(py
+            .import("formualizer._recalc")?
+            .getattr("evaluate_async")?
+            .call((self.clone(), budget_ms), Some(&kwargs))?
+            .unbind())
+    }
+
     /// Start a cooperative recalculation. Priority uses 1-based inclusive rectangles.
     #[pyo3(signature = (*, collect_deltas=true, max_delta_records=1024, priority=None))]
     pub fn begin_recalc(
-        &self, py: Python<'_>, collect_deltas: bool, max_delta_records: usize,
+        &self,
+        py: Python<'_>,
+        collect_deltas: bool,
+        max_delta_records: usize,
         priority: Option<Vec<crate::recalc::Rect>>,
     ) -> PyResult<crate::recalc::PyRecalcJob> {
         self.check_reentrancy()?;
         let priority = crate::recalc::targets(priority.unwrap_or_default())?;
         py.detach(|| {
-            let mut wb = self.write_inner_detached().map_err(workbook_error_to_pyerr)?;
+            let mut wb = self
+                .write_inner_detached()
+                .map_err(workbook_error_to_pyerr)?;
             let mut options = formualizer::eval::engine::RecalcJobOptions::default();
             options.collect_deltas = collect_deltas;
             options.max_delta_records = max_delta_records;
             options.initial_priority = priority;
-            wb.begin_recalc(options).map_err(crate::errors::recalc_error_to_pyerr)?;
-            self.cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
-            let generation = self.job_generation.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-            Ok(crate::recalc::PyRecalcJob { workbook: self.clone(), generation })
+            wb.begin_recalc(options)
+                .map_err(crate::errors::recalc_error_to_pyerr)?;
+            self.cancel_flag
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+            let generation = self
+                .job_generation
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            Ok(crate::recalc::PyRecalcJob {
+                workbook: self.clone(),
+                generation,
+            })
         })
     }
 
@@ -1067,42 +1125,77 @@ impl PyWorkbook {
     pub fn has_active_recalc_job(&self, py: Python<'_>) -> PyResult<bool> {
         self.check_reentrancy()?;
         py.detach(|| {
-            let wb = self.inner.read().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
+            let wb = self
+                .inner
+                .read()
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
             Ok(wb.has_active_recalc_job())
         })
     }
 
     /// Raw formula dirtiness in a 1-based inclusive viewport.
-    pub fn has_pending_in_rect(&self, py: Python<'_>, sheet: &str, r0: u32, c0: u32, r1: u32, c1: u32) -> PyResult<bool> {
+    pub fn has_pending_in_rect(
+        &self,
+        py: Python<'_>,
+        sheet: &str,
+        r0: u32,
+        c0: u32,
+        r1: u32,
+        c1: u32,
+    ) -> PyResult<bool> {
         self.check_reentrancy()?;
-        crate::recalc::validate_rect(r0,c0,r1,c1)?;
+        crate::recalc::validate_rect(r0, c0, r1, c1)?;
         py.detach(|| {
-            let wb = self.inner.read().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
-            let id = wb.engine().sheet_id(sheet).ok_or_else(|| crate::errors::SheetNotFoundError::new_err(sheet.to_owned()))?;
-            Ok(wb.has_pending_in_rect(id,r0-1,c0-1,r1-1,c1-1))
+            let wb = self
+                .inner
+                .read()
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
+            let id = wb
+                .engine()
+                .sheet_id(sheet)
+                .ok_or_else(|| crate::errors::SheetNotFoundError::new_err(sheet.to_owned()))?;
+            Ok(wb.has_pending_in_rect(id, r0 - 1, c0 - 1, r1 - 1, c1 - 1))
         })
     }
 
     /// Conservative pending rectangles; coordinates are 1-based inclusive.
-    pub fn pending_cells_in_rect(&self, py: Python<'_>, sheet: &str, r0: u32, c0: u32, r1: u32, c1: u32) -> PyResult<Vec<crate::recalc::Rect>> {
+    pub fn pending_cells_in_rect(
+        &self,
+        py: Python<'_>,
+        sheet: &str,
+        r0: u32,
+        c0: u32,
+        r1: u32,
+        c1: u32,
+    ) -> PyResult<Vec<crate::recalc::Rect>> {
         self.check_reentrancy()?;
-        crate::recalc::validate_rect(r0,c0,r1,c1)?;
+        crate::recalc::validate_rect(r0, c0, r1, c1)?;
         py.detach(|| {
-            let wb = self.inner.read().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
-            let id = wb.engine().sheet_id(sheet).ok_or_else(|| crate::errors::SheetNotFoundError::new_err(sheet.to_owned()))?;
-            Ok(crate::recalc::rectangles(&wb,&wb.pending_cells_in_rect(id,r0-1,c0-1,r1-1,c1-1)))
+            let wb = self
+                .inner
+                .read()
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("lock: {e}")))?;
+            let id = wb
+                .engine()
+                .sheet_id(sheet)
+                .ok_or_else(|| crate::errors::SheetNotFoundError::new_err(sheet.to_owned()))?;
+            Ok(crate::recalc::rectangles(
+                &wb,
+                &wb.pending_cells_in_rect(id, r0 - 1, c0 - 1, r1 - 1, c1 - 1),
+            ))
         })
     }
 
     pub fn evaluate_all(&self, py: Python<'_>) -> PyResult<()> {
-        // Ensure flag is reset before starting
-        self.cancel_flag
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-
         py.detach(|| {
-            self.write_inner_detached()?.evaluate_all_cancellable(
-                formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
-            )
+            let mut wb = self.write_inner_detached()?;
+            if !wb.has_active_recalc_job() {
+                self.cancel_flag
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+            wb.evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
+                self.cancel_flag.clone(),
+            ))
         })
         .map_err(workbook_error_to_pyerr)?;
         Ok(())
@@ -1152,10 +1245,6 @@ impl PyWorkbook {
             target_vec.push((sheet, row, col));
         }
 
-        // Ensure flag is reset
-        self.cancel_flag
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-
         // We use a temporary vector of (&str, u32, u32) because Workbook::evaluate_cells expects that
         let refs: Vec<(&str, u32, u32)> = target_vec
             .iter()
@@ -1164,7 +1253,12 @@ impl PyWorkbook {
 
         let results = py
             .detach(|| {
-                self.write_inner_detached()?.evaluate_cells_cancellable(
+                let mut wb = self.write_inner_detached()?;
+                if !wb.has_active_recalc_job() {
+                    self.cancel_flag
+                        .store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+                wb.evaluate_cells_cancellable(
                     &refs,
                     formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
                 )
@@ -1209,6 +1303,9 @@ impl PyWorkbook {
     pub fn cancel(&self) {
         self.cancel_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Some(token) = self.step_cancel.lock().expect("step token lock").as_ref() {
+            token.cancel();
+        }
     }
 
     pub fn reset_cancel(&self) {
@@ -1670,6 +1767,7 @@ impl PyWorkbook {
             sheets: std::sync::Arc::new(std::sync::RwLock::new(HashMap::new())),
             cancel_flag: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             job_generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            step_cancel: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -1750,9 +1848,22 @@ impl PyWorkbook {
         &self,
     ) -> PyResult<std::sync::RwLockReadGuard<'_, formualizer::workbook::Workbook>> {
         self.check_reentrancy()?;
-        self.inner
-            .read()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))
+        loop {
+            match self.inner.try_read() {
+                Ok(guard) => return Ok(guard),
+                Err(std::sync::TryLockError::Poisoned(e)) => {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lock: {e}"
+                    )));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    // A step may need the GIL for a Python UDF. Never wait for
+                    // its engine lock while holding the GIL. Guards never cross
+                    // the detach boundary: wait, drop, then retry.
+                    Python::attach(|py| py.detach(|| drop(self.inner.read())));
+                }
+            }
+        }
     }
 
     /// The compatibility cache, recovering it if a panic poisoned its lock.
@@ -1782,9 +1893,19 @@ impl PyWorkbook {
         &self,
     ) -> PyResult<std::sync::RwLockWriteGuard<'_, formualizer::workbook::Workbook>> {
         self.check_reentrancy()?;
-        self.inner
-            .write()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("lock: {e}")))
+        loop {
+            match self.inner.try_write() {
+                Ok(guard) => return Ok(guard),
+                Err(std::sync::TryLockError::Poisoned(e)) => {
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "lock: {e}"
+                    )));
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    Python::attach(|py| py.detach(|| drop(self.inner.write())));
+                }
+            }
+        }
     }
 
     /// Exclusive access from inside a `py.detach` region: the error type must

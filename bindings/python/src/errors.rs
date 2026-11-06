@@ -51,7 +51,7 @@ fn error_context_to_py(py: Python<'_>, context: &ErrorContext) -> PyObject {
     dict.into_any().unbind()
 }
 
-fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject> {
+pub(crate) fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject> {
     let dict = PyDict::new(py);
     match extra {
         ExcelErrorExtra::None => return None,
@@ -76,8 +76,12 @@ fn error_extra_to_py(py: Python<'_>, extra: &ExcelErrorExtra) -> Option<PyObject
             let _ = dict.set_item("function", function);
             let _ = dict.set_item("message", message);
         }
-        ExcelErrorExtra::RecalcJobActive => { let _ = dict.set_item("kind", "RecalcJobActive"); }
-        ExcelErrorExtra::EnginePoisoned => { let _ = dict.set_item("kind", "EnginePoisoned"); }
+        ExcelErrorExtra::RecalcJobActive => {
+            let _ = dict.set_item("kind", "RecalcJobActive");
+        }
+        ExcelErrorExtra::EnginePoisoned => {
+            let _ = dict.set_item("kind", "EnginePoisoned");
+        }
         ExcelErrorExtra::PlanStale { reason } => {
             let _ = dict.set_item("plan_stale_reason", reason.as_str());
         }
@@ -581,7 +585,9 @@ pub(crate) fn recalc_error_to_pyerr(error: formualizer::eval::engine::RecalcJobE
         E::NoActiveJob => NoActiveJobError::new_err(error.to_string()),
         E::AlreadyPending { explicit } => {
             let exc = RecalcAlreadyPendingError::new_err(error.to_string());
-            Python::attach(|py| { let _ = exc.value(py).setattr("explicit", explicit); });
+            Python::attach(|py| {
+                let _ = exc.value(py).setattr("explicit", explicit);
+            });
             exc
         }
         E::Poisoned => EnginePoisonedError::new_err(error.to_string()),
@@ -593,9 +599,18 @@ pub(crate) fn recalc_error_to_pyerr(error: formualizer::eval::engine::RecalcJobE
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add("RecalcJobError", m.py().get_type::<RecalcJobError>())?;
     m.add("NoActiveJobError", m.py().get_type::<NoActiveJobError>())?;
-    m.add("RecalcAlreadyPendingError", m.py().get_type::<RecalcAlreadyPendingError>())?;
-    m.add("EnginePoisonedError", m.py().get_type::<EnginePoisonedError>())?;
-    m.add("RecalcJobActiveError", m.py().get_type::<RecalcJobActiveError>())?;
+    m.add(
+        "RecalcAlreadyPendingError",
+        m.py().get_type::<RecalcAlreadyPendingError>(),
+    )?;
+    m.add(
+        "EnginePoisonedError",
+        m.py().get_type::<EnginePoisonedError>(),
+    )?;
+    m.add(
+        "RecalcJobActiveError",
+        m.py().get_type::<RecalcJobActiveError>(),
+    )?;
     m.add(
         "CalculationDeferred",
         m.py().get_type::<CalculationDeferred>(),

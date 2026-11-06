@@ -17,7 +17,9 @@ __all__ = [
 ]
 
 PhysicalCounter = Union[int, str, None]
-SettingOrigin = Literal["caller", "workbook", "excel_default"]
+# Keep the runtime alias a Union too: mypy 2.x normalizes a multi-value
+# Literal into this union when stubtest inspects this module.
+SettingOrigin = Literal["caller"] | Literal["workbook"] | Literal["excel_default"]
 
 
 class SourceRecalculateLimits(TypedDict, total=False):

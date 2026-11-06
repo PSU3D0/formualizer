@@ -77,7 +77,12 @@ fn main() -> Result<()> {
         contents = contents.replace(generated, corrected);
     }
 
-    let additional_public_exports = r#"    "CalculationDeferred",
+    let additional_public_exports = r#"    "RecalcJobError",
+    "NoActiveJobError",
+    "RecalcAlreadyPendingError",
+    "EnginePoisonedError",
+    "RecalcJobActiveError",
+    "CalculationDeferred",
     "DependencyStateUnavailableError",
     "ExcelEvaluationError",
     "FormualizerHostError",
@@ -113,6 +118,12 @@ fn main() -> Result<()> {
 
 # Exceptions created with pyo3::create_exception! are public runtime types but
 # are not currently discovered by pyo3-stub-gen's inventory.
+class RecalcJobError(Exception): ...
+class NoActiveJobError(RecalcJobError): ...
+class RecalcAlreadyPendingError(RecalcJobError):
+    explicit: bool
+class EnginePoisonedError(RecalcJobError): ...
+class RecalcJobActiveError(ExcelEvaluationError): ...
 class CalculationDeferred(Exception):
     kind: str
     reason: str
@@ -192,6 +203,12 @@ if typing.TYPE_CHECKING:
     // native runtime exports for these typing-only declarations.
     let source_imports = "from ._source_types import SourceCalculationPolicy, SourceRecalculateLimits, SourceRecalculateResult\n";
     contents.push_str(source_imports);
+    // Python's iterator protocol raises StopIteration rather than returning
+    // None; PyO3 uses Option only to encode that boundary in Rust.
+    contents = contents.replace(
+        "def __next__(self) -> typing.Optional[StepReport]:",
+        "def __next__(self) -> StepReport:",
+    );
     let lines: Vec<String> = contents
         .lines()
         .map(|line| {
@@ -211,6 +228,20 @@ if typing.TYPE_CHECKING:
                     line.replace_range(start..end, &format!("{name}: {shape} | None"));
                 }
                 line.replace("-> typing.Any:", "-> SourceRecalculateResult:")
+            } else if line.trim_start().starts_with("def evaluate_async(") {
+                line.replace(
+                    "on_progress: typing.Optional[typing.Any]",
+                    "on_progress: typing.Optional[typing.Callable[[StepReport], object]]",
+                )
+                .replace(
+                    "-> typing.Any:",
+                    "-> typing.Coroutine[typing.Any, typing.Any, RecalcResult | None]:",
+                )
+            } else if line.trim_start().starts_with("def recalc(") {
+                line.replace(
+                    "on_step: typing.Optional[typing.Any]",
+                    "on_step: typing.Optional[typing.Callable[[StepReport], object]]",
+                )
             } else {
                 line.to_owned()
             }
