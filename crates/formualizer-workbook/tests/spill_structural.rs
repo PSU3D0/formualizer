@@ -1,8 +1,8 @@
 //! FORM-000328: structural edits retire old projections before moving user cells.
 use formualizer_common::LiteralValue as V;
-use formualizer_workbook::{
-    CalamineAdapter, IoError, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,
-};
+#[cfg(feature = "umya")]
+use formualizer_workbook::{CalamineAdapter, LoadStrategy, SpreadsheetReader};
+use formualizer_workbook::{IoError, Workbook, WorkbookConfig};
 
 fn fixture(family: bool, logged: bool) -> Workbook {
     let mut cfg = WorkbookConfig::ephemeral();
@@ -33,6 +33,7 @@ fn values(w: &Workbook) -> Vec<V> {
         .collect()
 }
 
+#[cfg(feature = "umya")]
 fn clean_load(w: Workbook, family: bool) -> Workbook {
     let bytes = w.to_xlsx_bytes().unwrap();
     let reader = CalamineAdapter::open_bytes(bytes).unwrap();
@@ -45,7 +46,7 @@ fn clean_load(w: Workbook, family: bool) -> Workbook {
 #[test]
 fn structural_spills_match_clean_control_across_workbook_routes() {
     for family in [false, true] {
-        for route in 0..3 {
+        for route in 0..if cfg!(feature = "umya") { 3 } else { 2 } {
             for op in 0..4 {
                 for pos in if op < 2 { [2, 3, 5, 9] } else { [3, 4, 5, 8] } {
                     for count in [1, 2] {
@@ -54,6 +55,7 @@ fn structural_spills_match_clean_control_across_workbook_routes() {
                                 for user in 0..3 {
                                     let mut a = fixture(family, route == 1);
                                     let mut b = fixture(family, route == 1);
+                                    #[cfg(feature = "umya")]
                                     if route == 2 {
                                         a = clean_load(a, family);
                                         b = clean_load(b, family);
@@ -92,15 +94,20 @@ fn structural_spills_match_clean_control_across_workbook_routes() {
 
 #[test]
 fn structural_spills_preserve_workbook_child_action_history() {
+    workbook_child_action_history(true);
+    workbook_child_action_history(false);
+}
+
+fn workbook_child_action_history(logged: bool) {
     for family in [false, true] {
         for op in 0..4 {
             for atomic in [false, true] {
                 for formula in [false, true] {
                     for abort in [false, true] {
-                        if abort && !atomic {
+                        if !atomic && (abort || !logged) {
                             continue;
                         }
-                        let mut w = fixture(family, true);
+                        let mut w = fixture(family, logged);
                         w.evaluate_all().unwrap();
                         shift(&mut w, op, if op < 2 { 2 } else { 3 }, 1);
                         w.evaluate_all().unwrap();

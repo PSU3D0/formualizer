@@ -6,6 +6,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Fixed row and column insertions and deletions overwriting shifted user values or leaving stale spill results; structural edits now rebuild spill projections while preserving user cells and insert-action undo/redo ownership.
+
 - Fixed spill shrink and teardown erasing literal values written into an old spill extent; user edits now retain their own cells and block a live spill.
 - Fixed removing literal spill blockers leaving anchors stuck at `#SPILL!`; only anchors waiting on the edited blocker are recalculated.
 

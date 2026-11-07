@@ -16,9 +16,10 @@ use formualizer_parse::parser::ASTNode;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpillSnapshot {
-    /// Declared target cells (row-major rectangle) owned by this spill anchor.
+    /// Owned cells in row-major order, starting at the anchor. User-edited cells may be omitted.
     pub target_cells: Vec<CellRef>,
-    /// Row-major rectangular values corresponding to the target rectangle.
+    /// Dense values for the original rectangle, relative to the first target cell.
+    /// Values at omitted cells do not confer ownership and are never replayed.
     pub values: Vec<Vec<LiteralValue>>,
 }
 

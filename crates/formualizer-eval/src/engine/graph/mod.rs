@@ -4990,6 +4990,45 @@ impl DependencyGraph {
         values: Vec<Vec<LiteralValue>>,
         fault_after_ops: Option<usize>,
     ) -> Result<(), ExcelError> {
+        self.commit_spill_region_impl(anchor, target_cells, values, fault_after_ops, None)
+    }
+
+    /// History snapshots can omit cells relinquished to user edits while
+    /// retaining the old rectangle's dimensions in their dense value matrix.
+    pub(crate) fn restore_spill_snapshot(
+        &mut self,
+        anchor: VertexId,
+        snapshot: &crate::engine::graph::editor::change_log::SpillSnapshot,
+    ) -> Result<(), ExcelError> {
+        let cells = &snapshot.target_cells;
+        let values = &snapshot.values;
+        if cells.is_empty() {
+            return Ok(());
+        }
+        let height = values.len();
+        let width = values.first().map_or(0, Vec::len);
+        if cells.len() == height.saturating_mul(width) {
+            return self.commit_spill_region_atomic_with_fault(
+                anchor,
+                cells.clone(),
+                values.clone(),
+                None,
+            );
+        }
+        // Keep a partial snapshot partial, including snapshots truncated by a
+        // lowered spill budget. It cannot certify an A1# rectangle until recalc.
+        let owned = cells.iter().copied().collect();
+        self.commit_spill_region_impl(anchor, cells.clone(), values.clone(), None, Some(&owned))
+    }
+
+    fn commit_spill_region_impl(
+        &mut self,
+        anchor: VertexId,
+        target_cells: Vec<CellRef>,
+        values: Vec<Vec<LiteralValue>>,
+        fault_after_ops: Option<usize>,
+        owned_cells: Option<&std::collections::HashSet<CellRef, CoordBuildHasher>>,
+    ) -> Result<(), ExcelError> {
         self.materialize_vertex(anchor);
         let budgets = self.self_admission_budgets();
         if crate::engine::resource_ledger::graph_admission_enabled(&budgets) {
@@ -5054,6 +5093,13 @@ impl DependencyGraph {
             let sheet = self.sheet_name(first.sheet_id).to_string();
             for (r_off, row_vals) in values.iter().enumerate() {
                 for (c_off, v) in row_vals.iter().enumerate() {
+                    let cell = CellRef::new(
+                        first.sheet_id,
+                        Coord::new(row0 + r_off as u32, col0 + c_off as u32, true, true),
+                    );
+                    if owned_cells.is_some_and(|owned| !owned.contains(&cell)) {
+                        continue;
+                    }
                     ops.push(Op {
                         sheet: sheet.clone(),
                         row: row0 + r_off as u32,
@@ -5131,6 +5177,13 @@ impl DependencyGraph {
         }
         // Mark ownership for new rectangle using the declared target cells only
         for cell in &target_cells {
+            if owned_cells.is_some_and(|owned| !owned.contains(cell)) {
+                self.spill_cell_to_anchor.remove(cell);
+                if let Some(sheet) = self.spill_cells_by_sheet.get_mut(&cell.sheet_id) {
+                    sheet.remove(&(cell.coord.row(), cell.coord.col()));
+                }
+                continue;
+            }
             self.spill_cell_to_anchor.insert(*cell, anchor);
             self.spill_cells_by_sheet
                 .entry(cell.sheet_id)
@@ -5148,8 +5201,39 @@ impl DependencyGraph {
         {
             self.spill_intruded_anchors.remove(&anchor);
         }
+        if owned_cells.is_some() {
+            self.spill_intruded_anchors.insert(anchor);
+        }
         self.spill_anchor_to_cells.insert(anchor, target_cells);
         Ok(())
+    }
+
+    /// Only extents intersecting the shifted tail can have stale ownership.
+    pub(crate) fn spill_anchors_before_shift(
+        &self,
+        sheet: SheetId,
+        start: u32,
+        rows: bool,
+    ) -> Vec<VertexId> {
+        let mut anchors: Vec<_> = self
+            .spill_anchor_to_cells
+            .iter()
+            .filter_map(|(&anchor, cells)| {
+                cells
+                    .iter()
+                    .any(|cell| {
+                        cell.sheet_id == sheet
+                            && if rows {
+                                cell.coord.row() >= start
+                            } else {
+                                cell.coord.col() >= start
+                            }
+                    })
+                    .then_some(anchor)
+            })
+            .collect();
+        anchors.sort_unstable_by_key(|id| id.0);
+        anchors
     }
 
     pub(crate) fn spill_cells_for_anchor(&self, anchor: VertexId) -> Option<&[CellRef]> {

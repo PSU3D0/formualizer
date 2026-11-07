@@ -423,6 +423,14 @@ impl<'g> VertexEditor<'g> {
             values.push(row);
         }
 
+        // The rectangle can contain cells relinquished to user edits. Keep
+        // its dimensions, but snapshot ownership only for generated cells.
+        if self.graph.spill_may_be_intruded(anchor) {
+            cells.retain(|cell| {
+                self.graph.spill_registry_anchor_for_cell(*cell) == Some(anchor)
+                    && !self.graph.is_foreign_formula_cell(cell, anchor)
+            });
+        }
         Some(crate::engine::graph::editor::change_log::SpillSnapshot {
             target_cells: cells,
             values,
@@ -636,12 +644,7 @@ impl<'g> VertexEditor<'g> {
                 // Restore previous spill region.
                 if let Some(old) = old {
                     self.graph
-                        .commit_spill_region_atomic_with_fault(
-                            anchor,
-                            old.target_cells,
-                            old.values,
-                            None,
-                        )
+                        .restore_spill_snapshot(anchor, &old)
                         .map_err(EditorError::Excel)?;
                 } else {
                     self.graph.clear_spill_region(anchor);
@@ -650,12 +653,7 @@ impl<'g> VertexEditor<'g> {
             ChangeEvent::SpillCleared { anchor, old } => {
                 // Re-commit the previous spill region.
                 self.graph
-                    .commit_spill_region_atomic_with_fault(
-                        anchor,
-                        old.target_cells,
-                        old.values,
-                        None,
-                    )
+                    .restore_spill_snapshot(anchor, &old)
                     .map_err(EditorError::Excel)?;
             }
             ChangeEvent::StagedFormulaCellChanged { .. } => {

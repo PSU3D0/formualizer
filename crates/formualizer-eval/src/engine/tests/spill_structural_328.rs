@@ -1,5 +1,5 @@
 //! FORM-000328: structural edits move Arrow cells while the committed spill
-//! registry retains its old coordinates. Kept separate from FORM-000319.
+//! registry must never mistake shifted user cells for generated projections.
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
@@ -172,6 +172,132 @@ fn structural_spill_moved_blockers_wake_after_removal() {
                     Some(LiteralValue::Number(1.))
                 );
                 assert!(e.graph.spill_registry_counts().1 > 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn structural_spill_clears_compacted_projection_values() {
+    crate::builtins::load_builtins();
+    for family in [false, true] {
+        for op in 0..4 {
+            let mut e = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig {
+                    enable_parallel: false,
+                    family_execution: family,
+                    max_overlay_memory_bytes: Some(1),
+                    ..Default::default()
+                },
+            );
+            e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.))
+                .unwrap();
+            e.set_cell_formula("Sheet1", 3, 4, parse("=SEQUENCE(A1,3)").unwrap())
+                .unwrap();
+            e.evaluate_all().unwrap();
+            assert!(e.debug_overlay_compactions() > 0);
+            // The old output is already in base lanes; subsequent Empty
+            // tombstones must survive structural computed-cache invalidation.
+            e.config.max_overlay_memory_bytes = None;
+            e.set_cell_value("Sheet1", 6, 6, LiteralValue::Number(99.))
+                .unwrap();
+            e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.))
+                .unwrap();
+            shift(&mut e, op, if op < 2 { 2 } else { 3 }, 1);
+            e.evaluate_all().unwrap();
+            let (r, c) = match op {
+                0 => (7, 6),
+                1 => (5, 6),
+                2 => (6, 7),
+                _ => (6, 5),
+            };
+            assert_eq!(
+                e.get_cell_value("Sheet1", r, c),
+                Some(LiteralValue::Number(99.))
+            );
+            let (r, c) = match op {
+                0 => (8, 4),
+                1 => (6, 4),
+                2 => (7, 5),
+                _ => (7, 3),
+            };
+            assert_eq!(
+                e.get_cell_value("Sheet1", r, c),
+                None,
+                "compacted orphan op={op}"
+            );
+        }
+    }
+}
+
+#[test]
+fn structural_spill_snapshot_preserves_preexisting_intrusion_ownership() {
+    use crate::engine::{EditorError, graph::editor::undo_engine::UndoEngine};
+    for family in [false, true] {
+        for columns in [false, true] {
+            for abort in [false, true] {
+                let mut e = fixture(family);
+                e.evaluate_all().unwrap();
+                // Direct child edits leave a pending spill with ownership holes.
+                e.set_cell_value("Sheet1", 5, 6, LiteralValue::Number(99.))
+                    .unwrap();
+                e.set_cell_formula("Sheet1", 6, 6, parse("=88").unwrap())
+                    .unwrap();
+                let before = values(&e);
+                let result = e.action_atomic_journal("shift pending intrusion", |tx| {
+                    if columns {
+                        tx.insert_columns("Sheet1", 3, 2)?;
+                    } else {
+                        tx.insert_rows("Sheet1", 2, 2)?;
+                    }
+                    // A second shift exercises operation-local coordinate frames.
+                    tx.insert_rows("Sheet1", 2, 1)?;
+                    if abort {
+                        return Err(EditorError::TransactionFailed {
+                            reason: "intentional".into(),
+                        });
+                    }
+                    Ok(())
+                });
+                let mut undo = UndoEngine::new();
+                if abort {
+                    assert!(result.is_err());
+                } else {
+                    undo.push_action(result.unwrap().1);
+                    e.evaluate_all().unwrap();
+                    e.undo_action(&mut undo).unwrap();
+                }
+                assert_eq!(
+                    values(&e),
+                    before,
+                    "restored pending snapshot family={family} columns={columns} abort={abort}"
+                );
+                let sheet = e.graph.sheet_id("Sheet1").unwrap();
+                let user = crate::reference::CellRef::new(
+                    sheet,
+                    crate::reference::Coord::new(4, 5, true, true),
+                );
+                assert_eq!(e.graph.spill_registry_anchor_for_cell(user), None);
+                e.evaluate_all().unwrap();
+                assert_eq!(
+                    e.get_cell_value("Sheet1", 5, 6),
+                    Some(LiteralValue::Number(99.))
+                );
+                assert_eq!(
+                    e.get_cell_value("Sheet1", 6, 6),
+                    Some(LiteralValue::Number(88.))
+                );
+                assert_eq!(e.get_cell_value("Sheet1", 7, 6), None);
+                e.set_cell_value("Sheet1", 5, 6, LiteralValue::Empty)
+                    .unwrap();
+                e.set_cell_value("Sheet1", 6, 6, LiteralValue::Empty)
+                    .unwrap();
+                e.evaluate_all().unwrap();
+                assert_eq!(
+                    e.get_cell_value("Sheet1", 7, 6),
+                    Some(LiteralValue::Number(15.))
+                );
             }
         }
     }
