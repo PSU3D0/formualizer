@@ -491,13 +491,21 @@ mod followup {
                                                 (6, 6)
                                             };
                                             e.evaluate_all().unwrap();
-                                            if formula_last {
-                                                assert_eq!(
-                                                    e.get_cell_value("Sheet1", r, c),
-                                                    Some(V::Number(206.)),
-                                                    "forward {context}"
-                                                );
-                                            }
+                                            let expected = if formula_last {
+                                                V::Number(206.)
+                                            } else if anchor_mode == 0 {
+                                                // Clearing the intrusion lets the original
+                                                // SEQUENCE reclaim its child.
+                                                V::Number(21.)
+                                            } else {
+                                                V::Empty
+                                            };
+                                            assert_eq!(
+                                                e.get_cell_value("Sheet1", r, c)
+                                                    .unwrap_or(V::Empty),
+                                                expected,
+                                                "forward {context}"
+                                            );
                                             let edited = grid(&e);
                                             let mut u = UndoEngine::new();
                                             u.push_action(result.unwrap().1);

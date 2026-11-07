@@ -1295,8 +1295,9 @@ where
     // True when this EngineAction must enforce conservative atomic transaction policy.
     atomic_policy: bool,
     // Incremental action-local ownership history, kept in the current frame.
-    // The flag retains mask eligibility until a user writes this former projection.
-    // Keep released entries for semantic literal undo; no-spill edits add nothing.
+    // The flag retains mask eligibility for untouched projections and explicit
+    // clears. Literal/formula writes revoke it; no-spill edits add nothing.
+    // Keep released entries to distinguish later user writes from projections.
     spill_projection_history:
         std::collections::HashMap<CellRef, bool, formualizer_common::CoordBuildHasher>,
 }
@@ -1421,10 +1422,11 @@ where
                 .is_some_and(|owner| self.engine.graph.get_cell_ref(owner) != Some(addr));
             let delta_old_sem = if old_formula.is_some()
                 || old_was_spill_child
-                || self.spill_projection_history.contains_key(&addr)
+                || self.spill_projection_history.get(&addr) == Some(&true)
             {
-                // The spill snapshot restores this computed projection. It
-                // was not a literal delta that undo should turn into a blocker.
+                // An untouched former projection is restored by the spill snapshot.
+                // Once a user write revokes mask eligibility, old_value is the
+                // current literal instead: keep it so redo can remove/replace it.
                 None
             } else {
                 Some(old_value.clone().unwrap_or(LiteralValue::Empty))
@@ -1449,8 +1451,24 @@ where
             });
 
             self.remember_spill_clears(&unsafe { (&*capture_ptr).events() }[start_len..]);
+            let clears_projection = matches!(value, LiteralValue::Empty)
+                && self.spill_projection_history.contains_key(&addr);
+            if clears_projection {
+                // Empty releases an earlier literal so a later spill can fill
+                // this cell. Keep a computed tombstone to hide compacted base
+                // values until then, rather than a delta that masks new output.
+                self.engine.clear_delta_overlay_cell(sheet, row, col);
+                self.engine.set_computed_overlay_cell_raw(
+                    sheet,
+                    row,
+                    col,
+                    Some(LiteralValue::Empty),
+                );
+            }
             if let Some(mask) = self.spill_projection_history.get_mut(&addr) {
-                *mask = false;
+                // A clear leaves a projection mask, not a user blocker. Carry
+                // it through later inserts even if the Empty was compacted.
+                *mask = clears_projection;
             }
             if let Some(undo_ptr) = self.arrow_undo {
                 // 1) Spill snapshot operations (computed overlay rect restore).
@@ -1464,7 +1482,7 @@ where
                 let sheet_id = self.engine.graph.sheet_id_mut(sheet);
                 let row0 = row.saturating_sub(1);
                 let col0 = col.saturating_sub(1);
-                let delta_new_sem = Some(value.clone());
+                let delta_new_sem = (!clears_projection).then_some(value.clone());
                 undo.record_delta_cell(sheet_id, row0, col0, delta_old_sem, delta_new_sem);
                 undo.record_computed_cell(sheet_id, row0, col0, old_comp, new_comp);
             }
@@ -1516,8 +1534,13 @@ where
             if old_formula.is_none() {
                 old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             }
+            // History membership survives user writes. Only an eligible mask
+            // still represents an untouched projection; a later literal must
+            // be journaled so the formula's forward replay removes its delta.
+            // Inverse Arrow replay already skips deltas over restored spills.
             let delta_old = if self.arrow_undo.is_some() {
-                if old_formula.is_some() || self.spill_projection_history.contains_key(&addr) {
+                if old_formula.is_some() || self.spill_projection_history.get(&addr) == Some(&true)
+                {
                     None
                 } else {
                     Some(old_value.clone().unwrap_or(LiteralValue::Empty))
@@ -6066,10 +6089,10 @@ where
                 continue;
             };
             let (sheet, r, c) = self.cellref_to_sheet_row_col(cell);
-            if clear_only
-                && (self.read_computed_overlay_cell(&sheet, r, c).is_none()
-                    || (cell != first && self.read_cell_formula_ast(&sheet, r, c).is_some()))
-            {
+            // Owned snapshot cells can live in compacted base lanes with no
+            // computed entry. They still need an Empty mask on clear; otherwise
+            // a repeated edit sees orphan values and blocks the next spill.
+            if clear_only && cell != first && self.read_cell_formula_ast(&sheet, r, c).is_some() {
                 continue;
             }
             let out = if clear_only {
