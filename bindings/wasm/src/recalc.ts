@@ -70,10 +70,12 @@ export interface RecalcEvaluationCause extends Error {
   function?: string;
   panic_message?: string | null;
   extra?: { kind: string; function?: string; message?: string | null };
+  preparation_stale_reason?: string;
+  plan_stale_reason?: string;
 }
 export type RecalcJobError = Error & (
   | { code: 'ALREADY_PENDING'; explicit: boolean; kind: 'RecalcJobError' }
-  | { code: 'EVALUATION'; cause: RecalcEvaluationCause }
+  | (RecalcEvaluationCause & { code: 'EVALUATION'; cause: RecalcEvaluationCause })
   | { code: 'NO_ACTIVE_JOB' | 'ENGINE_POISONED' | 'REENTRANT_CALL' | 'INVALID_OPTIONS' | 'INVALID_ADDRESS'; kind: 'RecalcJobError' }
 );
 /** Existing evaluation errors retain their kind/Excel fields. */

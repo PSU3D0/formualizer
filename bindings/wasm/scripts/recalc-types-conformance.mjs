@@ -32,7 +32,7 @@ wb.evaluateWithYield({ signal: new AbortController().signal,
 const addresses: { sheet: string; row: number; column: number }[] = wb.pendingCellsInRect(area);
 function error(value: RecalcJobError) {
   if (value.code === 'ALREADY_PENDING') { const explicit: boolean = value.explicit; }
-  if (value.code === 'EVALUATION') { const kind: string = value.cause.kind; }
+  if (value.code === 'EVALUATION') { const kind: string = value.cause.kind; const reason: string | undefined = value.resource_reason; }
 }
 function refusal(value: RecalcJobActiveError) { const code: 'RECALC_JOB_ACTIVE' = value.code; }
 // @ts-expect-error No constructor: jobs are admitted by Workbook.
