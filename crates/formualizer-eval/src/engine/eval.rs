@@ -1373,7 +1373,14 @@ where
                 old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             }
 
-            let delta_old_sem = if old_formula.is_some() {
+            let old_was_spill_child = self
+                .engine
+                .graph
+                .spill_registry_anchor_for_cell(addr)
+                .is_some_and(|owner| self.engine.graph.get_cell_ref(owner) != Some(addr));
+            let delta_old_sem = if old_formula.is_some() || old_was_spill_child {
+                // The spill snapshot restores this computed projection. It
+                // was not a literal delta that undo should turn into a blocker.
                 None
             } else {
                 Some(old_value.clone().unwrap_or(LiteralValue::Empty))
@@ -5106,6 +5113,25 @@ where
         self.graph.get_cell_value(sheet, row, col)
     }
 
+    /// Whether a cell belongs to a currently committed spill projection.
+    ///
+    /// This indexed ownership query does not read values, calculate spill
+    /// bounds, prepare formulas, or evaluate the workbook.
+    pub fn cell_has_spill_projection(&self, sheet: &str, row: u32, col: u32) -> bool {
+        if self.graph.spill_registry_is_empty() {
+            return false;
+        }
+        let Some(sheet_id) = self.graph.sheet_id(sheet) else {
+            return false;
+        };
+        let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        self.graph.spill_registry_anchor_for_cell(cell).is_some()
+            || self
+                .graph
+                .get_vertex_for_cell(&cell)
+                .is_some_and(|vertex| self.graph.spill_registry_has_anchor(vertex))
+    }
+
     pub fn vertex_for_cell(&self, cell: &CellRef) -> Option<VertexId> {
         self.graph.get_vertex_for_cell(cell)
     }
@@ -5373,7 +5399,10 @@ where
                 }
                 if !journal.graph.is_empty() || !journal.arrow.is_empty() {
                     for event in &journal.graph.events {
-                        self.record_change_for_event(event);
+                        // Rollback restored projection ownership just like undo.
+                        // Notify dependents without treating restored cells as
+                        // new user writes that release that ownership again.
+                        self.record_inverse_change_for_event(event);
                     }
                 }
                 Err(e)
@@ -5843,7 +5872,7 @@ where
         self.mirror_undo_batch_to_arrow(&batch);
         if !batch.is_empty() {
             for item in &batch {
-                self.record_change_for_event(&item.event);
+                self.record_inverse_change_for_event(&item.event);
             }
         }
         crate::engine::trace::fz_event!(
@@ -5927,7 +5956,7 @@ where
         self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
         if !journal.graph.is_empty() || !journal.arrow.is_empty() {
             for event in &journal.graph.events {
-                self.record_change_for_event(event);
+                self.record_inverse_change_for_event(event);
             }
         }
 
@@ -6111,6 +6140,17 @@ where
             for v in row {
                 if let Some(cell) = snap.target_cells.get(i) {
                     let (sheet, r, c) = self.cellref_to_sheet_row_col(cell);
+                    // Logged teardown replays the old rectangle after graph
+                    // ownership is gone. A user value edit removes its computed
+                    // projection; a later formula owns its own computed value.
+                    if clear_only
+                        && (self.read_computed_overlay_cell(&sheet, r, c).is_none()
+                            || (Some(cell) != snap.target_cells.first()
+                                && self.read_cell_formula_ast(&sheet, r, c).is_some()))
+                    {
+                        i += 1;
+                        continue;
+                    }
                     let out = if clear_only {
                         LiteralValue::Empty
                     } else {
@@ -12539,7 +12579,25 @@ where
                     new,
                 } => {
                     let sheet = self.graph.sheet_name(*sheet_id).to_string();
-                    let v = if undo { old.clone() } else { new.clone() };
+                    // Graph undo has already restored projection ownership.
+                    // A prior write in the same action may have cleared the
+                    // spill before this cell's old delta was captured. Such
+                    // deltas (including Empty) must not mask its snapshot.
+                    let restored_projection = undo
+                        && self
+                            .graph
+                            .spill_registry_anchor_for_cell(CellRef::new(
+                                *sheet_id,
+                                Coord::new(*row0, *col0, true, true),
+                            ))
+                            .is_some();
+                    let v = if restored_projection {
+                        None
+                    } else if undo {
+                        old.clone()
+                    } else {
+                        new.clone()
+                    };
                     self.set_delta_overlay_cell_raw(&sheet, row0 + 1, col0 + 1, v);
                 }
                 ArrowOp::SetComputedCell {
@@ -13839,6 +13897,20 @@ where
         });
     }
 
+    fn record_inverse_change_for_event(&mut self, event: &ChangeEvent) {
+        if let ChangeEvent::SetValue { addr, .. } | ChangeEvent::SetFormula { addr, .. } = event {
+            // Replay already restored any spill snapshot's ownership. This
+            // notification is not a new literal write into that projection.
+            self.record_structural_change(StructuralScope::Region(Region::point(
+                addr.sheet_id,
+                addr.coord.row(),
+                addr.coord.col(),
+            )));
+        } else {
+            self.record_change_for_event(event);
+        }
+    }
+
     fn record_change_for_event(&mut self, event: &ChangeEvent) {
         match event {
             ChangeEvent::SetValue { addr, .. } | ChangeEvent::SetFormula { addr, .. } => {
@@ -13853,7 +13925,10 @@ where
                     self.record_structural_change(scope);
                 }
             }
-            ChangeEvent::SpillCleared { old, .. } => {
+            ChangeEvent::SpillCleared { anchor, old } => {
+                if self.graph.is_live_formula_vertex(*anchor) {
+                    self.graph.mark_dirty_many(&[*anchor]);
+                }
                 if let Some(scope) = Self::structural_scope_from_cells(&old.target_cells) {
                     self.record_structural_change(scope);
                 }
@@ -13888,7 +13963,7 @@ where
 
     fn record_structural_change(&mut self, scope: StructuralScope) {
         if let StructuralScope::Cell { sheet, row, col } = scope {
-            self.wake_spill_owner_of_entered_formula(sheet, row, col);
+            self.wake_spill_owner_of_entered_cell(sheet, row, col);
         }
         self.wake_spill_blocker_waiters(scope);
         self.invalidate_pending_spills(scope);
@@ -13917,14 +13992,11 @@ where
         }
     }
 
-    /// A formula entered into a live spill blocks it: wake the owning anchor
-    /// so its next recalc re-plans (and reports `#SPILL!`). The spill keeps
-    /// its registry until then; clearing it leaves the formula cell alone.
-    fn wake_spill_owner_of_entered_formula(&mut self, sheet: SheetId, row: u32, col: u32) {
+    /// A user edit into a live spill wakes its anchor. Literal writes release
+    /// projection ownership before any later shrink or clear.
+    fn wake_spill_owner_of_entered_cell(&mut self, sheet: SheetId, row: u32, col: u32) {
         let cell = self.graph.make_cell_ref_internal(sheet, row, col);
-        if let Some(owner) = self.graph.spill_registry_anchor_for_cell(cell)
-            && self.graph.is_foreign_formula_cell(&cell, owner)
-        {
+        if let Some(owner) = self.graph.note_spill_child_edit(cell) {
             self.graph.mark_dirty_many(&[owner]);
         }
     }
@@ -21647,6 +21719,9 @@ where
                                 cell.coord.col() as usize,
                             );
                             if !matches!(v, LiteralValue::Empty) {
+                                // A literal blocker can disappear without
+                                // another precedent edit. Wake only its anchor.
+                                self.spill_blocker_waiters.wait(vertex_id, *cell);
                                 return self.plan_spill_error_effects(
                                     vertex_id,
                                     "BlockedByValue",

@@ -1698,10 +1698,14 @@ impl<'g> VertexEditor<'g> {
             .and_then(|id| self.get_formula_ast(id))
             .or(fallback_old_formula);
 
-        // If this cell currently anchors a spill, clear the spill first and log it.
-        // This keeps spill ownership maps and children consistent under undo/redo.
+        // Record projection ownership as well as the value when a literal
+        // replaces a spill child, so undo restores a generated cell.
+        let spill_owner = self
+            .graph
+            .spill_registry_anchor_for_cell(cell_ref)
+            .or(old_id);
         let spill_snapshot =
-            old_id.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
+            spill_owner.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
         let did_spill_clear = spill_snapshot.is_some();
         if let Some((anchor, old_spill)) = spill_snapshot {
             if let Some(logger) = &mut self.change_logger {
@@ -1713,6 +1717,9 @@ impl<'g> VertexEditor<'g> {
                 ));
             }
             self.graph.clear_spill_region(anchor);
+            if self.graph.get_cell_ref(anchor) != Some(cell_ref) {
+                self.graph.mark_dirty_many(&[anchor]);
+            }
             self.log_change(ChangeEvent::SpillCleared {
                 anchor,
                 old: old_spill,
@@ -1848,8 +1855,12 @@ impl<'g> VertexEditor<'g> {
 
         // Snapshot old spill values before updating, but do not clear or log anything
         // until the fallible binding/admission path succeeds.
+        let spill_owner = self
+            .graph
+            .spill_registry_anchor_for_cell(cell_ref)
+            .or(old_id);
         let spill_snapshot =
-            old_id.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
+            spill_owner.and_then(|id| self.snapshot_spill_for_anchor(id).map(|s| (id, s)));
         let did_spill_clear = spill_snapshot.is_some();
 
         // VertexEditor operates on internal 0-based coords; graph APIs are 1-based.
@@ -1883,6 +1894,9 @@ impl<'g> VertexEditor<'g> {
                         ));
                     }
                     self.graph.clear_spill_region(anchor);
+                    if self.graph.get_cell_ref(anchor) != Some(cell_ref) {
+                        self.graph.mark_dirty_many(&[anchor]);
+                    }
                     self.log_change(ChangeEvent::SpillCleared {
                         anchor,
                         old: old_spill,
