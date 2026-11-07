@@ -199,12 +199,7 @@ impl UndoEngine {
                             let _ = editor.update_name(&name, new_definition, scope);
                         }
                         ChangeEvent::SpillCommitted { anchor, new, .. } => {
-                            let _ = graph.commit_spill_region_atomic_with_fault(
-                                anchor,
-                                new.target_cells,
-                                new.values,
-                                None,
-                            );
+                            let _ = graph.restore_spill_snapshot(anchor, &new);
                         }
                         ChangeEvent::SpillCleared { anchor, .. } => {
                             graph.clear_spill_region(anchor);

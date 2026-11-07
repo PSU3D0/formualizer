@@ -1317,12 +1317,78 @@ where
     arrow_undo: Option<*mut crate::engine::ArrowUndoBatch>,
     // True when this EngineAction must enforce conservative atomic transaction policy.
     atomic_policy: bool,
+    // Incremental action-local ownership history, kept in the current frame.
+    // The flag retains mask eligibility for untouched projections and explicit
+    // clears. Literal/formula writes revoke it; no-spill edits add nothing.
+    // Keep released entries to distinguish later user writes from projections.
+    spill_projection_history:
+        std::collections::HashMap<CellRef, bool, formualizer_common::CoordBuildHasher>,
 }
 
 impl<'a, R> EngineAction<'a, R>
 where
     R: EvaluationContext,
 {
+    fn remember_spill_clears(&mut self, events: &[ChangeEvent]) {
+        for event in events {
+            if let ChangeEvent::SpillCleared { old, .. } = event {
+                for &cell in &old.target_cells {
+                    self.spill_projection_history.entry(cell).or_insert(true);
+                }
+            }
+        }
+    }
+
+    /// Capture former projections in the old frame before structural invalidation.
+    /// Compaction can erase both computed and delta entries, so mask eligibility
+    /// follows action-local user writes rather than overlay presence.
+    fn spill_history_masks_before_insert(
+        &self,
+        sheet: SheetId,
+        before: u32,
+        rows: bool,
+    ) -> Vec<CellRef> {
+        let name = self.engine.graph.sheet_name(sheet);
+        self.spill_projection_history
+            .iter()
+            .filter_map(|(&cell, &mask)| {
+                let axis = if rows {
+                    cell.coord.row()
+                } else {
+                    cell.coord.col()
+                };
+                (mask
+                    && cell.sheet_id == sheet
+                    && axis >= before
+                    && self
+                        .engine
+                        .read_cell_formula_ast(name, cell.coord.row() + 1, cell.coord.col() + 1)
+                        .is_none())
+                .then_some(cell)
+            })
+            .collect()
+    }
+
+    fn shift_spill_history(&mut self, sheet: SheetId, before: u32, count: u32, rows: bool) {
+        self.spill_projection_history = self
+            .spill_projection_history
+            .drain()
+            .map(|(cell, mask)| {
+                if cell.sheet_id != sheet {
+                    return (cell, mask);
+                }
+                let (mut row, mut col) = (cell.coord.row(), cell.coord.col());
+                if rows && row >= before {
+                    row = row.saturating_add(count);
+                }
+                if !rows && col >= before {
+                    col = col.saturating_add(count);
+                }
+                (CellRef::new(sheet, Coord::new(row, col, true, true)), mask)
+            })
+            .collect();
+    }
+
     #[inline]
     fn addr_for(&mut self, sheet: &str, row: u32, col: u32) -> crate::reference::CellRef {
         let sheet_id = self.engine.graph.sheet_id_mut(sheet);
@@ -1378,9 +1444,13 @@ where
                 .graph
                 .spill_registry_anchor_for_cell(addr)
                 .is_some_and(|owner| self.engine.graph.get_cell_ref(owner) != Some(addr));
-            let delta_old_sem = if old_formula.is_some() || old_was_spill_child {
-                // The spill snapshot restores this computed projection. It
-                // was not a literal delta that undo should turn into a blocker.
+            let delta_old_sem = if old_formula.is_some()
+                || old_was_spill_child
+                || self.spill_projection_history.get(&addr) == Some(&true)
+            {
+                // An untouched former projection is restored by the spill snapshot.
+                // Once a user write revokes mask eligibility, old_value is the
+                // current literal instead: keep it so redo can remove/replace it.
                 None
             } else {
                 Some(old_value.clone().unwrap_or(LiteralValue::Empty))
@@ -1404,6 +1474,26 @@ where
                 col: addr.coord.col(),
             });
 
+            self.remember_spill_clears(&unsafe { (&*capture_ptr).events() }[start_len..]);
+            let clears_projection = matches!(value, LiteralValue::Empty)
+                && self.spill_projection_history.contains_key(&addr);
+            if clears_projection {
+                // Empty releases an earlier literal so a later spill can fill
+                // this cell. Keep a computed tombstone to hide compacted base
+                // values until then, rather than a delta that masks new output.
+                self.engine.clear_delta_overlay_cell(sheet, row, col);
+                self.engine.set_computed_overlay_cell_raw(
+                    sheet,
+                    row,
+                    col,
+                    Some(LiteralValue::Empty),
+                );
+            }
+            if let Some(mask) = self.spill_projection_history.get_mut(&addr) {
+                // A clear leaves a projection mask, not a user blocker. Carry
+                // it through later inserts even if the Empty was compacted.
+                *mask = clears_projection;
+            }
             if let Some(undo_ptr) = self.arrow_undo {
                 // 1) Spill snapshot operations (computed overlay rect restore).
                 let new_events = &unsafe { (&*capture_ptr).events() }[start_len..];
@@ -1416,7 +1506,7 @@ where
                 let sheet_id = self.engine.graph.sheet_id_mut(sheet);
                 let row0 = row.saturating_sub(1);
                 let col0 = col.saturating_sub(1);
-                let delta_new_sem = Some(value.clone());
+                let delta_new_sem = (!clears_projection).then_some(value.clone());
                 undo.record_delta_cell(sheet_id, row0, col0, delta_old_sem, delta_new_sem);
                 undo.record_computed_cell(sheet_id, row0, col0, old_comp, new_comp);
             }
@@ -1469,8 +1559,13 @@ where
             if old_formula.is_none() {
                 old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
             }
+            // History membership survives user writes. Only an eligible mask
+            // still represents an untouched projection; a later literal must
+            // be journaled so the formula's forward replay removes its delta.
+            // Inverse Arrow replay already skips deltas over restored spills.
             let delta_old = if self.arrow_undo.is_some() {
-                if old_formula.is_some() {
+                if old_formula.is_some() || self.spill_projection_history.get(&addr) == Some(&true)
+                {
                     None
                 } else {
                     Some(old_value.clone().unwrap_or(LiteralValue::Empty))
@@ -1507,6 +1602,10 @@ where
                 col: addr.coord.col(),
             });
 
+            self.remember_spill_clears(&unsafe { (&*capture_ptr).events() }[start_len..]);
+            if let Some(mask) = self.spill_projection_history.get_mut(&addr) {
+                *mask = false;
+            }
             if let Some(undo_ptr) = self.arrow_undo {
                 let new_events = &unsafe { (&*capture_ptr).events() }[start_len..];
                 let undo = unsafe { &mut *undo_ptr };
@@ -1648,6 +1747,18 @@ where
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let occupancy = self.engine.structural_row_occupancy(sheet, sheet_id);
             let affected_region = Engine::<R>::structural_row_region(sheet_id, before0);
+            let mut spill_masks = self.spill_history_masks_before_insert(sheet_id, before0, true);
+
+            // Capture/mirror the clear before the structural graph and Arrow
+            // moves, and journal it before the insert's inverse Arrow operation.
+            let cleared_spill_cells = self.engine.clear_spills_before_structural_edit(
+                sheet_id,
+                before0,
+                true,
+                Some(unsafe { &mut *capture_ptr }),
+                self.arrow_undo.map(|ptr| unsafe { &mut *ptr }),
+            )?;
+            spill_masks.extend(cleared_spill_cells.iter().copied());
 
             // Graph structural insert (logged) - no snapshot bump.
             let summary = {
@@ -1666,18 +1777,38 @@ where
             if let Some(asheet) = self.engine.arrow_sheets.sheet_mut(sheet) {
                 asheet.insert_rows(before0 as usize, count as usize);
             }
+            for cell in cleared_spill_cells {
+                self.spill_projection_history.entry(cell).or_insert(true);
+            }
+            self.shift_spill_history(sheet_id, before0, count, true);
+            if let Some(undo_ptr) = self.arrow_undo {
+                unsafe { &mut *undo_ptr }.record_insert_rows(sheet_id, before0, count);
+            }
             self.engine
                 .purge_derived_formats_after_row(sheet_id, before0);
             self.engine
                 .shift_row_visibility_insert(sheet_id, before0, count);
             self.engine.mark_moved_formula_vertices_dirty(&summary);
+            if let Some(undo_ptr) = self.arrow_undo {
+                self.engine.journal_structural_computed_clear(
+                    sheet,
+                    before0 as usize,
+                    true,
+                    unsafe { &mut *undo_ptr },
+                );
+            }
             self.engine
                 .clear_computed_overlay_after_row(sheet, before0 as usize);
+            self.engine.restore_shifted_spill_tombstones(
+                spill_masks,
+                before0,
+                count,
+                true,
+                true,
+                self.arrow_undo.map(|ptr| unsafe { &mut *ptr }),
+            );
             self.engine
                 .record_structural_change(StructuralScope::Region(affected_region));
-            if let Some(undo_ptr) = self.arrow_undo {
-                unsafe { &mut *undo_ptr }.record_insert_rows(sheet_id, before0, count);
-            }
             Ok(summary)
         } else {
             self.engine.insert_rows(sheet, before, count)
@@ -1729,6 +1860,18 @@ where
             let sheet_id = self.engine.graph.sheet_id_mut(sheet);
             let occupancy = self.engine.structural_column_occupancy();
             let affected_region = Engine::<R>::structural_col_region(sheet_id, before0);
+            let mut spill_masks = self.spill_history_masks_before_insert(sheet_id, before0, false);
+
+            // Capture/mirror the clear before the structural graph and Arrow
+            // moves, and journal it before the insert's inverse Arrow operation.
+            let cleared_spill_cells = self.engine.clear_spills_before_structural_edit(
+                sheet_id,
+                before0,
+                false,
+                Some(unsafe { &mut *capture_ptr }),
+                self.arrow_undo.map(|ptr| unsafe { &mut *ptr }),
+            )?;
+            spill_masks.extend(cleared_spill_cells.iter().copied());
 
             let summary = {
                 let capture = unsafe { &mut *capture_ptr };
@@ -1745,16 +1888,36 @@ where
             if let Some(asheet) = self.engine.arrow_sheets.sheet_mut(sheet) {
                 asheet.insert_columns(before0 as usize, count as usize);
             }
-            self.engine
-                .purge_derived_formats_after_col(sheet_id, before0);
-            self.engine.mark_moved_formula_vertices_dirty(&summary);
-            self.engine
-                .clear_computed_overlay_after_col(sheet, before0 as usize);
-            self.engine
-                .record_structural_change(StructuralScope::Region(affected_region));
+            for cell in cleared_spill_cells {
+                self.spill_projection_history.entry(cell).or_insert(true);
+            }
+            self.shift_spill_history(sheet_id, before0, count, false);
             if let Some(undo_ptr) = self.arrow_undo {
                 unsafe { &mut *undo_ptr }.record_insert_cols(sheet_id, before0, count);
             }
+            self.engine
+                .purge_derived_formats_after_col(sheet_id, before0);
+            self.engine.mark_moved_formula_vertices_dirty(&summary);
+            if let Some(undo_ptr) = self.arrow_undo {
+                self.engine.journal_structural_computed_clear(
+                    sheet,
+                    before0 as usize,
+                    false,
+                    unsafe { &mut *undo_ptr },
+                );
+            }
+            self.engine
+                .clear_computed_overlay_after_col(sheet, before0 as usize);
+            self.engine.restore_shifted_spill_tombstones(
+                spill_masks,
+                before0,
+                count,
+                false,
+                true,
+                self.arrow_undo.map(|ptr| unsafe { &mut *ptr }),
+            );
+            self.engine
+                .record_structural_change(StructuralScope::Region(affected_region));
             Ok(summary)
         } else {
             self.engine.insert_columns(sheet, before, count)
@@ -5279,6 +5442,7 @@ where
             capture: None,
             arrow_undo: None,
             atomic_policy: false,
+            spill_projection_history: Default::default(),
         };
         f(&mut tx)
     }
@@ -5342,6 +5506,7 @@ where
             capture: Some(capture_ptr),
             arrow_undo: Some(arrow_ptr),
             atomic_policy: true,
+            spill_projection_history: Default::default(),
         };
 
         let res = f(&mut tx);
@@ -6135,38 +6300,28 @@ where
     ) {
         use formualizer_common::LiteralValue;
 
-        let mut i = 0usize;
-        for row in &snap.values {
-            for v in row {
-                if let Some(cell) = snap.target_cells.get(i) {
-                    let (sheet, r, c) = self.cellref_to_sheet_row_col(cell);
-                    // Logged teardown replays the old rectangle after graph
-                    // ownership is gone. A user value edit removes its computed
-                    // projection; a later formula owns its own computed value.
-                    if clear_only
-                        && (self.read_computed_overlay_cell(&sheet, r, c).is_none()
-                            || (Some(cell) != snap.target_cells.first()
-                                && self.read_cell_formula_ast(&sheet, r, c).is_some()))
-                    {
-                        i += 1;
-                        continue;
-                    }
-                    let out = if clear_only {
-                        LiteralValue::Empty
-                    } else {
-                        v.clone()
-                    };
-                    self.mirror_value_to_computed_overlay(&sheet, r, c, &out);
-                }
-                i += 1;
+        let Some(first) = snap.target_cells.first() else {
+            return;
+        };
+        for cell in &snap.target_cells {
+            let r_off = cell.coord.row().saturating_sub(first.coord.row()) as usize;
+            let c_off = cell.coord.col().saturating_sub(first.coord.col()) as usize;
+            let Some(v) = snap.values.get(r_off).and_then(|row| row.get(c_off)) else {
+                continue;
+            };
+            let (sheet, r, c) = self.cellref_to_sheet_row_col(cell);
+            // Owned snapshot cells can live in compacted base lanes with no
+            // computed entry. They still need an Empty mask on clear; otherwise
+            // a repeated edit sees orphan values and blocks the next spill.
+            if clear_only && cell != first && self.read_cell_formula_ast(&sheet, r, c).is_some() {
+                continue;
             }
-        }
-        // If target_cells is longer than values (should not happen), clear remaining cells.
-        if clear_only {
-            for cell in snap.target_cells.iter().skip(i) {
-                let (sheet, r, c) = self.cellref_to_sheet_row_col(cell);
-                self.mirror_value_to_computed_overlay(&sheet, r, c, &LiteralValue::Empty);
-            }
+            let out = if clear_only {
+                LiteralValue::Empty
+            } else {
+                v.clone()
+            };
+            self.mirror_value_to_computed_overlay(&sheet, r, c, &out);
         }
     }
 
@@ -11655,6 +11810,83 @@ where
         }
     }
 
+    /// Tear down projections in the old coordinate frame, before Arrow moves
+    /// either generated cells or user cells. Recalculation installs fresh extents.
+    fn clear_spills_before_structural_edit(
+        &mut self,
+        sheet: SheetId,
+        start: u32,
+        rows: bool,
+        capture: Option<&mut MutationCapture>,
+        undo: Option<&mut crate::engine::ArrowUndoBatch>,
+    ) -> Result<Vec<CellRef>, crate::engine::EditorError> {
+        let anchors = self.graph.spill_anchors_before_shift(sheet, start, rows);
+        if anchors.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cells: Vec<_> = anchors
+            .iter()
+            .flat_map(|&anchor| self.graph.spill_cells_to_clear(anchor))
+            .collect();
+        if let Some(capture) = capture {
+            let start_len = capture.len();
+            self.edit_with_capture(capture, |editor| {
+                for &anchor in &anchors {
+                    editor.clear_spill_region(anchor);
+                }
+            })?;
+            if let Some(undo) = undo {
+                self.record_spill_ops_into_arrow_undo(undo, &capture.events()[start_len..]);
+            }
+        } else {
+            for &anchor in &anchors {
+                self.clear_spill_projection_and_mirror(anchor, None);
+            }
+        }
+        self.graph.mark_dirty_many(&anchors);
+        Ok(cells)
+    }
+
+    /// Empty overlays mask old outputs compacted into base storage. Structural
+    /// cache invalidation must not expose them as orphan literals.
+    fn restore_shifted_spill_tombstones(
+        &mut self,
+        cells: Vec<CellRef>,
+        start: u32,
+        count: u32,
+        rows: bool,
+        insert: bool,
+        mut undo: Option<&mut crate::engine::ArrowUndoBatch>,
+    ) {
+        for cell in cells {
+            let old = if rows {
+                cell.coord.row()
+            } else {
+                cell.coord.col()
+            };
+            let shifted = if old < start {
+                old
+            } else if insert {
+                old.saturating_add(count)
+            } else if old < start.saturating_add(count) {
+                continue;
+            } else {
+                old - count
+            };
+            let (row, col) = if rows {
+                (shifted, cell.coord.col())
+            } else {
+                (cell.coord.row(), shifted)
+            };
+            let sheet = self.graph.sheet_name(cell.sheet_id).to_string();
+            if let Some(undo) = undo.as_deref_mut() {
+                let old = self.read_computed_overlay_cell(&sheet, row + 1, col + 1);
+                undo.record_computed_cell(cell.sheet_id, row, col, old, Some(LiteralValue::Empty));
+            }
+            self.mirror_value_to_computed_overlay(&sheet, row + 1, col + 1, &LiteralValue::Empty);
+        }
+    }
+
     fn structural_column_occupancy(&self) -> crate::engine::graph::StructuralOccupancy {
         // Arrow exposes occupied columns through chunk metadata and overlay maps,
         // but has no cheap occupied-row index. Column edits therefore deliberately
@@ -11683,6 +11915,8 @@ where
         self.check_insert_room(sheet, before0, count, true)?;
         let affected_region = Self::structural_row_region(sheet_id, before0);
         let occupancy = self.structural_row_occupancy(sheet, sheet_id);
+        let cleared_spill_cells =
+            self.clear_spills_before_structural_edit(sheet_id, before0, true, None, None)?;
         let summary = {
             let mut editor =
                 VertexEditor::new(&mut self.graph).with_structural_occupancy(occupancy);
@@ -11695,6 +11929,14 @@ where
         self.purge_derived_formats_after_row(sheet_id, before0);
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_row(sheet, before0 as usize);
+        self.restore_shifted_spill_tombstones(
+            cleared_spill_cells,
+            before0,
+            count,
+            true,
+            true,
+            None,
+        );
         self.shift_row_visibility_insert(sheet_id, before0, count);
         self.record_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
@@ -11721,6 +11963,8 @@ where
         let start0 = start.saturating_sub(1);
         let affected_region = Self::structural_row_region(sheet_id, start0);
         let occupancy = self.structural_row_occupancy(sheet, sheet_id);
+        let cleared_spill_cells =
+            self.clear_spills_before_structural_edit(sheet_id, start0, true, None, None)?;
         let summary = {
             let mut editor =
                 VertexEditor::new(&mut self.graph).with_structural_occupancy(occupancy);
@@ -11733,6 +11977,14 @@ where
         self.purge_derived_formats_after_row(sheet_id, start0);
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_row(sheet, start0 as usize);
+        self.restore_shifted_spill_tombstones(
+            cleared_spill_cells,
+            start0,
+            count,
+            true,
+            false,
+            None,
+        );
         self.shift_row_visibility_delete(sheet_id, start0, count);
         self.record_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
@@ -11765,6 +12017,8 @@ where
         self.check_insert_room(sheet, before0, count, false)?;
         let affected_region = Self::structural_col_region(sheet_id, before0);
         let occupancy = self.structural_column_occupancy();
+        let cleared_spill_cells =
+            self.clear_spills_before_structural_edit(sheet_id, before0, false, None, None)?;
         let summary = {
             let mut editor =
                 VertexEditor::new(&mut self.graph).with_structural_occupancy(occupancy);
@@ -11777,6 +12031,14 @@ where
         self.purge_derived_formats_after_col(sheet_id, before0);
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_col(sheet, before0 as usize);
+        self.restore_shifted_spill_tombstones(
+            cleared_spill_cells,
+            before0,
+            count,
+            false,
+            true,
+            None,
+        );
         self.record_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
@@ -11807,6 +12069,8 @@ where
         let start0 = start.saturating_sub(1);
         let affected_region = Self::structural_col_region(sheet_id, start0);
         let occupancy = self.structural_column_occupancy();
+        let cleared_spill_cells =
+            self.clear_spills_before_structural_edit(sheet_id, start0, false, None, None)?;
         let summary = {
             let mut editor =
                 VertexEditor::new(&mut self.graph).with_structural_occupancy(occupancy);
@@ -11819,6 +12083,14 @@ where
         self.purge_derived_formats_after_col(sheet_id, start0);
         self.mark_moved_formula_vertices_dirty(&summary);
         self.clear_computed_overlay_after_col(sheet, start0 as usize);
+        self.restore_shifted_spill_tombstones(
+            cleared_spill_cells,
+            start0,
+            count,
+            false,
+            false,
+            None,
+        );
         self.record_structural_change(StructuralScope::Region(affected_region));
         self.mark_topology_edited();
         Ok(summary)
@@ -12319,6 +12591,51 @@ where
         }
     }
 
+    /// Structural invalidation also removes caches of foreign formulas. Keep
+    /// those removals in the operation's coordinate frame for exact rollback.
+    fn journal_structural_computed_clear(
+        &self,
+        sheet: &str,
+        start: usize,
+        rows: bool,
+        undo: &mut crate::engine::ArrowUndoBatch,
+    ) {
+        let Some(sheet_id) = self.graph.sheet_id(sheet) else {
+            return;
+        };
+        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
+            return;
+        };
+        for (col, column) in asheet.columns.iter().enumerate() {
+            if !rows && col < start {
+                continue;
+            }
+            for (chunk, data) in column.chunks.iter().enumerate().chain(
+                column
+                    .sparse_chunks
+                    .iter()
+                    .map(|(chunk, data)| (*chunk, data)),
+            ) {
+                let Some(&row0) = asheet.chunk_starts.get(chunk) else {
+                    continue;
+                };
+                for (off, value) in data.computed_overlay.iter() {
+                    let row = row0.saturating_add(off);
+                    if rows && row < start {
+                        continue;
+                    }
+                    undo.record_computed_cell(
+                        sheet_id,
+                        row as u32,
+                        col as u32,
+                        Some(value.to_literal_for(asheet.date_system)),
+                        None,
+                    );
+                }
+            }
+        }
+    }
+
     fn clear_computed_overlay_after_row(&mut self, sheet: &str, start_row0: usize) {
         if !(self.config.arrow_storage_enabled && self.config.write_formula_overlay_enabled) {
             return;
@@ -12726,6 +13043,29 @@ where
                     }
                 }
                 ChangeEvent::SpillCleared { old, .. } => {
+                    let width = old.values.first().map_or(0, Vec::len);
+                    if old.target_cells.len() != old.values.len().saturating_mul(width) {
+                        if let Some(first) = old.target_cells.first() {
+                            for cell in &old.target_cells {
+                                let r = (cell.coord.row() - first.coord.row()) as usize;
+                                let c = (cell.coord.col() - first.coord.col()) as usize;
+                                let value = old
+                                    .values
+                                    .get(r)
+                                    .and_then(|row| row.get(c))
+                                    .cloned()
+                                    .unwrap_or(LiteralValue::Empty);
+                                undo.record_computed_cell(
+                                    cell.sheet_id,
+                                    cell.coord.row(),
+                                    cell.coord.col(),
+                                    Some(value),
+                                    Some(LiteralValue::Empty),
+                                );
+                            }
+                        }
+                        continue;
+                    }
                     if let Some((sid, sr0, sc0, er0, ec0, old_vals)) = rect_from_snapshot(old) {
                         let new_vals =
                             vec![vec![LiteralValue::Empty; old_vals[0].len()]; old_vals.len()];
@@ -13942,9 +14282,13 @@ where
                 // NamedRangeAdjusted event. Epoch changes only rebuild caches.
                 self.record_structural_change(StructuralScope::AllSheets);
             }
-            ChangeEvent::VertexMoved { .. } | ChangeEvent::FormulaAdjusted { .. } => {
-                // Structural entry points publish their axis delta once after
-                // the graph and Arrow commits.
+            ChangeEvent::VertexMoved { id, .. } | ChangeEvent::FormulaAdjusted { id, .. } => {
+                // Structural replay restores cached values in the old frame;
+                // moved foreign formulas must recompute there as well as spill
+                // anchors. The forward structural entry point also dirties them.
+                if self.graph.is_live_formula_vertex(*id) {
+                    self.graph.mark_dirty_many(&[*id]);
+                }
             }
             ChangeEvent::SetRowVisibility { sheet_id, row0, .. } => {
                 self.record_structural_change(StructuralScope::Region(Region::whole_row(
@@ -22077,6 +22421,12 @@ where
             values.push(row);
         }
 
+        if self.graph.spill_may_be_intruded(anchor) {
+            cells.retain(|cell| {
+                self.graph.spill_registry_anchor_for_cell(*cell) == Some(anchor)
+                    && !self.graph.is_foreign_formula_cell(cell, anchor)
+            });
+        }
         Some(SpillSnapshot {
             target_cells: cells,
             values,

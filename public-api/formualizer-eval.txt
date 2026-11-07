@@ -1407,6 +1407,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan(&self) -> co
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_has_spill_projection(&self, &str, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
@@ -2037,6 +2038,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -2610,6 +2612,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -6082,6 +6085,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -6327,6 +6331,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan(&self) -> co
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_has_spill_projection(&self, &str, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
