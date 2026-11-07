@@ -8,6 +8,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Fixed first-request `INDIRECT` reads of future spill children in parallel batches, including Python `Workbook.evaluate_all()` and Rust cancellable evaluation.
 - Fixed spill shrink and teardown erasing literal values written into an old spill extent; user edits now retain their own cells and block a live spill.
 - Fixed removing literal spill blockers leaving anchors stuck at `#SPILL!`; only anchors waiting on the edited blocker are recalculated.
 - Kept the Python event loop responsive during asynchronous recalculation admission and cleanup. Concurrent drivers now refuse promptly without waiting for a running step, and cancellation during admission cleans up any job admitted by the worker.
@@ -30,7 +31,6 @@ All notable changes to Formualizer will be documented in this file.
 - Fixed lazy error consumers, dynamic/name invalidation and cycle handling, plus supported array, lookup, rounding and text-format modes. Executed unsupported or unverified modes remain visible through caught errors and optimized reuse.
 - Preserved source formulas and package ownership during selective cache publication. What-If table calculation, saved iterative seeds and external-data refresh are not newly implemented; partial output does not claim full Excel equivalence.
 - Prepared product packages 0.14.0 with parser/common SDK 4.2.0. Published seeded-RAND streams remain target-specific. Small-workbook WASM overhead and a family linear-memory increase remain documented maintenance follow-ups.
-
 
 ## [0.13.0] - 2026-10-25
 

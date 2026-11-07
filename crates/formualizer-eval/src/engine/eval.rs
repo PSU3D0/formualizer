@@ -21442,6 +21442,10 @@ mod pending_spill_tests;
 #[path = "tests/spill_batch_abort_192.rs"]
 mod spill_batch_abort_192;
 
+#[cfg(test)]
+#[path = "tests/observed_future_spill_329.rs"]
+mod observed_future_spill_329;
+
 // ── Effects pipeline (ticket 603) ──────────────────────────────────────────
 //
 // Compute → Plan → Apply separation for evaluation side-effects.

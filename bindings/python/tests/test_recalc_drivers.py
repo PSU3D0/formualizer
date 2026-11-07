@@ -441,10 +441,6 @@ def test_async_callback_exception_cleans_up():
     wb.evaluate_all()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="FORM-000327: ordinary observed-read / future-spill routing on 0.14",
-)
 def test_ordinary_future_spill_matches_job():
     def workbook():
         wb = fz.Workbook()
