@@ -1,4 +1,7 @@
 import * as wasm from '../pkg/formualizer_wasm.js';
+import { recalc, evaluateWithYield } from './recalc.js';
+import type { RecalcJob, RecalcJobOptions, RecalcOptions, EvaluateWithYieldOptions, RecalcOutcome } from './recalc.js';
+export * from './recalc.js';
 
 let wasmInitialized = false;
 let wasmInitPromise: Promise<void> | null = null;
@@ -644,7 +647,12 @@ export interface CycleTelemetry {
   elapsedMs: number;
 }
 
-export interface WorkbookApi extends wasm.Workbook {
+export interface WorkbookApi extends Omit<wasm.Workbook, 'beginRecalc' | 'pendingCellsInRect' | 'hasPendingInRect' | '_beginRecalcDriver'> {
+  beginRecalc(options?: RecalcJobOptions): RecalcJob;
+  hasPendingInRect(area: FiniteRangeAddress): boolean;
+  pendingCellsInRect(area: FiniteRangeAddress): CellAddress[];
+  recalc(options?: RecalcOptions): RecalcOutcome;
+  evaluateWithYield(options?: EvaluateWithYieldOptions): Promise<RecalcOutcome>;
   registerFunction(
     name: string,
     callback: (...args: CellValue[]) => CellValue,
@@ -957,6 +965,8 @@ const rawWorkbookCtor = wasm.Workbook as unknown as {
 };
 const rawWorkbookFromXlsxBytes = rawWorkbookCtor.fromXlsxBytes.bind(rawWorkbookCtor);
 const rawWorkbookFromXlsxBytesWithOptions = rawWorkbookCtor.fromXlsxBytesWithOptions.bind(rawWorkbookCtor);
+
+Object.assign(rawWorkbookCtor.prototype, { recalc, evaluateWithYield });
 
 export const Workbook = Object.assign(rawWorkbookCtor, {
   fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi {
