@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { Workbook, RecalcJob } from 'formualizer';
 
 export function chain(count = 100) {
@@ -21,7 +22,7 @@ await test('sync actual package finishes and exports generated job', () => {
   } });
   assert.equal(out.status, 'Finished');
   assert.ok(calls > 1);
-  assert.equal(wb.getValue('S', 100, 1), 100);
+  assert.equal(wb.sheet('S').getValue(100, 1), 100);
 });
 await test('async actual package yields task turns before finishing', async () => {
   const wb = chain(500);
@@ -33,8 +34,240 @@ await test('async actual package yields task turns before finishing', async () =
     } });
     assert.equal(out.status, 'Finished');
     assert.ok(unfinishedHeartbeat, 'a timer must run while recalculation is unfinished');
-    assert.equal(wb.getValue('S', 500, 1), 500);
+    assert.equal(wb.sheet('S').getValue(500, 1), 500);
   } finally { clearInterval(timer); }
+});
+const rect = (startRow = 1, endRow = 100) => ({
+  sheet: 'S', startRow, startColumn: 1, endRow, endColumn: 1,
+});
+const code = expected => error => error.code === expected;
+const finish = job => { let report; do { report = job.step(0); } while (job.active); return report; };
+const aborts = promise => assert.rejects(promise, error => error.name === 'AbortError');
+const tick = () => new Promise(resolve => setTimeout(resolve, 0));
+
+await test('constructor/static loader parity and runtime export identity', () => {
+  for (const wb of [new Workbook(), Workbook.fromJson(JSON.stringify({ version: 1, sheets: { S: { cells: [] } } }))]) {
+    assert.equal(wb.recalc, Workbook.prototype.recalc);
+    assert.equal(wb.evaluateWithYield, Workbook.prototype.evaluateWithYield);
+    const job = wb.beginRecalc();
+    assert.ok(job instanceof RecalcJob);
+    finish(job);
+  }
+  const bytes = readFileSync(new URL('../../../crates/formualizer-workbook/tests/fixtures/shared_formula_above_master.xlsx', import.meta.url));
+  const loaded = Workbook.fromXlsxBytes(bytes);
+  assert.equal(loaded.recalc().status, 'Finished');
+  assert.equal(loaded.evaluateWithYield, Workbook.prototype.evaluateWithYield);
+});
+await test('budgets default, zero, finite, null and undefined finish', () => {
+  for (const budgetMs of [undefined, 0, 5, null]) {
+    const wb = chain(25);
+    assert.equal(wb.recalc({ budgetMs }).status, 'Finished');
+    assert.equal(wb.sheet('S').getValue(25, 1), 25);
+  }
+});
+await test('invalid driver and raw options rejected before admission', async () => {
+  for (const options of [null, [], false, { x: 1 }, { [Symbol('x')]: true },
+    ...[-1, NaN, Infinity, 2 ** 80, '5'].map(budgetMs => ({ budgetMs })),
+    { onStep: true }, { priority: [rect(0)] }, { collectDeltas: 'yes' }, { maxDeltaRecords: -1 }]) {
+    const wb = chain(5);
+    assert.throws(() => wb.recalc(options), code(options?.priority ? 'INVALID_ADDRESS' : 'INVALID_OPTIONS'));
+    assert.equal(wb.hasActiveRecalcJob, false);
+    assert.equal(wb.recalc().status, 'Finished');
+  }
+  for (const options of [{ onProgress: 1 }, { yieldControl: false }, { signal: {} }, { budgetMs: -1 }]) {
+    const wb = chain(5);
+    await assert.rejects(wb.evaluateWithYield(options), code('INVALID_OPTIONS'));
+    assert.equal(wb.hasActiveRecalcJob, false);
+  }
+});
+await test('pause releases reservation; priority/input edit/inspection and manual resume', () => {
+  const wb = chain();
+  const out = wb.recalc({ budgetMs: 0, onStep(report, job) {
+    job.prioritize([rect(70, 100)]);
+    wb.setValue('S', 1, 1, 10);
+    assert.ok(wb.inspectCell({ sheet: 'S', row: 1, column: 1 }));
+    return false;
+  } });
+  assert.equal(out.status, 'Paused');
+  assert.ok(out.job.active);
+  assert.throws(() => wb.beginRecalc(), error => error.code === 'ALREADY_PENDING' && error.explicit === true);
+  out.job.cancel();
+  // Admission proves reservation was released even though the paused engine job was active.
+  const replacement = wb.beginRecalc();
+  finish(replacement);
+  assert.equal(wb.sheet('S').getValue(100, 1), 109);
+  assert.equal(out.job.active, false);
+  assert.throws(() => out.job.cancel(), code('NO_ACTIVE_JOB'));
+});
+await test('paused handle resumes directly after repair', () => {
+  const wb = chain();
+  const out = wb.recalc({ budgetMs: 0, onStep: () => false });
+  wb.setValue('S', 1, 1, 7);
+  finish(out.job);
+  assert.equal(wb.sheet('S').getValue(100, 1), 106);
+});
+await test('cooperative and terminal cancellation beat false; explicit reset overrides flag', () => {
+  for (const mode of ['job', 'workbook', 'reset']) {
+    const wb = chain();
+    const out = wb.recalc({ budgetMs: 0, onStep(_, job) {
+      if (mode === 'job') job.cancel();
+      else { wb.cancel(); if (mode === 'reset') wb.resetCancel(); }
+      return false;
+    } });
+    assert.equal(out.status, mode === 'reset' ? 'Paused' : 'Cancelled');
+    if (out.status === 'Paused') out.job.cancel();
+    assert.equal(wb.hasActiveRecalcJob, false);
+    assert.equal(wb.recalc().status, 'Finished');
+  }
+});
+await test('sync exceptions preserve exact identity including terminal callbacks', () => {
+  for (const budgetMs of [0, null]) {
+    const wb = chain(10), sentinel = {};
+    assert.throws(() => wb.recalc({ budgetMs, onStep() { throw sentinel; } }), error => error === sentinel);
+    assert.equal(wb.hasActiveRecalcJob, false);
+    assert.equal(wb.recalc().status, 'Finished');
+  }
+});
+await test('sync terminal callbacks hold shared reservation', () => {
+  const wb = chain(10);
+  const out = wb.recalc({ budgetMs: null, onStep(report) {
+    if (report.phase !== 'Finished') return;
+    assert.throws(() => wb.beginRecalc(), code('ALREADY_PENDING'));
+    assert.throws(() => wb.recalc(), code('ALREADY_PENDING'));
+    assert.throws(() => wb.evaluateAll(), code('RECALC_JOB_ACTIVE'));
+  } });
+  assert.equal(out.status, 'Finished');
+});
+await test('callback terminal cancellation is never mistaken for a Finished report', async () => {
+  const wb = chain();
+  const out = await wb.evaluateWithYield({ budgetMs: 0, onProgress(_, job) { job.cancel(); } });
+  assert.deepEqual(out, { status: 'Cancelled' });
+});
+await test('pre-abort admits no job', async () => {
+  const wb = chain(), controller = new AbortController();
+  controller.abort();
+  await aborts(wb.evaluateWithYield({ signal: controller.signal }));
+  assert.equal(wb.hasActiveRecalcJob, false);
+  assert.equal(wb.recalc().status, 'Finished');
+});
+await test('abort during UDF stays lock-free and monotonic after resetCancel', async () => {
+  const wb = new Workbook(), controller = new AbortController();
+  wb.addSheet('S');
+  wb.registerFunction('ABORT_NOW', () => { controller.abort(); wb.resetCancel(); return 4; });
+  wb.setFormula('S', 1, 1, '=ABORT_NOW()');
+  await aborts(wb.evaluateWithYield({ signal: controller.signal, budgetMs: null }));
+  assert.equal(wb.hasActiveRecalcJob, false);
+  wb.unregisterFunction('ABORT_NOW');
+  wb.setFormula('S', 1, 1, '=4');
+  assert.equal(wb.recalc().status, 'Finished');
+});
+await test('abort interrupts unresolved progress (nonterminal and terminal) and yield hooks', async () => {
+  for (const stage of ['progress', 'terminal', 'yield']) {
+    const wb = chain(10), controller = new AbortController();
+    let reached;
+    const ready = new Promise(resolve => { reached = resolve; });
+    const hang = () => { reached(); return new Promise(() => {}); };
+    const promise = wb.evaluateWithYield({
+      budgetMs: stage === 'terminal' ? null : 0,
+      signal: controller.signal,
+      ...(stage === 'yield' ? { yieldControl: hang } : { onProgress: hang }),
+    });
+    await ready;
+    assert.throws(() => wb.beginRecalc(), code('ALREADY_PENDING'));
+    await assert.rejects(wb.evaluateWithYield(), code('ALREADY_PENDING'));
+    controller.abort();
+    await aborts(promise);
+    assert.equal(wb.hasActiveRecalcJob, false);
+    assert.equal(wb.recalc().status, 'Finished');
+  }
+});
+await test('awaited hook errors retain identity and cleanup, including terminal callbacks', async () => {
+  for (const hook of ['progress-reject', 'progress-throw', 'terminal-reject', 'yield-reject']) {
+    const wb = chain(10), sentinel = {};
+    const fail = () => { if (hook.endsWith('throw')) throw sentinel; return Promise.reject(sentinel); };
+    await assert.rejects(wb.evaluateWithYield({
+      budgetMs: hook === 'terminal-reject' ? null : 0,
+      ...(hook === 'yield-reject' ? { yieldControl: fail } : { onProgress: fail }),
+    }), error => error === sentinel);
+    assert.equal(wb.hasActiveRecalcJob, false);
+    assert.equal(wb.recalc().status, 'Finished');
+  }
+});
+await test('progress false does not pause and can edit/prioritize/read without locks', async () => {
+  const wb = chain(20);
+  let edited = false;
+  const out = await wb.evaluateWithYield({ budgetMs: 0, onProgress(report, job) {
+    if (!edited && report.phase !== 'Finished') {
+      wb.setValue('S', 1, 1, 9);
+      job.prioritize([rect(10, 20)]);
+      wb.inspectCell({ sheet: 'S', row: 1, column: 1 });
+      edited = true;
+    }
+    return false;
+  } });
+  assert.equal(out.status, 'Finished');
+  assert.equal(wb.sheet('S').getValue(20, 1), 28);
+});
+await test('late losing rejection is observed; stale cleanup cannot affect replacement signal', async () => {
+  const wb = chain(10), controller = new AbortController();
+  let rejectHook, reached;
+  const ready = new Promise(resolve => { reached = resolve; });
+  const unhandled = [];
+  const observe = reason => unhandled.push(reason);
+  process.on('unhandledRejection', observe);
+  try {
+    const old = wb.evaluateWithYield({ budgetMs: 0, signal: controller.signal, onProgress() {
+      reached(); return new Promise((_, reject) => { rejectHook = reject; });
+    } });
+    await ready;
+    controller.abort();
+    await aborts(old);
+    const replacement = wb.beginRecalc();
+    wb.cancel();
+    rejectHook(new Error('late losing rejection'));
+    await tick();
+    assert.deepEqual(unhandled, []);
+    assert.equal(replacement.step().phase, 'Cancelled');
+  } finally { process.off('unhandledRejection', observe); }
+});
+await test('abort listeners removed on finish/pause-equivalent cancellation/error/abort', async () => {
+  for (const mode of ['finish', 'cancel', 'error', 'abort']) {
+    const wb = chain(5), controller = new AbortController();
+    let additions = 0, removals = 0;
+    const signal = controller.signal;
+    const add = signal.addEventListener.bind(signal), remove = signal.removeEventListener.bind(signal);
+    signal.addEventListener = (...args) => { additions++; return add(...args); };
+    signal.removeEventListener = (...args) => { removals++; return remove(...args); };
+    const promise = wb.evaluateWithYield({ signal, budgetMs: 0, onProgress(_, job) {
+      if (mode === 'cancel') job.cancel();
+      if (mode === 'error') throw new Error('hook');
+      if (mode === 'abort') controller.abort();
+    } });
+    if (mode === 'error') await assert.rejects(promise, /hook/);
+    else if (mode === 'abort') await aborts(promise);
+    else await promise;
+    assert.equal(additions, 1); assert.equal(removals, 1);
+  }
+});
+await test('raw reports detached; changed/overflow/pending query shapes', () => {
+  const wb = chain(100), job = wb.beginRecalc({ priority: [rect(80, 100)] });
+  let sawChanges = false;
+  let first = job.step(0), snapshot = structuredClone(first);
+  assert.ok(wb.pendingCellsInRect(rect()).every(cell => cell.sheet === 'S' && cell.row >= 1 && cell.row <= 100));
+  while (job.active) {
+    const report = job.step(0);
+    if (report.changed.length) sawChanges = true;
+  }
+  assert.deepEqual(first, snapshot);
+  assert.ok(sawChanges);
+  assert.equal(wb.hasPendingInRect(rect()), false);
+  first.changed.push(rect());
+  assert.equal(wb.sheet('S').getValue(100, 1), 100);
+  wb.setValue('S', 1, 1, 2);
+  const overflow = wb.beginRecalc({ maxDeltaRecords: 0 });
+  let sawOverflow = false;
+  while (overflow.active) if (overflow.step(0).overflowSheets.includes('S')) sawOverflow = true;
+  assert.ok(sawOverflow);
 });
 console.log('recalc conformance: ' + passed + ' passed, ' + failed + ' failed');
 if (failed) process.exitCode = 1;

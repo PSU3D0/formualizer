@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
-import ts from 'typescript';
+
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const packageDir = process.env.FORMUALIZER_WASM_NODE_PACKAGE
@@ -128,19 +128,11 @@ test('unread corrupt and oversized payload accepted; required corruption refused
   assert.throws(() => load(undefined, zip(required, 'xl/worksheets/sheet1.xml')), /CRC|checksum|corrupt/i);
 });
 
-// Run the actual public wrapper against the same built WASM, with only its
-// bundler-specific import rewritten for Node. No loader behavior is mocked.
+// Node 26 imports the built bundler package directly, including its WASM module.
+// Run build:ts and build the bundler package before this conformance script.
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'formualizer-load-wrapper-'));
 try {
-  const source = fs.readFileSync(path.join(root, 'src/index.ts'), 'utf8')
-    .replace("'../pkg/formualizer_wasm.js'", JSON.stringify(entry));
-  fs.writeFileSync(path.join(temp, 'package.json'), '{"type":"module"}');
-  fs.writeFileSync(path.join(temp, 'manifest.js'), ts.transpileModule(
-    fs.readFileSync(path.join(root, 'src/manifest.ts'), 'utf8'),
-    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText);
-  fs.writeFileSync(path.join(temp, 'index.mjs'), ts.transpileModule(source,
-    { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText);
-  const wrapper = await import(pathToFileURL(path.join(temp, 'index.mjs')).href);
+  const wrapper = await import('formualizer');
   test('generated/public declarations accept exactly five optional numeric fields', () => {
     const importPath = path.join(root, 'src/index.js').replaceAll('\\', '/');
     fs.writeFileSync(path.join(temp, 'types.ts'), `
