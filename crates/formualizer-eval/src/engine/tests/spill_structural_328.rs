@@ -6,7 +6,6 @@ use formualizer_common::LiteralValue;
 use formualizer_parse::parser::parse;
 
 #[test]
-#[ignore = "FORM-000328: structural edits must move spill ownership with user values"]
 fn form_000328_insert_above_spill_preserves_shifted_user_value() {
     crate::builtins::load_builtins();
     let mut e = Engine::new(
@@ -30,4 +29,229 @@ fn form_000328_insert_above_spill_preserves_shifted_user_value() {
         e.get_cell_value("Sheet1", 5, 2),
         Some(LiteralValue::Number(99.))
     );
+}
+
+fn fixture(family: bool) -> Engine<TestWorkbook> {
+    crate::builtins::load_builtins();
+    let mut e = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig {
+            enable_parallel: false,
+            family_execution: family,
+            ..Default::default()
+        },
+    );
+    e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(5.))
+        .unwrap();
+    e.set_cell_formula("Sheet1", 3, 4, parse("=SEQUENCE(A1,3)").unwrap())
+        .unwrap();
+    e
+}
+
+fn shift(e: &mut Engine<TestWorkbook>, op: usize, pos: u32, count: u32) {
+    match op {
+        0 => e.insert_rows("Sheet1", pos, count).unwrap(),
+        1 => e.delete_rows("Sheet1", pos, count).unwrap(),
+        2 => e.insert_columns("Sheet1", pos, count).unwrap(),
+        _ => e.delete_columns("Sheet1", pos, count).unwrap(),
+    };
+}
+
+fn values(e: &Engine<TestWorkbook>) -> Vec<LiteralValue> {
+    (1..=12)
+        .flat_map(|r| {
+            (1..=11).map(move |c| {
+                e.get_cell_value("Sheet1", r, c)
+                    .unwrap_or(LiteralValue::Empty)
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn structural_spill_matches_never_installed_control() {
+    for family in [false, true] {
+        for op in 0..4 {
+            for pos in if op < 2 { [2, 3, 5, 9] } else { [3, 4, 5, 8] } {
+                for count in [1, 2] {
+                    for height in [1., 5., 7.] {
+                        for after in [false, true] {
+                            for user in 0..3 {
+                                let mut a = fixture(family);
+                                let mut b = fixture(family);
+                                a.evaluate_all().unwrap();
+                                for e in [&mut a, &mut b] {
+                                    e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(height))
+                                        .unwrap();
+                                    match user {
+                                        1 => e
+                                            .set_cell_value(
+                                                "Sheet1",
+                                                6,
+                                                6,
+                                                LiteralValue::Number(99.),
+                                            )
+                                            .unwrap(),
+                                        2 => {
+                                            e.set_cell_formula(
+                                                "Sheet1",
+                                                6,
+                                                6,
+                                                parse("=99").unwrap(),
+                                            )
+                                            .unwrap();
+                                        }
+                                        _ => (),
+                                    }
+                                }
+                                if after {
+                                    a.evaluate_all().unwrap();
+                                    b.evaluate_all().unwrap();
+                                }
+                                shift(&mut a, op, pos, count);
+                                shift(&mut b, op, pos, count);
+                                a.evaluate_all().unwrap();
+                                b.evaluate_all().unwrap();
+                                assert_eq!(
+                                    values(&a),
+                                    values(&b),
+                                    "family={family} op={op} pos={pos} count={count} height={height} after={after} user={user}"
+                                );
+                                assert_eq!(
+                                    a.graph.spill_registry_counts(),
+                                    b.graph.spill_registry_counts()
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn structural_spill_moved_blockers_wake_after_removal() {
+    use formualizer_common::ExcelErrorKind;
+    for family in [false, true] {
+        for columns in [false, true] {
+            for formula in [false, true] {
+                let mut e = fixture(family);
+                if columns {
+                    e.set_cell_formula("Sheet1", 3, 4, parse("=SEQUENCE(3,5)").unwrap())
+                        .unwrap();
+                }
+                e.evaluate_all().unwrap();
+                let (r, c) = if columns { (4, 10) } else { (9, 4) };
+                if formula {
+                    e.set_cell_formula("Sheet1", r, c, parse("=99").unwrap())
+                        .unwrap();
+                } else {
+                    e.set_cell_value("Sheet1", r, c, LiteralValue::Number(99.))
+                        .unwrap();
+                }
+                if columns {
+                    e.delete_columns("Sheet1", 6, 2).unwrap();
+                } else {
+                    e.delete_rows("Sheet1", 5, 2).unwrap();
+                }
+                e.evaluate_all().unwrap();
+                let (r, c) = if columns { (4, 8) } else { (7, 4) };
+                assert_eq!(
+                    e.get_cell_value("Sheet1", r, c),
+                    Some(LiteralValue::Number(99.))
+                );
+                assert!(
+                    matches!(e.get_cell_value("Sheet1",3,4),Some(LiteralValue::Error(err)) if err.kind == ExcelErrorKind::Spill)
+                );
+                e.set_cell_value("Sheet1", r, c, LiteralValue::Empty)
+                    .unwrap();
+                e.evaluate_all().unwrap();
+                assert_eq!(
+                    e.get_cell_value("Sheet1", 3, 4),
+                    Some(LiteralValue::Number(1.))
+                );
+                assert!(e.graph.spill_registry_counts().1 > 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn structural_spill_insert_journal_restores_projection_and_user_cells() {
+    use crate::engine::{EditorError, graph::editor::undo_engine::UndoEngine};
+    for family in [false, true] {
+        for columns in [false, true] {
+            for child_first in [false, true] {
+                for formula in [false, true] {
+                    for abort in [false, true] {
+                        let mut e = fixture(family);
+                        e.evaluate_all().unwrap();
+                        let original = values(&e);
+                        let result = e.action_atomic_journal("structural spill", |tx| {
+                            let edit = |tx: &mut crate::engine::EngineAction<'_, TestWorkbook>,
+                                        r,
+                                        c| {
+                                tx.set_cell_value("Sheet1", r, c, LiteralValue::Number(99.))?;
+                                if formula {
+                                    tx.set_cell_formula("Sheet1", r + 1, c, parse("=88").unwrap())?;
+                                } else {
+                                    tx.set_cell_value(
+                                        "Sheet1",
+                                        r + 1,
+                                        c,
+                                        LiteralValue::Number(88.),
+                                    )?;
+                                }
+                                Ok::<_, EditorError>(())
+                            };
+                            if child_first {
+                                edit(tx, 5, 6)?;
+                            }
+                            if columns {
+                                tx.insert_columns("Sheet1", 3, 2)?;
+                            } else {
+                                tx.insert_rows("Sheet1", 2, 2)?;
+                            }
+                            if !child_first {
+                                edit(tx, if columns { 5 } else { 7 }, if columns { 8 } else { 6 })?;
+                            }
+                            if abort {
+                                return Err(EditorError::TransactionFailed {
+                                    reason: "intentional".into(),
+                                });
+                            }
+                            Ok(())
+                        });
+                        if abort {
+                            assert!(result.is_err());
+                            assert_eq!(values(&e), original, "rollback before evaluate");
+                            e.evaluate_all().unwrap();
+                            assert_eq!(values(&e), original, "rollback after evaluate");
+                        } else {
+                            let (_, journal) = result.unwrap();
+                            let mut undo = UndoEngine::new();
+                            undo.push_action(journal);
+                            e.evaluate_all().unwrap();
+                            let edited = values(&e);
+                            e.undo_action(&mut undo).unwrap();
+                            assert_eq!(values(&e), original, "undo before evaluate");
+                            e.evaluate_all().unwrap();
+                            assert_eq!(values(&e), original, "undo after evaluate");
+                            e.redo_action(&mut undo).unwrap();
+                            e.evaluate_all().unwrap();
+                            assert_eq!(values(&e), edited, "redo");
+                        }
+                        // Restored ownership must still clear cleanly on later shrink.
+                        if abort {
+                            e.set_cell_value("Sheet1", 1, 1, LiteralValue::Number(1.))
+                                .unwrap();
+                            e.evaluate_all().unwrap();
+                            assert_eq!(e.get_cell_value("Sheet1", 7, 6), None);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
