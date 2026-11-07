@@ -18,9 +18,6 @@ pub use resumable::{
     RecalcOutcome, SlowUnitKind, SlowUnitReport, StepDelta, StepPhase, StepProgress, StepReport,
     StopReason,
 };
-/// Bounded relation facts for source publication policy, not all-read certification.
-#[doc(hidden)]
-pub mod affected_closure;
 pub(crate) mod convergence;
 pub(crate) mod derived_formats;
 pub mod effects;
