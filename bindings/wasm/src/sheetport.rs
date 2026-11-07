@@ -126,6 +126,20 @@ impl SheetPortSession {
     #[wasm_bindgen(js_name = "evaluateOnce")]
     pub fn evaluate_once(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
         let eval_options = parse_eval_options(options)?;
+        if self
+            .workbook
+            .driver_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+            != 0
+        {
+            return Err(sheetport_error_to_js(
+                formualizer::SheetPortError::Workbook {
+                    source: formualizer::workbook::IoError::Engine(
+                        crate::workbook::recalc_job_active_error(),
+                    ),
+                },
+            ));
+        }
         let outputs =
             self.with_sheetport(move |sheetport| sheetport.evaluate_once(eval_options))?;
         snapshot_to_js(outputs.inner())

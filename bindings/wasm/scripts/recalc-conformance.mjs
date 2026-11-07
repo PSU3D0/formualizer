@@ -323,7 +323,8 @@ function observeRefusals(fixture, freed) {
 }
 function assertRefusals(observations) {
   assert.ok(observations.every(item => item.status === 'refused' &&
-    item.code === 'RECALC_JOB_ACTIVE' && item.kind === 'Engine' && item.excel_kind === '#VALUE!'),
+    item.code === 'RECALC_JOB_ACTIVE' &&
+    item.kind === (item.route === 'SheetPort.evaluateOnce' ? 'Workbook' : 'Engine') && item.excel_kind === '#VALUE!'),
   JSON.stringify(observations));
 }
 function afterReservation(fixture, freed) {
@@ -366,6 +367,8 @@ for (const mode of ['sync', 'async']) {
           }
           if (freed) fixture.wb.free();
           observations = observeRefusals(fixture, freed);
+          if (interval === 'cancelled') assert.equal(job._cancelRequested, true,
+            'refused evaluation must preserve the retained cooperative flag');
           if (interval === 'error') throw sentinel;
           return false; // Finished/cancellation must still take precedence over pause.
         };

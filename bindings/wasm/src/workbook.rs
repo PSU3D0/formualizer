@@ -8,6 +8,14 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
 
+pub(crate) fn recalc_job_active_error() -> ExcelError {
+    ExcelError::new(ExcelErrorKind::Value)
+        .with_message(
+            "recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc",
+        )
+        .with_extra(formualizer::common::ExcelErrorExtra::RecalcJobActive)
+}
+
 #[derive(Default)]
 struct JsCallbackRegistry {
     next_id: u64,
@@ -1305,6 +1313,7 @@ impl Workbook {
 
         Ok(Sheet {
             wb: self.inner.clone(),
+            driver_generation: Arc::clone(&self.driver_generation),
             name,
         })
     }
@@ -1369,7 +1378,17 @@ impl Workbook {
                 .inner
                 .write()
                 .map_err(|_| js_error("failed to lock workbook for write"))?;
-            wb.evaluate_cell(&sheet, row, col)
+            if self
+                .driver_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 0
+            {
+                Err(formualizer::workbook::IoError::Engine(
+                    recalc_job_active_error(),
+                ))
+            } else {
+                wb.evaluate_cell(&sheet, row, col)
+            }
         };
         let v = result.map_err(workbook_error_to_js)?;
         Ok(literal_to_js(&v))
@@ -1389,11 +1408,7 @@ impl Workbook {
         {
             drop(wb);
             return Err(workbook_error_to_js(
-                formualizer::workbook::IoError::Engine(
-                    ExcelError::new(ExcelErrorKind::Value)
-                        .with_message("recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc")
-                        .with_extra(formualizer::common::ExcelErrorExtra::RecalcJobActive),
-                ),
+                formualizer::workbook::IoError::Engine(recalc_job_active_error()),
             ));
         }
         self.cancel_flag
@@ -1439,11 +1454,7 @@ impl Workbook {
         {
             drop(wb);
             return Err(workbook_error_to_js(
-                formualizer::workbook::IoError::Engine(
-                    ExcelError::new(ExcelErrorKind::Value)
-                        .with_message("recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc")
-                        .with_extra(formualizer::common::ExcelErrorExtra::RecalcJobActive),
-                ),
+                formualizer::workbook::IoError::Engine(recalc_job_active_error()),
             ));
         }
         self.cancel_flag
@@ -1648,6 +1659,7 @@ impl Workbook {
 #[wasm_bindgen]
 pub struct Sheet {
     wb: Arc<RwLock<formualizer::workbook::Workbook>>,
+    driver_generation: Arc<std::sync::atomic::AtomicU64>,
     name: String,
 }
 
@@ -1796,7 +1808,17 @@ impl Sheet {
                 .wb
                 .write()
                 .map_err(|_| js_error("failed to lock workbook for write"))?;
-            wb.evaluate_cell(&self.name, row, col)
+            if self
+                .driver_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 0
+            {
+                Err(formualizer::workbook::IoError::Engine(
+                    recalc_job_active_error(),
+                ))
+            } else {
+                wb.evaluate_cell(&self.name, row, col)
+            }
         };
         let v = result.map_err(workbook_error_to_js)?;
         Ok(literal_to_js(&v))
