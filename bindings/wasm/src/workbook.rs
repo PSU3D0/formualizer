@@ -1364,12 +1364,14 @@ impl Workbook {
     pub fn evaluate_cell(&self, sheet: String, row: u32, col: u32) -> Result<JsValue, JsValue> {
         validate_cell_coords(row, col)?;
 
-        let v = self
-            .inner
-            .write()
-            .map_err(|_| js_error("failed to lock workbook for write"))?
-            .evaluate_cell(&sheet, row, col)
-            .map_err(workbook_error_to_js)?;
+        let result = {
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|_| js_error("failed to lock workbook for write"))?;
+            wb.evaluate_cell(&sheet, row, col)
+        };
+        let v = result.map_err(workbook_error_to_js)?;
         Ok(literal_to_js(&v))
     }
 
@@ -1396,10 +1398,11 @@ impl Workbook {
         }
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        wb.evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
-            self.cancel_flag.clone(),
-        ))
-        .map_err(workbook_error_to_js)?;
+        let result = wb.evaluate_all_cancellable(
+            formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+        );
+        drop(wb);
+        result.map_err(workbook_error_to_js)?;
         Ok(())
     }
 
@@ -1446,12 +1449,12 @@ impl Workbook {
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
-        let results = wb
-            .evaluate_cells_cancellable(
-                &refs,
-                formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
-            )
-            .map_err(workbook_error_to_js)?;
+        let results = wb.evaluate_cells_cancellable(
+            &refs,
+            formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+        );
+        drop(wb);
+        let results = results.map_err(workbook_error_to_js)?;
 
         let out = js_sys::Array::new();
         for v in results {
@@ -1788,12 +1791,14 @@ impl Sheet {
     pub fn evaluate_cell(&self, row: u32, col: u32) -> Result<JsValue, JsValue> {
         validate_cell_coords(row, col)?;
 
-        let v = self
-            .wb
-            .write()
-            .map_err(|_| js_error("failed to lock workbook for write"))?
-            .evaluate_cell(&self.name, row, col)
-            .map_err(workbook_error_to_js)?;
+        let result = {
+            let mut wb = self
+                .wb
+                .write()
+                .map_err(|_| js_error("failed to lock workbook for write"))?;
+            wb.evaluate_cell(&self.name, row, col)
+        };
+        let v = result.map_err(workbook_error_to_js)?;
         Ok(literal_to_js(&v))
     }
 
