@@ -51,6 +51,14 @@ Native async steps run on a worker thread with the GIL released; callbacks run o
 
 `wb.recalc(5, on_step=callback)` is the synchronous driver; return `False` to pause and resume through the returned `outcome.job`. Existing `evaluate_*` calls raise `RecalcJobActiveError` while a job is active. Reads and edits between steps are allowed; use `has_pending_in_rect` / `pending_cells_in_rect` with `has_active_recalc_job` to interpret old values. See the [interruptible recalculation guide](https://www.formualizer.dev/docs/guides/interruptible-recalculation) for lifecycle, exceptions and limits.
 
+Runnable, self-contained examples (from this directory, with a compatible native build installed):
+
+- [Viewport grid](examples/interruptible_viewport_grid.py): prioritize visible cells, scroll, repaint changed rectangles and edit an assumption during a job.
+- [Async service](examples/interruptible_async_service.py): keep a heartbeat running, cancel a superseded what-if request and calculate its replacement.
+- [Pause and inspect](examples/interruptible_pause_inspect.py): pause a callback driver on a negative margin, repair the input and resume the same job.
+
+Run, for example, `python examples/interruptible_viewport_grid.py`. Each script checks its final results; timings and step counts depend on the machine and native build.
+
 ## Command line
 
 Native wheels include the `formualizer` command, which recalculates the cached formula values in an `.xlsx` after another tool has edited it:
