@@ -381,3 +381,129 @@ fn structural_spill_insert_journal_restores_projection_and_user_cells() {
         }
     }
 }
+
+// Compacted EngineAction regressions ported from the independent R328 review.
+mod compacted_action_review {
+    use super::*;
+    use crate::engine::{EditorError, graph::editor::undo_engine::UndoEngine};
+    use formualizer_common::LiteralValue as V;
+    fn fixture(compact: bool) -> Engine<TestWorkbook> {
+        crate::builtins::load_builtins();
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                enable_parallel: false,
+                family_execution: false,
+                max_overlay_memory_bytes: compact.then_some(1),
+                ..Default::default()
+            },
+        );
+        e.set_cell_value("Sheet1", 1, 1, V::Number(4.)).unwrap();
+        e.set_cell_formula("Sheet1", 4, 4, parse("=SEQUENCE(A1,A1,11)").unwrap())
+            .unwrap();
+        e
+    }
+    fn grid(e: &Engine<TestWorkbook>) -> Vec<V> {
+        (1..=13)
+            .flat_map(|r| {
+                (1..=13).map(move |c| e.get_cell_value("Sheet1", r, c).unwrap_or(V::Empty))
+            })
+            .collect()
+    }
+    #[test]
+    fn insert_history_second_undo_and_failed_action() {
+        let mut mismatch = false;
+        for columns in [false, true] {
+            for child_first in [false, true] {
+                for abort in [false, true] {
+                    let mut e = fixture(true);
+                    e.evaluate_all().unwrap();
+                    e.config.max_overlay_memory_bytes = None;
+                    let original = grid(&e);
+                    let result = e.action_atomic_journal("independent", |tx| {
+                        if child_first {
+                            tx.set_cell_value("Sheet1", 6, 6, V::Number(87.))?;
+                            tx.set_cell_formula("Sheet1", 7, 6, parse("=92").unwrap())?;
+                        }
+                        if columns {
+                            tx.insert_columns("Sheet1", 4, 1)?;
+                        } else {
+                            tx.insert_rows("Sheet1", 4, 1)?;
+                        }
+                        let (r, c) = if columns { (6, 7) } else { (7, 6) };
+                        tx.set_cell_value("Sheet1", r, c, V::Number(97.))?;
+                        tx.set_cell_formula("Sheet1", r + 1, c, parse("=103").unwrap())?;
+                        // Many ordinary edits must not trigger rescans of prior action events.
+                        for n in 20..=120 {
+                            tx.set_cell_value("Sheet1", n, 20, V::Number(f64::from(n)))?;
+                        }
+                        if abort {
+                            return Err(EditorError::TransactionFailed {
+                                reason: "expected".into(),
+                            });
+                        }
+                        Ok(())
+                    });
+                    if abort {
+                        assert!(result.is_err());
+                        assert_eq!(grid(&e), original);
+                        e.evaluate_all().unwrap();
+                        assert_eq!(grid(&e), original);
+                    } else {
+                        let mut u = UndoEngine::new();
+                        u.push_action(result.unwrap().1);
+                        e.evaluate_all().unwrap();
+                        let edited = grid(&e);
+                        e.undo_action(&mut u).unwrap();
+                        assert_eq!(grid(&e), original);
+                        e.evaluate_all().unwrap();
+                        assert_eq!(grid(&e), original);
+                        e.redo_action(&mut u).unwrap();
+                        e.evaluate_all().unwrap();
+                        if grid(&e) != edited {
+                            mismatch = true;
+                            eprintln!("redo mismatch columns={columns} child_first={child_first}");
+                        }
+                        e.undo_action(&mut u).unwrap();
+                        assert_eq!(grid(&e), original);
+                        e.evaluate_all().unwrap();
+                        assert_eq!(grid(&e), original);
+                        e.set_cell_value("Sheet1", 1, 1, V::Number(1.)).unwrap();
+                        e.evaluate_all().unwrap();
+                        assert_eq!(e.get_cell_value("Sheet1", 7, 7), None);
+                    }
+                }
+            }
+        }
+        assert!(
+            !mismatch,
+            "redo differed from first forward state; all second undos and aborts completed"
+        );
+    }
+    #[test]
+    fn compacted_action_child_before_insert_minimal() {
+        for columns in [false, true] {
+            let mut e = fixture(true);
+            e.evaluate_all().unwrap();
+            e.config.max_overlay_memory_bytes = None;
+            e.action_atomic_journal("minimal", |tx| {
+                tx.set_cell_value("Sheet1", 6, 6, V::Number(87.))?;
+                tx.set_cell_formula("Sheet1", 7, 6, parse("=92").unwrap())?;
+                if columns {
+                    tx.insert_columns("Sheet1", 4, 1)?;
+                } else {
+                    tx.insert_rows("Sheet1", 4, 1)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+            e.evaluate_all().unwrap();
+            let (r, c) = if columns { (4, 6) } else { (6, 4) };
+            assert_eq!(
+                e.get_cell_value("Sheet1", r, c).unwrap_or(V::Empty),
+                V::Empty,
+                "orphan columns={columns} at=({r},{c})"
+            );
+        }
+    }
+}
