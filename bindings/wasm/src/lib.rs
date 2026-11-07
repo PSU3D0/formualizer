@@ -8,9 +8,10 @@ mod dialect;
 mod errors;
 mod inspect;
 mod parser;
-mod reference;
 mod recalc;
-pub use recalc::*;
+#[cfg(all(test, target_arch = "wasm32"))]
+mod recalc_tests;
+mod reference;
 mod sheetport;
 #[cfg(feature = "xlsx-recalc")]
 mod source_calculation;
@@ -25,6 +26,7 @@ pub use ast::*;
 pub use dialect::*;
 pub use errors::*;
 pub use parser::*;
+pub use recalc::*;
 pub use reference::*;
 pub use sheetport::*;
 pub use token::*;
@@ -173,7 +175,7 @@ fn apply_reproducibility_options(
     }
     let obj = Object::try_from(options)
         .ok_or_else(|| utils::js_error("recalculateXlsxBytes options must be an object"))?;
-    if let Some(value) = sheetport::get_optional_value(&obj, "rngSeed")? {
+    if let Some(value) = sheetport::get_optional_value(obj, "rngSeed")? {
         const MESSAGE: &str = "rngSeed must be a non-negative safe integer or a u64 bigint";
         config.workbook_seed = if value.is_bigint() {
             js_sys::BigInt::from(value)
@@ -189,8 +191,8 @@ fn apply_reproducibility_options(
             n as u64
         };
     }
-    let timestamp = sheetport::get_optional_value(&obj, "deterministicTimestampUtc")?;
-    let timezone = sheetport::get_optional_value(&obj, "deterministicTimezone")?;
+    let timestamp = sheetport::get_optional_value(obj, "deterministicTimestampUtc")?;
+    let timezone = sheetport::get_optional_value(obj, "deterministicTimezone")?;
     if let Some(value) = timestamp {
         let mode = DeterministicMode::Enabled {
             timestamp_utc: sheetport::parse_timestamp_utc(&value)?,

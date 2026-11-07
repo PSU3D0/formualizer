@@ -145,6 +145,36 @@ fn ordinary_load_limits_are_xlsx_only() {
     assert!(Workbook::from_json_with_options("{}".into(), Some(options)).is_err());
 }
 
+#[wasm_bindgen_test]
+fn raw_xlsx_constructor_supports_jobs_and_sheetport_refusal() {
+    let wb = Workbook::from_xlsx_bytes(build_fixture_xlsx_bytes()).unwrap();
+    let job = wb.clone().begin_recalc(None).unwrap();
+    job.step(None).unwrap();
+    assert_eq!(
+        wb.sheet("Sheet1".into())
+            .unwrap()
+            .get_value(1, 3)
+            .unwrap()
+            .as_f64(),
+        Some(3.0)
+    );
+
+    let wb = build_sheetport_workbook();
+    let mut session = SheetPortSession::from_manifest_yaml(SHEETPORT_MANIFEST.into(), &wb).unwrap();
+    let job = wb.begin_recalc(None).unwrap();
+    let error = session.evaluate_once(JsValue::UNDEFINED).unwrap_err();
+    assert_eq!(
+        Reflect::get(&error, &"code".into())
+            .unwrap()
+            .as_string()
+            .as_deref(),
+        Some("RECALC_JOB_ACTIVE")
+    );
+    assert!(job.active().unwrap());
+    job.cancel().unwrap();
+    session.evaluate_once(JsValue::UNDEFINED).unwrap();
+}
+
 fn build_fixture_xlsx_bytes() -> Vec<u8> {
     build_named_fixture_xlsx_bytes("Sheet1")
 }

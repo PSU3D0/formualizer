@@ -57,6 +57,48 @@ mod tests {
     use wasm_bindgen_test::wasm_bindgen_test;
 
     #[wasm_bindgen_test]
+    fn job_poison_and_function_panic_metadata_remain_machine_readable() {
+        let error =
+            ExcelError::new(ExcelErrorKind::Value).with_extra(ExcelErrorExtra::FunctionPanicked {
+                function: "resolver:source".into(),
+                message: Some("available panic detail".into()),
+            });
+        let js = excel_error_to_js(error);
+        assert_eq!(
+            js_sys::Reflect::get(&js, &"code".into())
+                .unwrap()
+                .as_string()
+                .as_deref(),
+            Some("FUNCTION_PANICKED")
+        );
+        let extra = js_sys::Reflect::get(&js, &"extra".into()).unwrap();
+        assert_eq!(
+            js_sys::Reflect::get(&extra, &"function".into())
+                .unwrap()
+                .as_string()
+                .as_deref(),
+            Some("resolver:source")
+        );
+        assert_eq!(
+            js_sys::Reflect::get(&extra, &"message".into())
+                .unwrap()
+                .as_string()
+                .as_deref(),
+            Some("available panic detail")
+        );
+        let poisoned = excel_error_to_js(
+            ExcelError::new(ExcelErrorKind::Value).with_extra(ExcelErrorExtra::EnginePoisoned),
+        );
+        assert_eq!(
+            js_sys::Reflect::get(&poisoned, &"code".into())
+                .unwrap()
+                .as_string()
+                .as_deref(),
+            Some("ENGINE_POISONED")
+        );
+    }
+
+    #[wasm_bindgen_test]
     fn workbook_deferral_is_typed_and_cancel_remains_engine_error() {
         use formualizer::workbook::{CalculationDeferredReason, IoError};
         let deferred = workbook_error_to_js(IoError::CalculationDeferred {
@@ -149,6 +191,23 @@ pub(crate) fn excel_error_to_js(error: ExcelError) -> JsValue {
     }
     match error.extra() {
         ExcelErrorExtra::None | ExcelErrorExtra::Spill { .. } => {}
+        ExcelErrorExtra::RecalcJobActive => {
+            set_string(object, "code", "RECALC_JOB_ACTIVE");
+        }
+        ExcelErrorExtra::EnginePoisoned => {
+            set_string(object, "code", "ENGINE_POISONED");
+        }
+        ExcelErrorExtra::FunctionPanicked { function, message } => {
+            set_string(object, "code", "FUNCTION_PANICKED");
+            set_string(object, "function", function);
+            let message = message.as_ref().map_or(JsValue::NULL, |value| value.into());
+            let _ = js_sys::Reflect::set(object, &"panic_message".into(), &message);
+            let extra = js_sys::Object::new();
+            set_string(&extra, "kind", "FunctionPanicked");
+            set_string(&extra, "function", function);
+            let _ = js_sys::Reflect::set(&extra, &"message".into(), &message);
+            let _ = js_sys::Reflect::set(object, &"extra".into(), &extra);
+        }
         ExcelErrorExtra::Resource { detail } => {
             set_string(object, "resource_reason", detail.reason.as_str());
             // Decimal strings are the stable binding contract for Rust u64 values.

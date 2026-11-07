@@ -793,8 +793,10 @@ fn eval_plan_to_js(plan: &formualizer::EvalPlan) -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen]
 pub struct Workbook {
-    inner: Arc<RwLock<formualizer::workbook::Workbook>>,
-    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) inner: Arc<RwLock<formualizer::workbook::Workbook>>,
+    pub(crate) job_generation: Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) driver_generation: Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) cancel_flag: Arc<std::sync::atomic::AtomicBool>,
     callback_ids: Arc<RwLock<BTreeMap<String, u64>>>,
 }
 
@@ -802,6 +804,8 @@ impl Default for Workbook {
     fn default() -> Self {
         Self {
             inner: Arc::new(RwLock::new(formualizer::workbook::Workbook::new())),
+            job_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            driver_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
         }
@@ -812,6 +816,8 @@ impl Clone for Workbook {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            job_generation: Arc::clone(&self.job_generation),
+            driver_generation: Arc::clone(&self.driver_generation),
             cancel_flag: Arc::clone(&self.cancel_flag),
             callback_ids: Arc::clone(&self.callback_ids),
         }
@@ -851,6 +857,8 @@ impl Workbook {
             inner: Arc::new(RwLock::new(
                 formualizer::workbook::Workbook::new_with_config(cfg),
             )),
+            job_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            driver_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
         })
@@ -884,6 +892,8 @@ impl Workbook {
             .map_err(|e| js_error(format!("load failed: {e}")))?;
             Ok(Workbook {
                 inner: Arc::new(RwLock::new(wb)),
+                job_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                driver_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
             })
@@ -960,6 +970,8 @@ impl Workbook {
             };
             Ok(Workbook {
                 inner: Arc::new(RwLock::new(wb)),
+                job_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                driver_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
             })
@@ -1367,6 +1379,21 @@ impl Workbook {
             .inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?;
+        if wb.has_active_recalc_job()
+            || self
+                .driver_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 0
+        {
+            drop(wb);
+            return Err(workbook_error_to_js(
+                formualizer::workbook::IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc")
+                        .with_extra(formualizer::common::ExcelErrorExtra::RecalcJobActive),
+                ),
+            ));
+        }
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
         wb.evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
@@ -1401,6 +1428,21 @@ impl Workbook {
             .inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?;
+        if wb.has_active_recalc_job()
+            || self
+                .driver_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 0
+        {
+            drop(wb);
+            return Err(workbook_error_to_js(
+                formualizer::workbook::IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Value)
+                        .with_message("recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc")
+                        .with_extra(formualizer::common::ExcelErrorExtra::RecalcJobActive),
+                ),
+            ));
+        }
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
