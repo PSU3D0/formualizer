@@ -1395,6 +1395,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan(&self) -> co
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_has_spill_projection(&self, &str, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
@@ -1519,7 +1520,6 @@ impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::tra
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all(&mut self) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_cancellable(&mut self, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_for_snapshot(&mut self, core::option::Option<formualizer_eval::engine::cancel::CancelToken>) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_until(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::EvaluationProgress, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta_policy(&mut self, formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_target_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_common::error::ExcelError>
@@ -1531,7 +1531,6 @@ pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_cells_with_delta_poli
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_cells_with_target_delta(&mut self, &[(&str, u32, u32)]) -> core::result::Result<(alloc::vec::Vec<core::option::Option<formualizer_common::value::LiteralValue>>, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_until_cancellable(&mut self, &[&str], formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_eval_plan(&self, &[(&str, u32, u32)]) -> core::result::Result<formualizer_eval::engine::eval::EvalPlan, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_resumable_evaluation(&self) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::pending_snapshot_iterative_members(&self) -> usize
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -2025,6 +2024,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -2598,6 +2598,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -4465,43 +4466,6 @@ impl core::marker::Copy for formualizer_eval::engine::resource_observability::Fo
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats
 pub const formualizer_eval::engine::resource_observability::FORMULA_PLANE_ROUTE_EVENT_CAPACITY: usize
 pub const formualizer_eval::engine::resource_observability::FORMULA_PLANE_ROUTE_EVENT_SHEET_CAPACITY: usize
-pub mod formualizer_eval::engine::resumable
-#[non_exhaustive] pub enum formualizer_eval::engine::resumable::EvaluationProgress
-pub formualizer_eval::engine::resumable::EvaluationProgress::Complete(formualizer_eval::engine::eval::EvalResult)
-pub formualizer_eval::engine::resumable::EvaluationProgress::Incomplete(formualizer_eval::engine::resumable::IncompleteEvaluation)
-impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationProgress
-pub fn formualizer_eval::engine::resumable::EvaluationProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-#[non_exhaustive] pub enum formualizer_eval::engine::resumable::StopReason
-pub formualizer_eval::engine::resumable::StopReason::Cancelled
-pub formualizer_eval::engine::resumable::StopReason::Deadline
-impl core::clone::Clone for formualizer_eval::engine::resumable::StopReason
-pub fn formualizer_eval::engine::resumable::StopReason::clone(&self) -> formualizer_eval::engine::resumable::StopReason
-impl core::cmp::Eq for formualizer_eval::engine::resumable::StopReason
-impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StopReason
-pub fn formualizer_eval::engine::resumable::StopReason::eq(&self, &formualizer_eval::engine::resumable::StopReason) -> bool
-impl core::fmt::Debug for formualizer_eval::engine::resumable::StopReason
-pub fn formualizer_eval::engine::resumable::StopReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for formualizer_eval::engine::resumable::StopReason
-impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StopReason
-#[non_exhaustive] pub struct formualizer_eval::engine::resumable::EvaluationStop
-pub formualizer_eval::engine::resumable::EvaluationStop::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
-pub formualizer_eval::engine::resumable::EvaluationStop::soft_deadline: core::option::Option<core::time::Duration>
-impl formualizer_eval::engine::resumable::EvaluationStop
-pub fn formualizer_eval::engine::resumable::EvaluationStop::after(core::time::Duration) -> Self
-pub fn formualizer_eval::engine::resumable::EvaluationStop::cancel(formualizer_eval::engine::cancel::CancelToken) -> Self
-pub fn formualizer_eval::engine::resumable::EvaluationStop::none() -> Self
-pub fn formualizer_eval::engine::resumable::EvaluationStop::with_cancel(self, formualizer_eval::engine::cancel::CancelToken) -> Self
-impl core::clone::Clone for formualizer_eval::engine::resumable::EvaluationStop
-pub fn formualizer_eval::engine::resumable::EvaluationStop::clone(&self) -> formualizer_eval::engine::resumable::EvaluationStop
-impl core::default::Default for formualizer_eval::engine::resumable::EvaluationStop
-pub fn formualizer_eval::engine::resumable::EvaluationStop::default() -> formualizer_eval::engine::resumable::EvaluationStop
-impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationStop
-pub fn formualizer_eval::engine::resumable::EvaluationStop::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-#[non_exhaustive] pub struct formualizer_eval::engine::resumable::IncompleteEvaluation
-pub formualizer_eval::engine::resumable::IncompleteEvaluation::computed_vertices: usize
-pub formualizer_eval::engine::resumable::IncompleteEvaluation::reason: formualizer_eval::engine::resumable::StopReason
-impl core::fmt::Debug for formualizer_eval::engine::resumable::IncompleteEvaluation
-pub fn formualizer_eval::engine::resumable::IncompleteEvaluation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod formualizer_eval::engine::row_visibility
 pub enum formualizer_eval::engine::row_visibility::RowVisibilitySource
 pub formualizer_eval::engine::row_visibility::RowVisibilitySource::Filter
@@ -5169,11 +5133,6 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_ledger::EvaluationI
 pub fn formualizer_eval::engine::resource_ledger::EvaluationIncompleteReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_ledger::EvaluationIncompleteReason
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_ledger::EvaluationIncompleteReason
-#[non_exhaustive] pub enum formualizer_eval::engine::EvaluationProgress
-pub formualizer_eval::engine::EvaluationProgress::Complete(formualizer_eval::engine::eval::EvalResult)
-pub formualizer_eval::engine::EvaluationProgress::Incomplete(formualizer_eval::engine::resumable::IncompleteEvaluation)
-impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationProgress
-pub fn formualizer_eval::engine::resumable::EvaluationProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum formualizer_eval::engine::EvaluationRequestKind
 pub formualizer_eval::engine::EvaluationRequestKind::Cell
 pub formualizer_eval::engine::EvaluationRequestKind::Cells
@@ -5706,18 +5665,6 @@ impl core::fmt::Debug for formualizer_eval::engine::SpillVisibility
 pub fn formualizer_eval::engine::SpillVisibility::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::SpillVisibility
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::SpillVisibility
-#[non_exhaustive] pub enum formualizer_eval::engine::StopReason
-pub formualizer_eval::engine::StopReason::Cancelled
-pub formualizer_eval::engine::StopReason::Deadline
-impl core::clone::Clone for formualizer_eval::engine::resumable::StopReason
-pub fn formualizer_eval::engine::resumable::StopReason::clone(&self) -> formualizer_eval::engine::resumable::StopReason
-impl core::cmp::Eq for formualizer_eval::engine::resumable::StopReason
-impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StopReason
-pub fn formualizer_eval::engine::resumable::StopReason::eq(&self, &formualizer_eval::engine::resumable::StopReason) -> bool
-impl core::fmt::Debug for formualizer_eval::engine::resumable::StopReason
-pub fn formualizer_eval::engine::resumable::StopReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Copy for formualizer_eval::engine::resumable::StopReason
-impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StopReason
 pub enum formualizer_eval::engine::StripeType
 pub formualizer_eval::engine::StripeType::Block
 pub formualizer_eval::engine::StripeType::Column
@@ -5905,6 +5852,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -6139,6 +6087,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan(&self) -> co
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_has_spill_projection(&self, &str, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
@@ -6263,7 +6212,6 @@ impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::tra
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all(&mut self) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_cancellable(&mut self, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_for_snapshot(&mut self, core::option::Option<formualizer_eval::engine::cancel::CancelToken>) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_until(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::EvaluationProgress, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta_policy(&mut self, formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_target_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_common::error::ExcelError>
@@ -6275,7 +6223,6 @@ pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_cells_with_delta_poli
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_cells_with_target_delta(&mut self, &[(&str, u32, u32)]) -> core::result::Result<(alloc::vec::Vec<core::option::Option<formualizer_common::value::LiteralValue>>, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_until_cancellable(&mut self, &[&str], formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_eval_plan(&self, &[(&str, u32, u32)]) -> core::result::Result<formualizer_eval::engine::eval::EvalPlan, formualizer_common::error::ExcelError>
-pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_resumable_evaluation(&self) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::pending_snapshot_iterative_members(&self) -> usize
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -6631,20 +6578,6 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
-#[non_exhaustive] pub struct formualizer_eval::engine::EvaluationStop
-pub formualizer_eval::engine::EvaluationStop::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
-pub formualizer_eval::engine::EvaluationStop::soft_deadline: core::option::Option<core::time::Duration>
-impl formualizer_eval::engine::resumable::EvaluationStop
-pub fn formualizer_eval::engine::resumable::EvaluationStop::after(core::time::Duration) -> Self
-pub fn formualizer_eval::engine::resumable::EvaluationStop::cancel(formualizer_eval::engine::cancel::CancelToken) -> Self
-pub fn formualizer_eval::engine::resumable::EvaluationStop::none() -> Self
-pub fn formualizer_eval::engine::resumable::EvaluationStop::with_cancel(self, formualizer_eval::engine::cancel::CancelToken) -> Self
-impl core::clone::Clone for formualizer_eval::engine::resumable::EvaluationStop
-pub fn formualizer_eval::engine::resumable::EvaluationStop::clone(&self) -> formualizer_eval::engine::resumable::EvaluationStop
-impl core::default::Default for formualizer_eval::engine::resumable::EvaluationStop
-pub fn formualizer_eval::engine::resumable::EvaluationStop::default() -> formualizer_eval::engine::resumable::EvaluationStop
-impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationStop
-pub fn formualizer_eval::engine::resumable::EvaluationStop::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::FormulaFamilyGrouper
 impl formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
 pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::members(&self) -> u64
@@ -6870,11 +6803,6 @@ pub fn formualizer_eval::engine::journal::GraphUndoBatch::default() -> formualiz
 impl core::fmt::Debug for formualizer_eval::engine::journal::GraphUndoBatch
 pub fn formualizer_eval::engine::journal::GraphUndoBatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::journal::GraphUndoBatch
-#[non_exhaustive] pub struct formualizer_eval::engine::IncompleteEvaluation
-pub formualizer_eval::engine::IncompleteEvaluation::computed_vertices: usize
-pub formualizer_eval::engine::IncompleteEvaluation::reason: formualizer_eval::engine::resumable::StopReason
-impl core::fmt::Debug for formualizer_eval::engine::resumable::IncompleteEvaluation
-pub fn formualizer_eval::engine::resumable::IncompleteEvaluation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::Layer
 pub formualizer_eval::engine::Layer::vertices: alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 impl formualizer_eval::engine::scheduler::Layer
