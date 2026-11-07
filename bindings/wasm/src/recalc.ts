@@ -96,7 +96,7 @@ export interface EvaluateWithYieldOptions extends RecalcJobOptions {
 }
 
 type DriverWorkbook = wasm.Workbook;
-type OwnedJob = RecalcJob & Pick<wasm.RecalcJob, '_releaseDriver' | '_cancelRequested'>;
+type OwnedJob = RecalcJob & Pick<wasm.RecalcJob, '_releaseDriver' | '_cancelRequested' | '_requestCancel'>;
 
 function invalidOptions(message: string): never {
   throw Object.assign(new Error(message), {
@@ -191,7 +191,7 @@ export async function evaluateWithYield(
   let failed = false;
   let notifyAbort: (() => void) | undefined;
   // This listener must remain lock-free: abort may fire inside a synchronous UDF.
-  const onAbort = () => { this.cancel(); notifyAbort?.(); };
+  const onAbort = () => { try { job._requestCancel(); } finally { notifyAbort?.(); } };
   const boundary = async (hook: () => unknown): Promise<void> => {
     checkAbort();
     let rejectAbort: (error: Error) => void = () => {};

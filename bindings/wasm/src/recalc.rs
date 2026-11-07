@@ -338,6 +338,16 @@ impl RecalcJob {
         drop(guard);
         Ok(true)
     }
+    /// Internal lock-free signal through the retained owner, never a JS wrapper.
+    /// A newer admission changes the generation before an old handle can signal.
+    #[wasm_bindgen(js_name = _requestCancel)]
+    pub fn request_cancel(&self) -> bool {
+        if self.workbook.job_generation.load(Ordering::SeqCst) != self.generation {
+            return false;
+        }
+        self.workbook.cancel_flag.store(true, Ordering::SeqCst);
+        true
+    }
     /// Internal lock-free query, including during terminal callbacks.
     #[wasm_bindgen(getter, js_name = _cancelRequested)]
     pub fn cancel_requested(&self) -> bool {

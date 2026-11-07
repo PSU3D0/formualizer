@@ -1,7 +1,8 @@
 import * as wasm from '../pkg/formualizer_wasm.js';
 import { recalc, evaluateWithYield } from './recalc.js';
 import type { RecalcJob, RecalcJobOptions, RecalcOptions, EvaluateWithYieldOptions, RecalcOutcome } from './recalc.js';
-export * from './recalc.js';
+export { RecalcJob } from './recalc.js';
+export type * from './recalc.js';
 
 let wasmInitialized = false;
 let wasmInitPromise: Promise<void> | null = null;
