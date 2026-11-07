@@ -13,13 +13,36 @@ fn minimal_default_workbook_future_spill() {
 }
 
 #[test]
+fn first_request_cancellable_future_spill() {
+    for deferred in [false, true] {
+        for parallel in [false, true] {
+            let mut config = WorkbookConfig::interactive();
+            config.eval.defer_graph_building = deferred;
+            config.eval.enable_parallel = parallel;
+            config.eval.max_threads = Some(4);
+            let mut wb = Workbook::new_with_config(config);
+            wb.add_sheet("S").unwrap();
+            wb.set_formula("S", 1, 4, "=SEQUENCE(4)").unwrap();
+            wb.set_formula("S", 1, 6, "=INDIRECT(\"D4\")+1").unwrap();
+            wb.evaluate_all_cancellable(formualizer_eval::engine::CancelToken::new())
+                .unwrap();
+            assert_eq!(
+                wb.get_value("S", 1, 6),
+                Some(LiteralValue::Number(5.)),
+                "deferred={deferred}, parallel={parallel}"
+            );
+        }
+    }
+}
+
+#[test]
 fn first_request_observed_future_spill_batch() {
     let mut failures = Vec::new();
     for family in [false, true] {
         for names in [false, true] {
             for offset in [false, true] {
                 for tail in [false, true] {
-                    for api in 0..4 {
+                    for api in 0..5 {
                         let mut config = WorkbookConfig::interactive();
                         config.eval.family_execution = family;
                         config.eval.enable_parallel = true;
@@ -65,8 +88,14 @@ fn first_request_observed_future_spill_batch() {
                                 }])
                                 .unwrap();
                             }
-                            _ => {
+                            3 => {
                                 wb.engine_mut().evaluate_all_for_snapshot(None).unwrap();
+                            }
+                            _ => {
+                                wb.evaluate_all_cancellable(
+                                    formualizer_eval::engine::CancelToken::new(),
+                                )
+                                .unwrap();
                             }
                         }
                         if wb.get_value("S", 1, 6) != Some(LiteralValue::Number(5.))

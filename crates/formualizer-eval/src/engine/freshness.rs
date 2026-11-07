@@ -409,6 +409,22 @@ impl<R: EvaluationContext> Engine<R> {
             .map(|(v, _)| *v)
             .filter(|v| !stale.contains_key(v) && !group_dropped.contains(v))
             .collect();
+        // Every result in this batch was computed before any publication.
+        // A new dynamic reader's installed-value proof does not exist yet:
+        // arrays commit first, before its scalar write installs that proof.
+        // Publish routing hints now so a spill can re-dirty the reader even
+        // on the first pass. Keep the one-use evidence staged for its actual
+        // write; these hints do not attest an installed value.
+        let fresh_reads = self.freshness.fresh_reads.get_mut().unwrap();
+        for &member in &members {
+            if let Some(reads) = fresh_reads.get(&member) {
+                self.graph.authority_host_mut().set_observed_with_value(
+                    member,
+                    reads.clone(),
+                    false,
+                );
+            }
+        }
         self.freshness.committed.extend(members.iter().copied());
         self.graph.clear_dirty_flags(&members);
         true

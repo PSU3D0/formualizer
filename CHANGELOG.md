@@ -6,8 +6,13 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+<<<<<<< HEAD
 - Fixed row and column insertions and deletions overwriting shifted user values or leaving stale spill results; structural edits now rebuild spill projections while preserving user cells and insert-action undo/redo ownership.
 
+||||||| parent of 475bec71 (fix(eval): route new batch readers before spill publication)
+=======
+- Fixed first-request `INDIRECT` reads of future spill children in parallel batches, including Python `Workbook.evaluate_all()` and Rust cancellable evaluation.
+>>>>>>> 475bec71 (fix(eval): route new batch readers before spill publication)
 - Fixed spill shrink and teardown erasing literal values written into an old spill extent; user edits now retain their own cells and block a live spill.
 - Fixed removing literal spill blockers leaving anchors stuck at `#SPILL!`; only anchors waiting on the edited blocker are recalculated.
 
