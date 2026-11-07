@@ -55,6 +55,27 @@ The `Workbook` class manages stateful evaluation across multiple sheets and cell
 - `evaluateAll()`: Re-evaluate all dirty cells in the workbook.
 - `sheet(name: string)`: Returns a sheet facade with helper methods like `setValues` and `setFormulas`.
 
+## Recalculation jobs
+
+| API | Behavior |
+| --- | --- |
+| `wb.beginRecalc(options?)` | Returns the generated `RecalcJob` runtime class with typed methods; defaults: `collectDeltas: true`, `maxDeltaRecords: 1024`, no priority |
+| `job.step(budgetMs?)` | Detached `StepReport`; null/undefined means no soft deadline; zero progresses |
+| `job.prioritize(ranges)` | Replaces queued priority with bounded, 1-based inclusive rectangles |
+| `job.active`, `job.cancel()` | Query activity or terminate this generation, retaining installed results |
+| `wb.hasActiveRecalcJob` | Whether an engine job is active |
+| `wb.hasPendingInRect(area)`, `wb.pendingCellsInRect(area)` | Bounded viewport query; pending cells use `{ sheet, row, column }` |
+| `wb.recalc({ budgetMs = 5, onStep, ...jobOptions }?)` | Synchronous driver; `onStep(report, job) === false` pauses |
+| `wb.evaluateWithYield({ budgetMs = 5, onProgress, signal, yieldControl, ...jobOptions }?)` | Awaited progress and task turns; abort rejects AbortError |
+
+`RecalcOutcome` is a discriminated union: `{ status: 'Finished', result }`, `{ status: 'Paused', job }`, or `{ status: 'Cancelled' }`. The async driver never pauses from callback return values. Both drivers hold exclusive ownership through terminal callbacks and cancel their owned generation on hook failure while preserving the original exception.
+
+`StepReport.phase` is BuildingGraph, Scheduling, Evaluating, Finished or Cancelled. Only Finished has a non-null `result` (`computedVertices`, `cycleErrors`, `elapsedMs`). Every report includes `progress`, `stepComputed`, `stepElapsedMs`, `changed`, `overflowSheets` and nullable `longestUnit`. `progress.totalExact` describes whether the current pass total is proven fixed; progress can replan after edits.
+
+Exported types include `RecalcJobOptions`, `RecalcOptions`, `EvaluateWithYieldOptions`, `RecalcJob`, `StepReport`, `RecalcProgress`, `RecalcLongestUnit`, `RecalcResult`, `RecalcOutcome`, `RecalcJobError`, `RecalcEvaluationCause` and `RecalcJobActiveError`. Job errors expose stable `code` fields, including `ALREADY_PENDING` with boolean `explicit` and `EVALUATION` with structured `cause`. Ordinary evaluation refusal preserves its existing error kind and adds `code: 'RECALC_JOB_ACTIVE'`.
+
+See [Interruptible Recalculation](/docs/guides/interruptible-recalculation) for cancellation, resource limits, atomic step overruns, ownership and runnable examples. Internal generated bridge helpers are reserved for the facade.
+
 ## Custom Functions
 
 Extend the engine with your own logic:

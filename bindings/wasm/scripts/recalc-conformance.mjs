@@ -37,6 +37,15 @@ await test('async actual package yields task turns before finishing', async () =
     assert.equal(wb.sheet('S').getValue(500, 1), 500);
   } finally { clearInterval(timer); }
 });
+await test('microtask-only custom yielding does not provide timer task turns', async () => {
+  const wb = chain(500);
+  let beats = 0;
+  const timer = setInterval(() => { beats++; }, 0);
+  try {
+    assert.equal((await wb.evaluateWithYield({ budgetMs: 0, yieldControl: () => Promise.resolve() })).status, 'Finished');
+    assert.equal(beats, 0, 'negative control must distinguish microtasks from default task yields');
+  } finally { clearInterval(timer); }
+});
 const rect = (startRow = 1, endRow = 100) => ({
   sheet: 'S', startRow, startColumn: 1, endRow, endColumn: 1,
 });
@@ -251,15 +260,17 @@ await test('abort listeners removed on finish/pause-equivalent cancellation/erro
 });
 await test('raw reports detached; changed/overflow/pending query shapes', () => {
   const wb = chain(100), job = wb.beginRecalc({ priority: [rect(80, 100)] });
-  let sawChanges = false;
+  let sawChanges = false, sawFinalCell = false;
   let first = job.step(0), snapshot = structuredClone(first);
   assert.ok(wb.pendingCellsInRect(rect()).every(cell => cell.sheet === 'S' && cell.row >= 1 && cell.row <= 100));
   while (job.active) {
     const report = job.step(0);
     if (report.changed.length) sawChanges = true;
+    if (report.changed.some(area => area.sheet === 'S' && area.startRow <= 100 &&
+      area.endRow >= 100 && area.startColumn <= 1 && area.endColumn >= 1)) sawFinalCell = true;
   }
   assert.deepEqual(first, snapshot);
-  assert.ok(sawChanges);
+  assert.ok(sawChanges && sawFinalCell, 'changed reports cover the expected final cell');
   assert.equal(wb.hasPendingInRect(rect()), false);
   first.changed.push(rect());
   assert.equal(wb.sheet('S').getValue(100, 1), 100);

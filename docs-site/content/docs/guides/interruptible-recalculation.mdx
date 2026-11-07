@@ -1,9 +1,62 @@
 ---
 title: Interruptible Recalculation
-description: Spread Rust and Python recalculation over calls with progress, viewport priority and cooperative cancellation.
+description: Spread Rust, Python and JavaScript recalculation over calls with progress, viewport priority and cooperative cancellation.
 ---
 
-Rust and Python hosts can yield between recalculation steps while preserving installed results. JavaScript and worker bindings follow separately.
+Rust, Python and JavaScript hosts can yield between recalculation steps while preserving installed results.
+
+## JavaScript / WASM
+
+The public `formualizer` facade preserves the same Workbook constructor and JSON/XLSX loaders. Use manual stepping for a viewport loop:
+
+```js
+import { Workbook, RecalcJob } from 'formualizer';
+
+const wb = new Workbook();
+wb.addSheet('S');
+wb.setValue('S', 1, 1, 10);
+wb.setFormula('S', 2, 1, '=A1+1');
+const viewport = { sheet: 'S', startRow: 1, startColumn: 1, endRow: 20, endColumn: 8 };
+const job = wb.beginRecalc({ priority: [viewport] });
+console.assert(job instanceof RecalcJob);
+while (job.active) {
+  const report = job.step(5);
+  // Paint report.changed, or visible cells on report.overflowSheets.
+  console.log(report.phase, wb.pendingCellsInRect(viewport));
+}
+console.assert(wb.sheet('S').getValue(2, 1) === 11);
+```
+
+Rectangles are finite, 1-based and inclusive, within Excel's row/column bounds. `job.prioritize(ranges)` replaces queued viewport priorities after a scroll. Edits between steps invalidate schedules as needed; dirty readers are recalculated by the same job. `hasPendingInRect` and `pendingCellsInRect` let a host distinguish pending cells from current installed values. `collectDeltas` defaults to true, and `maxDeltaRecords` defaults to 1024 per step; overflow conservatively reports sheet names instead of individual rectangles.
+
+For host event-loop responsiveness:
+
+```js
+const controller = new AbortController();
+const outcome = await wb.evaluateWithYield({
+  budgetMs: 5,
+  signal: controller.signal,
+  async onProgress(report, job) {
+    console.log(report.progress);
+    // Await a host update here; inspect/edit/prioritize/cancel outside engine locks.
+  },
+});
+if (outcome.status === 'Finished') console.log(outcome.result);
+```
+
+The default yield gives a real task turn via `setTimeout(0)`. A custom `yieldControl()` may be awaited; returning a resolved promise alone does not let timers/UI tasks run. A step executes on the calling thread and may overrun its soft deadline at indivisible graph/schedule builds, families, cycles or synchronous UDFs. `budgetMs: null` removes the soft deadline; zero still makes progress. Evaluation work/time limits configured on Workbook apply across the whole job, not separately to each step.
+
+`recalc({ budgetMs: 5, onStep(report, job) { return false; } })` drives synchronously and pauses an active job on exactly false. Narrow the returned `RecalcOutcome`: Finished carries `result`, Paused carries an active `job`, and Cancelled carries neither. A Paused job releases driver ownership but remains the workbook's active job; resume with `job.step()` or terminate with `job.cancel()`. Callback cancellation takes precedence over false. `evaluateWithYield` ignores callback return values and awaits progress hooks, including terminal hooks.
+
+Only Finished step reports carry a result. Progress includes `pass`, `completedInPass`, `scheduledInPass`, `cumulative`, `totalExact`, `stagedRemaining` and `priorityPending`. A new pass can change the denominator; false `totalExact` means the total is not proven fixed. `stepComputed`, `stepElapsedMs` and `longestUnit` describe the current step. Reports and their changed rectangles are detached: retaining or editing one cannot change engine state.
+
+An aborted signal rejects with an error named `AbortError`, cancels the owned generation and releases its reservation. It interrupts awaited progress/yield hooks promptly; losing promises retain rejection handlers. Abort inside a synchronous UDF only signals cancellation, and cleanup runs after the step returns. `wb.cancel()` is a cooperative flag; `wb.resetCancel()` deliberately clears that flag, even during an active job. Reset cannot undo an already aborted signal or terminal `job.cancel()`. A throwing/rejected hook ends the owned job and rethrows the original value.
+
+A driver reserves its generation through terminal callbacks and cleanup. Competing `beginRecalc`/driver calls fail with `ALREADY_PENDING` and boolean `explicit`; ordinary evaluation, including Sheet and SheetPort evaluation, exposes `RECALC_JOB_ACTIVE`. Old handles cannot operate on replacements. A job retains the underlying workbook even after the original JS Workbook wrapper is freed; asynchronous abort uses the retained owner too. Do not explicitly free the job handle while a driver owns it. Explicit cancellation controls lifecycle; freeing a handle alone does not terminate a job.
+
+Thrown `RecalcJobError` values are ordinary Error objects with typed properties, not an exported error constructor. Their `code` is `NO_ACTIVE_JOB`, `ALREADY_PENDING`, `ENGINE_POISONED`, `REENTRANT_CALL`, `EVALUATION`, `INVALID_OPTIONS` or `INVALID_ADDRESS`. Narrow `code` without parsing messages. EVALUATION preserves structured Excel/resource fields and a typed `cause`. UDF reentry into job APIs fails promptly with REENTRANT_CALL. WASM panic-abort builds do not provide native Rust unwind recovery.
+
+The local assertion-bearing examples and browser preparation commands live in [the WASM binding README](https://github.com/psu3d0/formualizer/tree/main/bindings/wasm#interruptible-recalculation). They demonstrate viewport scroll/input edits, asynchronous heartbeat/abort/supersede, and pause/inspect/repair/resume. Worker orchestration is a separate host concern.
 
 ## Python
 

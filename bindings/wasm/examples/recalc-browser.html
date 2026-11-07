@@ -1,0 +1,20 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Formualizer recalculation smoke</title>
+<script type="importmap">{"imports":{"formualizer":"./index.js"}}</script>
+<p id="result" data-status="running">Running local WASM facade examples…</p>
+<script type="module">
+import { viewportExample } from './examples/recalc-viewport.mjs';
+import { asyncExample } from './examples/recalc-async.mjs';
+import { pauseExample } from './examples/recalc-pause.mjs';
+const result = document.querySelector('#result');
+try {
+  const messages = [viewportExample(), await asyncExample(), pauseExample()];
+  result.textContent = 'RECALC_BROWSER_OK: ' + messages.join('; ');
+  result.dataset.status = 'passed';
+} catch (error) {
+  result.textContent = String(error.stack ?? error);
+  result.dataset.status = 'failed';
+  throw error;
+}
+</script>

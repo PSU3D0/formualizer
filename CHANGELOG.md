@@ -8,6 +8,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- Released WASM evaluation guards before converting errors to JavaScript, allowing error-property callbacks to inspect active-job state. Asynchronous abort remains effective after the original Workbook wrapper is freed.
 - Fixed row and column insertions and deletions overwriting shifted user values or leaving stale spill results; structural edits now rebuild spill projections while preserving user cells and insert-action undo/redo ownership.
 - Fixed first-request `INDIRECT` reads of future spill children in parallel batches, including Python `Workbook.evaluate_all()` and Rust cancellable evaluation.
 - Fixed spill shrink and teardown erasing literal values written into an old spill extent; user edits now retain their own cells and block a live spill.
@@ -19,6 +20,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- Added typed JavaScript/WASM recalculation jobs, viewport priority and pending queries, a pausable synchronous driver, and asynchronous task yielding with AbortSignal cancellation. Included runnable local examples for viewport edits, heartbeat/abort/supersede and pause/repair/resume.
 - Added Python recalculation jobs with immutable step reports, viewport priority and pending queries, a pausable `recalc` driver, and `evaluate_async` with cooperative task cancellation. Native steps release the GIL; Pyodide yields between in-thread steps. Active-job refusals and poisoned engines have typed exceptions, and function-panic payloads retain attribution on Python errors.
 - Added engine-owned recalculation jobs with held schedules, formula progress, changed regions, viewport priority and pending queries. Explicit jobs refuse foreign evaluation requests and apply work/deadline limits across steps; cancellation preserves installed units without advancing the random epoch.
 

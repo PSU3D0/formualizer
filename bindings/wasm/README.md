@@ -24,6 +24,57 @@ Load Excel workbooks, change inputs, recalculate and read results—in the brows
 
 > This package is the WebAssembly library. The `formualizer recalc` command-line tool is the separate native package [`@formualizer/cli`](https://www.npmjs.com/package/@formualizer/cli) (`npx @formualizer/cli recalc book.xlsx`); it is not included here.
 
+## Interruptible recalculation
+
+Use `beginRecalc()` when your UI owns the loop, `recalc()` for synchronous progress/pause, or `evaluateWithYield()` to give the host event loop task turns between steps. They use the same engine-owned job: edits between steps replan dirty work, viewport priority changes which pending cells are visited first, and cancellation retains already installed values.
+
+```js
+const outcome = await wb.evaluateWithYield({
+  budgetMs: 5,
+  signal: controller.signal,
+  priority: [{ sheet: 'Model', startRow: 1, startColumn: 1, endRow: 40, endColumn: 12 }],
+  onProgress(report, job) {
+    // Repaint report.changed; on report.overflowSheets repaint visible cells.
+    // wb.pendingCellsInRect(viewport) distinguishes pending from current cells.
+  },
+});
+if (outcome.status === 'Finished') console.log(outcome.result.computedVertices);
+```
+
+`budgetMs` defaults to 5; `null` has no soft deadline and zero still progresses. Steps stop at atomic engine boundaries: a graph/schedule build, family, cycle or synchronous UDF may overrun the budget. This runs on the calling thread. The default asynchronous yield uses `setTimeout(0)`; a custom `yieldControl` must provide a task turn if timers/UI events need to run.
+
+`recalc({ onStep(report, job) { return false; } })` returns `{ status: 'Paused', job }` while the job is still active. Inspect or edit, then call `job.step(budgetMs)` until Finished, or `job.cancel()`. Cancellation wins over false; an explicit `wb.resetCancel()` can clear cooperative `wb.cancel()`, but cannot undo terminal job cancellation or an aborted signal. `evaluateWithYield` awaits `onProgress` and ignores its return value. Abort rejects with `AbortError`, including while awaiting progress/yield hooks. Hook failures preserve the original thrown value and cancel the owned job.
+
+Only one job/driver can own a workbook. Competing evaluation is refused, including during awaited terminal callbacks. A callback receives the owned job outside engine locks, so it may inspect, edit, reprioritize or cancel. Jobs retain the workbook after the original wrapper is freed; async abort also uses this retained owner. Explicitly freeing the job handle while a driver owns it is unsupported. End jobs explicitly; freeing a handle alone does not cancel.
+
+Reports are detached per-step objects. Only Finished carries `result`; `progress.totalExact === false` means the denominator is not proven fixed. `changed` is conservative, and `overflowSheets` means repaint the visible region of those sheets. Job rectangles use finite, 1-based inclusive coordinates. TypeScript exports `RecalcJob`, `RecalcJobOptions`, `StepReport`, `RecalcOutcome`, driver options, and error interfaces. See the [guide](https://www.formualizer.dev/docs/guides/interruptible-recalculation) for error codes and lifecycle details.
+
+### Run the local examples
+
+From this checkout's `bindings/wasm` directory, with cached Rust/WASM and pnpm tooling available:
+
+```sh
+pnpm install --offline --frozen-lockfile
+wasm-pack build --target bundler --out-dir pkg --dev --mode no-install -- --offline
+pnpm run build:ts
+pnpm run test:recalc-conformance
+pnpm run example:recalc
+```
+
+These commands use the local package's self-reference (`import ... from 'formualizer'`), never an installed release. Node 26 supports this bundler build's WASM module imports; older Node versions need a WASM-aware bundler/loader. The three assertion-bearing examples are `examples/recalc-viewport.mjs` (scroll, priority, edit, changed/pending), `recalc-async.mjs` (heartbeat, abort, supersede), and `recalc-pause.mjs` (inspect, repair, resume).
+
+For a browser smoke using the same built TypeScript facade and examples:
+
+```sh
+wasm-pack build --target web --out-dir pkg-node/recalc-browser/raw --dev --mode no-install -- --offline
+pnpm run example:recalc-browser:prepare
+uv run --no-project python -m http.server --bind 127.0.0.1 --directory pkg-node/recalc-browser 8000
+# Open http://127.0.0.1:8000/index.html
+# Expect #result[data-status="passed"] and RECALC_BROWSER_OK.
+```
+
+Preparation copies the compiled facade into ignored staging and substitutes only its raw import with a web-target initializer. It does not modify `pkg/` or `dist/`. Serve `.wasm` as `application/wasm`. Browser results must be checked in a browser; Node tests alone do not establish browser behavior.
+
 ## Installation
 
 ```bash
