@@ -418,6 +418,7 @@ mod compacted_action_review {
                 for abort in [false, true] {
                     let mut e = fixture(true);
                     e.evaluate_all().unwrap();
+                    assert!(e.debug_overlay_compactions() > 0);
                     e.config.max_overlay_memory_bytes = None;
                     let original = grid(&e);
                     let result = e.action_atomic_journal("independent", |tx| {
@@ -485,6 +486,7 @@ mod compacted_action_review {
         for columns in [false, true] {
             let mut e = fixture(true);
             e.evaluate_all().unwrap();
+            assert!(e.debug_overlay_compactions() > 0);
             e.config.max_overlay_memory_bytes = None;
             e.action_atomic_journal("minimal", |tx| {
                 tx.set_cell_value("Sheet1", 6, 6, V::Number(87.))?;
@@ -504,6 +506,30 @@ mod compacted_action_review {
                 V::Empty,
                 "orphan columns={columns} at=({r},{c})"
             );
+            // Historical projection coordinates edited by the user must retain
+            // their literal/formula results rather than receiving Empty masks.
+            for old_row in 4..=7 {
+                for old_col in 4..=7 {
+                    if (old_row, old_col) == (4, 4) {
+                        continue; // The surviving anchor reports the blocked spill.
+                    }
+                    let (row, col) = if columns {
+                        (old_row, old_col + 1)
+                    } else {
+                        (old_row + 1, old_col)
+                    };
+                    let expected = match (old_row, old_col) {
+                        (6, 6) => V::Number(87.),
+                        (7, 6) => V::Number(92.),
+                        _ => V::Empty,
+                    };
+                    assert_eq!(
+                        e.get_cell_value("Sheet1", row, col).unwrap_or(V::Empty),
+                        expected,
+                        "columns={columns} at=({row},{col})"
+                    );
+                }
+            }
         }
     }
 }
