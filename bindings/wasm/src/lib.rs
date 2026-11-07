@@ -9,6 +9,8 @@ mod errors;
 mod inspect;
 mod parser;
 mod reference;
+mod recalc;
+pub use recalc::*;
 mod sheetport;
 #[cfg(feature = "xlsx-recalc")]
 mod source_calculation;
