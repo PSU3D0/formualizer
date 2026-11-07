@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Workbook, RecalcJob } from 'formualizer';
+import { Workbook, RecalcJob, SheetPortSession } from 'formualizer';
 
 export function chain(count = 100) {
   const wb = new Workbook();
@@ -280,5 +280,137 @@ await test('raw reports detached; changed/overflow/pending query shapes', () => 
   while (overflow.active) if (overflow.step(0).overflowSheets.includes('S')) sawOverflow = true;
   assert.ok(sawOverflow);
 });
+// All aliases are made before admission, so they must share the original owner.
+function terminalFixture() {
+  const wb = new Workbook();
+  wb.addSheet('S'); wb.setFormula('S', 1, 1, '=1+2');
+  const sheet = wb.sheet('S');
+  const session = SheetPortSession.fromManifest({
+    spec: 'fio', spec_version: '0.3.0',
+    manifest: { id: 'terminal', name: 'Terminal', workbook: { uri: 'memory://test.xlsx', locale: 'en-US', date_system: 1900 } },
+    ports: [
+      { id: 'out', dir: 'out', shape: 'scalar', location: { a1: 'S!A1' }, schema: { type: 'number' } },
+      { id: 'input', dir: 'in', shape: 'scalar', location: { a1: 'S!B1' }, schema: { type: 'number' } },
+    ],
+  }, wb);
+  return { wb, sheet, session };
+}
+function evaluationRoutes({ wb, sheet, session }, freed) {
+  return [
+    ...(!freed ? [
+      ['Workbook.evaluateAll', () => wb.evaluateAll()],
+      ['Workbook.evaluateCells', () => wb.evaluateCells([['S', 1, 1]])],
+      ['Workbook.evaluateCell', () => wb.evaluateCell('S', 1, 1)],
+    ] : []),
+    ['Sheet.evaluateCell', () => sheet.evaluateCell(1, 1)],
+    ['SheetPort.evaluateOnce', () => session.evaluateOnce()],
+  ];
+}
+function observeRefusals(fixture, freed) {
+  // Editing and inspection remain usable during the reservation.
+  fixture.sheet.setFormula(1, 1, '=40+2');
+  assert.equal(fixture.sheet.getFormula(1, 1).replaceAll(' ', ''), '=40+2');
+  fixture.session.writeInputs({ input: 7 });
+  assert.equal(fixture.session.readInputs().input, 7);
+  assert.equal(fixture.session.describePorts().length, 2);
+  return evaluationRoutes(fixture, freed).map(([route, run]) => {
+    try { return { route, status: 'allowed', value: run() }; }
+    catch (error) {
+      return { route, status: 'refused', code: error.code,
+        kind: error.kind, excel_kind: error.excel_kind };
+    }
+  });
+}
+function assertRefusals(observations) {
+  assert.ok(observations.every(item => item.status === 'refused' &&
+    item.code === 'RECALC_JOB_ACTIVE' && item.kind === 'Engine' && item.excel_kind === '#VALUE!'),
+  JSON.stringify(observations));
+}
+function afterReservation(fixture, freed) {
+  for (const [, run] of evaluationRoutes(fixture, freed)) run();
+  assert.equal(fixture.sheet.evaluateCell(1, 1), 42);
+  assert.equal(fixture.session.evaluateOnce().out, 42);
+  fixture.session.free(); fixture.sheet.free();
+  if (!freed) fixture.wb.free();
+}
+await test('all ordinary routes refuse sync and awaited Finished callbacks', async () => {
+  const observations = [];
+  for (const mode of ['sync', 'async']) {
+    const fixture = terminalFixture();
+    const callback = report => {
+      if (report.phase === 'Finished') observations.push(...observeRefusals(fixture, false).map(item => ({ mode, ...item })));
+    };
+    const out = mode === 'sync'
+      ? fixture.wb.recalc({ budgetMs: null, onStep: callback })
+      : await fixture.wb.evaluateWithYield({ budgetMs: null, onProgress: async report => {
+        await Promise.resolve(); callback(report);
+      } });
+    assert.equal(out.status, 'Finished');
+    afterReservation(fixture, false);
+  }
+  console.log('terminal route observations: ' + JSON.stringify(observations));
+  assert.equal(observations.length, 10);
+  assertRefusals(observations);
+});
+for (const mode of ['sync', 'async']) {
+  for (const interval of ['finished', 'cancelled', 'error']) {
+    for (const freed of [false, true]) {
+      await test(mode + ' ' + interval + ' reservation with original wrapper ' + (freed ? 'freed' : 'retained'), async () => {
+        const fixture = terminalFixture(), sentinel = {};
+        let observations, visited = false;
+        const callback = (report, job) => {
+          if (interval !== 'cancelled' && report.phase !== 'Finished') return;
+          visited = true;
+          if (interval === 'cancelled') {
+            job.cancel(); fixture.wb.cancel();
+          }
+          if (freed) fixture.wb.free();
+          observations = observeRefusals(fixture, freed);
+          if (interval === 'error') throw sentinel;
+          return false; // Finished/cancellation must still take precedence over pause.
+        };
+        const run = () => mode === 'sync'
+          ? fixture.wb.recalc({ budgetMs: interval === 'cancelled' ? 0 : null, onStep: callback })
+          : fixture.wb.evaluateWithYield({ budgetMs: interval === 'cancelled' ? 0 : null, onProgress: async (report, job) => {
+            await Promise.resolve(); return callback(report, job);
+          } });
+        if (interval === 'error') {
+          if (mode === 'sync') assert.throws(run, error => error === sentinel);
+          else await assert.rejects(run(), error => error === sentinel);
+        } else {
+          const out = await run();
+          assert.equal(out.status, interval === 'cancelled' ? 'Cancelled' : 'Finished',
+            'refusals must not erase cooperative cancellation');
+        }
+        assert.ok(visited);
+        // Verify ordinary evaluation after release even if an assertion below fails.
+        afterReservation(fixture, freed);
+        assertRefusals(observations);
+      });
+    }
+  }
+}
+for (const interval of ['cancelled', 'error']) {
+  await test('async ' + interval + ' cleanup retains reservation during listener removal', async () => {
+    const fixture = terminalFixture(), controller = new AbortController(), sentinel = {};
+    let observations;
+    const remove = controller.signal.removeEventListener.bind(controller.signal);
+    controller.signal.removeEventListener = (...args) => {
+      assert.equal(fixture.wb.hasActiveRecalcJob, false);
+      observations = observeRefusals(fixture, false);
+      remove(...args);
+    };
+    const promise = fixture.wb.evaluateWithYield({ budgetMs: interval === 'cancelled' ? 0 : null, signal: controller.signal,
+      onProgress(report, job) {
+        if (interval !== 'cancelled' && report.phase !== 'Finished') return;
+        if (interval === 'error') throw sentinel;
+        job.cancel(); fixture.wb.cancel();
+      } });
+    if (interval === 'error') await assert.rejects(promise, error => error === sentinel);
+    else assert.equal((await promise).status, 'Cancelled');
+    afterReservation(fixture, false);
+    assertRefusals(observations);
+  });
+}
 console.log('recalc conformance: ' + passed + ' passed, ' + failed + ' failed');
 if (failed) process.exitCode = 1;
