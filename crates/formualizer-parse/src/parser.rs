@@ -1875,6 +1875,17 @@ impl Display for BinaryOperator {
         f.write_str(self.as_str())
     }
 }
+/// Whether a node is a number, text or logical constant: never a reference,
+/// so never an operand of the union operator (`=1,000` is not a union).
+/// Error literals are not counted: Excel writes `#REF!` where a reference
+/// in a union was deleted.
+fn is_constant_literal(node: &ASTNode) -> bool {
+    matches!(
+        &node.node_type,
+        ASTNodeType::Literal(value) if !matches!(value, LiteralValue::Error(_))
+    )
+}
+
 impl TryFrom<&str> for BinaryOperator {
     type Error = &'static str;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
@@ -2774,21 +2785,28 @@ impl Parser {
         let height = 1 + left.height.max(right.height);
         self.admit(height)?;
         let token = self.span_to_token(&span);
+        let op = BinaryOperator::try_from(token.value.as_str()).map_err(|message| ParserError {
+            message: if token.value == ";" {
+                "';' is an argument separator, not an operator in this position; OpenFormula union uses '~'".to_string()
+            } else {
+                message.to_string()
+            },
+            position: Some(span.start),
+        })?;
+        if op == BinaryOperator::Union
+            && (is_constant_literal(&left.node) || is_constant_literal(&right.node))
+        {
+            return Err(ParserError {
+                message: "the union operator joins references; a number, text or logical constant is not a reference".to_string(),
+                position: Some(span.start),
+            });
+        }
         let volatile = left.contains_volatile || right.contains_volatile;
         Ok(BuiltNode {
             height,
             node: ASTNode::new_with_volatile(
                 ASTNodeType::BinaryOp {
-                    op: BinaryOperator::try_from(token.value.as_str()).map_err(|message| {
-                        ParserError {
-                            message: if token.value == ";" {
-                                "';' is an argument separator, not an operator in this position; OpenFormula union uses '~'".to_string()
-                            } else {
-                                message.to_string()
-                            },
-                            position: Some(span.start),
-                        }
-                    })?,
+                    op,
                     left: Box::new(left.node),
                     right: Box::new(right.node),
                 },
