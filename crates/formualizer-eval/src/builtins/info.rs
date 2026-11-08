@@ -1785,6 +1785,9 @@ pub struct CellFn;
 /// Known divergence: without a reference Excel's `filename` names the sheet of
 /// the cell selected at calculation time. There is no selection state here, so
 /// it names the formula's own sheet.
+/// Operation diagnostics report both gaps: a call without a reference as the
+/// `implicit_active_cell_reference` mode, even with a path, and any call as the
+/// `filename` mode while the workbook's identity is unknown.
 ///
 /// Known divergence: `CELL("contents", <blank cell>)` produces `Empty` in-graph
 /// where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
@@ -1885,6 +1888,16 @@ impl Function for CellFn {
             // cell's sheet, a state that does not exist here); the other info
             // types give #VALUE!, which keeps the result well-defined.
             if info_type == "filename" {
+                // An unknown workbook identity is its own gap, as with a
+                // reference: the #VALUE! is not Excel's answer.
+                if ctx.workbook_path().is_none() {
+                    ctx.report_unavailable_operation(
+                        crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode {
+                            name: self.name().into(),
+                            mode: "filename",
+                        },
+                    );
+                }
                 return Ok(scalar(cell_filename(ctx, ctx.current_sheet())));
             }
             return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
@@ -1932,7 +1945,10 @@ impl Function for CellFn {
         let col = cell.coord.col() + 1;
         let unsupported_mode = match info_type.as_str() {
             "color" => Some("color"),
-            "filename" => Some("filename"),
+            // A host-supplied identity (`Engine::set_workbook_path`), even an
+            // explicitly unsaved one, answers `filename`; without it the
+            // #VALUE! below is a gap, not Excel's answer.
+            "filename" => ctx.workbook_path().is_none().then_some("filename"),
             "format" => Some("format"),
             "parentheses" => Some("parentheses"),
             "prefix" => Some("prefix"),

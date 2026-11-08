@@ -501,3 +501,95 @@ fn cell_filename_follows_a_renamed_sheet_and_a_new_path() {
         check(&mut engine, "/b/[Two.xlsx]Renamed", "/b/[Two.xlsx]Sheet1");
     }
 }
+
+/// Evaluate `formula` alone on Sheet1 and return its value with the unavailable
+/// operations it reported.
+fn filename_reports(
+    path: Option<&str>,
+    formula: &str,
+    family_execution: bool,
+) -> (
+    LiteralValue,
+    Vec<crate::operation_diagnostics::UnavailableOperation>,
+) {
+    let config = EvalConfig {
+        family_execution,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::new(), config);
+    engine.enable_operation_diagnostics(8);
+    engine.set_workbook_path(path.map(str::to_owned));
+    engine
+        .set_cell_formula("Sheet1", 1, 20, parse(formula).unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let report = engine.take_operation_diagnostics().unwrap().unwrap();
+    let value = engine.get_cell_value("Sheet1", 1, 20).unwrap();
+    let operations = report
+        .roots
+        .iter()
+        .map(|root| root.operation.as_ref().clone())
+        .collect();
+    (value, operations)
+}
+
+#[test]
+fn cell_filename_reports_unknown_identity_and_the_implicit_active_cell() {
+    use crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode;
+    let gap = |mode: &'static str| UnimplementedFunctionMode {
+        name: "CELL".into(),
+        mode,
+    };
+    let text = |s: &str| LiteralValue::Text(s.into());
+    let value_error = LiteralValue::Error(formualizer_common::ExcelError::new_value());
+    let path = Some(r"C:\a\b.xlsx");
+    let cases = [
+        // Unknown identity is #VALUE! and still a reported gap.
+        (
+            None,
+            r#"=CELL("filename",A1)"#,
+            value_error.clone(),
+            vec![gap("filename")],
+        ),
+        // A host-supplied identity, or an explicitly unsaved workbook, closes it.
+        (
+            path,
+            r#"=CELL("filename",A1)"#,
+            text(r"C:\a\[b.xlsx]Sheet1"),
+            vec![],
+        ),
+        (Some(""), r#"=CELL("filename",A1)"#, text(""), vec![]),
+        // Without a reference Excel reads the selected cell, which is not
+        // available here, with or without a path; an unknown identity is a
+        // second gap.
+        (
+            None,
+            r#"=CELL("filename")"#,
+            value_error.clone(),
+            vec![gap("filename"), gap("implicit_active_cell_reference")],
+        ),
+        (
+            path,
+            r#"=CELL("filename")"#,
+            text(r"C:\a\[b.xlsx]Sheet1"),
+            vec![gap("implicit_active_cell_reference")],
+        ),
+        (
+            Some(""),
+            r#"=CELL("filename")"#,
+            text(""),
+            vec![gap("implicit_active_cell_reference")],
+        ),
+        // A non-reference argument is an ordinary #VALUE!, not a gap.
+        (None, r#"=CELL("filename",42)"#, value_error.clone(), vec![]),
+    ];
+    for family_execution in [true, false] {
+        for (path, formula, value, operations) in &cases {
+            assert_eq!(
+                filename_reports(*path, formula, family_execution),
+                (value.clone(), operations.clone()),
+                "{formula} with path {path:?}, family execution {family_execution}"
+            );
+        }
+    }
+}

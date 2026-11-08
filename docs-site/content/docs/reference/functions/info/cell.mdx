@@ -29,6 +29,9 @@ Supported `info_type` values (case-insensitive):
  Known divergence: without a reference Excel's `filename` names the sheet of
  the cell selected at calculation time. There is no selection state here, so
  it names the formula's own sheet.
+ Operation diagnostics report both gaps: a call without a reference as the
+ `implicit_active_cell_reference` mode, even with a path, and any call as the
+ `filename` mode while the workbook's identity is unknown.
 
  Known divergence: `CELL("contents", &lt;blank cell&gt;)` produces `Empty` in-graph
  where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE

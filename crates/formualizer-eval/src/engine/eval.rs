@@ -4886,7 +4886,11 @@ where
     /// and the engine never takes it from the file it was loaded from. An
     /// empty path means a workbook never saved; `None` means unknown. A change
     /// marks the formulas that read it, and their dependents, dirty.
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn set_workbook_path(&mut self, path: Option<String>) {
+        self.assert_not_poisoned();
         if self.workbook_path != path {
             self.workbook_path = path;
             self.mark_workbook_identity_readers_dirty();
