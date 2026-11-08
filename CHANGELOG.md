@@ -6,58 +6,109 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [0.14.0] - 2026-11-08
 
-Recalculation becomes interruptible and resumable. A host can now run a recalculation as a job: step it under a work or time budget, pause and resume it, cancel it, prioritise the cells a user is looking at, and keep everything already computed. Rust, Python (including asyncio) and JavaScript/WASM all expose the same model, and a new `formualizer/worker` entry runs a workbook off the main thread with typed RPC and viewport subscriptions. Source recalculation of XLSX files gains a workbook-aware profile that applies the file's saved calculation settings and returns explicit complete, partial or deferred outcomes rather than refusing a whole workbook over one unsupported feature. SheetPort can now write native Excel tables and resize them with undo. This release also includes a set of Excel-compatibility fixes, several of them contributed.
+Recalculation no longer has to finish before your program can do anything else. A 0.14 recalculation is a job you can run in slices of a few milliseconds, pause, resume, cancel, or point at the cells someone is looking at. Values already computed are kept. The same model works in Rust, in Python (including asyncio) and in JavaScript, and a new `formualizer/worker` entry runs a whole workbook off the main thread.
 
-Product packages are 0.14.0; the parser and common SDK are 4.2.0. Publish the SDK first.
+Two more things change how Formualizer fits into real systems. Recalculating an XLSX file no longer has to be all or nothing: the workbook profile computes everything it can and reports exactly what it could not. And SheetPort can now feed native Excel tables, so a spreadsheet model becomes a typed function that takes a table of any length.
 
-### Breaking changes and upgrading
-
-- **Rust: new fields on recalculation option and result structs.** `XlsxRecalculateLimits` gains `max_affected_regions`, `max_affected_scratch_bytes`, `max_affected_work`, `max_operation_roots` and `max_operation_text_bytes`; `XlsxRecalculateOptions` gains `calculation`, `physical_telemetry`, `profile` and `require_complete`; `XlsxRecalculateResult` gains `caches_invalidated`, `calculation`, `calculation_flags_changed`, `coverage`, `coverage_scope` and `operation_diagnostics`. Complete struct literals no longer compile; build options with `..Default::default()` (both option structs implement `Default`) and read results by field.
-- **Rust: new enum variants break exhaustive matches.** `IoError` adds `CalculationDeferred { context, reason }` and `InvalidOptions { field, message }`; `OverlayValue` adds `FunctionPanicked(Arc<ExcelError>)`; `ChangeEvent` adds `TableResized { name, old_range, new_range, old_empty_body, new_empty_body }`. Add a wildcard arm or handle the new variants. The common SDK's new `ExcelErrorExtra` and `ResourceExhaustionReason` variants are on non-exhaustive enums and need no change.
-- **Evaluation is refused while a recalculation job is active.** Calls such as `evaluate_all` during an explicit job return an error carrying `ExcelErrorExtra::RecalcJobActive` instead of interleaving with the job. Existing evaluation signatures are unchanged.
-- **A panic inside a native function is now a cell error, not a crash.** It becomes a typed `#VALUE!` with a completeness diagnostic. A panic inside the engine itself permanently refuses further evaluation and mutation on that engine; check `is_poisoned()`.
-- **Per-cell error messages in source recalculation can be empty.** 0.13 filled messages such as `Unknown function: SPDVOL` by reading the formula text, which could name a cause unrelated to the actual error (for example in `IFERROR(SPDVOL(1),NoSuchName)`). 0.14 reports a message only when it is the real cause and otherwise leaves it empty; the CLI `--check` report shows the error code. The unknown-function summary is unaffected and keeps the spelling used in the file. Restoring true per-cell causes is tracked as a follow-up.
-- **The low-level strict recalculation profile is still the Rust default.** Opt in to the workbook-aware profile through `XlsxRecalculateOptions::profile`; use `require_complete` to refuse any partial or unverified result.
+Product packages are 0.14.0. The parser and common SDK are 4.2.0.
 
 ### Highlights
 
-- **Interruptible, resumable recalculation.** Engine-owned jobs hold their schedule across steps, report formula progress and changed regions, honour viewport priority and work/deadline limits per job, and keep installed results on pause or cancel without advancing the random epoch. `Engine::evaluate_all_until`, `RecalcJobError` and `recalc_with` closure drivers are available on `Engine` and `Workbook`.
-- **Python jobs and asyncio.** Recalculation jobs with immutable step reports, a pausable `recalc` driver and `evaluate_async` with cooperative cancellation. Native steps release the GIL; Pyodide yields between steps. Active-job refusals and poisoned engines raise typed exceptions.
-- **JavaScript/WASM jobs and `formualizer/worker`.** Typed recalculation jobs, a pausable synchronous driver and asynchronous task yielding with `AbortSignal`. The new `formualizer/worker` subpath and browser worker entry provide typed asynchronous workbook RPC, automatic and explicit recalculation, causal revisions, viewport subscriptions with transferable columnar frames, SheetPort sessions and worker-side custom functions. The client side imports no WASM. Includes Node `worker_threads` examples and real-browser smoke coverage.
-- **Workbook-aware source recalculation.** Applies saved calculation settings, returns complete, partial or deferred outcomes with affected-cache invalidation and coverage diagnostics, and preserves useful independent results when an executed feature is unsupported or unverified. Corruption, cancellation, resource exhaustion and output failures remain errors. Portable finite limits are shared across Rust, Python and WASM/TypeScript.
-- **SheetPort native table writes.** A table port bound to an Excel table (`location: { table: ... }`) writes rows into the table body and grows or shrinks the table, clearing trailing mapped cells. Extent changes are journaled with the cell writes, so undo, redo and failed-action rollback restore the table, and structured references recalculate. Writing zero rows leaves Excel's required blank body row in place but reads back as an empty table. Rust adds `resize_table` and `resize_table_body` on `Engine`, `Workbook` and their actions.
-- **Faster SheetPort batch writes.** Large table writes reserve storage once per sheet and propagate dirtiness once per batch, including during undo and redo.
+- **Interruptible, resumable recalculation.** Step a recalculation under a time or work budget, pause and resume it, or cancel it. Edits made between steps join the running job. Visible cells can be computed first, and you can see which cells are still pending. Completed results survive pause and cancel.
+- **A workbook in a Web Worker.** `formualizer/worker` gives you a typed async client for a workbook running in a browser worker or a Node `worker_threads` thread. It recalculates in the background and streams the cells in view, including as transferable columnar frames, while your page stays responsive. The client side loads no WASM.
+- **Python asyncio.** `await wb.evaluate_async(budget_ms=5)` recalculates without blocking the event loop. Native steps release the GIL, and cancelling the task cancels the recalculation.
+- **Partial results instead of refusals.** With `profile="workbook"`, source recalculation applies the file's saved calculation settings, recalculates everything it can and reports exactly which functions and cells it could not handle, instead of rejecting the whole workbook. `require_complete` keeps the strict guarantee when you need it.
+- **SheetPort writes native Excel tables.** Bind a table port to `Orders` and send 3 rows or 3,000: the table grows or shrinks, structured references follow, and one undo puts it back. Large table writes are about 3 times faster at 150 rows and 4 times faster at 2,000.
+- **One bad function can't take the engine down.** A panic in a native or custom function now becomes a `#VALUE!` in that cell and is reported as a coverage gap.
+
+### What you can build with it
+
+- **Spreadsheet interfaces that stay responsive.** Run a large model in a worker, render the viewport as values arrive, and let people keep typing while a recalculation is in flight. Scrolling re-prioritises the running job, so the cells on screen are computed first.
+- **Spreadsheet-backed services.** Serve many workbook requests from one Python event loop or Node process, give each a deadline, and cancel cleanly when a client goes away.
+- **Workbooks as APIs.** Describe the inputs and outputs of a pricing or planning model with SheetPort, write a request's rows into its tables, evaluate, read the outputs, and `undo()` to reset the warm workbook for the next request.
+- **Batch and agent pipelines over real files.** Recalculate thousands of XLSX files and get a precise account of each: complete, partial with the unsupported functions and affected cells listed, or refused for a stated reason.
+
+```js
+import { createWorkbookWorker } from 'formualizer/worker';
+
+const wb = await createWorkbookWorker(
+  new Worker(new URL('formualizer/worker-entry', import.meta.url), { type: 'module' }),
+  { autoRecalc: true, autoRecalcBudgetMs: 5 },
+);
+await wb.subscribeViewport({
+  rect: { sheet: 'Model', startRow: 1, startColumn: 1, endRow: 40, endColumn: 12 },
+  mode: 'values',
+  onFrame: (frame) => render(frame),
+});
+```
+
+```python
+result = await wb.evaluate_async(budget_ms=5, priority=[("Model", 1, 1, 40, 12)])
+```
+
+See [Interruptible Recalculation](docs-site/content/docs/guides/interruptible-recalculation.mdx) for the full API in each language.
+
+### Upgrading
+
+- **Most applications need no changes.** Existing evaluation calls keep their signatures and behaviour, and the strict profile stays the default for source recalculation.
+- **Rust: new fields on the XLSX recalculation structs.** `XlsxRecalculateLimits`, `XlsxRecalculateOptions` and `XlsxRecalculateResult` gain fields for limits, profile, calculation settings, coverage and diagnostics. Struct literals that list every field need updating; build the option structs with `..Default::default()`.
+- **Rust: new enum variants.** `IoError` adds `CalculationDeferred` and `InvalidOptions`, `OverlayValue` adds `FunctionPanicked`, and `ChangeEvent` adds `TableResized`. Exhaustive matches need a new arm or a wildcard. The common SDK's new `ExcelErrorExtra` and `ResourceExhaustionReason` variants are on non-exhaustive enums.
+- **`ParserError.position` is a byte offset everywhere** (SDK 4.2.0). It is the zero-based UTF-8 byte offset of the offending token, or the formula's byte length at the end of input; some errors used to report a token index. Positions in Python and WASM error messages (`... at position N`) change accordingly. Code that indexes the formula by character or UTF-16 code unit needs to convert. (#561, @mcdonaldsam)
+- **A union of constants no longer parses.** `=1,000` is refused, as Excel does, rather than read as the union of 1 and 0. `=A1,B1` and `=SUM(1,000)` are unchanged. (#560, @mcdonaldsam)
+- **Other evaluation calls wait for an active job.** While an explicit recalculation job is running, calls such as `evaluate_all` return an error carrying `ExcelErrorExtra::RecalcJobActive` instead of interleaving with it.
+- **An internal engine panic retires that engine.** It refuses further evaluation and edits; check `is_poisoned()` and create a new workbook. Panics in functions only affect their cells.
+- **Per-cell error messages are reported only when they are the real cause.** 0.13 filled messages such as `Unknown function: SPDVOL` by reading the formula text, which could name the wrong cause, for example in `IFERROR(SPDVOL(1),NoSuchName)`. 0.14 leaves the message empty when the cause is not known, so `formualizer recalc --check` may show only the error code for some cells. The unknown-function summary is complete and keeps the spelling used in the file.
+
+### Interruptible recalculation
+
+- **Rust.** `begin_recalc`, `step_recalc` and `recalc_with` on `Engine` and `Workbook` run a recalculation as a job. Each step stops at the first safe boundary after its budget. A step reports phase, progress within the pass and the regions that changed. `prioritize_recalc` moves visible cells to the front, and `has_pending_in_rect` tells you whether a viewport is up to date. `Engine::evaluate_all_until` offers the same continuation without an explicit job. Work and deadline limits apply to the whole job, not to each step.
+- **Python.** `wb.begin_recalc()` returns a job you can step or iterate. `wb.recalc(budget_ms, on_step=...)` drives it synchronously and pauses when the callback returns `False`. `evaluate_async` runs steps on a worker thread with the GIL released and calls progress callbacks on the event loop. In Pyodide, it yields between steps. Active-job conflicts raise `RecalcAlreadyPendingError` and `RecalcJobActiveError`.
+- **JavaScript.** `wb.beginRecalc({ priority })` returns a `RecalcJob` you can step. `wb.recalc()` and `wb.evaluateWithYield()` drive it, with `AbortSignal` cancellation and a real task turn between steps. Errors carry a typed `code` such as `ALREADY_PENDING` or `RECALC_JOB_ACTIVE`.
+- **Workers.** `createWorkbookWorker`, `attachWorkbookWorker` and `createInProcessWorkbookWorker` cover the browser and Node. Every reply carries the workbook revision, the evaluated revision and the last acknowledged client edit, so optimistic UIs can reconcile. Viewport subscriptions deliver `values`, `snapshots`, `deltas` or transferable `columnar` frames with built-in flow control. Workers can also host SheetPort sessions and custom functions, registered in the worker, loaded from a module, or (opt-in) from source.
+- **Panic containment.** Panics in native functions, custom functions, metadata and resolver callbacks and clock providers become typed `#VALUE!` errors on the cells that executed them. `IFERROR` can catch the value, but the gap is still reported, so `require_complete` refuses the result.
+
+### Source recalculation
+
+- **Workbook profile.** `profile="workbook"` (Python), `{ profile: 'workbook' }` (JavaScript) or `XlsxRecalculateProfile::Workbook` (Rust) applies the file's saved iteration, cycle and calculation settings, with overrides for seed, clock and time zone.
+- **Complete, partial or deferred.** Results report coverage, operation diagnostics (unavailable or unverified functions and modes, with sample cells), and which cached values were invalidated. Partial results keep every independent result and clear only the affected caches. Corrupt packages, cancellation, resource exhaustion and output failures are still errors.
+- **Sparse sheets admitted.** A worksheet's declared size no longer counts as work; actual byte, cell and formula limits still apply.
+- **Portable limits.** The same finite limits and option validation apply across Rust, Python and WASM/TypeScript.
+
+### SheetPort
+
+- **Native table ports.** `location: { table: { name: Orders, area: body } }` binds a table port to an Excel table. Columns are matched by header name in any order; writes resize the table, clear rows past the new end and keep structured references current. See [Native Excel Tables](docs-site/content/docs/sheetport/manifest-format.mdx#native-excel-tables).
+- **Reversible.** A table write and its resize are one undoable action. Undo, redo and a failed action restore both the values and the table's size. Writing zero rows leaves Excel's required blank row in place but reads back as an empty table.
+- **Faster writes.** Batch writes reserve sheet storage once and propagate changes once per batch, including during undo and redo. In a native release benchmark, table writes are 2.96 times faster at 150 rows and 4.29 times faster at 2,000 rows.
+- **Rust.** `resize_table` and `resize_table_body` on `Engine`, `Workbook` and their actions; `TableMetadata::empty_body`.
 
 ### Excel compatibility
 
-- `SUMIF`, `SUMIFS`, `COUNTIF`, `COUNTIFS`, `AVERAGEIF` and `AVERAGEIFS` return an array when a criterion is an array, one result per criterion, as Excel does. (#546, @mcdonaldsam)
-- `ISNUMBER` and the other `IS*` functions test each element of an array or range argument. (#547, @mcdonaldsam)
+- `SUMIF`, `SUMIFS`, `COUNTIF`, `COUNTIFS`, `AVERAGEIF` and `AVERAGEIFS` return one result per criterion when the criterion is an array. (#546, @mcdonaldsam)
+- `ISNUMBER` and the other `IS*` functions test each element of an array or range. (#547, @mcdonaldsam)
 - `XLOOKUP` and `XMATCH` look up each element of an array lookup value. (#548, @mcdonaldsam)
-- `^` and `POWER` return the real odd root of a negative base, so `=(-8)^(1/3)` is `-2`. (#550, @mcdonaldsam)
-- An error criterion such as `"#N/A"` matches cells holding that error in the `*IF(S)` functions. (#551, @mcdonaldsam)
+- `^` and `POWER` return the real odd root of a negative base: `=(-8)^(1/3)` is `-2`. (#550, @mcdonaldsam)
+- An error criterion such as `"#N/A"` matches cells holding that error. (#551, @mcdonaldsam)
 - Rich-value metadata that only describes a formula's cached value no longer blocks loading or recalculation. (#552, @mcdonaldsam)
-- Ordinary XLSX loading ignores the saved children of a dynamic array, so the recalculated spill is not blocked by its own stale cache. (#553, @mcdonaldsam)
-- `HSTACK` and `VSTACK` pad unequal inputs with `#N/A`; `UNIQUE` keeps column orientation; `SORTBY` validates its criteria and sorts along either axis; approximate descending `XLOOKUP` searches in the right direction; `CEILING` rounds two negative arguments away from zero and keeps exact decimal multiples.
+- Ordinary loading ignores the saved children of a dynamic array, so a recalculated spill is not blocked by its own old values. (#553, @mcdonaldsam)
+- Formulas that read a linked workbook's defined names, such as `=SUM([1]!Sales)`, use the values cached for that link, in recalculation and in ordinary loading. A local name with the same spelling stays separate. (#554, @mcdonaldsam)
+- `HSTACK` and `VSTACK` pad uneven inputs with `#N/A`. `UNIQUE` keeps column orientation. `SORTBY` validates its criteria and sorts along either axis. Approximate descending `XLOOKUP` searches the right way. `CEILING` rounds two negatives away from zero and keeps exact decimal multiples.
 - `TYPE` classifies errors as Excel does, and `ISFORMULA` follows references.
-- Names that are redefined or healed after an error now invalidate the formulas that read them, including transitively.
 
 ### Fixed
 
-- Row and column insertions and deletions no longer overwrite shifted user values or leave stale spill results. Structural edits rebuild spill projections while preserving user cells and undo/redo ownership.
-- Spill shrink and teardown no longer erase values typed into an old spill extent. Removing a literal blocker recalculates only the anchors that were waiting on it.
-- An `INDIRECT` into an empty cell that a spill later fills now recalculates, including on the first request of a parallel batch.
-- Runtime metadata, resolver, provider and clock callback panics are contained at their host boundaries; planning faults decline optimization and become typed errors at executed roots.
-- Declared worksheet rectangles are no longer treated as populated work, removing sparse-coordinate admission failures. Actual byte, cell, formula and host-memory limits still apply.
-- Selective cache publication preserves source formulas and package ownership, and invalidating a partial cache also discards its rich-value metadata.
-- Unknown-function names in diagnostics keep the spelling used in the workbook; different spellings of one function are counted together.
-- The Python event loop stays responsive during asynchronous recalculation admission and cleanup.
-- WASM evaluation guards are released before errors are converted to JavaScript, so error-property callbacks can inspect job state.
+- Inserting or deleting rows and columns no longer overwrites shifted values or leaves stale spill results.
+- A spill that shrinks no longer erases values typed into its old area. Removing a blocking value recalculates only the spills that were waiting on it.
+- An `INDIRECT` into a cell that a spill later fills now recalculates, including on the first parallel request.
+- Redefining a name, or a name recovering from an error, now recalculates every formula that depends on it, directly or through other names.
+- Partial cache publication preserves source formulas and package structure and also discards rich-value metadata for invalidated cells.
+- Unknown-function names in reports keep the file's spelling, and different spellings of one function are counted together.
 
 ### Known limitations
 
-- What-If tables, saved iterative seeds and external-data refresh are not implemented; a partial result does not claim full Excel equivalence.
-- Seeded `RAND()` streams remain target-specific.
-- Small-workbook WASM overhead and a family linear-memory increase are documented maintenance follow-ups.
+- What-If tables, saved iterative seeds and external-data refresh are not implemented. Complete coverage means no known gaps, not a proof of equivalence with Excel.
+- Jobs evaluate on one thread. A single long unit (a large family of formulas, a cycle or a slow custom function) can overrun a step's budget; use a worker to keep a UI responsive.
+- Seeded `RAND()` streams remain specific to each target.
+- Small-workbook WASM overhead and a WASM linear-memory increase for formula families are tracked as follow-ups.
 
 ## [0.13.0] - 2026-10-25
 

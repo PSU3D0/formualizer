@@ -16,6 +16,39 @@ fn openformula_semicolon_is_not_an_infix_operator() {
 }
 
 #[test]
+fn union_with_a_constant_operand_is_refused() {
+    // Excel 16 refuses `=1,000` when it is entered (Range.Formula and
+    // Range.Formula2 both raise) and stores `=A1,B1` and `=(A1,B1)` as
+    // written. The other refused rows follow from the union operator joining
+    // references; they were not entered in Excel.
+    use formualizer_parse::parse;
+    for (formula, position) in [
+        ("=1,000", 2),
+        ("=(1,000)", 3),
+        ("=A1,1", 3),
+        ("=\"a\",B1", 4),
+        ("=TRUE,A1", 5),
+    ] {
+        let error = parse(formula).unwrap_err();
+        assert_eq!(error.position, Some(position), "{formula}");
+        assert!(
+            error.message.contains("union operator"),
+            "{formula}: {error}"
+        );
+    }
+    for formula in [
+        "=A1,B1",
+        "=(A1,B1)",
+        "=SUM((A1,B1),C1)",
+        "=SUM(1,000)",
+        "=(#REF!,A1)",
+        "=INDEX(A1:B2,1,1),A1",
+    ] {
+        assert!(parse(formula).is_ok(), "{formula}");
+    }
+}
+
+#[test]
 fn hand_built_asts_reject_unknown_operator_strings() {
     // Callers constructing ASTNodeType::{BinaryOp, UnaryOp} must convert
     // strings through these checked constructors; arbitrary strings cannot fit.
