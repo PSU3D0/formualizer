@@ -232,6 +232,74 @@ fn array_countif_agrees_with_single_criterion_countif() {
     }
 }
 
+/// Text equality ignores case as single-criterion `COUNTIF` does, by Unicode
+/// simple case folding: `ΟΣ` meets `οσ` though it lowercases to `ος`, and an
+/// ASCII criterion meets the Kelvin sign and the long s.
+#[test]
+fn array_countif_folds_case_as_single_criterion_countif() {
+    let texts = [
+        "οσ", "ΟΣ", "ος", "Σ", "σ", "ς", "\u{212A}", "k", "K", "ſ", "s", "Straße", "STRASSE", "ẞ",
+        "ß", "İ", "i", "café", "CAFÉ", "£m", "£M", "Ǆ", "ǅ", "ǆ",
+    ];
+    // Twice over: long enough for the cells' own lift to be answered from one pass.
+    let texts = [texts.as_slice(), texts.as_slice()].concat();
+    let last = texts.len() as u32;
+    let literals: Vec<String> = ["ΟΣ", "k", "S", "ß", "ẞ", "i", "İ", "CAFÉ", "£m", "ǆ", "ss"]
+        .iter()
+        .map(|text| format!("\"{text}\""))
+        .collect();
+    let literals = [
+        literals.as_slice(),
+        literals.as_slice(),
+        literals.as_slice(),
+    ]
+    .concat();
+    let array = format!("{{{}}}", literals.join(","));
+    for mode in [
+        FormulaPlaneMode::Off,
+        FormulaPlaneMode::AuthoritativeExperimental,
+    ] {
+        let mut e = Engine::new(
+            TestWorkbook::default(),
+            EvalConfig::default().with_formula_plane_mode(mode),
+        );
+        for (i, text) in texts.iter().enumerate() {
+            e.set_cell_value("Sheet1", i as u32 + 1, 1, t(text))
+                .unwrap();
+        }
+        let mut pairs = Vec::new();
+        let mut formula = |row: u32, col: u32, text: String| {
+            e.set_cell_formula("Sheet1", row, col, parse(&text).unwrap())
+                .unwrap();
+        };
+        // Column C: each cell as a criterion. Rows from 101: its lift.
+        formula(101, 3, format!("=COUNTIF(A1:A{last},A1:A{last})"));
+        for row in 1..=last {
+            formula(row, 3, format!("=COUNTIF(A1:A{last},A{row})"));
+            pairs.push(((row, 3), (100 + row, 3)));
+        }
+        // From column D: the literals over every cell, then over `οσ` alone.
+        for (block, range) in [(201, format!("A1:A{last}")), (301, "A1:A1".into())] {
+            formula(block, 4, format!("=COUNTIF({range},{array})"));
+            for (i, literal) in literals.iter().enumerate() {
+                let col = 4 + i as u32;
+                formula(block + 1, col, format!("=COUNTIF({range},{literal})"));
+                pairs.push(((block, col), (block + 1, col)));
+            }
+        }
+        e.evaluate_all().unwrap();
+        for ((r1, c1), (r2, c2)) in pairs {
+            let (a, b) = (
+                e.get_cell_value("Sheet1", r1, c1),
+                e.get_cell_value("Sheet1", r2, c2),
+            );
+            assert_eq!(a, b, "R{r1}C{c1} and R{r2}C{c2} differ ({mode:?})");
+        }
+        // The case the review found: `ΟΣ` over `οσ`.
+        assert_eq!(e.get_cell_value("Sheet1", 301, 4), Some(n(1.0)), "{mode:?}");
+    }
+}
+
 #[test]
 fn distinct_count_idiom_over_a_long_column() {
     const ROWS: u32 = 5_000;

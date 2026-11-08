@@ -510,6 +510,7 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
 /// (exactly, as the walk's numeric lane does), dates and numeric text; a text
 /// criterion meets text, plain numbers and (when empty) blanks. The tolerance of
 /// `values_equal_invariant` applies wherever the walk uses `criteria_match`.
+/// Text is keyed by `text_equality_key`, so it is equal where the walk's is.
 #[derive(Default)]
 pub(crate) struct EqualityCounts {
     /// Number cells. These three lanes are sorted by `sorted`.
@@ -518,7 +519,7 @@ pub(crate) struct EqualityCounts {
     serials: Vec<f64>,
     /// Text cells that read as numbers.
     numeric_text: Vec<f64>,
-    /// Text cells, by lowercased text.
+    /// Text cells, by `text_equality_key`.
     text: rustc_hash::FxHashMap<String, u64>,
     trues: u64,
     falses: u64,
@@ -544,7 +545,7 @@ impl EqualityCounts {
             LiteralValue::Boolean(false) => self.falses += 1,
             LiteralValue::Empty => self.blanks += 1,
             LiteralValue::Text(t) => {
-                *self.text.entry(t.to_lowercase()).or_default() += 1;
+                *self.text.entry(text_equality_key(t)).or_default() += 1;
                 if let Ok(n) = value_to_number(cell) {
                     self.numeric_text.push(n);
                 }
@@ -596,7 +597,7 @@ impl EqualityCounts {
             LiteralValue::Boolean(true) => Some(self.trues),
             LiteralValue::Boolean(false) => Some(self.falses),
             LiteralValue::Text(t) => {
-                let same_text = self.text.get(&t.to_lowercase()).copied().unwrap_or(0);
+                let same_text = self.text.get(&text_equality_key(t)).copied().unwrap_or(0);
                 let blanks = if t.is_empty() { self.blanks } else { 0 };
                 let numbers = value_to_number(target).map_or(0, |n| within(&self.numbers, n));
                 Some(same_text + blanks + numbers)
@@ -604,6 +605,35 @@ impl EqualityCounts {
             _ => None,
         }
     }
+}
+
+/// Two texts are equal for the walk's text criterion (`compute_criteria_mask`)
+/// exactly when their keys are. The walk lowercases both sides and compares them
+/// with Arrow `ilike`; for non-ASCII text that is a regex, which matches
+/// character by character under Unicode simple case folding, so `ος` equals `οσ`
+/// and `k` equals the Kelvin sign. The key lowercases the same way, then puts
+/// each character as the least member of its folding class.
+pub(crate) fn text_equality_key(text: &str) -> String {
+    use regex_syntax::hir::{ClassUnicode, ClassUnicodeRange};
+    let lowered = text.to_lowercase();
+    // An ASCII letter's class starts at its capital: `S` before `s` and `ſ`.
+    if lowered.is_ascii() {
+        return lowered.to_ascii_uppercase();
+    }
+    lowered
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii() {
+                return ch.to_ascii_uppercase();
+            }
+            let mut class = ClassUnicode::new([ClassUnicodeRange::new(ch, ch)]);
+            // The regex folds a literal with this same call.
+            match class.try_case_fold_simple() {
+                Ok(()) => class.ranges().first().map_or(ch, |range| range.start()),
+                Err(_) => ch,
+            }
+        })
+        .collect()
 }
 
 /// Wildcard criteria match text cells only: Excel never matches a number,
