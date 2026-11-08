@@ -567,7 +567,11 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
     if(implicit)releaseJob(true);
     evaluating++;
     try{const result=fn();if(all)state.evaluatedRevision=state.revision;return result;}
-    finally{evaluating--;if(implicit)state.recalcStatus='idle';if(!job)scheduleAuto();}
+    finally{
+      evaluating--;if(implicit)state.recalcStatus='idle';
+      notify('mutation',undefined,undefined,true);
+      if(!job)scheduleAuto();
+    }
   }
   async function dispatch(method:string,a:any[],clientSeq?:number):Promise<any>{
     if(disposed && method!=='dispose')throw new Error('Workbook worker disposed');
@@ -662,12 +666,18 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
       for(const op of a[0])if(!['setValue','setFormula','setValues','setFormulas','addSheet'].includes(op.op??op.kind))throw domain('INVALID_OPTIONS','Unknown edit operation');
       if(a[1]?.actionDescription!==undefined)wb.beginAction(a[1].actionDescription);
       mayHaveFormulas ||=a[0].some((op:any)=>['setFormula','setFormulas'].includes(op.op??op.kind));
+      let applied=false;
       try{for(const op of a[0]){
         const kind=op.op??op.kind;
         if(kind==='addSheet')wb.addSheet(op.name);
         else if(kind==='setValues'||kind==='setFormulas') (sheet(op.sheet) as any)[kind](op.startRow,op.startCol,op.values??op.formulas);
         else (sheet(op.sheet) as any)[kind](op.row,op.column??op.col,op.value??(kind==='setValue'?null:op.formula));
-      }}finally{if(a[1]?.actionDescription!==undefined)wb.endAction();}
+        applied=true;
+      }}catch(error){
+        // Native batches are ordered, not rollback-atomic. Publish completed edits even when a later operation refuses.
+        if(applied)mutate(clientSeq);
+        throw error;
+      }finally{if(a[1]?.actionDescription!==undefined)wb.endAction();}
       return mutate(clientSeq);
     }
     if(['setValue','setFormula','setValues','setFormulas'].includes(method)){
@@ -688,7 +698,7 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
       if(method==='evaluateCell')sheet(a[0]);
       if(method==='evaluateCells')a[0]=a[0].map((c:any)=>{const t=Array.isArray(c)?c:[c.sheet,c.row,c.column];sheet(t[0]);return t;});
       const result=oneShot(()=>(wb as any)[method](...a),method==='evaluateAll');
-      notify('mutation',undefined,undefined,true);return result;
+      return result;
     }
     if(method==='getEvalPlan')a[0]=a[0].map((c:any)=>Array.isArray(c)?c:[c.sheet,c.row,c.column]);
     const result=(wb as any)[method](...a);

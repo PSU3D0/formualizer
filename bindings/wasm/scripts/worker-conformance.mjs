@@ -25,8 +25,17 @@ for (const mode of ['channel','thread']) {
   await assert.rejects(client.getValue('missing',1,1)); assert.deepEqual(await client.sheetNames(),['Sheet1','S']);
   await client.evaluateAll(); await client.inspectCell(cell); await client.precedents(cell); await client.dependents(cell); await client.trace([cell]); await client.rangePage(rect);
   const session=await client.createSheetPortSession(manifest);
+  const portFrames=[];
+  const portSub=await client.subscribeViewport({rect:{...rect,endRow:2,endColumn:1},mode:'values',throttleMs:0,onFrame:f=>portFrames.push(f)});
   await session.writeInputs({input:3}); assert.equal((await session.evaluateOnce()).output,6);
+  await client.sheetNames();assert.equal(portFrames.at(-1).grid[1][0],6,'session evaluation must publish installed output');
   assert.equal((await client.evaluateSheetPort(manifest,{inputs:{input:4}})).output,8);
+  await client.sheetNames();assert.equal(portFrames.at(-1).grid[1][0],8,'stateless evaluation must publish installed output');
+  await client.setValue('S',1,1,5);await session.evaluateOnce();
+  await client.sheetNames();assert.equal(portFrames.at(-1).grid[1][0],10,'session evaluation without input writes must publish');
+  await client.setValue('S',1,1,4);await client.evaluateSheetPort(manifest);
+  await client.sheetNames();assert.equal(portFrames.at(-1).grid[1][0],8,'stateless evaluation without input writes must publish');
+  await portSub.unsubscribe();
   await session.manifest(); await session.describePorts(); await session.readInputs(); await session.readOutputs(); await session.dispose();
   await client.beginRecalc(); assert.equal(client.state.recalcStatus,'paused');
   await assert.rejects(client.evaluateAll(),e=>e.code==='RECALC_JOB_ACTIVE');
@@ -106,6 +115,17 @@ for (const mode of ['channel','thread']) {
   await client.recalc({budgetMs:0});
   assert.equal(unrelated-beforeQuiet,1,'only terminal frame intersects an unrelated sheet');
   await quiet.unsubscribe();
+  await client.setFormula('S',2,1,'=A1*2');
+  await client.setAutoRecalc(true,{budgetMs:0});
+  const batchRevision=client.state.revision;
+  await assert.rejects(client.editBatch([
+    {op:'setValue',sheet:'S',row:1,col:1,value:99},
+    {op:'setValue',sheet:'does-not-exist',row:1,col:1,value:10},
+  ],{actionDescription:'partially failing batch'}));
+  assert.equal(client.state.revision,batchRevision+1,'partial edits advance the causal revision');
+  await client.recalc({budgetMs:0});
+  assert.equal(await client.getValue('S',2,1),198,'partial edits schedule automatic recalculation');
+  await client.setAutoRecalc(false);
   // Dirty literals in a small portion of a viewport produce patches.
   const patches=[];
   const patchSub=await client.subscribeViewport({rect,mode:'values',throttleMs:0,onFrame:f=>patches.push(f)});
