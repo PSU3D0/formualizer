@@ -54,6 +54,8 @@ pub enum ChangeEvent {
         name: String,
         old_range: crate::reference::RangeRef,
         new_range: crate::reference::RangeRef,
+        old_empty_body: bool,
+        new_empty_body: bool,
     },
     SetRowVisibility {
         sheet_id: SheetId,

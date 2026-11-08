@@ -71,9 +71,14 @@ fn replay_events(graph: &mut DependencyGraph, events: &[ChangeEvent]) {
                 editor.set_cell_formula(addr, new);
             }
             ChangeEvent::TableResized {
-                name, new_range, ..
+                name,
+                new_range,
+                new_empty_body,
+                ..
             } => {
-                graph.resize_table(&name, new_range).unwrap();
+                graph
+                    .resize_table_body(&name, new_range, new_empty_body)
+                    .unwrap();
             }
             ChangeEvent::SetRowVisibility { .. } => {
                 // Engine-level sidecar metadata; graph-only replay intentionally ignores it.

@@ -42,6 +42,7 @@ enum PreparedWrite {
     TableResize {
         name: String,
         new_end_row: u32,
+        empty_body: bool,
     },
 }
 
@@ -274,8 +275,12 @@ impl<'a> SheetPort<'a> {
                         } => {
                             action.set_value(&sheet, row, col, value)?;
                         }
-                        PreparedWrite::TableResize { name, new_end_row } => {
-                            action.resize_table(&name, new_end_row)?;
+                        PreparedWrite::TableResize {
+                            name,
+                            new_end_row,
+                            empty_body,
+                        } => {
+                            action.resize_table_body(&name, new_end_row, empty_body)?;
                         }
                     }
                 }
@@ -946,6 +951,9 @@ impl<'a> SheetPort<'a> {
                             .saturating_sub(u32::from(metadata.totals_row)),
                     ),
                 };
+                if matches!(area, TableArea::Body) && metadata.empty_body {
+                    return Ok(PortValue::Table(TableValue::new(Vec::new())));
+                }
                 let mut rows = Vec::new();
                 if start_row <= end_row {
                     for row in start_row..=end_row {
@@ -1422,6 +1430,7 @@ impl<'a> SheetPort<'a> {
                 writes.push(PreparedWrite::TableResize {
                     name: metadata.name,
                     new_end_row,
+                    empty_body: new_row_count == 0,
                 });
                 Ok(())
             }

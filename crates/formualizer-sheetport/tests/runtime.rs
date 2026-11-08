@@ -394,6 +394,7 @@ ports:
             false,
         )
         .unwrap();
+    assert!(workbook.table_metadata("Empty").unwrap().empty_body);
     let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
     let output = sheetport.evaluate_once(EvalOptions::default()).unwrap();
     assert!(
@@ -917,6 +918,219 @@ fn table_write_batch_timing() {
             legacy[2] / batched[2]
         );
     }
+}
+
+#[test]
+#[ignore = "manual reproduction timing; run release with --ignored --nocapture"]
+fn orders_150_write_evaluate_undo_timing() {
+    use formualizer_eval::engine::graph::editor::undo_engine::UndoEngine;
+    use formualizer_sheetport::{TableRow, TableValue};
+    use std::collections::BTreeMap;
+    use std::time::Instant;
+
+    const YAML: &str = r#"
+spec: fio
+spec_version: "0.3.0"
+manifest: { id: timing, name: Timing }
+ports:
+  - id: orders
+    dir: in
+    shape: table
+    location:
+      layout: { kind: header_contiguous_v1, sheet: Orders, header_row: 1, anchor_col: A, terminate: first_blank_row }
+    schema:
+      kind: table
+      columns:
+        - { name: order_id, type: string, col: A }
+        - { name: region, type: string, col: B }
+        - { name: seats, type: number, col: C }
+        - { name: unit_arr, type: number, col: D }
+  - id: target
+    dir: in
+    shape: scalar
+    location: { a1: Assumptions!B1 }
+    schema: { type: string }
+  - id: discount
+    dir: in
+    shape: scalar
+    location: { a1: Assumptions!B2 }
+    schema: { type: number }
+  - id: tax
+    dir: in
+    shape: scalar
+    location: { a1: Assumptions!B3 }
+    schema: { type: number }
+  - id: gross
+    dir: out
+    shape: scalar
+    location: { a1: Summary!B3 }
+    schema: { type: number }
+  - id: count
+    dir: out
+    shape: scalar
+    location: { a1: Summary!B1 }
+    schema: { type: number }
+  - id: seats
+    dir: out
+    shape: scalar
+    location: { a1: Summary!B2 }
+    schema: { type: number }
+  - id: after_tax
+    dir: out
+    shape: scalar
+    location: { a1: Summary!B5 }
+    schema: { type: number }
+"#;
+    let mut legacy = Vec::new();
+    let mut batched = Vec::new();
+    for _ in 0..7 {
+        for old in [true, false] {
+            let mut config = formualizer_workbook::WorkbookConfig::ephemeral();
+            config.enable_changelog = true;
+            let mut wb = Workbook::new_with_config(config);
+            for sheet in ["Orders", "Assumptions", "Summary"] {
+                wb.add_sheet(sheet).unwrap();
+            }
+            for (col, header) in ["order_id", "region", "seats", "unit_arr"]
+                .iter()
+                .enumerate()
+            {
+                wb.set_value(
+                    "Orders",
+                    1,
+                    col as u32 + 1,
+                    LiteralValue::Text((*header).into()),
+                )
+                .unwrap();
+            }
+            wb.set_values(
+                "Orders",
+                2,
+                1,
+                &[vec![
+                    LiteralValue::Text("ORD-0".into()),
+                    LiteralValue::Text("EMEA".into()),
+                    LiteralValue::Number(10.0),
+                    LiteralValue::Number(100.0),
+                ]],
+            )
+            .unwrap();
+            for (row, value) in [
+                LiteralValue::Text("EMEA".into()),
+                LiteralValue::Number(0.05),
+                LiteralValue::Number(0.2),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                wb.set_value("Assumptions", row as u32 + 1, 2, value)
+                    .unwrap();
+            }
+            for (row, formula) in [
+                "=COUNTIF(Orders!B2:B1000, Assumptions!B1)",
+                "=SUMIFS(Orders!C2:C1000, Orders!B2:B1000, Assumptions!B1)",
+                "=SUMPRODUCT((Orders!B2:B1000=Assumptions!B1)*Orders!C2:C1000*Orders!D2:D1000)",
+                "=B3*(1-Assumptions!B2)",
+                "=B4*(1-Assumptions!B3)",
+            ]
+            .iter()
+            .enumerate()
+            {
+                wb.set_formula("Summary", row as u32 + 1, 2, formula)
+                    .unwrap();
+            }
+            wb.evaluate_all().unwrap();
+            let rows: Vec<_> = (1..=150)
+                .map(|i| {
+                    TableRow::new(BTreeMap::from([
+                        ("order_id".into(), LiteralValue::Text(format!("ORD-{i}"))),
+                        (
+                            "region".into(),
+                            LiteralValue::Text(["EMEA", "NA", "APAC"][i % 3].into()),
+                        ),
+                        ("seats".into(), LiteralValue::Number((i % 10 + 1) as f64)),
+                        ("unit_arr".into(), LiteralValue::Number(1200.0)),
+                    ]))
+                })
+                .collect();
+            let mut update = InputUpdate::new();
+            update.insert("orders", PortValue::Table(TableValue::new(rows.clone())));
+            for (id, value) in [
+                ("target", LiteralValue::Text("NA".into())),
+                ("discount", LiteralValue::Number(0.1)),
+                ("tax", LiteralValue::Number(0.25)),
+            ] {
+                update.insert(id, PortValue::Scalar(value));
+            }
+            let mut port = SheetPort::new(&mut wb, Manifest::from_yaml_str(YAML).unwrap()).unwrap();
+            let mut log = formualizer_eval::engine::ChangeLog::new();
+            let mut undo = UndoEngine::new();
+            let start = Instant::now();
+            if old {
+                // Same cells and old unreserved/non-deferred transaction shape.
+                port.workbook_mut()
+                    .engine_mut()
+                    .action_with_logger(&mut log, "legacy request", |tx| {
+                        for (i, row) in rows.iter().enumerate() {
+                            for (j, name) in ["order_id", "region", "seats", "unit_arr"]
+                                .iter()
+                                .enumerate()
+                            {
+                                tx.set_cell_value(
+                                    "Orders",
+                                    i as u32 + 2,
+                                    j as u32 + 1,
+                                    row.values[*name].clone(),
+                                )?;
+                            }
+                        }
+                        for col in 1..=4 {
+                            tx.set_cell_value("Orders", 152, col, LiteralValue::Empty)?;
+                        }
+                        tx.set_cell_value("Assumptions", 1, 2, LiteralValue::Text("NA".into()))?;
+                        tx.set_cell_value("Assumptions", 2, 2, LiteralValue::Number(0.1))?;
+                        tx.set_cell_value("Assumptions", 3, 2, LiteralValue::Number(0.25))?;
+                        Ok(())
+                    })
+                    .unwrap();
+            } else {
+                port.write_inputs(update).unwrap();
+            }
+            port.evaluate_once(EvalOptions::default()).unwrap();
+            assert_eq!(
+                port.workbook().get_value("Summary", 1, 2),
+                Some(LiteralValue::Number(50.0))
+            );
+            assert_eq!(
+                port.workbook().get_value("Summary", 3, 2),
+                Some(LiteralValue::Number(330000.0))
+            );
+            if old {
+                port.workbook_mut()
+                    .engine_mut()
+                    .undo_logged(&mut undo, &mut log)
+                    .unwrap();
+                legacy.push(start.elapsed().as_secs_f64());
+            } else {
+                port.workbook_mut().undo().unwrap();
+                batched.push(start.elapsed().as_secs_f64());
+            }
+            // Confirm undo restored the original request state, outside timing.
+            port.evaluate_once(EvalOptions::default()).unwrap();
+            assert_eq!(
+                port.workbook().get_value("Summary", 3, 2),
+                Some(LiteralValue::Number(1000.0))
+            );
+        }
+    }
+    legacy.sort_by(f64::total_cmp);
+    batched.sort_by(f64::total_cmp);
+    eprintln!(
+        "orders rows=150 write+evaluate+undo: legacy={:.3}ms batched={:.3}ms speedup={:.2}x (median of 7; native Rust reproduction)",
+        legacy[3] * 1000.0,
+        batched[3] * 1000.0,
+        legacy[3] / batched[3]
+    );
 }
 
 fn inventory_rows(n: usize) -> PortValue {

@@ -1631,17 +1631,27 @@ where
         name: &str,
         new_end_row: u32,
     ) -> Result<TableMetadata, crate::engine::EditorError> {
+        self.resize_table_body(name, new_end_row, false)
+    }
+
+    /// Resize and explicitly set the logical body state within this action.
+    pub fn resize_table_body(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+        empty_body: bool,
+    ) -> Result<TableMetadata, crate::engine::EditorError> {
         self.engine.ensure_not_poisoned()?;
         let range = self.engine.table_resize_range(name, new_end_row)?;
         if let Some(capture_ptr) = self.capture {
             self.engine
                 .edit_with_capture(unsafe { &mut *capture_ptr }, |editor| {
-                    editor.resize_table(name, range)
+                    editor.resize_table_body(name, range, empty_body)
                 })??;
         } else {
             return self
                 .engine
-                .resize_table(name, new_end_row)
+                .resize_table_body(name, new_end_row, empty_body)
                 .map_err(Into::into);
         }
         Ok(self
@@ -2191,6 +2201,8 @@ pub struct TableMetadata {
     pub header_row: bool,
     pub headers: Vec<String>,
     pub totals_row: bool,
+    /// The reserved physical body row represents zero logical records.
+    pub empty_body: bool,
 }
 
 /// Read-only engine counters used by benchmark/instrumentation tooling.
@@ -5122,6 +5134,7 @@ where
             header_row: entry.header_row,
             headers: entry.headers.clone(),
             totals_row: entry.totals_row,
+            empty_body: entry.empty_body,
         })
     }
 
@@ -5264,9 +5277,19 @@ where
         name: &str,
         new_end_row: u32,
     ) -> Result<TableMetadata, ExcelError> {
+        self.resize_table_body(name, new_end_row, false)
+    }
+
+    /// Resize a table, retaining a physical row for a logically empty body.
+    pub fn resize_table_body(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+        empty_body: bool,
+    ) -> Result<TableMetadata, ExcelError> {
         self.ensure_not_poisoned()?;
         let range = self.table_resize_range(name, new_end_row)?;
-        self.graph.resize_table(name, range)?;
+        self.graph.resize_table_body(name, range, empty_body)?;
         self.record_structural_change(StructuralScope::AllSheets);
         self.mark_topology_edited();
         Ok(self.table_metadata(name).expect("resized table exists"))
@@ -14273,6 +14296,12 @@ where
             self.clear_spill_projection_and_mirror(anchor, None);
         }
         self.graph.set_cell_value(sheet, row, col, value.clone())?;
+        if value != LiteralValue::Empty {
+            for table in self.graph.empty_tables_at(cell_ref) {
+                self.graph.resize_table(&table.name, table.range)?;
+                self.mark_topology_edited();
+            }
+        }
         self.clear_cell_format_state(sheet, cell_ref);
         self.record_changed_cell(sheet, row, col);
         if !sheet_existed || replaced_formula {
@@ -14536,6 +14565,9 @@ where
             ingested.dep_plan.volatile,
             ingested.dep_plan.dynamic,
         )?;
+        for table in self.graph.empty_tables_at(placement) {
+            self.graph.resize_table(&table.name, table.range)?;
+        }
         self.clear_cell_format_state(sheet, placement);
         self.record_changed_cell(sheet, row, col);
 
@@ -20353,7 +20385,9 @@ where
 
                     let has_totals = table.totals_row;
                     let has_headers = table.header_row;
-                    let data_sr = if has_headers {
+                    let data_sr = if table.empty_body {
+                        er0.saturating_add(1)
+                    } else if has_headers {
                         sr0.saturating_add(1)
                     } else {
                         sr0

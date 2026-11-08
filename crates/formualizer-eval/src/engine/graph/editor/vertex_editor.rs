@@ -504,15 +504,40 @@ impl<'g> VertexEditor<'g> {
         name: &str,
         new_range: crate::reference::RangeRef,
     ) -> Result<(), EditorError> {
-        let old_range = self.graph.resize_table(name, new_range)?;
-        if old_range != new_range {
+        self.resize_table_body(name, new_range, false)
+    }
+
+    pub fn resize_table_body(
+        &mut self,
+        name: &str,
+        new_range: crate::reference::RangeRef,
+        new_empty_body: bool,
+    ) -> Result<(), EditorError> {
+        let old_empty_body = self
+            .graph
+            .resolve_table_entry(name)
+            .ok_or_else(|| ExcelError::new(ExcelErrorKind::Name))?
+            .empty_body;
+        let old_range = self
+            .graph
+            .resize_table_body(name, new_range, new_empty_body)?;
+        if old_range != new_range || old_empty_body != new_empty_body {
             self.log_change(ChangeEvent::TableResized {
                 name: name.to_string(),
                 old_range,
                 new_range,
+                old_empty_body,
+                new_empty_body,
             });
         }
         Ok(())
+    }
+
+    fn materialize_empty_tables(&mut self, cell: CellRef) {
+        for table in self.graph.empty_tables_at(cell) {
+            self.resize_table_body(&table.name, table.range, false)
+                .expect("existing table extent is valid");
+        }
     }
 
     // Transaction support has been moved to TransactionContext
@@ -568,9 +593,13 @@ impl<'g> VertexEditor<'g> {
                 }
             }
             ChangeEvent::TableResized {
-                name, old_range, ..
+                name,
+                old_range,
+                old_empty_body,
+                ..
             } => {
-                self.graph.resize_table(&name, old_range)?;
+                self.graph
+                    .resize_table_body(&name, old_range, old_empty_body)?;
             }
             ChangeEvent::SetRowVisibility { .. } => {
                 // Engine-level sidecar metadata; handled by Engine replay/rollback paths.
@@ -1706,6 +1735,9 @@ impl<'g> VertexEditor<'g> {
         fallback_old_value: Option<LiteralValue>,
         fallback_old_formula: Option<ASTNode>,
     ) -> VertexId {
+        if value != LiteralValue::Empty {
+            self.materialize_empty_tables(cell_ref);
+        }
         let sheet_name = self.graph.sheet_name(cell_ref.sheet_id).to_string();
 
         // Capture old state before modification (value + formula); fall back
@@ -1904,6 +1936,7 @@ impl<'g> VertexEditor<'g> {
         };
         match result {
             Ok(summary) => {
+                self.materialize_empty_tables(cell_ref);
                 if let Some((anchor, old_spill)) = spill_snapshot {
                     if let Some(logger) = &mut self.change_logger {
                         logger.begin_compound(format!(

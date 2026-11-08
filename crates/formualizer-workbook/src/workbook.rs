@@ -1007,10 +1007,11 @@ pub struct Workbook {
 }
 
 trait WorkbookActionOps {
-    fn resize_table(
+    fn resize_table_body(
         &mut self,
         name: &str,
         new_end_row: u32,
+        empty_body: bool,
     ) -> Result<formualizer_eval::engine::TableMetadata, IoError>;
 
     fn set_value(
@@ -1100,7 +1101,17 @@ impl WorkbookAction<'_> {
         name: &str,
         new_end_row: u32,
     ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
-        self.ops.resize_table(name, new_end_row)
+        self.resize_table_body(name, new_end_row, false)
+    }
+
+    /// Set the logical body state while retaining a physical Excel row.
+    pub fn resize_table_body(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+        empty_body: bool,
+    ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
+        self.ops.resize_table_body(name, new_end_row, empty_body)
     }
 
     #[inline]
@@ -1863,14 +1874,15 @@ impl Workbook {
                     tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
                 }
                 impl WorkbookActionOps for TxOps<'_, '_> {
-                    fn resize_table(
+                    fn resize_table_body(
                         &mut self,
                         name: &str,
                         new_end_row: u32,
+                        empty_body: bool,
                     ) -> Result<formualizer_eval::engine::TableMetadata, IoError>
                     {
                         self.tx
-                            .resize_table(name, new_end_row)
+                            .resize_table_body(name, new_end_row, empty_body)
                             .map_err(|e| match e {
                                 formualizer_eval::engine::EditorError::Excel(excel) => {
                                     IoError::Engine(excel)
@@ -2020,13 +2032,14 @@ impl Workbook {
                 tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
             }
             impl WorkbookActionOps for TxOps<'_, '_> {
-                fn resize_table(
+                fn resize_table_body(
                     &mut self,
                     name: &str,
                     new_end_row: u32,
+                    empty_body: bool,
                 ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
                     self.tx
-                        .resize_table(name, new_end_row)
+                        .resize_table_body(name, new_end_row, empty_body)
                         .map_err(|e| match e {
                             formualizer_eval::engine::EditorError::Excel(excel) => {
                                 IoError::Engine(excel)

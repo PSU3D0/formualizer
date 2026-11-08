@@ -244,6 +244,208 @@ fn empty_native_input_retains_one_blank_body_row_and_is_reversible() {
     assert_outputs(&mut port, 60.0, 36.0);
 }
 
+fn roundtrip_manifest(nullable: bool) -> Manifest {
+    let input = MANIFEST.split("  - id: total").next().unwrap();
+    let input = if nullable {
+        format!("{input}    constraints: {{ nullable: true }}\n")
+    } else {
+        input.to_string()
+    };
+    let output = input
+        .split("  - id: orders")
+        .nth(1)
+        .unwrap()
+        .replace("dir: in", "dir: out");
+    let scalars = MANIFEST.split("  - id: total").nth(1).unwrap();
+    Manifest::from_yaml_str(&format!(
+        "{input}  - id: rows{output}  - id: total{scalars}"
+    ))
+    .unwrap()
+}
+
+fn assert_roundtrip(port: &mut SheetPort<'_>, count: usize, empty: bool) {
+    let inputs = port.read_inputs().unwrap();
+    let outputs = port.read_outputs().unwrap();
+    let input = inputs.get("orders").unwrap().as_table().unwrap();
+    let output = outputs.get("rows").unwrap().as_table().unwrap();
+    assert_eq!(input, output);
+    assert_eq!(input.rows.len(), count);
+    assert_eq!(
+        port.workbook().table_metadata("Orders").unwrap().empty_body,
+        empty
+    );
+}
+
+fn assert_formula(port: &mut SheetPort<'_>, total: f64, filtered: f64) {
+    port.evaluate_once(EvalOptions::default()).unwrap();
+    assert_eq!(
+        port.workbook().get_value("Outputs", 1, 1),
+        Some(LiteralValue::Number(total))
+    );
+    assert_eq!(
+        port.workbook().get_value("Outputs", 2, 1),
+        Some(LiteralValue::Number(filtered))
+    );
+}
+
+#[test]
+fn logical_empty_native_body_roundtrips_and_replays_in_both_history_modes() {
+    for changelog in [false, true] {
+        for nullable in [false, true] {
+            let mut wb = workbook(changelog, false);
+            let mut port = SheetPort::new(&mut wb, roundtrip_manifest(nullable)).unwrap();
+            let before = port.read_inputs().unwrap();
+            let metadata = port.workbook().table_metadata("Orders").unwrap();
+            port.write_inputs(update(0)).unwrap();
+            assert_roundtrip(&mut port, 0, true);
+            assert_eq!(port.workbook().table_metadata("Orders").unwrap().end_row, 2);
+            // The unmapped unit_arr still contains 1000: logical emptiness cannot
+            // be inferred by inspecting blank cells.
+            assert_formula(&mut port, 0.0, 0.0);
+
+            port.workbook_mut().undo().unwrap();
+            assert_eq!(port.workbook().table_metadata("Orders").unwrap(), metadata);
+            assert_eq!(port.read_inputs().unwrap(), before);
+            assert_roundtrip(&mut port, 5, false);
+            assert_formula(&mut port, 60.0, 36.0);
+            port.workbook_mut().redo().unwrap();
+            assert_roundtrip(&mut port, 0, true);
+            assert_formula(&mut port, 0.0, 0.0);
+
+            let failed = port.workbook_mut().action("materialize then fail", |tx| {
+                tx.resize_table("Orders", 6)?;
+                tx.set_value("Orders", 2, 3, LiteralValue::Number(9.0))?;
+                tx.set_formula("Outputs", 9, 1, "=INVALID((")
+            });
+            assert!(failed.is_err());
+            assert_roundtrip(&mut port, 0, true);
+            assert_eq!(port.workbook().table_metadata("Orders").unwrap().end_row, 2);
+            assert_formula(&mut port, 0.0, 0.0);
+
+            port.workbook_mut().undo().unwrap();
+            let failed = port.workbook_mut().action("empty then fail", |tx| {
+                for row in 2..=6 {
+                    for col in 1..=3 {
+                        tx.set_value("Orders", row, col, LiteralValue::Empty)?;
+                    }
+                }
+                tx.resize_table_body("Orders", 2, true)?;
+                tx.set_formula("Outputs", 9, 1, "=INVALID((")
+            });
+            assert!(failed.is_err());
+            assert_eq!(port.workbook().table_metadata("Orders").unwrap(), metadata);
+            assert_eq!(port.read_inputs().unwrap(), before);
+            assert_roundtrip(&mut port, 5, false);
+            assert_formula(&mut port, 60.0, 36.0);
+        }
+    }
+}
+
+#[test]
+fn nullable_blank_record_is_not_a_logically_empty_body() {
+    for changelog in [false, true] {
+        let mut wb = workbook(changelog, false);
+        let mut port = SheetPort::new(&mut wb, roundtrip_manifest(true)).unwrap();
+        port.write_inputs(update(0)).unwrap();
+        let blank = TableValue::new(vec![TableRow::new(BTreeMap::from([
+            ("seats".into(), LiteralValue::Empty),
+            ("region".into(), LiteralValue::Empty),
+            ("order_id".into(), LiteralValue::Empty),
+        ]))]);
+        let mut update = InputUpdate::new();
+        update.insert("orders", PortValue::Table(blank.clone()));
+        port.write_inputs(update).unwrap();
+        assert_roundtrip(&mut port, 1, false);
+        assert_eq!(
+            port.read_inputs().unwrap().get("orders"),
+            Some(&PortValue::Table(blank))
+        );
+        assert_formula(&mut port, 0.0, 0.0);
+        port.workbook_mut().undo().unwrap();
+        assert_roundtrip(&mut port, 0, true);
+        port.workbook_mut().redo().unwrap();
+        assert_roundtrip(&mut port, 1, false);
+    }
+}
+
+#[test]
+fn edits_and_explicit_resize_materialize_empty_body_reversibly() {
+    for changelog in [false, true] {
+        for kind in ["value", "formula", "resize"] {
+            let mut wb = workbook(changelog, false);
+            let mut port = SheetPort::new(&mut wb, roundtrip_manifest(true)).unwrap();
+            port.write_inputs(update(0)).unwrap();
+            let failed = port.workbook_mut().action("materialize then fail", |tx| {
+                match kind {
+                    "value" => tx.set_value("Orders", 2, 3, LiteralValue::Number(7.0))?,
+                    "formula" => tx.set_formula("Orders", 2, 3, "=7")?,
+                    _ => {
+                        tx.resize_table("Orders", 2)?;
+                    }
+                }
+                tx.set_formula("Outputs", 9, 1, "=INVALID((")
+            });
+            assert!(failed.is_err());
+            assert_roundtrip(&mut port, 0, true);
+            assert_formula(&mut port, 0.0, 0.0);
+            port.workbook_mut()
+                .action("materialize", |tx| match kind {
+                    "value" => tx.set_value("Orders", 2, 3, LiteralValue::Number(7.0)),
+                    "formula" => tx.set_formula("Orders", 2, 3, "=7"),
+                    _ => tx.resize_table("Orders", 2).map(|_| ()),
+                })
+                .unwrap();
+            assert_roundtrip(&mut port, 1, false);
+            assert_formula(&mut port, if kind == "resize" { 0.0 } else { 7.0 }, 0.0);
+            port.workbook_mut().undo().unwrap();
+            assert_roundtrip(&mut port, 0, true);
+            assert_formula(&mut port, 0.0, 0.0);
+            port.workbook_mut().redo().unwrap();
+            assert_roundtrip(&mut port, 1, false);
+            assert_formula(&mut port, if kind == "resize" { 0.0 } else { 7.0 }, 0.0);
+        }
+    }
+}
+
+#[test]
+fn logical_empty_body_excludes_unmapped_values_and_direct_engine_edits_restore_it() {
+    for formula in [false, true] {
+        let mut wb = workbook(false, false);
+        wb.set_formula("Outputs", 3, 1, "=SUM(Orders[unit_arr])")
+            .unwrap();
+        wb.evaluate_all().unwrap();
+        {
+            let mut port = SheetPort::new(&mut wb, roundtrip_manifest(true)).unwrap();
+            port.write_inputs(update(0)).unwrap();
+        }
+        wb.evaluate_all().unwrap();
+        assert_eq!(
+            wb.get_value("Outputs", 3, 1),
+            Some(LiteralValue::Number(0.0))
+        );
+        wb.engine_mut()
+            .set_cell_value("Orders", 2, 3, LiteralValue::Empty)
+            .unwrap();
+        assert!(wb.table_metadata("Orders").unwrap().empty_body);
+        if formula {
+            let ast = formualizer_parse::parse("=7").unwrap();
+            wb.engine_mut()
+                .set_cell_formula("Orders", 2, 3, ast)
+                .unwrap();
+        } else {
+            wb.engine_mut()
+                .set_cell_value("Orders", 2, 3, LiteralValue::Number(7.0))
+                .unwrap();
+        }
+        assert!(!wb.table_metadata("Orders").unwrap().empty_body);
+        wb.evaluate_all().unwrap();
+        assert_eq!(
+            wb.get_value("Outputs", 3, 1),
+            Some(LiteralValue::Number(1000.0))
+        );
+    }
+}
+
 #[test]
 fn native_totals_allow_fixed_size_writes_but_reject_resize_atomically() {
     let mut wb = workbook(true, true);
