@@ -785,6 +785,140 @@ ports:
     );
 }
 
+#[test]
+fn large_table_write_is_one_reversible_batched_action() {
+    for changelog in [false, true] {
+        let mut config = formualizer_workbook::WorkbookConfig::ephemeral();
+        config.enable_changelog = changelog;
+        let mut workbook = Workbook::new_with_config(config);
+        for sheet in ["Inputs", "Inventory", "Outputs"] {
+            workbook.add_sheet(sheet).unwrap();
+        }
+        workbook
+            .set_formula("Outputs", 1, 1, "=SUM(Inventory!C2:C401)")
+            .unwrap();
+        workbook.evaluate_all().unwrap();
+        let yaml = include_str!("../../sheetport-spec/tests/fixtures/supply_planning.yaml");
+        let manifest = Manifest::from_yaml_str(yaml).unwrap();
+        let mut sheetport = SheetPort::new(&mut workbook, manifest).unwrap();
+        let mut update = InputUpdate::new();
+        update.insert("sku_inventory", inventory_rows(400));
+        sheetport.write_inputs(update).unwrap();
+        sheetport.workbook_mut().evaluate_all().unwrap();
+        assert_eq!(
+            sheetport.workbook().get_value("Outputs", 1, 1),
+            Some(LiteralValue::Number(400.0))
+        );
+        sheetport.workbook_mut().undo().unwrap();
+        for row in 2..=401 {
+            for col in 1..=5 {
+                assert_eq!(
+                    sheetport
+                        .workbook()
+                        .get_value("Inventory", row, col)
+                        .unwrap_or(LiteralValue::Empty),
+                    LiteralValue::Empty
+                );
+            }
+        }
+        sheetport.workbook_mut().evaluate_all().unwrap();
+        assert_eq!(
+            sheetport.workbook().get_value("Outputs", 1, 1),
+            Some(LiteralValue::Number(0.0))
+        );
+        sheetport.workbook_mut().redo().unwrap();
+        sheetport.workbook_mut().evaluate_all().unwrap();
+        assert_eq!(
+            sheetport.workbook().get_value("Outputs", 1, 1),
+            Some(LiteralValue::Number(400.0))
+        );
+    }
+}
+
+/// Manual timing probe: reproduces the old unreserved, non-deferred Engine
+/// action used by SheetPort, excluding workbook/manifest setup from both timings.
+#[test]
+#[ignore = "manual performance probe; run with --ignored --nocapture"]
+fn table_write_batch_timing() {
+    use std::time::Instant;
+    for count in [150, 2000] {
+        let mut legacy = Vec::new();
+        let mut batched = Vec::new();
+        for _ in 0..5 {
+            for old in [true, false] {
+                let mut wb = make_test_workbook();
+                wb.set_formula("Outputs", 1, 1, "=SUM(Inventory!C2:C2001)")
+                    .unwrap();
+                for row in 2..=151 {
+                    wb.set_formula("Outputs", row, 1, &format!("=A{}+1", row - 1))
+                        .unwrap();
+                }
+                wb.evaluate_all().unwrap();
+                let value = inventory_rows(count);
+                let manifest = Manifest::from_yaml_str(include_str!(
+                    "../../sheetport-spec/tests/fixtures/supply_planning.yaml"
+                ))
+                .unwrap();
+                let mut port = SheetPort::new(&mut wb, manifest).unwrap();
+                let mut update = InputUpdate::new();
+                update.insert("sku_inventory", value.clone());
+                let start = Instant::now();
+                if old {
+                    let PortValue::Table(table) = value else {
+                        unreachable!()
+                    };
+                    let mut log = formualizer_eval::engine::ChangeLog::new();
+                    port.workbook_mut()
+                        .engine_mut()
+                        .action_with_logger(&mut log, "legacy", |tx| {
+                            for (i, row) in table.rows.iter().enumerate() {
+                                for (j, name) in [
+                                    "sku",
+                                    "description",
+                                    "on_hand",
+                                    "safety_stock",
+                                    "lead_time_days",
+                                ]
+                                .iter()
+                                .enumerate()
+                                {
+                                    tx.set_cell_value(
+                                        "Inventory",
+                                        i as u32 + 2,
+                                        j as u32 + 1,
+                                        row.values[*name].clone(),
+                                    )?;
+                                }
+                            }
+                            for col in 1..=5 {
+                                tx.set_cell_value(
+                                    "Inventory",
+                                    count as u32 + 2,
+                                    col,
+                                    LiteralValue::Empty,
+                                )?;
+                            }
+                            Ok(())
+                        })
+                        .unwrap();
+                    legacy.push(start.elapsed().as_secs_f64());
+                } else {
+                    port.write_inputs(update).unwrap();
+                    batched.push(start.elapsed().as_secs_f64());
+                }
+            }
+        }
+        legacy.sort_by(f64::total_cmp);
+        batched.sort_by(f64::total_cmp);
+        eprintln!(
+            "rows={count}: legacy={:.3}ms batched={:.3}ms speedup={:.2}x (median of 5)",
+            legacy[2] * 1000.0,
+            batched[2] * 1000.0,
+            legacy[2] / batched[2]
+        );
+    }
+}
+
 fn inventory_rows(n: usize) -> PortValue {
     use formualizer_sheetport::{TableRow, TableValue};
     use std::collections::BTreeMap;

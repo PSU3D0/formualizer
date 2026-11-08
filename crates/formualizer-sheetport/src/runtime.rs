@@ -241,6 +241,16 @@ impl<'a> SheetPort<'a> {
     }
 
     fn apply_writes(&mut self, writes: Vec<PreparedWrite>) -> Result<(), SheetPortError> {
+        let mut extents: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
+        for write in &writes {
+            let extent = extents.entry(&write.sheet).or_default();
+            extent.0 = extent.0.max(write.row);
+            extent.1 = extent.1.max(write.col);
+        }
+        for (sheet, (row, col)) in extents {
+            self.workbook
+                .ensure_sheet_capacity(sheet, row as usize, col as usize);
+        }
         self.workbook
             .action("sheetport.write_inputs", move |action| {
                 for write in writes {

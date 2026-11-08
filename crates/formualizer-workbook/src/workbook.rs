@@ -1829,6 +1829,17 @@ impl Workbook {
         name: &str,
         f: impl FnOnce(&mut WorkbookAction<'_>) -> Result<T, IoError>,
     ) -> Result<T, IoError> {
+        self.engine.begin_deferred_dirty();
+        let result = self.action_inner(name, f);
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn action_inner<T>(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(&mut WorkbookAction<'_>) -> Result<T, IoError>,
+    ) -> Result<T, IoError> {
         let mut user_err: Option<IoError> = None;
 
         if self.enable_changelog {
@@ -2118,6 +2129,13 @@ impl Workbook {
         Ok(v)
     }
     pub fn undo(&mut self) -> Result<(), IoError> {
+        self.engine.begin_deferred_dirty();
+        let result = self.undo_inner();
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn undo_inner(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
             self.engine
                 .undo_logged(&mut self.undo, &mut self.log)
@@ -2130,6 +2148,13 @@ impl Workbook {
         Ok(())
     }
     pub fn redo(&mut self) -> Result<(), IoError> {
+        self.engine.begin_deferred_dirty();
+        let result = self.redo_inner();
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn redo_inner(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
             self.engine
                 .redo_logged(&mut self.undo, &mut self.log)
@@ -2140,6 +2165,11 @@ impl Workbook {
                 .map_err(|e| IoError::from_backend("editor", e))?;
         }
         Ok(())
+    }
+
+    /// Reserve Arrow storage for a batch without changing any cell values.
+    pub fn ensure_sheet_capacity(&mut self, sheet: &str, max_row: usize, max_col: usize) {
+        self.ensure_arrow_sheet_capacity(sheet, max_row, max_col);
     }
 
     fn ensure_arrow_sheet_capacity(&mut self, sheet: &str, min_rows: usize, min_cols: usize) {

@@ -215,6 +215,62 @@ fn undo_restores_pre_batch_values() {
     assert_post_edit_state(&wb, 5.0);
 }
 
+#[test]
+fn action_undo_redo_and_rollback_batch_dirty_propagation() {
+    for changelog in [false, true] {
+        let mut wb = workbook(changelog);
+        build_rollup(&mut wb);
+        let before = wb.engine().dirty_propagation_visits();
+        wb.action("batch", |tx| {
+            for row in 1..=INPUTS {
+                tx.set_value(SHEET, row, 1, LiteralValue::Number(4.0))?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        let visits = wb.engine().dirty_propagation_visits() - before;
+        assert!(visits <= 2 * (INPUTS + CHAIN + 1) as u64, "{visits}");
+        wb.evaluate_all().unwrap();
+        assert_post_edit_state(&wb, 4.0);
+        for (redo, expected) in [(false, 1.0), (true, 4.0)] {
+            let before = wb.engine().dirty_propagation_visits();
+            if redo {
+                wb.redo().unwrap();
+            } else {
+                wb.undo().unwrap();
+            }
+            let visits = wb.engine().dirty_propagation_visits() - before;
+            assert!(visits <= 2 * (INPUTS + CHAIN + 1) as u64, "{visits}");
+            wb.evaluate_all().unwrap();
+            assert_post_edit_state(&wb, expected);
+        }
+        let failed = wb.action("rollback", |tx| {
+            for row in 1..=INPUTS {
+                tx.set_value(SHEET, row, 1, LiteralValue::Number(9.0))?;
+            }
+            tx.set_formula(SHEET, 1, 5, "=INVALID((")
+        });
+        assert!(failed.is_err());
+        for row in 1..=INPUTS {
+            assert_eq!(num(&wb, row, 1), 4.0);
+        }
+        wb.evaluate_all().unwrap();
+        assert_post_edit_state(&wb, 4.0);
+        wb.set_value(SHEET, 1, 1, LiteralValue::Number(5.0))
+            .unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(num(&wb, 1, 2), (4 * INPUTS + 1) as f64);
+        // An empty history error must also flush its deferred scope.
+        let mut empty = workbook(changelog);
+        let _ = empty.undo();
+        let _ = empty.redo();
+        empty
+            .set_value(SHEET, 1, 1, LiteralValue::Number(2.0))
+            .unwrap();
+        empty.evaluate_all().unwrap();
+    }
+}
+
 /* ─────────────────────────── error-path flush ─────────────────────────── */
 
 #[test]
