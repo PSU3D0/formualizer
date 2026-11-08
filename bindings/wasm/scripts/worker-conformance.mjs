@@ -60,6 +60,17 @@ for (const mode of ['channel','thread']) {
   await client.registerFunctionModule(new URL('../examples/worker-functions.mjs',import.meta.url).href);
   assert.ok((await client.listFunctions()).some(f=>f.name==='PLUSONE'));
   await client.unregisterFunction('TRIPLE');
+  const fields={kind:'CalculationDeferred',code:'DEFERRED',inspect_code:'INSPECT_ERROR',explicit:true,
+    workbook_kind:'Engine',excel_kind:'#VALUE!',excel_message:'detail',resource_reason:'work_units',
+    limit:'18446744073709551615',observed:'18446744073709551614',request_id:'request',
+    function:'UDF',panic_message:'panic',extra:{kind:'FunctionPanic',function:'UDF'},
+    preparation_stale_reason:'changed',plan_stale_reason:'changed',reason:'KnownCoverageIncomplete',context:'fixture',pos:4};
+  const failingModule='data:text/javascript,'+encodeURIComponent('throw Object.assign(new Error("outer",{cause:Object.assign(new Error("inner"),{kind:"Engine",limit:"18446744073709551615"})}),'+JSON.stringify(fields)+');');
+  await assert.rejects(client.registerFunctionModule(failingModule),error=>{
+    for(const [key,value]of Object.entries(fields))assert.deepEqual(error[key],value);
+    assert.equal(error.cause.limit,fields.limit);assert.equal(error.cause.kind,'Engine');return true;
+  });
+
   const backing=new Uint8Array(fixture.length+8);backing.set(fixture,4);
   await client.loadFromXlsxBytes(backing.subarray(4,4+fixture.length),undefined,{transfer:true});
   assert.equal(backing.byteLength,fixture.length+8);
@@ -75,6 +86,12 @@ for (const mode of ['channel','thread']) {
   await stream.return();assert.equal(client.state.recalcStatus,'paused');
   await client.recalc();
   await client.setFormula('S',8,1,'=A7+1');
+  const stale=client.recalcStream({budgetMs:0});
+  await stale.next();await client.cancelRecalc();
+  await client.beginRecalc();await stale.return();
+  assert.equal(client.state.hasActiveJob,true,'stale stream cleanup must preserve the replacement job');
+  await client.recalc();
+  await client.setFormula('S',8,1,'=A7+2');
   const mid=new AbortController();
   await assert.rejects(client.recalc({budgetMs:0,signal:mid.signal,onProgress(){mid.abort();return new Promise(()=>{});}}),e=>e.name==='AbortError');
   assert.equal(client.state.hasActiveJob,false);

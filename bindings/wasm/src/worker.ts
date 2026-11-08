@@ -182,6 +182,7 @@ type WorkbookRpc = {
 export interface WorkbookWorkerClient extends WorkbookRpc {}
 export class WorkbookWorkerClient {
   private current=initialState();
+  private failure:unknown;
   private seq=0; private next=0; private disposed=false;
   private pending=new Map<number,{resolve:(v:any)=>void;reject:(e:unknown)=>void;cleanup:()=>void}>();
   private listeners=new Set<(state:WorkerStateHeader)=>void>();
@@ -201,6 +202,7 @@ export class WorkbookWorkerClient {
   get hasInFlightMutations(): boolean { return this.current.ackClientSeq<this.seq; }
   onStatusChange(listener:(state:WorkerStateHeader)=>void):()=>void {this.listeners.add(listener);return ()=>{this.listeners.delete(listener);};}
   private fail(error:unknown) {
+    this.failure=error;
     this.rejectReady(error);
     for(const p of this.pending.values()){p.cleanup();p.reject(error);} this.pending.clear();
   }
@@ -229,6 +231,7 @@ export class WorkbookWorkerClient {
   }
   private sendRequest(method:string,args:unknown[]=[],req?:RequestOptions,transfer:any[]=[]):Promise<any> {
     if(this.disposed)return Promise.reject(new Error('Workbook worker disposed'));
+    if(this.failure!==undefined)return Promise.reject(this.failure);
     if(req?.signal?.aborted)return Promise.reject(abortError());
     const id=++this.next;
     const clientSeq=mutationMethods.has(method)?++this.seq:undefined;
@@ -488,7 +491,7 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
         if(value===null||value===undefined)continue;
         if(typeof value==='number'){tags[i]=1;numbers[i]=value;}
         else if(typeof value==='boolean'){tags[i]=2;numbers[i]=Number(value);}
-        else if(typeof value==='string'){tags[i]=/^#(?:REF!|VALUE!|DIV\/0!|N\/A|NAME\\?|NUM!|NULL!|SPILL!|CIRC!|CALC!)/.test(value)?4:3;numbers[i]=text(value);}
+        else if(typeof value==='string'){tags[i]=/^#(?:REF!|VALUE!|DIV\/0!|N\/A|NAME\?|NUM!|NULL!|SPILL!|CIRC!|CALC!)/.test(value)?4:3;numbers[i]=text(value);}
         else{tags[i]=value.kind==='error'?4:5;numbers[i]=text(JSON.stringify(value));}
       }
       for(const c of pending){const i=(c.row-r.startRow)*cols+c.column-r.startColumn;pendingBitset[i>>3]|=1<<(i&7);}
@@ -544,7 +547,7 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
     }catch(error){releaseJob(true);state.recalcStatus='error';status();throw error;}
   }
   function cancel(){
-    const report=releaseJob(true);state.recalcStatus='cancelled';
+    const report=releaseJob(true);driver=false;driverGeneration++;state.recalcStatus='cancelled';
     if(report)notify('finished',report);status();
     return report?{...report,...header()}:null;
   }
@@ -722,6 +725,7 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
   };
   ready=(async()=>{
     runtime=options.runtime??await import('./index.js');await runtime.default();
+    if(disposed)return;
     wb=new runtime.Workbook();registerAll(options.functions??{});
     send({type:'ready'});
   })();
