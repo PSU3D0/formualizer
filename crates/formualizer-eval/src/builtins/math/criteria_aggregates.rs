@@ -1,4 +1,4 @@
-use super::super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
+use super::super::utils::{ARG_ANY_ONE, EqualityCounts, coerce_num, criteria_match};
 use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
 use crate::compute_prelude::{boolean, cmp};
@@ -243,6 +243,33 @@ fn lifting_shape(value: &LiteralValue) -> Option<(usize, usize)> {
     }
 }
 
+/// From this many criteria elements, one pass over `COUNTIF`'s range replaces a
+/// walk per element. Below it the walk wins: its vectorized number comparison
+/// and shared masks cost less than a pass that reads every cell.
+const EQUALITY_COUNTS_MIN_ELEMENTS: usize = 32;
+
+/// The equality counts of `COUNTIF`'s range. `None` when the argument is not a
+/// range or cannot be read; each element then takes the walk, which reports it.
+fn count_argument_equalities<'a, 'b>(
+    arg: &ArgumentHandle<'a, 'b>,
+    ctx: &dyn FunctionContext<'b>,
+) -> Option<EqualityCounts> {
+    let (AggregateArgument::Range(view), logical_cells) = resolve_count_argument(arg, ctx).ok()?
+    else {
+        return None;
+    };
+    let mut counts = EqualityCounts::default();
+    view.for_each_cell(&mut |cell| {
+        counts.add(cell);
+        Ok(())
+    })
+    .ok()?;
+    let (rows, cols) = view.dims();
+    let stored_cells = rows as u64 * cols as u64;
+    counts.add_blanks(logical_cells.map_or(0, |cells| cells.saturating_sub(stored_cells)));
+    Some(counts.sorted())
+}
+
 /// `SUMIF(S)`, `COUNTIF(S)`, `AVERAGEIF(S)`. A criterion that is an array or
 /// a multi-cell range lifts the call, as in Excel: the result is an array
 /// with one aggregate per criterion element (`SUMIFS(B:B, A:A, {"a","b"})`
@@ -278,6 +305,11 @@ fn eval_if_family<'a, 'b>(
     ) {
         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
     }
+    // Many of COUNTIF's equality criteria share one pass over the range, read
+    // when the first is reached; the walk answers every other predicate.
+    let use_equality_counts =
+        !multi && agg_type == AggregationType::Count && rows * cols >= EQUALITY_COUNTS_MIN_ELEMENTS;
+    let mut equality_counts: Option<Option<EqualityCounts>> = None;
     let mut out = Vec::with_capacity(rows);
     for r in 0..rows {
         let mut out_row = Vec::with_capacity(cols);
@@ -305,9 +337,21 @@ fn eval_if_family<'a, 'b>(
                     }
                 })
                 .collect();
-            out_row.push(match eval_if_core(args, ctx, agg_type, multi, &preds) {
-                Ok(value) => value.into_literal(),
-                Err(e) => LiteralValue::Error(e),
+            let counted = match preds.as_slice() {
+                [Ok(pred)] if use_equality_counts && EqualityCounts::answers(pred) => {
+                    equality_counts
+                        .get_or_insert_with(|| count_argument_equalities(&args[0], ctx))
+                        .as_ref()
+                        .and_then(|counts| counts.count(pred))
+                }
+                _ => None,
+            };
+            out_row.push(match counted {
+                Some(count) => LiteralValue::Number(count as f64),
+                None => match eval_if_core(args, ctx, agg_type, multi, &preds) {
+                    Ok(value) => value.into_literal(),
+                    Err(e) => LiteralValue::Error(e),
+                },
             });
         }
         out.push(out_row);

@@ -30,6 +30,8 @@ formualizer-common = { workspace = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
+# Unicode simple case folding, the equality Arrow `ilike` (through `regex`) gives text criteria.
+regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode-case"] }
 # default-features = false: SmallRng + seeded PRNG only; no OsRng / getrandom at runtime.
 rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
 rayon = "1.8"
