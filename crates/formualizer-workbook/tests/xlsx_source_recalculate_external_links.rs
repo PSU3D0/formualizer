@@ -479,13 +479,17 @@ fn reference_shapes_over_external_references_are_refused() {
 }
 
 #[test]
-fn rich_value_data_keeps_its_own_refusal() {
+fn rich_value_parts_no_cell_uses_are_opaque() {
     let mut parts = unpack(&book(&[Ws::new("Sheet1", vec![formula("A1", "1")])], ""));
     parts.insert(
         "xl/richData/rdrichvalue.xml".into(),
         format!("<rvData xmlns=\"{MAIN}\"/>"),
     );
-    refuses(&pack(&parts), "rich value data");
+    let out = recalc(&pack(&parts));
+    assert_eq!(
+        unpack(&out.bytes).get("xl/richData/rdrichvalue.xml"),
+        parts.get("xl/richData/rdrichvalue.xml")
+    );
 }
 
 #[test]

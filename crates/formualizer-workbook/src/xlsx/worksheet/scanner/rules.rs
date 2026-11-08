@@ -530,9 +530,23 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                 (None, (self.row.max(1), self.column.saturating_add(1)))
             };
             self.admit_cell_position(r, c, context)?;
-            if STRICT && attrs.value("vm").is_some() {
-                return Err(unsupported("rich value metadata (vm)", "worksheet"));
-            }
+            // Value metadata (rich values) only describes a cached value. A
+            // formula's cache is recomputed, so `vm` is admitted there and
+            // refused on literal cells, whose value would depend on it.
+            let vm = if STRICT {
+                attrs
+                    .attribute("", "vm")
+                    .map(|a| {
+                        let index = a.value.parse::<u32>().ok().filter(|n| *n > 0);
+                        match index {
+                            Some(index) if !empty => Ok((index, a.span.clone())),
+                            _ => Err(unsupported("rich value metadata (vm)", "worksheet")),
+                        }
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
             let cm = if STRICT {
                 attrs
                     .value("cm")
@@ -590,21 +604,24 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                     value: None,
                     inline: None,
                     has_formula: false,
-                    dynamic: (STRICT && (cm.is_some() || canonical.is_none())).then(|| {
-                        Box::new(DynamicAttributes {
-                            original_address: canonical.is_none().then(|| {
-                                coordinate_attribute
-                                    .as_ref()
-                                    .expect("strict coordinate")
-                                    .value
-                                    .to_string()
-                                    .into_boxed_str()
-                            }),
-                            cm,
-                            cm_span: attrs.attribute("", "cm").map(|a| a.span.clone()),
-                            ..Default::default()
-                        })
-                    }),
+                    dynamic: (STRICT && (cm.is_some() || canonical.is_none() || vm.is_some()))
+                        .then(|| {
+                            Box::new(DynamicAttributes {
+                                original_address: canonical.is_none().then(|| {
+                                    coordinate_attribute
+                                        .as_ref()
+                                        .expect("strict coordinate")
+                                        .value
+                                        .to_string()
+                                        .into_boxed_str()
+                                }),
+                                cm,
+                                cm_span: attrs.attribute("", "cm").map(|a| a.span.clone()),
+                                vm: vm.as_ref().map(|(index, _)| *index),
+                                vm_span: vm.map(|(_, span)| span),
+                                ..Default::default()
+                            })
+                        }),
                 });
             } else if let Some(index) = self.index.as_mut() {
                 if cm.is_some() {
@@ -868,6 +885,10 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                     raw_value_span: cell.value.as_ref().map(|v| v.open_end..v.close_start),
                     value,
                 })?;
+            }
+            if STRICT && !cell.has_formula && cell.dynamic.as_ref().is_some_and(|d| d.vm.is_some())
+            {
+                return Err(unsupported("rich value metadata (vm)", "worksheet"));
             }
             let emitted_value = (!cell.has_formula).then(|| {
                 cell.decode(
