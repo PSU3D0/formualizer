@@ -482,6 +482,8 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
         (LiteralValue::Text(x), LiteralValue::Empty) if x.is_empty() => true,
         (LiteralValue::Empty, LiteralValue::Text(y)) if y.is_empty() => true,
         (LiteralValue::Empty, LiteralValue::Empty) => true,
+        // An error criterion matches cells holding the same error.
+        (LiteralValue::Error(x), LiteralValue::Error(y)) => x.kind == y.kind,
         // Date/time/duration equality: compare by serial value.
         // This matches criteria semantics (COUNTIF(S), SUMIF(S), database criteria, etc.) where
         // date-like values participate in numeric comparisons.
