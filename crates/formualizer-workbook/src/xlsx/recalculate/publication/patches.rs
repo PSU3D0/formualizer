@@ -87,6 +87,7 @@ pub(in crate::xlsx::recalculate) fn invalidate_formula_cache(
 ) -> (bool, bool) {
     let before = patches.len();
     for span in [
+        cell.vm_span(),
         cell.kind_span.as_ref(),
         cell.inline.as_ref(),
         cell.value.as_ref().map(|v| &v.span),
