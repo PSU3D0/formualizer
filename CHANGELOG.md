@@ -57,7 +57,7 @@ See [Interruptible Recalculation](https://www.formualizer.dev/docs/guides/interr
 - **A union of constants no longer parses.** `=1,000` is refused, as Excel does, rather than read as the union of 1 and 0. `=A1,B1` and `=SUM(1,000)` are unchanged. (#560, @mcdonaldsam)
 - **Other evaluation calls wait for an active job.** While an explicit recalculation job is running, calls such as `evaluate_all` return an error carrying `ExcelErrorExtra::RecalcJobActive` instead of interleaving with it.
 - **An internal engine panic retires that engine.** It refuses further evaluation and edits; check `is_poisoned()` and create a new workbook. Panics in functions only affect their cells.
-- **Per-cell error messages are reported only when they are the real cause.** 0.13 filled messages such as `Unknown function: SPDVOL` by reading the formula text, which could name the wrong cause, for example in `IFERROR(SPDVOL(1),NoSuchName)`. 0.14 leaves the message empty when the cause is not known, so `formualizer recalc --check` may show only the error code for some cells. The unknown-function summary is complete and keeps the spelling used in the file.
+- **Per-cell error messages are reported only when they are the real cause.** 0.13 filled messages by reading the formula text, which could name the wrong cause, for example `Unknown function: SPDVOL` for `IFERROR(SPDVOL(1),NoSuchName)`. 0.14 reports a reason only when it is certain, such as a cell whose formula is an unknown function call (`=SPDVOL(A1)` gives `Unknown function: SPDVOL`, in the file's spelling); other error cells in `formualizer recalc --check` and the recalculation summaries show the error code without a message.
 
 ### Interruptible recalculation
 
