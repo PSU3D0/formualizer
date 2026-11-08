@@ -172,7 +172,9 @@ impl Cache {
         }
     }
     fn matches(&self, cell: &sheet::FormulaMark, bytes: &[u8]) -> bool {
-        if cell.inline.is_some() {
+        // Value metadata describes the old cache (a rich error, say), so a
+        // cell carrying it is always rewritten without it.
+        if cell.inline.is_some() || cell.vm().is_some() {
             return false;
         }
         let Some(v) = &cell.value else {
@@ -422,6 +424,15 @@ pub(super) fn admit_source<'a>(
             }
             None => dynamic_metadata::SheetOwnership::default(),
         };
+        if let Some(cell) = scan.cells.iter().find(|cell| {
+            cell.vm()
+                .is_some_and(|vm| !metadata.as_ref().is_some_and(|m| m.has_value_block(vm)))
+        }) {
+            return Err(unsupported(
+                "dangling or invalid value metadata index (vm)",
+                format!("{}!{}", sheet.name, cell.address()),
+            ));
+        }
         values.push(scanned_values);
         plans.push(SheetPlan {
             hidden_rows: scan.hidden_rows,

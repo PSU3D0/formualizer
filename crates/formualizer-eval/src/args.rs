@@ -123,7 +123,9 @@ pub struct ValidationOptions {
 /// - `?`, `*` and `~` are wildcards, matched against text cells only, with or
 ///   without a leading `=` (`"<>a*"` is the complement);
 /// - `>`, `>=`, `<`, `<=` compare numbers with a numeric operand and text
-///   with a text operand.
+///   with a text operand;
+/// - an error value, or the text of one (`"#N/A"`, `"=#DIV/0!"`), matches
+///   cells holding that error (`"<>#N/A"` every other cell).
 pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
     match v {
         LiteralValue::Text(s) => {
@@ -163,6 +165,13 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
                     }
                     // Fallback: non-numeric operand (support Excel-style quoted strings: ="aa")
                     let text = unquote(rhs);
+                    if let Some(error) = error_operand(&text) {
+                        match *op {
+                            "=" => return Ok(CriteriaPredicate::Eq(error)),
+                            "<>" => return Ok(CriteriaPredicate::Ne(error)),
+                            _ => {}
+                        }
+                    }
                     let boolean = match text.to_ascii_lowercase().as_str() {
                         "true" => Some(true),
                         "false" => Some(false),
@@ -197,6 +206,9 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
             }
 
             let plain = unquote(s);
+            if let Some(error) = error_operand(&plain) {
+                return Ok(CriteriaPredicate::Eq(error));
+            }
 
             // Wildcards or escaped tilde => TextLike (including literal ~* and ~?).
             if is_pattern(&plain) {
@@ -228,7 +240,8 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
         // (numeric text == number, etc.)
         LiteralValue::Int(i) => Ok(CriteriaPredicate::Eq(LiteralValue::Number(*i as f64))),
         LiteralValue::Boolean(b) => Ok(CriteriaPredicate::Eq(LiteralValue::Boolean(*b))),
-        LiteralValue::Error(e) => Err(e.clone()),
+        // An error criterion matches cells holding the same error.
+        LiteralValue::Error(e) => Ok(CriteriaPredicate::Eq(LiteralValue::Error(e.clone()))),
         LiteralValue::Array(arr) => {
             // Treat 1x1 array literals as scalars for criteria parsing
             if arr.len() == 1 && arr.first().map(|r| r.len()).unwrap_or(0) == 1 {
@@ -239,6 +252,15 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
         }
         other => Ok(CriteriaPredicate::Eq(other.clone())),
     }
+}
+
+/// The error a criteria operand spells exactly (`"#N/A"`, `"#div/0!"`).
+fn error_operand(text: &str) -> Option<LiteralValue> {
+    if text.trim() != text {
+        return None;
+    }
+    formualizer_common::ExcelErrorKind::try_parse(text)
+        .map(|kind| LiteralValue::Error(ExcelError::new(kind)))
 }
 
 /// A date or time operand (`"2/1/02"`, `"1-Feb-2002"`, `"13:30"`) as a 1900-system

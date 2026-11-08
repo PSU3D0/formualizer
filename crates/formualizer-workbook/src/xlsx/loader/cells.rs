@@ -318,8 +318,9 @@ pub(super) fn scan(
                 col_index = 0;
             }
             Event::Start(e) if e.local_name().as_ref() == b"c" => {
-                let (r, style, kind) = get_attrs!(e, b"r" => r, b"s" => style, b"t" => kind)
-                    .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
+                let (r, style, kind, cm) =
+                    get_attrs!(e, b"r" => r, b"s" => style, b"t" => kind, b"cm" => cm)
+                        .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
                 let pos = if let Some(r) = r {
                     let p = coordinate(r)?;
                     col_index = p.1;
@@ -384,6 +385,14 @@ pub(super) fn scan(
                                         }
                                     }
                                 } else {
+                                    if t == Some(b"array")
+                                        && let (Some(cm), Some(range)) = (cm, range)
+                                        && let Ok(extent) = dimension(range)
+                                    {
+                                        sink.observe_dynamic_anchor(
+                                            coord0.row, coord0.col, cm, extent,
+                                        );
+                                    }
                                     OwnedSpoolFormulaRecord::Ordinary {
                                         sequence,
                                         coord0,

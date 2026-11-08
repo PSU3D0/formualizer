@@ -350,9 +350,13 @@ fn scan_inner(
                         if *observed > options.limits.max_cells {
                             return Err(unsupported("serialized cell count limit", "worksheet"));
                         }
-                        if node.value("vm").is_some() {
-                            return Err(unsupported("rich value metadata (vm)", "worksheet"));
-                        }
+                        let vm = node
+                            .attribute("", "vm")
+                            .map(|a| match a.value.parse::<u32>().ok().filter(|n| *n > 0) {
+                                Some(index) if !*empty => Ok((index, a.span.clone())),
+                                _ => Err(unsupported("rich value metadata (vm)", "worksheet")),
+                            })
+                            .transpose()?;
                         let cm = node
                             .value("cm")
                             .map(|value| {
@@ -397,16 +401,21 @@ fn scan_inner(
                                 has_formula: false,
                                 formula_open: 0..0,
                                 formula_kind_span: None,
-                                dynamic: (cm.is_some() || canonical.is_none()).then(|| {
-                                    Box::new(DynamicAttributes {
-                                        original_address: canonical
-                                            .is_none()
-                                            .then(|| address.to_string().into_boxed_str()),
-                                        cm,
-                                        cm_span: node.attribute("", "cm").map(|a| a.span.clone()),
-                                        ..Default::default()
-                                    })
-                                }),
+                                dynamic: (cm.is_some() || canonical.is_none() || vm.is_some())
+                                    .then(|| {
+                                        Box::new(DynamicAttributes {
+                                            original_address: canonical
+                                                .is_none()
+                                                .then(|| address.to_string().into_boxed_str()),
+                                            cm,
+                                            cm_span: node
+                                                .attribute("", "cm")
+                                                .map(|a| a.span.clone()),
+                                            vm: vm.as_ref().map(|(index, _)| *index),
+                                            vm_span: vm.map(|(_, span)| span),
+                                            ..Default::default()
+                                        })
+                                    }),
                             });
                         } else if let Some(index) = index.as_mut() {
                             if cm.is_some() {
@@ -584,6 +593,11 @@ fn scan_inner(
                             .as_mut()
                             .ok_or_else(|| unsupported("unbalanced cell", "worksheet"))?;
                         cell.span.end = node.span.end;
+                        if !cell.has_formula
+                            && cell.dynamic.as_ref().is_some_and(|d| d.vm.is_some())
+                        {
+                            return Err(unsupported("rich value metadata (vm)", "worksheet"));
+                        }
                         let refusal = cell.literal_refusal(bytes);
                         cell.dynamic_anchor_extent()?;
                         if let Some(index) = index.as_mut() {

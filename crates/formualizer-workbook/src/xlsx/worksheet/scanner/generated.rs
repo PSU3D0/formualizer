@@ -10,12 +10,12 @@ const COLUMNS: usize = 16_384;
 /// Allocated only after the first array anchor; the scanner has validated grid
 /// coordinates and strictly increasing source order before calling this helper.
 #[derive(Default)]
-pub(super) struct GeneratedChildren {
+pub(in crate::xlsx) struct GeneratedChildren {
     coverage: Vec<usize>,
     expiry: BinaryHeap<Reverse<(u32, u32, u32)>>,
 }
 impl GeneratedChildren {
-    pub(super) fn observe(&mut self, extent: SourceRect) {
+    pub(in crate::xlsx) fn observe(&mut self, extent: SourceRect) {
         self.expire(extent.first_row);
         if self.coverage.is_empty() {
             self.coverage.resize(COLUMNS * 2, 0);
@@ -27,7 +27,7 @@ impl GeneratedChildren {
             extent.last_col,
         )));
     }
-    pub(super) fn contains(&mut self, row: u32, col: u32) -> bool {
+    pub(in crate::xlsx) fn contains(&mut self, row: u32, col: u32) -> bool {
         self.expire(row);
         if self.expiry.is_empty() {
             return false;
