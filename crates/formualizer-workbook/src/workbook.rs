@@ -2462,6 +2462,13 @@ impl Workbook {
         }
     }
 
+    // Empty table bodies need successful graph admission before materialization,
+    // including without a changelog.
+    fn formula_needs_graph_edit(&mut self, sheet: &str, row: u32, col: u32) -> bool {
+        self.engine.cell_in_empty_table(sheet, row, col)
+            || self.formula_needs_spill_history(sheet, row, col)
+    }
+
     // Projection edits need graph history even in deferred mode. Also cover
     // later cells in the same action after its first edit cleared the spill.
     fn formula_needs_spill_history(&mut self, sheet: &str, row: u32, col: u32) -> bool {
@@ -2526,7 +2533,7 @@ impl Workbook {
             .then(|| self.staged_formula_cell(sheet, row, col));
         if self.engine.config.defer_graph_building {
             if self.engine.get_cell(sheet, row, col).is_some()
-                || self.formula_needs_spill_history(sheet, row, col)
+                || self.formula_needs_graph_edit(sheet, row, col)
             {
                 let with_eq = if formula.starts_with('=') {
                     formula.to_string()
@@ -2719,7 +2726,7 @@ impl Workbook {
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
             let defer_graph_building = self.engine.config.defer_graph_building
                 && !cells.iter().any(|(&(r, c), d)| {
-                    d.formula.is_some() && self.formula_needs_spill_history(sheet, r, c)
+                    d.formula.is_some() && self.formula_needs_graph_edit(sheet, r, c)
                 });
 
             // Capture per-cell old state from Arrow truth BEFORE applying the bulk edit.
@@ -2789,12 +2796,14 @@ impl Workbook {
                                 };
                                 let ast = formualizer_parse::parser::parse(&with_eq)
                                     .map_err(|e| IoError::from_backend("parser", e))?;
-                                editor.set_cell_formula_with_old_state(
-                                    *cell,
-                                    ast,
-                                    old_value.clone(),
-                                    old_formula.clone(),
-                                );
+                                editor
+                                    .try_set_cell_formula_with_old_state(
+                                        *cell,
+                                        ast,
+                                        old_value.clone(),
+                                        old_formula.clone(),
+                                    )
+                                    .map_err(IoError::Engine)?;
                             }
                         }
                     }
@@ -2840,7 +2849,9 @@ impl Workbook {
                         .map_err(IoError::Engine)?;
                 }
                 if let Some(f) = d.formula.as_ref() {
-                    if self.engine.config.defer_graph_building {
+                    if self.engine.config.defer_graph_building
+                        && !self.formula_needs_graph_edit(sheet, r, c)
+                    {
                         self.engine.stage_formula_text(sheet, r, c, f.clone());
                     } else {
                         let with_eq = if f.starts_with('=') {
@@ -3027,17 +3038,12 @@ impl Workbook {
             self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
         }
 
-        let spill_history = self.enable_changelog
-            && rows.iter().enumerate().any(|(ri, forms)| {
-                forms.iter().enumerate().any(|(ci, _)| {
-                    self.formula_needs_spill_history(
-                        sheet,
-                        start_row + ri as u32,
-                        start_col + ci as u32,
-                    )
-                })
-            });
-        if self.engine.config.defer_graph_building && !spill_history {
+        let needs_graph_edit = rows.iter().enumerate().any(|(ri, forms)| {
+            forms.iter().enumerate().any(|(ci, _)| {
+                self.formula_needs_graph_edit(sheet, start_row + ri as u32, start_col + ci as u32)
+            })
+        });
+        if self.engine.config.defer_graph_building && !needs_graph_edit {
             // Per-cell staged-formula deltas (see #126). Capture each cell's prior
             // staged text before overwriting so undo/redo can replay precisely.
             for (ri, rforms) in rows.iter().enumerate() {

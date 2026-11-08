@@ -5122,6 +5122,15 @@ where
         self.graph.get_value(entry.vertex)
     }
 
+    /// Whether a cell lies in a logically empty table's reserved body.
+    pub fn cell_in_empty_table(&self, sheet: &str, row: u32, col: u32) -> bool {
+        let Some(sheet_id) = self.graph.sheet_id(sheet) else {
+            return false;
+        };
+        let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        !self.graph.empty_tables_at(cell).is_empty()
+    }
+
     pub fn table_metadata(&self, name: &str) -> Option<TableMetadata> {
         let entry = self.graph.resolve_table_entry(name)?;
         Some(TableMetadata {
@@ -14613,6 +14622,9 @@ where
         let n = self.graph.bulk_set_formulas_with_plans(sheet, planned)?;
         for (row, col) in edited_cells {
             let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+            for table in self.graph.empty_tables_at(cell) {
+                self.graph.resize_table(&table.name, table.range)?;
+            }
             self.clear_cell_format_state(sheet, cell);
             self.record_changed_cell(sheet, row, col);
         }

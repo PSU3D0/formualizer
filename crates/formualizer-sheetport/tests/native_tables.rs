@@ -446,6 +446,111 @@ fn logical_empty_body_excludes_unmapped_values_and_direct_engine_edits_restore_i
     }
 }
 
+// Exercise the public Workbook methods directly: action's transaction setters
+// use a different eager path and cannot catch deferred-ingestion regressions.
+#[test]
+fn bulk_and_deferred_writes_materialize_empty_native_tables() {
+    for changelog in [false, true] {
+        for kind in [
+            "bulk_formula",
+            "formula",
+            "formulas",
+            "values",
+            "range_formula",
+            "range_value",
+        ] {
+            let mut wb = workbook(changelog, false);
+            wb.engine_mut().config.defer_graph_building = true;
+            wb.set_formula(
+                "Outputs",
+                2,
+                1,
+                "=SUMIFS(Orders[seats], Orders[region], \"\")",
+            )
+            .unwrap();
+            let mut port = SheetPort::new(&mut wb, roundtrip_manifest(true)).unwrap();
+            port.write_inputs(update(0)).unwrap();
+            assert_roundtrip(&mut port, 0, true);
+
+            let wb = port.workbook_mut();
+            wb.begin_action("public bulk edit");
+            match kind {
+                "bulk_formula" => {
+                    wb.engine_mut()
+                        .bulk_set_formulas(
+                            "Orders",
+                            [(2, 3, formualizer_parse::parse("=7").unwrap())],
+                        )
+                        .unwrap();
+                }
+                "formula" => wb.set_formula("Orders", 2, 3, "=7").unwrap(),
+                "formulas" => wb
+                    .set_formulas("Orders", 2, 3, &[vec!["=7".into()]])
+                    .unwrap(),
+                "values" => wb
+                    .set_values("Orders", 2, 3, &[vec![LiteralValue::Number(7.0)]])
+                    .unwrap(),
+                _ => {
+                    let data = if kind == "range_formula" {
+                        formualizer_workbook::traits::CellData::from_formula("=7")
+                    } else {
+                        formualizer_workbook::traits::CellData::from_value(7.0)
+                    };
+                    wb.write_range("Orders", (2, 3), BTreeMap::from([((2, 3), data)]))
+                        .unwrap();
+                }
+            }
+            wb.end_action();
+            assert_roundtrip(&mut port, 1, false);
+            port.workbook_mut().evaluate_all().unwrap();
+            assert_formula(&mut port, 7.0, 7.0);
+            let inputs = port.read_inputs().unwrap();
+            assert_eq!(
+                inputs.get("orders").unwrap().as_table().unwrap().rows[0]
+                    .values
+                    .get("seats"),
+                Some(&LiteralValue::Number(7.0))
+            );
+            if changelog && kind != "bulk_formula" {
+                port.workbook_mut().undo().unwrap();
+                assert_roundtrip(&mut port, 0, true);
+                assert_formula(&mut port, 0.0, 0.0);
+                port.workbook_mut().redo().unwrap();
+                assert_roundtrip(&mut port, 1, false);
+                assert_formula(&mut port, 7.0, 7.0);
+            }
+        }
+    }
+}
+
+#[test]
+fn rejected_deferred_formulas_preserve_logically_empty_native_tables() {
+    for changelog in [false, true] {
+        for kind in ["formula", "formulas", "range"] {
+            let mut wb = workbook(changelog, false);
+            wb.engine_mut().config.defer_graph_building = true;
+            let mut port = SheetPort::new(&mut wb, roundtrip_manifest(true)).unwrap();
+            port.write_inputs(update(0)).unwrap();
+            let wb = port.workbook_mut();
+            let result = match kind {
+                "formula" => wb.set_formula("Orders", 2, 3, "=INVALID(("),
+                "formulas" => wb.set_formulas("Orders", 2, 3, &[vec!["=INVALID((".into()]]),
+                _ => wb.write_range(
+                    "Orders",
+                    (2, 3),
+                    BTreeMap::from([(
+                        (2, 3),
+                        formualizer_workbook::traits::CellData::from_formula("=INVALID(("),
+                    )]),
+                ),
+            };
+            assert!(result.is_err());
+            assert_roundtrip(&mut port, 0, true);
+            assert_formula(&mut port, 0.0, 0.0);
+        }
+    }
+}
+
 #[test]
 fn native_totals_allow_fixed_size_writes_but_reject_resize_atomically() {
     let mut wb = workbook(true, true);
