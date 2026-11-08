@@ -1,17 +1,23 @@
-'use client';
+"use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { ASTNodeData, Token } from 'formualizer';
-import { DynamicCodeBlock } from 'fumadocs-ui/components/dynamic-codeblock';
+import type { ASTNodeData, Token } from "formualizer";
+import { DynamicCodeBlock } from "fumadocs-ui/components/dynamic-codeblock";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   astTreeLines,
   extractFunctionNames,
   extractReferences,
   formatReference,
-} from '@/lib/formula/ast-utils';
-import { loadFormualizer } from '@/lib/wasm/formualizer-loader';
+} from "@/lib/formula/ast-utils";
+import { loadFormualizer } from "@/lib/wasm/formualizer-loader";
 
-type Dialect = 'excel' | 'openFormula';
+type Dialect = "excel" | "openFormula";
 
 type EvalStep = {
   id: string;
@@ -22,11 +28,17 @@ type EvalStep = {
 };
 
 type ExprRenderNode =
-  | { kind: 'leaf'; text: string }
-  | { kind: 'binary'; stepId: string; left: ExprRenderNode; right: ExprRenderNode; op: string }
-  | { kind: 'unary'; stepId: string; operand: ExprRenderNode; op: string }
-  | { kind: 'function'; stepId: string; name: string; args: ExprRenderNode[] }
-  | { kind: 'array'; stepId: string };
+  | { kind: "leaf"; text: string }
+  | {
+      kind: "binary";
+      stepId: string;
+      left: ExprRenderNode;
+      right: ExprRenderNode;
+      op: string;
+    }
+  | { kind: "unary"; stepId: string; operand: ExprRenderNode; op: string }
+  | { kind: "function"; stepId: string; name: string; args: ExprRenderNode[] }
+  | { kind: "array"; stepId: string };
 
 type FixSuggestion = {
   label: string;
@@ -35,8 +47,8 @@ type FixSuggestion = {
 
 function normalizeFormula(raw: string): string {
   const trimmed = raw.trim();
-  if (!trimmed) return '';
-  return trimmed.startsWith('=') ? trimmed : `=${trimmed}`;
+  if (!trimmed) return "";
+  return trimmed.startsWith("=") ? trimmed : `=${trimmed}`;
 }
 
 function toErrorMessage(error: unknown): string {
@@ -45,35 +57,39 @@ function toErrorMessage(error: unknown): string {
 }
 
 function dialectLabel(dialect: Dialect): string {
-  return dialect === 'openFormula' ? 'OpenFormula' : 'Excel';
+  return dialect === "openFormula" ? "OpenFormula" : "Excel";
 }
 
 function normalizedTokenType(token: Token): string {
   const value = token.value.trim();
   const lowerType = token.tokenType.toLowerCase();
-  const lowerSubtype = ((token as any).subtype ?? '').toLowerCase();
+  const lowerSubtype = (
+    (token as Token & { subtype?: string }).subtype ?? ""
+  ).toLowerCase();
 
-  if (lowerType === 'func' && lowerSubtype === 'close') return 'Paren';
-  if (lowerType === 'func' && value.endsWith('(')) return 'FunctionCall';
-  if ((value === '(' || value === ')') && lowerType === 'func') return 'Paren';
+  if (lowerType === "func" && lowerSubtype === "close") return "Paren";
+  if (lowerType === "func" && value.endsWith("(")) return "FunctionCall";
+  if ((value === "(" || value === ")") && lowerType === "func") return "Paren";
   return token.tokenType;
 }
 
 function tokenRole(token: Token): string {
   const value = token.value.trim();
   const lowerType = token.tokenType.toLowerCase();
-  const lowerSubtype = ((token as any).subtype ?? '').toLowerCase();
+  const lowerSubtype = (
+    (token as Token & { subtype?: string }).subtype ?? ""
+  ).toLowerCase();
 
-  if (lowerType === 'func' && value.endsWith('(')) return 'function-open';
-  if (lowerType === 'func' && lowerSubtype === 'close') return 'function-close';
-  if (value === '(') return 'group-open';
-  if (value === ')') return 'group-close';
-  if (lowerType === 'opin') return 'binary-operator';
-  if (lowerType === 'oppre') return 'unary-prefix';
-  if (lowerType === 'oppost') return 'unary-postfix';
-  if (lowerType === 'sep') return 'separator';
-  if (lowerType === 'operand') return 'operand';
-  return 'token';
+  if (lowerType === "func" && value.endsWith("(")) return "function-open";
+  if (lowerType === "func" && lowerSubtype === "close") return "function-close";
+  if (value === "(") return "group-open";
+  if (value === ")") return "group-close";
+  if (lowerType === "opin") return "binary-operator";
+  if (lowerType === "oppre") return "unary-prefix";
+  if (lowerType === "oppost") return "unary-postfix";
+  if (lowerType === "sep") return "separator";
+  if (lowerType === "operand") return "operand";
+  return "token";
 }
 
 /**
@@ -81,12 +97,17 @@ function tokenRole(token: Token): string {
  * UTF-8 byte offset, and JavaScript strings index UTF-16 code units, so the two
  * differ after any non-ASCII character.
  */
-function extractErrorPosition(formula: string, message: string | null): number | null {
+function extractErrorPosition(
+  formula: string,
+  message: string | null,
+): number | null {
   if (!message) return null;
   const m = message.match(/position\s+(?:Some\()?([0-9]+)/i);
   if (!m) return null;
   const byteOffset = Number(m[1]);
-  return Number.isFinite(byteOffset) ? byteOffsetToIndex(formula, byteOffset) : null;
+  return Number.isFinite(byteOffset)
+    ? byteOffsetToIndex(formula, byteOffset)
+    : null;
 }
 
 function byteOffsetToIndex(text: string, byteOffset: number): number {
@@ -95,69 +116,80 @@ function byteOffsetToIndex(text: string, byteOffset: number): number {
   for (const ch of text) {
     if (bytes >= byteOffset) break;
     const codePoint = ch.codePointAt(0) ?? 0;
-    bytes += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+    bytes +=
+      codePoint < 0x80
+        ? 1
+        : codePoint < 0x800
+          ? 2
+          : codePoint < 0x10000
+            ? 3
+            : 4;
     index += ch.length;
   }
   return index;
 }
 
 function buildErrorPointer(formula: string, pos: number | null): string {
-  if (pos == null || formula.length === 0) return formula || '(empty formula)';
+  if (pos == null || formula.length === 0) return formula || "(empty formula)";
 
   const safePos = Math.max(0, Math.min(formula.length - 1, pos));
   const start = Math.max(0, safePos - 28);
   const end = Math.min(formula.length, safePos + 28);
-  const prefix = start > 0 ? '…' : '';
-  const suffix = end < formula.length ? '…' : '';
+  const prefix = start > 0 ? "…" : "";
+  const suffix = end < formula.length ? "…" : "";
   const snippet = `${prefix}${formula.slice(start, end)}${suffix}`;
   const caretOffset = (start > 0 ? 1 : 0) + (safePos - start);
-  const caretLine = `${' '.repeat(Math.max(0, caretOffset))}^`;
+  const caretLine = `${" ".repeat(Math.max(0, caretOffset))}^`;
 
   return `${snippet}\n${caretLine}`;
 }
 
 function leafToExpr(node: ASTNodeData): string {
   switch (node.type) {
-    case 'number':
+    case "number":
       return String(node.value ?? 0);
-    case 'text':
-      return `"${String(node.value ?? '')}"`;
-    case 'boolean':
+    case "text":
+      return `"${String(node.value ?? "")}"`;
+    case "boolean":
       return String(node.value);
-    case 'reference':
-      return node.reference ? formatReference(node.reference) : '(reference)';
-    case 'error':
-      return node.message ? `#ERROR(${node.message})` : '#ERROR';
+    case "reference":
+      return node.reference ? formatReference(node.reference) : "(reference)";
+    case "error":
+      return node.message ? `#ERROR(${node.message})` : "#ERROR";
     default:
       return node.type;
   }
 }
 
 function renderExpression(node: ASTNodeData, depth = 0): string {
-  if (depth > 6) return '…';
+  if (depth > 6) return "…";
 
   switch (node.type) {
-    case 'number':
-    case 'text':
-    case 'boolean':
-    case 'reference':
-    case 'error':
+    case "number":
+    case "text":
+    case "boolean":
+    case "reference":
+    case "error":
       return leafToExpr(node);
-    case 'unaryOp': {
-      const operand = node.operand ? renderExpression(node.operand, depth + 1) : '…';
-      return `${node.op ?? ''}${operand}`;
+    case "unaryOp": {
+      const operand = node.operand
+        ? renderExpression(node.operand, depth + 1)
+        : "…";
+      return `${node.op ?? ""}${operand}`;
     }
-    case 'binaryOp': {
-      const left = node.left ? renderExpression(node.left, depth + 1) : '…';
-      const right = node.right ? renderExpression(node.right, depth + 1) : '…';
-      return `(${left} ${node.op ?? '?'} ${right})`;
+    case "binaryOp": {
+      const left = node.left ? renderExpression(node.left, depth + 1) : "…";
+      const right = node.right ? renderExpression(node.right, depth + 1) : "…";
+      return `(${left} ${node.op ?? "?"} ${right})`;
     }
-    case 'function': {
-      const args = (node.args ?? []).map((arg) => renderExpression(arg, depth + 1)).join(', ');
-      return `${node.name ?? 'FN'}(${args})`;
+    case "function": {
+      const args = (node.args ?? [])
+        .map((arg) => renderExpression(arg, depth + 1))
+        .join(", ");
+      return `${node.name ?? "FN"}(${args})`;
     }
-    case 'array':
-      return '{…array…}';
+    case "array":
+      return "{…array…}";
     default:
       return node.type;
   }
@@ -165,29 +197,29 @@ function renderExpression(node: ASTNodeData, depth = 0): string {
 
 function opExplanation(op: string): string {
   switch (op) {
-    case '+':
-      return 'adds left and right values';
-    case '-':
-      return 'subtracts the right value from the left';
-    case '*':
-      return 'multiplies the two values';
-    case '/':
-      return 'divides left by right';
-    case '^':
-      return 'raises left to the power of right';
-    case '&':
-      return 'concatenates text values';
-    case ':':
-      return 'creates a range between two references';
-    case '=':
-    case '<>':
-    case '<':
-    case '>':
-    case '<=':
-    case '>=':
-      return 'compares values';
+    case "+":
+      return "adds left and right values";
+    case "-":
+      return "subtracts the right value from the left";
+    case "*":
+      return "multiplies the two values";
+    case "/":
+      return "divides left by right";
+    case "^":
+      return "raises left to the power of right";
+    case "&":
+      return "concatenates text values";
+    case ":":
+      return "creates a range between two references";
+    case "=":
+    case "<>":
+    case "<":
+    case ">":
+    case "<=":
+    case ">=":
+      return "compares values";
     default:
-      return 'applies an operator';
+      return "applies an operator";
   }
 }
 
@@ -206,14 +238,15 @@ function collectMetrics(ast: ASTNodeData | null): {
     nodeCount += 1;
     maxDepth = Math.max(maxDepth, depth);
 
-    if (node.type === 'binaryOp' || node.type === 'unaryOp') operatorCount += 1;
+    if (node.type === "binaryOp" || node.type === "unaryOp") operatorCount += 1;
 
     if (node.left) visit(node.left, depth + 1);
     if (node.right) visit(node.right, depth + 1);
     if (node.operand) visit(node.operand, depth + 1);
     if (node.args) for (const arg of node.args) visit(arg, depth + 1);
     if (node.elements) {
-      for (const row of node.elements) for (const item of row) visit(item, depth + 1);
+      for (const row of node.elements)
+        for (const item of row) visit(item, depth + 1);
     }
   };
 
@@ -226,7 +259,7 @@ function buildEvaluationPlan(ast: ASTNodeData | null): {
   finalExpr: string;
   root: ExprRenderNode | null;
 } {
-  if (!ast) return { steps: [], finalExpr: '', root: null };
+  if (!ast) return { steps: [], finalExpr: "", root: null };
 
   const steps: EvalStep[] = [];
   let counter = 1;
@@ -234,8 +267,14 @@ function buildEvaluationPlan(ast: ASTNodeData | null): {
   type Span = { start: number; end: number } | null;
 
   const nodeOwnSpan = (node: ASTNodeData): Span => {
-    const nodeAny = node as any;
-    if (typeof nodeAny.sourceStart === 'number' && typeof nodeAny.sourceEnd === 'number') {
+    const nodeAny = node as ASTNodeData & {
+      sourceStart?: unknown;
+      sourceEnd?: unknown;
+    };
+    if (
+      typeof nodeAny.sourceStart === "number" &&
+      typeof nodeAny.sourceEnd === "number"
+    ) {
       return { start: nodeAny.sourceStart, end: nodeAny.sourceEnd };
     }
     return null;
@@ -250,83 +289,95 @@ function buildEvaluationPlan(ast: ASTNodeData | null): {
     };
   };
 
-  const missingResult = (): { placeholder: string; render: ExprRenderNode; span: Span } => ({
-    placeholder: '…',
-    render: { kind: 'leaf', text: '…' },
+  const missingResult = (): {
+    placeholder: string;
+    render: ExprRenderNode;
+    span: Span;
+  } => ({
+    placeholder: "…",
+    render: { kind: "leaf", text: "…" },
     span: null,
   });
 
-  const evalNode = (node: ASTNodeData): { placeholder: string; render: ExprRenderNode; span: Span } => {
+  const evalNode = (
+    node: ASTNodeData,
+  ): { placeholder: string; render: ExprRenderNode; span: Span } => {
     if (
-      node.type === 'number' ||
-      node.type === 'text' ||
-      node.type === 'boolean' ||
-      node.type === 'reference' ||
-      node.type === 'error'
+      node.type === "number" ||
+      node.type === "text" ||
+      node.type === "boolean" ||
+      node.type === "reference" ||
+      node.type === "error"
     ) {
       return {
         placeholder: leafToExpr(node),
-        render: { kind: 'leaf', text: leafToExpr(node) },
+        render: { kind: "leaf", text: leafToExpr(node) },
         span: nodeOwnSpan(node),
       };
     }
 
-    if (node.type === 'unaryOp') {
+    if (node.type === "unaryOp") {
       const operand = node.operand ? evalNode(node.operand) : missingResult();
-      const expr = `${node.op ?? ''}${operand.placeholder}`;
+      const expr = `${node.op ?? ""}${operand.placeholder}`;
       const id = `S${counter++}`;
       const span = mergeSpan(nodeOwnSpan(node), operand.span);
       steps.push({
         id,
         expr,
-        explanation: `Apply unary operator "${node.op ?? '?'}" to ${operand.placeholder}.`,
+        explanation: `Apply unary operator "${node.op ?? "?"}" to ${operand.placeholder}.`,
         sourceStart: span?.start ?? null,
         sourceEnd: span?.end ?? null,
       });
       return {
         placeholder: `[${id}]`,
         render: {
-          kind: 'unary',
+          kind: "unary",
           stepId: id,
-          op: node.op ?? '',
+          op: node.op ?? "",
           operand: operand.render,
         },
         span,
       };
     }
 
-    if (node.type === 'binaryOp') {
+    if (node.type === "binaryOp") {
       const left = node.left ? evalNode(node.left) : missingResult();
       const right = node.right ? evalNode(node.right) : missingResult();
-      const expr = `${left.placeholder} ${node.op ?? '?'} ${right.placeholder}`;
+      const expr = `${left.placeholder} ${node.op ?? "?"} ${right.placeholder}`;
       const id = `S${counter++}`;
-      const span = mergeSpan(nodeOwnSpan(node), mergeSpan(left.span, right.span));
+      const span = mergeSpan(
+        nodeOwnSpan(node),
+        mergeSpan(left.span, right.span),
+      );
       steps.push({
         id,
         expr,
-        explanation: `Compute ${expr} (${opExplanation(node.op ?? '?')}).`,
+        explanation: `Compute ${expr} (${opExplanation(node.op ?? "?")}).`,
         sourceStart: span?.start ?? null,
         sourceEnd: span?.end ?? null,
       });
       return {
         placeholder: `[${id}]`,
         render: {
-          kind: 'binary',
+          kind: "binary",
           stepId: id,
           left: left.render,
           right: right.render,
-          op: node.op ?? '?',
+          op: node.op ?? "?",
         },
         span,
       };
     }
 
-    if (node.type === 'function') {
-      const fn = (node.name ?? 'FN').toUpperCase();
+    if (node.type === "function") {
+      const fn = (node.name ?? "FN").toUpperCase();
       const args = (node.args ?? []).map((arg) => evalNode(arg));
-      const expr = `${fn}(${args.map((a) => a.placeholder).join(', ')})`;
+      const expr = `${fn}(${args.map((a) => a.placeholder).join(", ")})`;
       const id = `S${counter++}`;
-      const argSpan = args.reduce<Span>((acc, curr) => mergeSpan(acc, curr.span), null);
+      const argSpan = args.reduce<Span>(
+        (acc, curr) => mergeSpan(acc, curr.span),
+        null,
+      );
       const span = mergeSpan(nodeOwnSpan(node), argSpan);
       steps.push({
         id,
@@ -338,7 +389,7 @@ function buildEvaluationPlan(ast: ASTNodeData | null): {
       return {
         placeholder: `[${id}]`,
         render: {
-          kind: 'function',
+          kind: "function",
           stepId: id,
           name: fn,
           args: args.map((a) => a.render),
@@ -351,14 +402,14 @@ function buildEvaluationPlan(ast: ASTNodeData | null): {
     const span = nodeOwnSpan(node);
     steps.push({
       id,
-      expr: '{…array…}',
-      explanation: 'Construct array literal values.',
+      expr: "{…array…}",
+      explanation: "Construct array literal values.",
       sourceStart: span?.start ?? null,
       sourceEnd: span?.end ?? null,
     });
     return {
       placeholder: `[${id}]`,
-      render: { kind: 'array', stepId: id },
+      render: { kind: "array", stepId: id },
       span,
     };
   };
@@ -371,12 +422,12 @@ function buildEvaluationPlan(ast: ASTNodeData | null): {
 
 function stepHighlightClass(index: number): string {
   const palette = [
-    'bg-sky-400/25 ring-sky-500/40 dark:bg-sky-500/25',
-    'bg-emerald-400/25 ring-emerald-500/40 dark:bg-emerald-500/25',
-    'bg-violet-400/25 ring-violet-500/40 dark:bg-violet-500/25',
-    'bg-amber-400/25 ring-amber-500/40 dark:bg-amber-500/25',
-    'bg-rose-400/25 ring-rose-500/40 dark:bg-rose-500/25',
-    'bg-cyan-400/25 ring-cyan-500/40 dark:bg-cyan-500/25',
+    "bg-sky-400/25 ring-sky-500/40 dark:bg-sky-500/25",
+    "bg-emerald-400/25 ring-emerald-500/40 dark:bg-emerald-500/25",
+    "bg-violet-400/25 ring-violet-500/40 dark:bg-violet-500/25",
+    "bg-amber-400/25 ring-amber-500/40 dark:bg-amber-500/25",
+    "bg-rose-400/25 ring-rose-500/40 dark:bg-rose-500/25",
+    "bg-cyan-400/25 ring-cyan-500/40 dark:bg-cyan-500/25",
   ];
   return palette[index % palette.length];
 }
@@ -390,7 +441,7 @@ function renderExpressionNode(
     const active = hoveredStepId === stepId;
     return (
       <span
-        className={`rounded px-0.5 transition-colors ${active ? `${stepClassById.get(stepId) ?? ''} ring-1` : ''}`}
+        className={`rounded px-0.5 transition-colors ${active ? `${stepClassById.get(stepId) ?? ""} ring-1` : ""}`}
       >
         {content}
       </span>
@@ -398,9 +449,9 @@ function renderExpressionNode(
   };
 
   switch (node.kind) {
-    case 'leaf':
+    case "leaf":
       return <span>{node.text}</span>;
-    case 'unary':
+    case "unary":
       return wrap(
         node.stepId,
         <>
@@ -408,31 +459,32 @@ function renderExpressionNode(
           {renderExpressionNode(node.operand, hoveredStepId, stepClassById)}
         </>,
       );
-    case 'binary':
+    case "binary":
       return wrap(
         node.stepId,
         <>
-          (
-          {renderExpressionNode(node.left, hoveredStepId, stepClassById)} {node.op}{' '}
+          ({renderExpressionNode(node.left, hoveredStepId, stepClassById)}{" "}
+          {node.op}{" "}
           {renderExpressionNode(node.right, hoveredStepId, stepClassById)})
         </>,
       );
-    case 'function':
+    case "function":
       return wrap(
         node.stepId,
         <>
           {node.name}(
           {node.args.map((arg, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: arguments are positional and never reorder
             <span key={`${node.stepId}-${i}`}>
-              {i > 0 ? ', ' : ''}
+              {i > 0 ? ", " : ""}
               {renderExpressionNode(arg, hoveredStepId, stepClassById)}
             </span>
           ))}
           )
         </>,
       );
-    case 'array':
-      return wrap(node.stepId, <>{'{…array…}'}</>);
+    case "array":
+      return wrap(node.stepId, "{…array…}");
     default:
       return null;
   }
@@ -444,7 +496,7 @@ function renderFormulaSourceWithHighlight(
   end: number | null,
   highlightClass: string,
 ): ReactNode {
-  if (!formula) return '(empty formula)';
+  if (!formula) return "(empty formula)";
   if (start == null || end == null || start > end) return formula;
 
   const safeStart = Math.max(0, Math.min(formula.length, start));
@@ -457,7 +509,9 @@ function renderFormulaSourceWithHighlight(
   return (
     <>
       <span>{before}</span>
-      <span className={`rounded px-0.5 ring-1 ${highlightClass}`}>{mid || ' '}</span>
+      <span className={`rounded px-0.5 ring-1 ${highlightClass}`}>
+        {mid || " "}
+      </span>
       <span>{after}</span>
     </>
   );
@@ -471,10 +525,14 @@ function dedupeFixes(items: FixSuggestion[]): FixSuggestion[] {
   return Array.from(map.values());
 }
 
-function buildFixCandidates(normalized: string, errorMessage: string | null, pos: number | null): FixSuggestion[] {
+function buildFixCandidates(
+  normalized: string,
+  errorMessage: string | null,
+  pos: number | null,
+): FixSuggestion[] {
   if (!normalized) return [];
 
-  const msg = (errorMessage ?? '').toLowerCase();
+  const msg = (errorMessage ?? "").toLowerCase();
   const out: FixSuggestion[] = [];
 
   const openParenCount = (normalized.match(/\(/g) ?? []).length;
@@ -483,41 +541,63 @@ function buildFixCandidates(normalized: string, errorMessage: string | null, pos
   const closeBracketCount = (normalized.match(/\]/g) ?? []).length;
   const quoteCount = (normalized.match(/"/g) ?? []).length;
 
-  if (openParenCount > closeParenCount || msg.includes('unmatched opening parenthesis')) {
-    out.push({ label: 'Close missing parenthesis', formula: `${normalized})` });
+  if (
+    openParenCount > closeParenCount ||
+    msg.includes("unmatched opening parenthesis")
+  ) {
+    out.push({ label: "Close missing parenthesis", formula: `${normalized})` });
   }
 
-  if (openBracketCount > closeBracketCount || msg.includes('unmatched opening') && msg.includes('bracket')) {
-    out.push({ label: 'Close missing bracket', formula: `${normalized}]` });
+  if (
+    openBracketCount > closeBracketCount ||
+    (msg.includes("unmatched opening") && msg.includes("bracket"))
+  ) {
+    out.push({ label: "Close missing bracket", formula: `${normalized}]` });
   }
 
-  if ((msg.includes('unmatched closing') || msg.includes('unexpected closing')) && pos != null) {
+  if (
+    (msg.includes("unmatched closing") || msg.includes("unexpected closing")) &&
+    pos != null
+  ) {
     const i = Math.max(0, Math.min(normalized.length - 1, pos));
-    out.push({ label: 'Remove unexpected closing character', formula: `${normalized.slice(0, i)}${normalized.slice(i + 1)}` });
+    out.push({
+      label: "Remove unexpected closing character",
+      formula: `${normalized.slice(0, i)}${normalized.slice(i + 1)}`,
+    });
   }
 
-  if (quoteCount % 2 === 1 || msg.includes('unterminated string') || msg.includes('unclosed string')) {
-    out.push({ label: 'Close missing quote', formula: `${normalized}"` });
+  if (
+    quoteCount % 2 === 1 ||
+    msg.includes("unterminated string") ||
+    msg.includes("unclosed string")
+  ) {
+    out.push({ label: "Close missing quote", formula: `${normalized}"` });
   }
 
   if (/[,;]\s*\)/.test(normalized)) {
-    out.push({ label: 'Remove trailing separator before )', formula: normalized.replace(/([,;])\s*\)/g, ')') });
+    out.push({
+      label: "Remove trailing separator before )",
+      formula: normalized.replace(/([,;])\s*\)/g, ")"),
+    });
   }
 
   if (/[,;]\s*$/.test(normalized)) {
-    out.push({ label: 'Remove trailing separator at end', formula: normalized.replace(/([,;])\s*$/, '') });
+    out.push({
+      label: "Remove trailing separator at end",
+      formula: normalized.replace(/([,;])\s*$/, ""),
+    });
   }
 
   return dedupeFixes(out);
 }
 
 export function FormulaParserTool() {
-  const [formula, setFormula] = useState('=SUM(A1:A3)');
-  const [dialect, setDialect] = useState<Dialect>('excel');
+  const [formula, setFormula] = useState("=SUM(A1:A3)");
+  const [dialect, setDialect] = useState<Dialect>("excel");
 
   const [isParsing, setIsParsing] = useState(false);
   const [parseMs, setParseMs] = useState<number | null>(null);
-  const [normalizedFormula, setNormalizedFormula] = useState('=SUM(A1:A3)');
+  const [normalizedFormula, setNormalizedFormula] = useState("=SUM(A1:A3)");
 
   const [tokens, setTokens] = useState<Token[]>([]);
   const [ast, setAst] = useState<ASTNodeData | null>(null);
@@ -529,25 +609,29 @@ export function FormulaParserTool() {
   const [lockedStepId, setLockedStepId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
 
     const params = new URLSearchParams(window.location.search);
-    const initialFormula = params.get('f');
-    const initialDialect = params.get('dialect');
+    const initialFormula = params.get("f");
+    const initialDialect = params.get("dialect");
 
     if (initialFormula) setFormula(initialFormula);
-    if (initialDialect === 'excel' || initialDialect === 'openFormula') {
+    if (initialDialect === "excel" || initialDialect === "openFormula") {
       setDialect(initialDialect);
     }
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    if (typeof window === "undefined") return;
 
     const params = new URLSearchParams(window.location.search);
-    params.set('f', formula);
-    params.set('dialect', dialect);
-    window.history.replaceState(null, '', `/formula-parser?${params.toString()}`);
+    params.set("f", formula);
+    params.set("dialect", dialect);
+    window.history.replaceState(
+      null,
+      "",
+      `/formula-parser?${params.toString()}`,
+    );
   }, [formula, dialect]);
 
   const runParse = useCallback(async () => {
@@ -558,7 +642,7 @@ export function FormulaParserTool() {
       setTokens([]);
       setAst(null);
       setTokenError(null);
-      setParseError('Enter a formula to parse.');
+      setParseError("Enter a formula to parse.");
       setParseMs(null);
       setErrorPos(null);
       setFixes([]);
@@ -574,7 +658,7 @@ export function FormulaParserTool() {
     try {
       const formualizer = await loadFormualizer();
       const wasmDialect =
-        dialect === 'openFormula'
+        dialect === "openFormula"
           ? formualizer.FormulaDialect.OpenFormula
           : formualizer.FormulaDialect.Excel;
 
@@ -599,7 +683,7 @@ export function FormulaParserTool() {
       const activeError = nextParseError ?? nextTokenError;
       const pos = extractErrorPosition(normalized, activeError);
 
-      let verifiedFixes: FixSuggestion[] = [];
+      const verifiedFixes: FixSuggestion[] = [];
       if (activeError) {
         const candidates = buildFixCandidates(normalized, activeError, pos);
         for (const candidate of candidates) {
@@ -640,9 +724,15 @@ export function FormulaParserTool() {
   }, [runParse]);
 
   const references = useMemo(() => (ast ? extractReferences(ast) : []), [ast]);
-  const functions = useMemo(() => (ast ? extractFunctionNames(ast) : []), [ast]);
+  const functions = useMemo(
+    () => (ast ? extractFunctionNames(ast) : []),
+    [ast],
+  );
   const treeLines = useMemo(() => (ast ? astTreeLines(ast) : []), [ast]);
-  const astJson = useMemo(() => (ast ? JSON.stringify(ast, null, 2) : ''), [ast]);
+  const astJson = useMemo(
+    () => (ast ? JSON.stringify(ast, null, 2) : ""),
+    [ast],
+  );
   const metrics = useMemo(() => collectMetrics(ast), [ast]);
   const plan = useMemo(() => buildEvaluationPlan(ast), [ast]);
   const stepClassById = useMemo(() => {
@@ -655,49 +745,66 @@ export function FormulaParserTool() {
 
   const stepById = useMemo(() => {
     const map = new Map<string, EvalStep>();
-    plan.steps.forEach((step) => map.set(step.id, step));
+    plan.steps.forEach((step) => {
+      map.set(step.id, step);
+    });
     return map;
   }, [plan.steps]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new formula's plan clears the step selection
   useEffect(() => {
     setHoveredStepId(null);
     setLockedStepId(null);
   }, [plan.finalExpr]);
 
   const activeStepId = lockedStepId ?? hoveredStepId;
-  const activeStep = activeStepId ? stepById.get(activeStepId) ?? null : null;
+  const activeStep = activeStepId ? (stepById.get(activeStepId) ?? null) : null;
 
   const status = parseError
-    ? 'error'
+    ? "error"
     : ast
-      ? 'ok'
+      ? "ok"
       : tokens.length > 0
-        ? 'partial'
-        : 'idle';
+        ? "partial"
+        : "idle";
 
   return (
     <div className="mx-auto w-full max-w-6xl px-4 pb-10 pt-8 md:px-6">
       <div className="mb-6 space-y-2">
         <div className="flex flex-wrap items-center gap-2 text-xs text-fd-muted-foreground">
-          <a href="/docs" className="rounded-md border px-2 py-1 hover:bg-fd-muted">
+          <a
+            href="/docs"
+            className="rounded-md border px-2 py-1 hover:bg-fd-muted"
+          >
             ← Docs Home
           </a>
-          <a href="/docs/reference/functions" className="rounded-md border px-2 py-1 hover:bg-fd-muted">
+          <a
+            href="/docs/reference/functions"
+            className="rounded-md border px-2 py-1 hover:bg-fd-muted"
+          >
             Function Reference
           </a>
         </div>
 
-        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">Formula Parser</h1>
+        <h1 className="text-2xl font-semibold tracking-tight md:text-3xl">
+          Formula Parser
+        </h1>
         <p className="text-sm text-fd-muted-foreground md:text-base">
-          Parse formulas in-browser using Formualizer WASM, then inspect a practical explanation,
-          dependencies, and advanced parser output.
+          Parse formulas in-browser using Formualizer WASM, then inspect a
+          practical explanation, dependencies, and advanced parser output.
         </p>
       </div>
 
       <div className="rounded-xl border bg-fd-card p-4 shadow-sm md:p-5 dark:border-fd-border/70">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <label className="text-xs font-medium text-fd-muted-foreground">Dialect</label>
+          <label
+            htmlFor="formula-parser-dialect"
+            className="text-xs font-medium text-fd-muted-foreground"
+          >
+            Dialect
+          </label>
           <select
+            id="formula-parser-dialect"
             className="rounded-md border bg-fd-background px-2 py-1 text-xs"
             value={dialect}
             onChange={(event) => setDialect(event.target.value as Dialect)}
@@ -707,7 +814,7 @@ export function FormulaParserTool() {
           </select>
 
           <span className="ml-auto text-xs text-fd-muted-foreground">
-            {isParsing ? 'Recomputing…' : 'Auto-recomputes after typing pauses'}
+            {isParsing ? "Recomputing…" : "Auto-recomputes after typing pauses"}
           </span>
         </div>
 
@@ -722,23 +829,23 @@ export function FormulaParserTool() {
           <span
             className={`rounded-full px-2 py-0.5 font-medium ${
               isParsing
-                ? 'bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                : status === 'ok'
-                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                  : status === 'error'
-                    ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300'
-                    : 'bg-fd-muted text-fd-muted-foreground'
+                ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                : status === "ok"
+                  ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                  : status === "error"
+                    ? "bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                    : "bg-fd-muted text-fd-muted-foreground"
             }`}
           >
             {isParsing
-              ? 'Parsing…'
-              : status === 'ok'
-                ? 'Parse successful'
-                : status === 'error'
-                  ? 'Parse error'
-                  : status === 'partial'
-                    ? 'Partial output'
-                    : 'Idle'}
+              ? "Parsing…"
+              : status === "ok"
+                ? "Parse successful"
+                : status === "error"
+                  ? "Parse error"
+                  : status === "partial"
+                    ? "Partial output"
+                    : "Idle"}
           </span>
 
           <span className="rounded-full bg-fd-muted px-2 py-0.5 text-fd-muted-foreground">
@@ -751,7 +858,9 @@ export function FormulaParserTool() {
             </span>
           )}
 
-          <span className="text-fd-muted-foreground">Normalized: {normalizedFormula || '—'}</span>
+          <span className="text-fd-muted-foreground">
+            Normalized: {normalizedFormula || "—"}
+          </span>
         </div>
       </div>
 
@@ -775,15 +884,23 @@ export function FormulaParserTool() {
       </div>
 
       <details open className="mt-5 rounded-xl border bg-fd-card">
-        <summary className="cursor-pointer list-none border-b px-4 py-3 text-sm font-semibold">Explain</summary>
+        <summary className="cursor-pointer list-none border-b px-4 py-3 text-sm font-semibold">
+          Explain
+        </summary>
         <div className="space-y-4 p-4 text-sm">
           {plan.finalExpr ? (
             <>
               <div className="rounded-md border bg-fd-muted/10 p-3">
-                <div className="mb-1 text-xs uppercase tracking-wide text-fd-muted-foreground">Final expression</div>
+                <div className="mb-1 text-xs uppercase tracking-wide text-fd-muted-foreground">
+                  Final expression
+                </div>
                 <div className="font-mono text-xs leading-relaxed md:text-sm">
                   {plan.root
-                    ? renderExpressionNode(plan.root, activeStepId, stepClassById)
+                    ? renderExpressionNode(
+                        plan.root,
+                        activeStepId,
+                        stepClassById,
+                      )
                     : plan.finalExpr}
                 </div>
 
@@ -797,9 +914,9 @@ export function FormulaParserTool() {
                           normalizedFormula,
                           activeStep.sourceStart,
                           activeStep.sourceEnd,
-                          stepClassById.get(activeStep.id) ?? '',
+                          stepClassById.get(activeStep.id) ?? "",
                         )
-                      : normalizedFormula || '—'}
+                      : normalizedFormula || "—"}
                   </div>
                 </div>
 
@@ -820,45 +937,65 @@ export function FormulaParserTool() {
               </div>
 
               <div className="space-y-2">
-                <div className="text-xs uppercase tracking-wide text-fd-muted-foreground">Evaluation sequence</div>
+                <div className="text-xs uppercase tracking-wide text-fd-muted-foreground">
+                  Evaluation sequence
+                </div>
                 {plan.steps.length === 0 ? (
-                  <p className="text-fd-muted-foreground">No intermediate steps.</p>
+                  <p className="text-fd-muted-foreground">
+                    No intermediate steps.
+                  </p>
                 ) : (
                   <ol className="space-y-2">
                     {plan.steps.map((step) => {
-                      const highlightClass = stepClassById.get(step.id) ?? '';
+                      const highlightClass = stepClassById.get(step.id) ?? "";
                       const isHovered = hoveredStepId === step.id;
                       const isLocked = lockedStepId === step.id;
                       const isActive = activeStepId === step.id;
 
                       return (
+                        // biome-ignore lint/a11y/useSemanticElements: a step of the ordered list; role, tabIndex and Enter/Space make it a button
                         <li
                           key={step.id}
                           className={`rounded-md border p-2 transition-colors ${
-                            isActive ? 'border-fd-primary/40 bg-fd-muted/20' : ''
-                          } ${isLocked ? 'ring-1 ring-fd-primary/40' : ''}`}
+                            isActive
+                              ? "border-fd-primary/40 bg-fd-muted/20"
+                              : ""
+                          } ${isLocked ? "ring-1 ring-fd-primary/40" : ""}`}
                           onMouseEnter={() => setHoveredStepId(step.id)}
                           onMouseLeave={() => setHoveredStepId(null)}
                           onClick={() =>
-                            setLockedStepId((prev) => (prev === step.id ? null : step.id))
+                            setLockedStepId((prev) =>
+                              prev === step.id ? null : step.id,
+                            )
                           }
+                          // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: see above
                           role="button"
                           tabIndex={0}
                           onKeyDown={(event) => {
-                            if (event.key === 'Enter' || event.key === ' ') {
+                            if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
-                              setLockedStepId((prev) => (prev === step.id ? null : step.id));
+                              setLockedStepId((prev) =>
+                                prev === step.id ? null : step.id,
+                              );
                             }
                           }}
                         >
                           <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-fd-muted-foreground">
-                            <span className={`inline-block h-2.5 w-2.5 rounded-full ${highlightClass}`} />
+                            <span
+                              className={`inline-block h-2.5 w-2.5 rounded-full ${highlightClass}`}
+                            />
                             {step.id}
-                            {isLocked && <span className="text-[10px]">(locked)</span>}
-                            {!isLocked && isHovered && <span className="text-[10px]">(hover)</span>}
+                            {isLocked && (
+                              <span className="text-[10px]">(locked)</span>
+                            )}
+                            {!isLocked && isHovered && (
+                              <span className="text-[10px]">(hover)</span>
+                            )}
                           </div>
                           <div className="font-mono text-xs">{step.expr}</div>
-                          <div className="mt-1 text-xs text-fd-muted-foreground">{step.explanation}</div>
+                          <div className="mt-1 text-xs text-fd-muted-foreground">
+                            {step.explanation}
+                          </div>
                         </li>
                       );
                     })}
@@ -867,7 +1004,9 @@ export function FormulaParserTool() {
               </div>
             </>
           ) : (
-            <p className="text-fd-muted-foreground">No parsed expression to explain yet.</p>
+            <p className="text-fd-muted-foreground">
+              No parsed expression to explain yet.
+            </p>
           )}
         </div>
       </details>
@@ -882,7 +1021,9 @@ export function FormulaParserTool() {
               References
             </h3>
             {references.length === 0 ? (
-              <p className="text-sm text-fd-muted-foreground">No references found.</p>
+              <p className="text-sm text-fd-muted-foreground">
+                No references found.
+              </p>
             ) : (
               <ul className="space-y-1 font-mono text-xs">
                 {references.map((reference) => (
@@ -897,7 +1038,9 @@ export function FormulaParserTool() {
               Function calls
             </h3>
             {functions.length === 0 ? (
-              <p className="text-sm text-fd-muted-foreground">No function calls found.</p>
+              <p className="text-sm text-fd-muted-foreground">
+                No function calls found.
+              </p>
             ) : (
               <ul className="space-y-1 font-mono text-xs">
                 {functions.map((name) => (
@@ -930,13 +1073,15 @@ export function FormulaParserTool() {
               lang="text"
               code={buildErrorPointer(normalizedFormula, errorPos)}
               codeblock={{
-                className: 'my-0 rounded-md border',
+                className: "my-0 rounded-md border",
               }}
             />
 
             {fixes.length > 0 && (
               <div className="space-y-2">
-                <div className="text-xs uppercase tracking-wide text-fd-muted-foreground">Auto-fix suggestions</div>
+                <div className="text-xs uppercase tracking-wide text-fd-muted-foreground">
+                  Auto-fix suggestions
+                </div>
                 <div className="flex flex-wrap gap-2">
                   {fixes.map((fix) => (
                     <button
@@ -956,14 +1101,18 @@ export function FormulaParserTool() {
       )}
 
       <details className="mt-4 rounded-xl border bg-fd-card">
-        <summary className="cursor-pointer list-none border-b px-4 py-3 text-sm font-semibold">AST Tree</summary>
+        <summary className="cursor-pointer list-none border-b px-4 py-3 text-sm font-semibold">
+          AST Tree
+        </summary>
         <div className="p-4">
           <DynamicCodeBlock
             lang="text"
-            code={treeLines.length > 0 ? treeLines.join('\n') : 'No AST output.'}
+            code={
+              treeLines.length > 0 ? treeLines.join("\n") : "No AST output."
+            }
             codeblock={{
-              className: 'my-0 max-h-[420px] overflow-auto rounded-md border',
-              viewportProps: { className: 'max-h-[420px]' },
+              className: "my-0 max-h-[420px] overflow-auto rounded-md border",
+              viewportProps: { className: "max-h-[420px]" },
             }}
           />
         </div>
@@ -987,18 +1136,32 @@ export function FormulaParserTool() {
               </thead>
               <tbody>
                 {tokens.map((token, index) => (
-                  <tr key={`${token.tokenType}-${token.pos}-${index}`} className="border-b last:border-b-0">
-                    <td className="px-3 py-2 font-mono text-fd-muted-foreground">{index}</td>
-                    <td className="px-3 py-2 font-mono">{normalizedTokenType(token)}</td>
-                    <td className="px-3 py-2 font-mono text-fd-muted-foreground">{tokenRole(token)}</td>
+                  <tr
+                    // biome-ignore lint/suspicious/noArrayIndexKey: the index is the token's place in the stream, shown in the first column
+                    key={`${token.tokenType}-${token.pos}-${index}`}
+                    className="border-b last:border-b-0"
+                  >
+                    <td className="px-3 py-2 font-mono text-fd-muted-foreground">
+                      {index}
+                    </td>
+                    <td className="px-3 py-2 font-mono">
+                      {normalizedTokenType(token)}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-fd-muted-foreground">
+                      {tokenRole(token)}
+                    </td>
                     <td className="px-3 py-2 font-mono">{token.value}</td>
-                    <td className="px-3 py-2 font-mono text-fd-muted-foreground">{token.pos}</td>
+                    <td className="px-3 py-2 font-mono text-fd-muted-foreground">
+                      {token.pos}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {tokens.length === 0 && (
-              <div className="px-3 py-4 text-sm text-fd-muted-foreground">No tokens to display.</div>
+              <div className="px-3 py-4 text-sm text-fd-muted-foreground">
+                No tokens to display.
+              </div>
             )}
           </div>
         </div>
@@ -1013,18 +1176,21 @@ export function FormulaParserTool() {
             lang="json"
             code={astJson || '{\n  "message": "No AST JSON available."\n}'}
             codeblock={{
-              className: 'my-0 max-h-[360px] overflow-auto rounded-md border',
-              viewportProps: { className: 'max-h-[360px]' },
+              className: "my-0 max-h-[360px] overflow-auto rounded-md border",
+              viewportProps: { className: "max-h-[360px]" },
             }}
           />
         </div>
       </details>
 
       <section className="mt-8 space-y-5 rounded-xl border bg-fd-card p-5">
-        <h2 className="text-lg font-semibold">Why use this Excel formula parser?</h2>
+        <h2 className="text-lg font-semibold">
+          Why use this Excel formula parser?
+        </h2>
         <p className="text-sm text-fd-muted-foreground">
-          This tool helps spreadsheet users and developers debug complex formulas by showing
-          syntax diagnostics, AST structure, reference dependencies, and evaluation flow in one view.
+          This tool helps spreadsheet users and developers debug complex
+          formulas by showing syntax diagnostics, AST structure, reference
+          dependencies, and evaluation flow in one view.
         </p>
 
         <div className="grid gap-4 md:grid-cols-2">
@@ -1032,9 +1198,13 @@ export function FormulaParserTool() {
             <h3 className="mb-1 text-sm font-semibold">Common use cases</h3>
             <ul className="list-disc space-y-1 pl-5 text-sm text-fd-muted-foreground">
               <li>Check formula syntax before sharing across teams.</li>
-              <li>Understand nested formulas with readable evaluation steps.</li>
+              <li>
+                Understand nested formulas with readable evaluation steps.
+              </li>
               <li>Audit references and function calls for model reviews.</li>
-              <li>Prototype formulas before moving into production workbooks.</li>
+              <li>
+                Prototype formulas before moving into production workbooks.
+              </li>
             </ul>
           </div>
 
@@ -1042,17 +1212,26 @@ export function FormulaParserTool() {
             <h3 className="mb-1 text-sm font-semibold">Related tools</h3>
             <ul className="space-y-1 text-sm text-fd-muted-foreground">
               <li>
-                <a className="underline underline-offset-4" href="/docs/reference/functions">
+                <a
+                  className="underline underline-offset-4"
+                  href="/docs/reference/functions"
+                >
                   Function reference
                 </a>
               </li>
               <li>
-                <a className="underline underline-offset-4" href="/docs/playground/formula-sandbox">
+                <a
+                  className="underline underline-offset-4"
+                  href="/docs/playground/formula-sandbox"
+                >
                   Formula sandbox docs
                 </a>
               </li>
               <li>
-                <a className="underline underline-offset-4" href="/docs/playground/parser-ast-inspector">
+                <a
+                  className="underline underline-offset-4"
+                  href="/docs/playground/parser-ast-inspector"
+                >
                   Parser + AST inspector docs
                 </a>
               </li>
@@ -1064,34 +1243,46 @@ export function FormulaParserTool() {
           <h2 className="text-lg font-semibold">FAQ: Excel formula parser</h2>
 
           <div>
-            <h3 className="text-sm font-semibold">How do I parse an Excel formula online?</h3>
+            <h3 className="text-sm font-semibold">
+              How do I parse an Excel formula online?
+            </h3>
             <p className="text-sm text-fd-muted-foreground">
-              Paste your formula into the editor and pause typing. The parser auto-runs in your
-              browser and shows diagnostics, references, AST structure, and evaluation steps.
+              Paste your formula into the editor and pause typing. The parser
+              auto-runs in your browser and shows diagnostics, references, AST
+              structure, and evaluation steps.
             </p>
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold">Can this tool debug nested IF and complex formulas?</h3>
+            <h3 className="text-sm font-semibold">
+              Can this tool debug nested IF and complex formulas?
+            </h3>
             <p className="text-sm text-fd-muted-foreground">
-              Yes. It handles deeply nested formulas, then breaks them into intermediate evaluation
-              steps so you can understand operation order and identify fragile segments.
+              Yes. It handles deeply nested formulas, then breaks them into
+              intermediate evaluation steps so you can understand operation
+              order and identify fragile segments.
             </p>
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold">Does this parser show formula dependencies?</h3>
+            <h3 className="text-sm font-semibold">
+              Does this parser show formula dependencies?
+            </h3>
             <p className="text-sm text-fd-muted-foreground">
-              Yes. The references panel extracts cell and range dependencies, and the function panel
-              lists all called functions found in your formula.
+              Yes. The references panel extracts cell and range dependencies,
+              and the function panel lists all called functions found in your
+              formula.
             </p>
           </div>
 
           <div>
-            <h3 className="text-sm font-semibold">Can it fix formula syntax errors automatically?</h3>
+            <h3 className="text-sm font-semibold">
+              Can it fix formula syntax errors automatically?
+            </h3>
             <p className="text-sm text-fd-muted-foreground">
-              It suggests safe fixes for common syntax issues (for example unmatched parentheses,
-              trailing separators, and unclosed quotes). Suggested fixes are validated before shown.
+              It suggests safe fixes for common syntax issues (for example
+              unmatched parentheses, trailing separators, and unclosed quotes).
+              Suggested fixes are validated before shown.
             </p>
           </div>
         </div>
