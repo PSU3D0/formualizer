@@ -865,6 +865,17 @@ impl formualizer_eval::traits::NamedRangeResolver for WBResolver {
         &self,
         _name: &str,
     ) -> Result<Vec<Vec<LiteralValue>>, formualizer_common::error::ExcelError> {
+        // A linked workbook's name holding a range (`[1]!Sales`) reads its
+        // cached cells; scalar ones resolve as engine source scalars.
+        #[cfg(feature = "xlsx-recalc")]
+        if let Some(grid) = self
+            .external
+            .as_ref()
+            .and_then(|values| values.range(_name))
+        {
+            use formualizer_eval::traits::Range;
+            return Ok(grid.materialise().into_owned());
+        }
         Err(ExcelError::new(ExcelErrorKind::Name)
             .with_message(format!("Undefined name: {}", _name)))
     }
