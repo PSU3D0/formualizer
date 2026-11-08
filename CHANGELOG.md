@@ -46,7 +46,7 @@ await wb.subscribeViewport({
 result = await wb.evaluate_async(budget_ms=5, priority=[("Model", 1, 1, 40, 12)])
 ```
 
-See [Interruptible Recalculation](docs-site/content/docs/guides/interruptible-recalculation.mdx) for the full API in each language.
+See [Interruptible Recalculation](https://www.formualizer.dev/docs/guides/interruptible-recalculation) for the full API in each language.
 
 ### Upgrading
 
@@ -76,7 +76,7 @@ See [Interruptible Recalculation](docs-site/content/docs/guides/interruptible-re
 
 ### SheetPort
 
-- **Native table ports.** `location: { table: { name: Orders, area: body } }` binds a table port to an Excel table. Columns are matched by header name in any order; writes resize the table, clear rows past the new end and keep structured references current. See [Native Excel Tables](docs-site/content/docs/sheetport/manifest-format.mdx#native-excel-tables).
+- **Native table ports.** `location: { table: { name: Orders, area: body } }` binds a table port to an Excel table. Columns are matched by header name in any order; writes resize the table, clear rows past the new end and keep structured references current. See [Native Excel Tables](https://www.formualizer.dev/docs/sheetport/manifest-format#native-excel-tables).
 - **Reversible.** A table write and its resize are one undoable action. Undo, redo and a failed action restore both the values and the table's size. Writing zero rows leaves Excel's required blank row in place but reads back as an empty table.
 - **Faster writes.** Batch writes reserve sheet storage once and propagate changes once per batch, including during undo and redo. In a native release benchmark, table writes are 2.96 times faster at 150 rows and 4.29 times faster at 2,000 rows.
 - **Rust.** `resize_table` and `resize_table_body` on `Engine`, `Workbook` and their actions; `TableMetadata::empty_body`.
