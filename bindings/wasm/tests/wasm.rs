@@ -798,16 +798,11 @@ fn test_recalculate_xlsx_bytes_reports_error_reasons_and_unknown_functions() {
             locations.get(index as u32).as_string().as_deref(),
             Some(location)
         );
-        // Actual error payloads may be unavailable; operation evidence must
-        // never be substituted for a final error cause.
         let message = messages.get(index as u32);
-        if !message.is_null() {
-            assert!(
-                message
-                    .as_string()
-                    .unwrap()
-                    .eq_ignore_ascii_case(reason.unwrap())
-            );
+        if location == "Sheet1!C1" {
+            assert_eq!(message.as_string().as_deref(), reason);
+        } else {
+            assert!(message.is_null());
         }
     }
     let unknown: serde_json::Value =

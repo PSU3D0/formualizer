@@ -237,6 +237,26 @@ def test_recalculate_xlsx_file_failure_leaves_existing_destination_unchanged(
     assert destination.read_bytes() == b"must remain unchanged"
 
 
+def test_pyodide_unknown_function_summary_and_edit_to_number():
+    openpyxl = pytest.importorskip("openpyxl")
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet["A1"] = 1
+    sheet["B1"] = "=SPDVOL(A1)"
+    buffer = BytesIO()
+    workbook.save(buffer)
+    result = fz.recalculate_xlsx_bytes(buffer.getvalue())
+    assert result["summary"]["error_summary"]["#NAME?"]["messages"] == [
+        "Unknown function: SPDVOL"
+    ]
+    workbook = openpyxl.load_workbook(BytesIO(result["bytes"]))
+    workbook.active["B1"] = 42
+    edited = BytesIO()
+    workbook.save(edited)
+    result = fz.recalculate_xlsx_bytes(edited.getvalue())
+    assert result["summary"].get("error_summary", {}) == {}
+
+
 def test_error_reasons_and_unknown_functions_are_reported():
     openpyxl = pytest.importorskip("openpyxl")
     workbook = openpyxl.Workbook()
@@ -272,13 +292,11 @@ def test_error_reasons_and_unknown_functions_are_reported():
     assert summary["evaluated"] == summary["total_formulas"] == 9
     messages = dict(zip(name["locations"], name["messages"], strict=True))
     assert set(messages) == set(expected)
-    # Error storage may discard actual payloads. Never reconstruct final causes
-    # from AST text, an inactive branch, or a separately caught operation.
     for location, message in messages.items():
-        assert message is None or (
-            expected[location] is not None
-            and message.upper() == expected[location].upper()
-        )
+        if location in ("Sheet!A1", "Sheet!A2", "Sheet!A3"):
+            assert message == expected[location]
+        else:
+            assert message is None
     assert summary["unknown_functions"] == [
         {"name": "SPDVOL", "cells": 4},
         {"name": "_xll.EURO", "cells": 1},
@@ -320,7 +338,7 @@ def test_error_reasons_and_unknown_functions_are_reported():
     assert truncated_name["count"] == 7
     assert len(truncated_name["locations"]) == len(truncated_name["messages"]) == 1
     assert truncated_name["locations_truncated"] == 6
-    assert truncated_name["messages"][0] in (None, "Unknown function: SPDVOL")
+    assert truncated_name["messages"] == ["Unknown function: SPDVOL"]
     assert (
         truncated["operation_diagnostics"]["unavailableFunctions"]
         == diagnostics["unavailableFunctions"]

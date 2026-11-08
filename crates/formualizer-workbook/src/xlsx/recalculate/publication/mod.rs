@@ -362,6 +362,7 @@ fn plan_spill_publication_covered(
                         cell,
                         value,
                         options.error_location_limit,
+                        coverage,
                     )
                 },
             )?;

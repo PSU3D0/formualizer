@@ -21,6 +21,8 @@ pub(super) struct Coverage {
     uncertain: Vec<RegionPiece>,
     pub diagnostics: SourceOperationDiagnostics,
     pub unknown_functions: BTreeMap<String, usize>,
+    // Retain the already bounded execution evidence through receipt publication.
+    pub final_reason_roots: Vec<formualizer_eval::operation_diagnostics::OperationRoot>,
 }
 impl Coverage {
     pub fn affects(&self, sheet_id: u16, row: u32, col: u32) -> bool {
@@ -459,6 +461,7 @@ pub(super) fn collect(
         out.uncertain = facts.uncertain_downstream;
         checkpoint(&options.cancel)?;
     }
+    out.final_reason_roots = events.roots;
     Ok(out)
 }
 

@@ -251,13 +251,7 @@ fn error_reasons_and_unknown_function_summary() {
                 "B1" => Value::from("Unknown function: _xll.EURO"),
                 _ => Value::Null,
             };
-            // 0.14 reports only retained final causes, never AST candidates or
-            // executed operations that may have been caught by the formula.
-            // Arrow results currently retain the error code without its reason.
-            assert!(
-                error["message"].is_null() || error["message"] == expected,
-                "{error}"
-            );
+            assert_eq!(error["message"], expected, "{error}");
         }
     }
     let (code, report) = json(&path, &["--check"]);
@@ -265,7 +259,10 @@ fn error_reasons_and_unknown_function_summary() {
     assert_eq!(report["errors"].as_array().unwrap().len(), 4);
     let (code, out, _) = invoke(&["recalc", path.to_str().unwrap(), "--check"], None);
     assert_eq!(code, 3);
-    assert!(out.contains("Sheet1!A1 #NAME?"), "{out}");
+    assert!(
+        out.contains("Sheet1!A1 #NAME? (Unknown function: SPDVOL)"),
+        "{out}"
+    );
     assert!(
         out.contains("Sheet1!B2 #DIV/0!,") || out.contains("Sheet1!B2 #DIV/0!)"),
         "{out}"

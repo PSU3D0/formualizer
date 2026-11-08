@@ -99,8 +99,7 @@ fn executed_operations_stay_separate_from_final_name_error_causes() {
         let out = recalc(&input);
         // Written, not refused; the inheriting cell has no reason of its own.
         assert_eq!(out.summary.errors, 2, "{formula}");
-        // Arrow error storage currently loses reasons. Do not reconstruct a
-        // final cause from AST text or from an independently caught operation.
+        // Only a directly executed root call proves an unknown-function cause.
         let errors = name_errors(&out);
         assert_eq!(
             errors
@@ -109,9 +108,12 @@ fn executed_operations_stay_separate_from_final_name_error_causes() {
                 .collect::<Vec<_>>(),
             vec!["Sheet1!A1", "Sheet1!B1"]
         );
-        for (_, message) in errors {
-            if let Some(message) = message {
-                assert!(message.eq_ignore_ascii_case(reason), "{formula}: {message}");
+        for (location, message) in errors {
+            let root_unknown = unknown.is_some_and(|name| formula.starts_with(&format!("{name}(")));
+            if location == "Sheet1!A1" && root_unknown {
+                assert_eq!(message.as_deref(), Some(reason), "{formula}");
+            } else {
+                assert_eq!(message, None, "{formula}");
             }
         }
         let expected: BTreeMap<String, usize> =
@@ -134,6 +136,95 @@ fn executed_operations_stay_separate_from_final_name_error_causes() {
             "{formula}"
         );
     }
+}
+
+#[test]
+fn root_unknown_reasons_are_scoped_to_current_scalar_source_results() {
+    for family in [false, true] {
+        let mut rows = String::new();
+        // Repeated formulas exercise compressed families and parallel-sized runs.
+        for row in 1..=128 {
+            rows.push_str(&format!(
+                "<row r=\"{row}\"><c r=\"A{row}\"><f>SPDVOL(1/0)</f><v>1</v></c>\
+                 <c r=\"B{row}\"><f>_xLl.eUrO(1)</f><v>1</v></c></row>"
+            ));
+        }
+        let mut options = XlsxRecalculateOptions::default();
+        options.eval_config.family_execution = family;
+        options.error_location_limit = 256;
+        let input = package(&rows, "");
+        let out = recalculate_xlsx_bytes(&input, options.clone()).unwrap();
+        assert_eq!(out.summary.errors, 256);
+        for (location, message) in name_errors(&out) {
+            let expected = if location.contains("!A") {
+                "Unknown function: SPDVOL"
+            } else {
+                "Unknown function: _xLl.eUrO"
+            };
+            assert_eq!(
+                message.as_deref(),
+                Some(expected),
+                "{location}, family={family}"
+            );
+        }
+        // Recalculate the source after replacing both error columns with numbers.
+        let edited_rows = rows
+            .replace("<f>SPDVOL(1/0)</f><v>1</v>", "<v>42</v>")
+            .replace("<f>_xLl.eUrO(1)</f><v>1</v>", "<v>42</v>");
+        let edited = package(&edited_rows, "");
+        let edited = recalculate_xlsx_bytes(&edited, options).unwrap();
+        assert!(edited.summary.error_summary.is_empty());
+    }
+}
+
+#[test]
+fn retained_error_reason_uses_complete_roots_not_display_samples() {
+    let input = package(
+        &row(concat!(
+            "<c r=\"A1\"><f>IFERROR(CAUGHT(1),7)</f><v>1</v></c>",
+            "<c r=\"B1\"><f>SPDVOL(1)</f><v>1</v></c>",
+        )),
+        "",
+    );
+    let options = XlsxRecalculateOptions {
+        error_location_limit: 1,
+        ..Default::default()
+    };
+    let out = recalculate_xlsx_bytes(&input, options).unwrap();
+    assert_eq!(
+        name_errors(&out),
+        vec![(
+            "Sheet1!B1".to_string(),
+            Some("Unknown function: SPDVOL".to_string())
+        )]
+    );
+    assert_eq!(out.operation_diagnostics.samples.len(), 1);
+    assert_eq!(out.operation_diagnostics.logical_cell_reason_count, 2);
+}
+
+#[test]
+fn wrapped_intersection_array_and_defined_name_roots_have_no_inferred_reason() {
+    for formula in [
+        "IFERROR(SPDVOL(1),NoSuchName)",
+        "SUM(NoSuchName,SPDVOL(1))",
+        "@SPDVOL(1)",
+    ] {
+        let out = recalc(&package(
+            &row(&format!("<c r=\"A1\"><f>{formula}</f><v>1</v></c>")),
+            "",
+        ));
+        assert_eq!(name_errors(&out)[0].1, None, "{formula}");
+    }
+    let out = recalc(&package(
+        &row("<c r=\"A1\"><f t=\"array\" ref=\"A1\">SPDVOL(1)</f><v>1</v></c>"),
+        "",
+    ));
+    assert_eq!(name_errors(&out)[0].1, None);
+    let out = recalc(&package(
+        &row("<c r=\"A1\"><f>SPDVOL(1)</f><v>1</v></c>"),
+        "<definedNames><definedName name=\"SPDVOL\">1</definedName></definedNames>",
+    ));
+    assert_eq!(name_errors(&out)[0].1, None);
 }
 
 #[test]
