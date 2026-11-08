@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking changes and upgrading
+
+- **`ParserError.position` is a byte offset everywhere.** It was a byte offset for tokenizer errors and some operator errors, and the parser's token index for the rest. It is now always the zero-based UTF-8 byte offset of the offending token in the formula, or the formula's byte length when the error is at the end of input. The values change for affected errors, as do the positions in Python and WASM error messages (`... at position N`). Callers that index the formula by character or by UTF-16 code unit (JavaScript strings) need to convert; the documentation playground does.
+
 ## [0.13.0] - 2026-10-25
 
 XLSX reading moves in-house: Rust, Python and JavaScript now use Formualizer's native reader by default, without a second production parser underneath it. Ordinary loading reads the workbook data it needs rather than decompressing every picture and attachment along the way. Source-preserving recalculation keeps its stricter whole-package integrity contract, and Umya remains available for rich document editing and export.

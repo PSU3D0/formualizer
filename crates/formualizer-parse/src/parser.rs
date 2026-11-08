@@ -33,6 +33,8 @@ type VolatilityClassifierArc = Arc<VolatilityFn>;
 #[derive(Debug)]
 pub struct ParserError {
     pub message: String,
+    /// Byte offset into the formula source where the error was found, when
+    /// known. At the end of the input it is the source length.
     pub position: Option<usize>,
 }
 
@@ -2835,6 +2837,15 @@ impl Parser {
             ),
         })
     }
+    /// The byte offset in the source of the token at `index`, or the source
+    /// length when `index` is past the last token. `ParserError::position`
+    /// is a byte offset, like the tokenizer's error position.
+    fn byte_offset(&self, index: usize) -> usize {
+        self.tokens
+            .get(index)
+            .map_or(self.source.len(), |token| token.start)
+    }
+
     /// The token at the cursor, if any.
     #[inline]
     fn peek(&self) -> Option<TokenSpan> {
@@ -2934,7 +2945,7 @@ impl Parser {
     fn limit_error(&self, budget: &str, limit: usize) -> ParserError {
         ParserError {
             message: format!("Formula {budget} (max {limit})"),
-            position: Some(self.position),
+            position: Some(self.byte_offset(self.position)),
         }
     }
     #[expect(
@@ -2987,8 +2998,8 @@ impl Parser {
             self.skip_whitespace();
             if let Some(extra) = self.peek() {
                 return Err(ParserError {
-                    message: format!("Unexpected token at position {}: {extra:?}", self.position),
-                    position: Some(self.position),
+                    message: format!("Unexpected token at position {}: {extra:?}", extra.start),
+                    position: Some(extra.start),
                 });
             }
 
@@ -3004,8 +3015,8 @@ impl Parser {
         self.skip_whitespace();
         if let Some(extra) = self.peek() {
             return Err(ParserError {
-                message: format!("Unexpected token at position {}: {extra:?}", self.position),
-                position: Some(self.position),
+                message: format!("Unexpected token at position {}: {extra:?}", extra.start),
+                position: Some(extra.start),
             });
         }
         Ok(ast.node)
@@ -3123,7 +3134,7 @@ impl Parser {
         let Some(token) = self.peek() else {
             return Err(ParserError {
                 message: "Unexpected end of tokens".to_string(),
-                position: Some(self.position),
+                position: Some(self.byte_offset(self.position)),
             });
         };
 
@@ -3143,7 +3154,7 @@ impl Parser {
                 if !self.peek_is(TokenType::Paren, TokenSubType::Close) {
                     return Err(ParserError {
                         message: "Expected closing parenthesis".to_string(),
-                        position: Some(self.position),
+                        position: Some(self.byte_offset(self.position)),
                     });
                 }
                 self.advance();
@@ -3155,7 +3166,7 @@ impl Parser {
             }
             _ => Err(ParserError {
                 message: format!("Unexpected token: {token:?}"),
-                position: Some(self.position),
+                position: Some(self.byte_offset(self.position)),
             }),
         }
     }
@@ -3169,7 +3180,7 @@ impl Parser {
             TokenSubType::Number => {
                 let value = value.parse::<f64>().map_err(|_| ParserError {
                     message: format!("Invalid number: {value}"),
-                    position: Some(self.position),
+                    position: Some(self.byte_offset(self.position)),
                 })?;
                 Ok(BuiltNode {
                     height: 1,
@@ -3210,7 +3221,7 @@ impl Parser {
                 let reference = ReferenceType::from_string_with_dialect(value, self.dialect)
                     .map_err(|e| ParserError {
                         message: format!("Invalid reference '{value}': {e}"),
-                        position: Some(self.position),
+                        position: Some(self.byte_offset(self.position)),
                     })?;
                 Ok(BuiltNode {
                     height: 1,
@@ -3225,7 +3236,7 @@ impl Parser {
             }
             _ => Err(ParserError {
                 message: format!("Unexpected operand subtype: {:?}", span.subtype),
-                position: Some(self.position),
+                position: Some(self.byte_offset(self.position)),
             }),
         }
     }
@@ -3238,7 +3249,7 @@ impl Parser {
         let Some(name) = self.span_value(&func_span).strip_suffix('(') else {
             return Err(ParserError {
                 message: "Invalid function token".to_string(),
-                position: Some(self.position),
+                position: Some(self.byte_offset(self.position)),
             });
         };
         let name = name.to_string();
@@ -3293,7 +3304,7 @@ impl Parser {
                 let Some(token) = self.peek() else {
                     return Err(ParserError {
                         message: "Unterminated call argument list".to_string(),
-                        position: Some(self.position),
+                        position: Some(self.byte_offset(self.position)),
                     });
                 };
 
@@ -3329,7 +3340,7 @@ impl Parser {
                 } else {
                     return Err(ParserError {
                         message: format!("Expected ',' or ')' in call arguments, got {token:?}"),
-                        position: Some(self.position),
+                        position: Some(self.byte_offset(self.position)),
                     });
                 }
             }
@@ -3354,7 +3365,7 @@ impl Parser {
             let Some(token) = self.peek() else {
                 return Err(ParserError {
                     message: "Unterminated function argument list".to_string(),
-                    position: Some(self.position),
+                    position: Some(self.byte_offset(self.position)),
                 });
             };
 
@@ -3389,7 +3400,7 @@ impl Parser {
             } else {
                 return Err(ParserError {
                     message: format!("Expected ',' or ')' in function arguments, got {token:?}"),
-                    position: Some(self.position),
+                    position: Some(self.byte_offset(self.position)),
                 });
             }
         }
@@ -3465,7 +3476,7 @@ impl Parser {
                 _ => {
                     return Err(ParserError {
                         message: format!("Unexpected token in array: {token:?}"),
-                        position: Some(self.position),
+                        position: Some(self.byte_offset(self.position)),
                     });
                 }
             }
@@ -3479,7 +3490,7 @@ impl Parser {
         {
             return Err(ParserError {
                 message: "Array rows must have equal length".to_string(),
-                position: Some(self.position.saturating_sub(1)),
+                position: Some(self.byte_offset(self.position.saturating_sub(1))),
             });
         }
 
