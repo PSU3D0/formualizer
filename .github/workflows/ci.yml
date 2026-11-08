@@ -105,6 +105,11 @@ jobs:
     # needlessly compiles PyO3/wasm-bindgen twice.
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      # Workbook test binaries statically link Wasmtime; full debug info can
+      # exhaust runner disk. Keep file/line information for panic backtraces.
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
     steps:
     - uses: actions/checkout@v4
@@ -124,7 +129,7 @@ jobs:
           ~/.cargo/registry/cache/
           ~/.cargo/git/db/
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-test-line-tables-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Check Rust formatting
       run: cargo fmt --all -- --check
