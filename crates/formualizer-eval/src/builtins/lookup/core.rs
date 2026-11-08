@@ -230,8 +230,26 @@ impl Function for MatchFn {
                 ExcelError::new(ExcelErrorKind::Na),
             )));
         }
-        let cv = args[0].value()?;
-        let lookup_value = cv.into_literal();
+        // An array (or multi-cell range) of lookup values lifts the call, as
+        // in Excel: one MATCH per element, giving an array of results.
+        match args[0].value()?.into_literal() {
+            LiteralValue::Array(needles) => {
+                super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
+                    MatchFn::lookup_one(args, ctx, needle)
+                })
+            }
+            lookup_value => MatchFn::lookup_one(args, ctx, lookup_value),
+        }
+    }
+}
+
+impl MatchFn {
+    /// One `MATCH` of a single lookup value (the arity is already checked).
+    fn lookup_one<'b>(
+        args: &[ArgumentHandle<'_, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+        lookup_value: LiteralValue,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         if let LiteralValue::Error(e) = lookup_value {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
@@ -596,8 +614,26 @@ impl Function for VLookupFn {
                 ExcelError::new(ExcelErrorKind::Na),
             )));
         }
-        let lookup_value = args[0].value()?.into_literal();
+        // An array (or multi-cell range) of lookup values lifts the call, as
+        // in Excel: one VLOOKUP per element, giving an array of results.
+        match args[0].value()?.into_literal() {
+            LiteralValue::Array(needles) => {
+                super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
+                    VLookupFn::lookup_one(args, ctx, needle)
+                })
+            }
+            lookup_value => VLookupFn::lookup_one(args, ctx, lookup_value),
+        }
+    }
+}
 
+impl VLookupFn {
+    /// One `VLOOKUP` of a single lookup value (the arity is already checked).
+    fn lookup_one<'b>(
+        args: &[ArgumentHandle<'_, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+        lookup_value: LiteralValue,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         // Try to get table as reference, fall back to array literal
         let table_ref_opt = args[1].as_reference_or_eval().ok();
         let col_index = match args[2].value()?.into_literal() {
@@ -861,8 +897,26 @@ impl Function for HLookupFn {
                 ExcelError::new(ExcelErrorKind::Na),
             )));
         }
-        let lookup_value = args[0].value()?.into_literal();
+        // An array (or multi-cell range) of lookup values lifts the call, as
+        // in Excel: one HLOOKUP per element, giving an array of results.
+        match args[0].value()?.into_literal() {
+            LiteralValue::Array(needles) => {
+                super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
+                    HLookupFn::lookup_one(args, ctx, needle)
+                })
+            }
+            lookup_value => HLookupFn::lookup_one(args, ctx, lookup_value),
+        }
+    }
+}
 
+impl HLookupFn {
+    /// One `HLOOKUP` of a single lookup value (the arity is already checked).
+    fn lookup_one<'b>(
+        args: &[ArgumentHandle<'_, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+        lookup_value: LiteralValue,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         // Try to get table as reference, fall back to array literal
         let table_ref_opt = args[1].as_reference_or_eval().ok();
         let row_index = match args[2].value()?.into_literal() {

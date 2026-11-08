@@ -6,11 +6,16 @@
 //! value, by intersection with the formula's row or column. Excel 365 shows
 //! these formulas with `@`; the file never contains it.
 //!
-//! Evidence: the formula cell is listed in `xl/calcChain.xml`, which Excel
-//! writes for every formula it calculated and which the recalc writer never
-//! edits. openpyxl, XlsxWriter and umya-spreadsheet do not write a calc
-//! chain, so agent-authored workbooks keep dynamic-array evaluation. Array
-//! formulas (CSE or dynamic) are never rewritten.
+//! Evidence, either of:
+//! - the formula cell is listed in `xl/calcChain.xml`, which Excel writes for
+//!   every formula it calculated and which the recalc writer never edits.
+//!   openpyxl, XlsxWriter and umya-spreadsheet do not write a calc chain, so
+//!   their unshared formulas keep dynamic-array evaluation;
+//! - the cell belongs to a shared formula family, a form that cannot hold a
+//!   dynamic array (those are stored as `t="array"` with `cm`), so a missing
+//!   or incomplete calc chain says nothing about its meaning.
+//!
+//! Array formulas (CSE or dynamic) are never rewritten.
 //!
 //! Where intersection happens follows Excel's token classes: the cell formula
 //! root is value class; function parameters convert their operands to
@@ -614,15 +619,13 @@ impl CalcChain {
             .get(sheet)
             .is_some_and(|cells| cells.contains(&(row, col)))
     }
-    pub fn is_empty(&self) -> bool {
-        self.cells.iter().all(FxHashSet::is_empty)
-    }
 }
 
 /// Read the calc chain. It is evidence only: a missing, malformed or
 /// oversized part yields no evidence rather than a refusal.
-/// Only legacy scalar formulas that pass the lowerer's own cheap screen
-/// need calc-chain evidence. Keep cancellation responsive on scalar-only files.
+/// Only unshared legacy scalar formulas that pass the lowerer's own cheap
+/// screen need calc-chain evidence; a shared family member is its own.
+/// Keep cancellation responsive on scalar-only files.
 pub(in crate::xlsx) fn needs_calc_chain(
     plans: &[SheetPlan],
     options: &XlsxRecalculateOptions,
@@ -631,6 +634,7 @@ pub(in crate::xlsx) fn needs_calc_chain(
         for cell in &plan.cells {
             checkpoint(&options.cancel)?;
             if cell.formula_kind != "array"
+                && cell.shared_id.is_none()
                 && cell.cm().is_none()
                 && !plan.ownership.children.contains_key(&(cell.row, cell.col))
                 && may_intersect(&cell.formula_text)
@@ -796,8 +800,8 @@ pub(in crate::xlsx) struct Stats {
 }
 
 /// Conservative evaluation-text lowering that makes legacy formulas of one worksheet
-/// intersect. `formula_cells_in_chain` decides evidence per cell; a shared
-/// family is rewritten only when every member is listed. In a workbook with
+/// intersect. A cell qualifies when `chain` lists it or it belongs to a shared
+/// family, unless it carries dynamic-array metadata. In a workbook with
 /// external links (`external_range_names` present: the lowercased defined
 /// names that hold an external range), formulas whose `[` may come from
 /// external references are classified too; structured references still
@@ -812,18 +816,6 @@ pub(in crate::xlsx) fn lowered_texts(
 ) -> Result<(Vec<crate::xlsx::recalculate::FormulaTextTransform>, Stats), IoError> {
     let mut stats = Stats::default();
     let mut out = Vec::new();
-    if chain.cells.get(sheet_index).is_none_or(FxHashSet::is_empty) {
-        return Ok((out, stats));
-    }
-    // Shared families with a member missing from the chain.
-    let mut unproven: HashSet<u32> = HashSet::new();
-    for cell in &plan.cells {
-        if let Some(si) = cell.shared_id
-            && !chain.contains(sheet_index, cell.row, cell.col)
-        {
-            unproven.insert(si);
-        }
-    }
     let mut lowerer = Lowerer::default();
     for cell in &plan.cells {
         checkpoint(&options.cancel)?;
@@ -832,8 +824,7 @@ pub(in crate::xlsx) fn lowered_texts(
             || cell.formula_kind == "array"
             || cell.cm().is_some()
             || plan.ownership.children.contains_key(&(cell.row, cell.col))
-            || !chain.contains(sheet_index, cell.row, cell.col)
-            || cell.shared_id.is_some_and(|si| unproven.contains(&si))
+            || (cell.shared_id.is_none() && !chain.contains(sheet_index, cell.row, cell.col))
         {
             continue;
         }

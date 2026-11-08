@@ -5,6 +5,45 @@ use crate::engine::{DateSystem, range_view::RangeView};
 use arrow_array::Array;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
 
+/// A lookup whose lookup value is an array (or a multi-cell range): one
+/// lookup per element, as in Excel, giving an array of the same shape. An
+/// element whose own lookup returns several cells contributes its first
+/// cell. A single lookup value never comes here, so the scalar path (and
+/// the family memo that reuses its results) is unchanged.
+pub(crate) fn lift_lookup_values<'b>(
+    ctx: &dyn crate::traits::FunctionContext<'b>,
+    needles: Vec<Vec<LiteralValue>>,
+    mut one: impl FnMut(LiteralValue) -> Result<crate::traits::CalcValue<'b>, ExcelError>,
+) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    let (rows, cols) = (needles.len(), needles.first().map_or(0, |r| r.len()));
+    if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+        rows,
+        cols,
+        ctx.materialized_array_cells(),
+    ) {
+        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+    }
+    let mut out = Vec::with_capacity(rows);
+    for row in needles {
+        let mut out_row = Vec::with_capacity(row.len());
+        for needle in row {
+            out_row.push(match one(needle) {
+                Ok(value) => match value.into_literal() {
+                    LiteralValue::Array(found) => found
+                        .into_iter()
+                        .next()
+                        .and_then(|r| r.into_iter().next())
+                        .unwrap_or(LiteralValue::Empty),
+                    other => other,
+                },
+                Err(e) => LiteralValue::Error(e),
+            });
+        }
+        out.push(out_row);
+    }
+    Ok(crate::traits::CalcValue::Scalar(LiteralValue::Array(out)))
+}
+
 /// Coerce a value to f64 with Excel-like rules for numeric comparisons:
 /// - Number / Int: numeric
 /// - Text: parsed if it looks numeric (lenient)
