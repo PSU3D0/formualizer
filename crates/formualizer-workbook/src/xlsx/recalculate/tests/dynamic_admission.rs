@@ -380,33 +380,89 @@ fn dangling_cell_metadata_is_rejected() {
     rejects(&edit(p, TYPES, METADATA_TYPE, ""), "dangling");
 }
 
+/// Excel's rich-value metadata as saved beside a blocked spill: a second
+/// metadata type, its future records and one value block selecting it.
+fn with_rich_value_metadata(p: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let p = edit(
+        p,
+        METADATA,
+        "<metadataTypes count=\"1\">",
+        "<metadataTypes count=\"2\">",
+    );
+    let p = edit(
+        p,
+        METADATA,
+        "</metadataTypes>",
+        "<metadataType name=\"XLRICHVALUE\" minSupportedVersion=\"120000\"/></metadataTypes>",
+    );
+    edit(
+        p,
+        METADATA,
+        "</cellMetadata>",
+        concat!(
+            "</cellMetadata><futureMetadata name=\"XLRICHVALUE\" count=\"1\"><bk><extLst>",
+            "<ext uri=\"{3e2802c4-a4d2-4d8b-9148-e3be6c30e623}\">",
+            "<xlrd:rvb xmlns:xlrd=\"http://schemas.microsoft.com/office/spreadsheetml/2017/richdata\" i=\"0\"/>",
+            "</ext></extLst></bk></futureMetadata>",
+            "<valueMetadata count=\"1\"><bk><rc t=\"2\" v=\"0\"/></bk></valueMetadata>"
+        ),
+    )
+}
+
 #[test]
-fn value_metadata_is_rejected() {
+fn value_metadata_is_admitted_only_on_formula_cells() {
+    // A literal's value would depend on the rich value: refused.
     rejects(
         &edit(
-            producer(),
+            with_rich_value_metadata(producer()),
             SHEET,
             "<c r=\"C3\" s=\"1\">",
             "<c r=\"C3\" s=\"1\" vm=\"1\">",
         ),
-        "vm",
+        "rich value metadata (vm)",
     );
-    rejects(
-        &edit(
-            producer(),
+    // A formula's cached value is recomputed: admitted when it resolves.
+    let anchor_vm = |p| {
+        edit(
+            p,
             SHEET,
             "<c r=\"C2\" s=\"1\" cm=\"1\">",
             "<c r=\"C2\" s=\"1\" cm=\"1\" vm=\"1\">",
-        ),
-        "vm",
-    );
-    let valued = edit(
-        producer(),
+        )
+    };
+    with_admission(
+        &anchor_vm(with_rich_value_metadata(producer())),
+        &Default::default(),
+        |a| {
+            assert_eq!(a.plans[0].cells[0].vm(), Some(1));
+        },
+    )
+    .expect("formula value metadata admitted");
+    rejects(&anchor_vm(producer()), "value metadata index (vm)");
+    // Value metadata no cell uses is inert.
+    with_admission(
+        &with_rich_value_metadata(producer()),
+        &Default::default(),
+        |_| (),
+    )
+    .expect("unused value metadata admitted");
+    // A cell block of an unsupported type is refused where a cell selects it.
+    let foreign_cell_block = edit(
+        with_rich_value_metadata(producer()),
         METADATA,
-        "</cellMetadata>",
-        "</cellMetadata><valueMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk></valueMetadata>",
+        "<cellMetadata count=\"1\"><bk><rc t=\"1\" v=\"0\"/></bk>",
+        "<cellMetadata count=\"1\"><bk><rc t=\"2\" v=\"0\"/></bk>",
     );
-    rejects(&valued, "unsupported sheet metadata");
+    rejects(&foreign_cell_block, "cell metadata of an unsupported type");
+    rejects(
+        &edit(
+            with_rich_value_metadata(producer()),
+            METADATA,
+            "<rc t=\"2\" v=\"0\"/></bk></valueMetadata>",
+            "<rc t=\"3\" v=\"0\"/></bk></valueMetadata>",
+        ),
+        "out-of-range metadata type index",
+    );
 }
 
 #[test]
@@ -463,7 +519,7 @@ fn wrong_namespace_lookalikes_are_rejected() {
         "http://purl.oclc.org/ooxml/officeDocument/relationships/sheetMetadata",
     );
     rejects(&strict, "unrelated sheet metadata part");
-    let unknown_type = edit(
+    let duplicate_type = edit(
         edit(
             producer(),
             METADATA,
@@ -472,9 +528,9 @@ fn wrong_namespace_lookalikes_are_rejected() {
         ),
         METADATA,
         "</metadataTypes>",
-        "<metadataType name=\"XLRICHVALUE\"/></metadataTypes>",
+        "<metadataType name=\"XLDAPR\"/></metadataTypes>",
     );
-    rejects(&unknown_type, "unsupported metadata type");
+    rejects(&duplicate_type, "duplicate XLDAPR metadata type");
     rejects(
         &edit(producer(), METADATA, "fDynamic=\"1\"", "fDynamic=\"0\""),
         "non-dynamic",
@@ -647,10 +703,10 @@ fn metadata_part_relationship_and_content_type_must_agree() {
         ),
         "content-type disagreement",
     );
-    // Rich data parts remain unsupported.
+    // Rich data parts are opaque: only `vm` cells give them meaning.
     let mut rich = producer();
     rich.insert("xl/richData/rdrichvalue.xml".into(), "<rv/>".into());
-    rejects(&rich, "rich value data");
+    with_admission(&rich, &Default::default(), |_| ()).expect("opaque rich data admitted");
 }
 
 #[test]

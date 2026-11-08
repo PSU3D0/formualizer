@@ -3,7 +3,7 @@
 pub(in crate::xlsx) use super::events as emission;
 use super::*;
 use crate::xlsx::options::{ReadOptions, ReadPolicy};
-mod generated;
+pub(in crate::xlsx) mod generated;
 mod rules;
 use rules::{RuleContext, RuleEvent};
 mod state;
