@@ -1153,7 +1153,7 @@ impl<'a> RangeView<'a> {
     /// Build per-column concatenated lowered text arrays for this view.
     /// Uses per-chunk lowered cache for base text and merges overlays via zip_select.
     pub fn lowered_text_columns(&self) -> Vec<arrow_array::ArrayRef> {
-        use crate::compute_prelude::concat_arrays;
+        use crate::compute_prelude::concat_engine_arrays as concat_arrays;
 
         let mut out: Vec<arrow_array::ArrayRef> = Vec::with_capacity(self.cols);
         if self.rows == 0 || self.cols == 0 {
@@ -1333,7 +1333,7 @@ impl<'a> RangeView<'a> {
             } else {
                 let refs: Vec<&dyn Array> =
                     segments.iter().map(|a| a.as_ref() as &dyn Array).collect();
-                let c = crate::compute_prelude::concat_arrays(&refs).expect("concat slice");
+                let c = crate::compute_prelude::concat_engine_arrays(&refs).expect("concat slice");
                 let fa = c
                     .as_any()
                     .downcast_ref::<arrow_array::Float64Array>()
@@ -1445,7 +1445,7 @@ impl<'a> RangeView<'a> {
             } else {
                 let refs: Vec<&dyn Array> =
                     segments.iter().map(|a| a.as_ref() as &dyn Array).collect();
-                let c = crate::compute_prelude::concat_arrays(&refs).expect("concat text");
+                let c = crate::compute_prelude::concat_engine_arrays(&refs).expect("concat text");
                 let sa = c
                     .as_any()
                     .downcast_ref::<arrow_array::StringArray>()

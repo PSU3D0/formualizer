@@ -60,7 +60,7 @@ fn read(view: &RangeView<'_>, mode: Read) -> f64 {
                     out += if matches!(mode, Read::Count) {
                         (col.len() - col.null_count()) as f64
                     } else {
-                        arrow::compute::kernels::aggregate::sum(col.as_ref()).unwrap_or(0.0)
+                        arrow_arith::aggregate::sum(col.as_ref()).unwrap_or(0.0)
                     };
                 }
             }

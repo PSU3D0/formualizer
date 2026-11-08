@@ -837,7 +837,7 @@ fn text_verdicts(
     ne: bool,
     text: &str,
 ) -> Option<(Vec<bool>, bool, bool)> {
-    use arrow::compute::kernels::comparison::{ilike, nilike};
+    use arrow_string::like::{ilike, nilike};
     let values = StringArray::from(classes.values.clone());
     let pattern = StringArray::new_scalar(text.to_lowercase());
     let mask = if ne {

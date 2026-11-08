@@ -44,13 +44,16 @@ smallvec = { workspace = true }
 # web-time is only needed for the js-runtime (browser/wasm-bindgen) profile.
 web-time = { workspace = true, optional = true }
 
-# Arrow (per-crate) — pinned to 58.x series
+# Arrow — depend directly on the compute crates used by engine fast paths.
 arrow-array = "59.2.0"
 arrow-buffer = "59.2.0"
 arrow-schema = "59.2.0"
 arrow-select = "59.2.0"
+arrow-arith = "59.2.0"
+arrow-ord = "59.2.0"
+# Uncalled public compute_prelude cast/comparison APIs retain source compatibility.
 arrow-cast = "59.2.0"
-arrow = "59.2.0"
+arrow-string = "59.2.0"
 
 [dependencies.tracing]
 version = "0.1"
