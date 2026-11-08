@@ -54,7 +54,9 @@ def main():
     assert wb.get_value("Margins", ROWS, 2) == 20 + ROWS - 1
     assert not wb.has_active_recalc_job
     assert not wb.has_pending_in_rect("Margins", 1, 2, ROWS, 2)
-    print(f"Finished: repaired margin=20; forecast={20 + ROWS - 1}; passes={sorted(passes)}")
+    print(
+        f"Finished: repaired margin=20; forecast={20 + ROWS - 1}; passes={sorted(passes)}"
+    )
 
 
 if __name__ == "__main__":

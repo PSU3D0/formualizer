@@ -5,7 +5,7 @@ PhysicalCounter None means unmeasured; decimal strings preserve large exact coun
 """
 
 from datetime import datetime
-from typing import Literal, TypedDict, Union
+from typing import Literal, TypedDict
 
 __all__ = [
     "SourceRecalculateLimits",
@@ -16,7 +16,7 @@ __all__ = [
     "SourceDependencyEvidence",
 ]
 
-PhysicalCounter = Union[int, str, None]
+PhysicalCounter = int | str | None
 # Keep the runtime alias a Union too: mypy 2.x normalizes a multi-value
 # Literal into this union when stubtest inspects this module.
 SettingOrigin = Literal["caller"] | Literal["workbook"] | Literal["excel_default"]
@@ -49,14 +49,14 @@ class SourceTimezoneOffset(TypedDict):
     offsetSeconds: int
 
 
-SourceTimezone = Union[Literal["utc", "local"], SourceTimezoneOffset]
+SourceTimezone = Literal["utc", "local"] | SourceTimezoneOffset
 
 
 class SourceCalculationPolicy(TypedDict, total=False):
     iteration: SourceIterationPolicy
     iterationInitialState: Literal["require_verified", "cold_start"]
     cycleDetection: Literal["runtime", "static"]
-    workbookSeed: Union[int, str]
+    workbookSeed: int | str
     fixedNowUtc: str
     timezone: SourceTimezone
     maxElapsedMs: int
@@ -88,17 +88,17 @@ class SourceInternalOperation(TypedDict):
     token: str
 
 
-SourceUnavailableOperation = Union[
-    SourceFunctionOperation,
-    SourceModeOperation,
-    SourcePostfixOperation,
-    SourceInternalOperation,
-]
+SourceUnavailableOperation = (
+    SourceFunctionOperation
+    | SourceModeOperation
+    | SourcePostfixOperation
+    | SourceInternalOperation
+)
 
 
 class SourceOperationSample(TypedDict):
     operation: SourceUnavailableOperation
-    location: Union[str, None]
+    location: str | None
 
 
 class SourceFunctionIncidence(TypedDict):
@@ -140,7 +140,7 @@ class SourceOperationDiagnostics(TypedDict):
     unavailableResultCells: int
     physicalUnavailableObservations: PhysicalCounter
     physicalFunctionDispatches: PhysicalCounter
-    dependencyEvidence: Union[SourceDependencyEvidence, None]
+    dependencyEvidence: SourceDependencyEvidence | None
     samples: list[SourceOperationSample]
     samplesTruncated: int
 
@@ -153,23 +153,23 @@ class SourceCalculationWarning(TypedDict):
 class ResolvedSourceCalculation(TypedDict):
     cycleDetection: Literal["runtime", "static"]
     iterationEnabled: bool
-    maxIterations: Union[int, None]
-    maxChange: Union[float, None]
+    maxIterations: int | None
+    maxChange: float | None
     iterationInitialState: Literal["require_verified", "cold_start"]
     dateSystem: Literal["1900", "1904"]
     workbookSeed: str
     timezone: SourceTimezone
-    fixedNowUtc: Union[str, None]
+    fixedNowUtc: str | None
     iterationOrigin: SettingOrigin
-    maxIterationsOrigin: Union[SettingOrigin, None]
-    maxChangeOrigin: Union[SettingOrigin, None]
+    maxIterationsOrigin: SettingOrigin | None
+    maxChangeOrigin: SettingOrigin | None
     warnings: list[SourceCalculationWarning]
-    maxElapsedMs: Union[str, None]
-    maxWorkUnits: Union[str, None]
+    maxElapsedMs: str | None
+    maxWorkUnits: str | None
 
 
 class SourceClock(TypedDict):
-    now: Union[datetime, None]
+    now: datetime | None
     timezone: str
     fixed: bool
 
@@ -186,7 +186,7 @@ class SourceOptionalErrorSummary(TypedDict, total=False):
 class SourceErrorSummary(SourceOptionalErrorSummary):
     count: int
     locations: list[str]
-    messages: list[Union[str, None]]
+    messages: list[str | None]
 
 
 class SourceUnknownFunction(TypedDict):
@@ -209,7 +209,7 @@ class SourceSummary(SourceOptionalSummary):
 
 
 class SourceOptionalResult(TypedDict, total=False):
-    external_links: dict[str, Union[str, int, bool]]
+    external_links: dict[str, str | int | bool]
 
 
 class SourceRecalculateResult(SourceOptionalResult):
@@ -220,7 +220,7 @@ class SourceRecalculateResult(SourceOptionalResult):
     worksheet_parts_changed: int
     clock: SourceClock
     seed: int
-    calculation: Union[ResolvedSourceCalculation, None]
+    calculation: ResolvedSourceCalculation | None
     coverage: Literal["complete", "partial"]
     coverage_scope: Literal["none", "conservative"]
     caches_invalidated: int

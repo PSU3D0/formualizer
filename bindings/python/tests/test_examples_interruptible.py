@@ -19,11 +19,21 @@ PYTHON_ROOT = Path(__file__).resolve().parents[1]
         ),
         (
             "interruptible_async_service.py",
-            ("Superseded:", "installed results preserved", "heartbeat ticks=", "revenue=1500"),
+            (
+                "Superseded:",
+                "installed results preserved",
+                "heartbeat ticks=",
+                "revenue=1500",
+            ),
         ),
         (
             "interruptible_pause_inspect.py",
-            ("Watch triggered:", "Paused: job active=True", "Repair cost:", "repaired margin=20"),
+            (
+                "Watch triggered:",
+                "Paused: job active=True",
+                "Repair cost:",
+                "repaired margin=20",
+            ),
         ),
     ],
 )

@@ -31,8 +31,7 @@ def build_model(price=12):
             "Cohorts",
             row,
             5,
-            f"=SUMIFS(D${max(1, row - 7)}:D{row},"
-            f"B${max(1, row - 7)}:B{row},B{row})",
+            f"=SUMIFS(D${max(1, row - 7)}:D{row},B${max(1, row - 7)}:B{row},B{row})",
         )
         wb.set_formula("Cohorts", row, 6, f"=C{row}*Assumptions!$A$2")
         wb.set_formula("Cohorts", row, 7, f"=D{row}-F{row}")

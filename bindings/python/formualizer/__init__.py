@@ -8,11 +8,10 @@ and is re-exported here for convenience.
 See ``bindings/python/README.md`` in the repository for longer, runnable examples.
 """
 
+from . import _source_types, visitor
 from . import formualizer_py as _py
-from . import visitor
-from ._types import ReferenceLike
-from . import _source_types
 from ._source_types import *  # noqa: F403
+from ._types import ReferenceLike
 from .formualizer_py import *  # noqa: F403
 
 __all__ = [*_py.__all__, *_source_types.__all__, "ReferenceLike", "visitor"]

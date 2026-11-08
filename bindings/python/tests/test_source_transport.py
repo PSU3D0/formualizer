@@ -3,10 +3,9 @@
 import inspect
 
 import pytest
-
-import formualizer as fz
 from test_source_calculation import book, reopen
 
+import formualizer as fz
 
 LIMIT_FIELDS = (
     "maxInputBytes",
@@ -45,7 +44,7 @@ def test_invalid_limits_before_zip_and_file_destination(field, value, tmp_path):
     "limits",
     [
         [],
-        [dict()],
+        [{}],
         True,
         "limits",
         {"unknown": 1},
@@ -231,12 +230,12 @@ def test_fatal_limits_sample_zero_atomic_destination_and_recovery(
     path, out = tmp_path / "in.xlsx", tmp_path / "out.xlsx"
     path.write_bytes(source)
     out.write_bytes(b"keep destination")
-    kwargs = dict(
-        profile="workbook",
-        require_complete=False,
-        error_location_limit=0,
-        limits={field: 0},
-    )
+    kwargs = {
+        "profile": "workbook",
+        "require_complete": False,
+        "error_location_limit": 0,
+        "limits": {field: 0},
+    }
     for call in [
         lambda: fz.recalculate_xlsx_bytes(source, **kwargs),
         lambda: fz.recalculate_xlsx_file(str(path), str(out), **kwargs),
@@ -254,14 +253,9 @@ def test_fatal_limits_sample_zero_atomic_destination_and_recovery(
 
 
 def test_strict_unused_query_zero_and_optional_telemetry():
-    no_query = {
-        field: 0
-        for field in [
-            "maxAffectedWork",
-            "maxAffectedRegions",
-            "maxAffectedScratchBytes",
-        ]
-    }
+    no_query = dict.fromkeys(
+        ["maxAffectedWork", "maxAffectedRegions", "maxAffectedScratchBytes"], 0
+    )
     result = fz.recalculate_xlsx_bytes(book({"A1": "=1+1"}), limits=no_query)
     assert result["coverage"] == "complete"
     assert result["operation_diagnostics"]["dependencyEvidence"] is None
