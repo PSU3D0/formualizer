@@ -81,11 +81,17 @@ See [Interruptible Recalculation](https://www.formualizer.dev/docs/guides/interr
 - **Faster writes.** Batch writes reserve sheet storage once and propagate changes once per batch, including during undo and redo. In a native release benchmark, table writes are 2.96 times faster at 150 rows and 4.29 times faster at 2,000 rows.
 - **Rust.** `resize_table` and `resize_table_body` on `Engine`, `Workbook` and their actions; `TableMetadata::empty_body`.
 
+### Performance
+
+- **Array criteria count in one pass.** `COUNTIF` with an array of equality criteria, as in the distinct-count idiom `SUM(1/COUNTIF(A1:A20000,A1:A20000))`, builds one index of the range instead of scanning it once per criterion: about 21 ms over 20,000 cells of ASCII text. Matching keeps COUNTIF's Unicode case rules. (#559, @mcdonaldsam)
+- **Array lookup values read the table once.** `LOOKUP` with an array of lookup values reads its lookup and result vectors once per call, so 1,000 lookups into a 10,000-row table take under 100 ms. (#549, @mcdonaldsam)
+
 ### Excel compatibility
 
 - `SUMIF`, `SUMIFS`, `COUNTIF`, `COUNTIFS`, `AVERAGEIF` and `AVERAGEIFS` return one result per criterion when the criterion is an array. (#546, @mcdonaldsam)
 - `ISNUMBER` and the other `IS*` functions test each element of an array or range. (#547, @mcdonaldsam)
 - `XLOOKUP` and `XMATCH` look up each element of an array lookup value. (#548, @mcdonaldsam)
+- `MATCH`, `VLOOKUP`, `HLOOKUP` and `LOOKUP` look up each element of an array lookup value. Shared formulas saved without a complete calculation chain now get Excel's legacy implicit intersection, so they load and calculate row by row. (#549, @mcdonaldsam)
 - `^` and `POWER` return the real odd root of a negative base: `=(-8)^(1/3)` is `-2`. (#550, @mcdonaldsam)
 - An error criterion such as `"#N/A"` matches cells holding that error. (#551, @mcdonaldsam)
 - Rich-value metadata that only describes a formula's cached value no longer blocks loading or recalculation. (#552, @mcdonaldsam)
