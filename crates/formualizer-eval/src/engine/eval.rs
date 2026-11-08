@@ -1625,6 +1625,31 @@ where
         }
     }
 
+    /// Resize a table within this action so rollback and history include its extent.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+    ) -> Result<TableMetadata, crate::engine::EditorError> {
+        self.engine.ensure_not_poisoned()?;
+        let range = self.engine.table_resize_range(name, new_end_row)?;
+        if let Some(capture_ptr) = self.capture {
+            self.engine
+                .edit_with_capture(unsafe { &mut *capture_ptr }, |editor| {
+                    editor.resize_table(name, range)
+                })??;
+        } else {
+            return self
+                .engine
+                .resize_table(name, new_end_row)
+                .map_err(Into::into);
+        }
+        Ok(self
+            .engine
+            .table_metadata(name)
+            .expect("resized table exists"))
+    }
+
     #[inline]
     pub fn set_row_hidden(
         &mut self,
@@ -5215,6 +5240,38 @@ where
         Ok(())
     }
 
+    fn table_resize_range(&self, name: &str, new_end_row: u32) -> Result<RangeRef, ExcelError> {
+        let entry = self.graph.resolve_table_entry(name).ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Name).with_message(format!("Unknown table: {name}"))
+        })?;
+        let minimum = entry.range.start.coord.row()
+            + 1
+            + u32::from(entry.header_row)
+            + u32::from(entry.totals_row);
+        if new_end_row < minimum || new_end_row > 1_048_576 {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(
+                "Table resize must retain at least one body row within the sheet grid",
+            ));
+        }
+        let mut range = entry.range;
+        range.end.coord = Coord::from_excel(new_end_row, range.end.coord.col() + 1, true, true);
+        Ok(range)
+    }
+
+    /// Resize a native table's row extent. For history, use an EngineAction.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+    ) -> Result<TableMetadata, ExcelError> {
+        self.ensure_not_poisoned()?;
+        let range = self.table_resize_range(name, new_end_row)?;
+        self.graph.resize_table(name, range)?;
+        self.record_structural_change(StructuralScope::AllSheets);
+        self.mark_topology_edited();
+        Ok(self.table_metadata(name).expect("resized table exists"))
+    }
+
     pub fn define_source_scalar(
         &mut self,
         name: &str,
@@ -6501,6 +6558,7 @@ where
                 | ChangeEvent::VertexMoved { .. }
                 | ChangeEvent::FormulaAdjusted { .. }
                 | ChangeEvent::NamedRangeAdjusted { .. }
+                | ChangeEvent::TableResized { .. }
                 | ChangeEvent::EdgeAdded { .. }
                 | ChangeEvent::EdgeRemoved { .. }
                 | ChangeEvent::DefineName { .. }
@@ -14273,7 +14331,8 @@ where
                     self.record_structural_change(scope);
                 }
             }
-            ChangeEvent::DefineName { .. }
+            ChangeEvent::TableResized { .. }
+            | ChangeEvent::DefineName { .. }
             | ChangeEvent::UpdateName { .. }
             | ChangeEvent::DeleteName { .. }
             | ChangeEvent::NamedRangeAdjusted { .. } => {

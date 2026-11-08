@@ -223,6 +223,11 @@ fn apply_forward_change_event(
             let mut editor = VertexEditor::new(graph);
             editor.set_cell_formula(*addr, new.clone());
         }
+        ChangeEvent::TableResized {
+            name, new_range, ..
+        } => {
+            graph.resize_table(name, *new_range)?;
+        }
         ChangeEvent::SetRowVisibility { .. } => {
             // Engine-level sidecar metadata; applied by Engine undo/redo orchestration.
         }

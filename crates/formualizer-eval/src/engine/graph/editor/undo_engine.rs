@@ -204,6 +204,11 @@ impl UndoEngine {
                         ChangeEvent::SpillCleared { anchor, .. } => {
                             graph.clear_spill_region(anchor);
                         }
+                        ChangeEvent::TableResized {
+                            name, new_range, ..
+                        } => {
+                            graph.resize_table(&name, new_range)?;
+                        }
                         ChangeEvent::SetRowVisibility { .. } => {
                             // Engine-level sidecar metadata; applied by Engine undo/redo wrappers.
                         }

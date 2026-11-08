@@ -174,6 +174,46 @@ impl DependencyGraph {
         Ok(())
     }
 
+    /// Resize only the row extent, preserving the table identity and columns.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_range: RangeRef,
+    ) -> Result<RangeRef, ExcelError> {
+        let entry = self.resolve_table_entry(name).cloned().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Name).with_message(format!("Unknown table: {name}"))
+        })?;
+        if new_range.start != entry.range.start
+            || new_range.end.sheet_id != entry.sheet_id()
+            || new_range.end.coord.col() != entry.range.end.coord.col()
+            || new_range.end.coord.row() < entry.range.start.coord.row()
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("Table resize must preserve its sheet, start, and columns"));
+        }
+        let old_range = entry.range;
+        if old_range == new_range {
+            return Ok(old_range);
+        }
+        let sheet_id = entry.sheet_id();
+        self.update_table(
+            name,
+            new_range,
+            entry.header_row,
+            entry.headers,
+            entry.totals_row,
+        )?;
+        // Also invalidate ordinary cell/range readers in the old/new union.
+        self.mark_dirty_rects(&[(
+            sheet_id,
+            old_range.start.coord.row(),
+            old_range.end.coord.row().max(new_range.end.coord.row()),
+            old_range.start.coord.col(),
+            old_range.end.coord.col(),
+        )]);
+        Ok(old_range)
+    }
+
     pub fn delete_table(&mut self, name: &str) -> Result<(), ExcelError> {
         let Some(canon) = self.canonical_table_name(name) else {
             return Err(ExcelError::new(ExcelErrorKind::Name)

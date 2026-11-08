@@ -50,6 +50,11 @@ pub enum ChangeEvent {
         old_formula: Option<ASTNode>,
         new: ASTNode,
     },
+    TableResized {
+        name: String,
+        old_range: crate::reference::RangeRef,
+        new_range: crate::reference::RangeRef,
+    },
     SetRowVisibility {
         sheet_id: SheetId,
         row0: u32,

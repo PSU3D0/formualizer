@@ -60,6 +60,87 @@ fn structured_ref_table_column_tracks_cell_edits_via_table_vertex() {
 }
 
 #[test]
+fn table_resize_without_cell_edits_rebuilds_dependencies_and_journal_replay() {
+    use crate::engine::ChangeEvent;
+    use crate::engine::graph::editor::undo_engine::UndoEngine;
+    let mut engine = Engine::new(
+        crate::test_workbook::TestWorkbook::new(),
+        EvalConfig::default(),
+    );
+    engine.add_sheet("Sheet1").unwrap();
+    for row in 2..=4 {
+        engine
+            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(row as f64))
+            .unwrap();
+    }
+    let sheet = engine.sheet_id("Sheet1").unwrap();
+    engine
+        .define_table(
+            "Orders",
+            RangeRef::new(
+                CellRef::new(sheet, Coord::from_excel(1, 1, true, true)),
+                CellRef::new(sheet, Coord::from_excel(2, 1, true, true)),
+            ),
+            true,
+            vec!["seats".into()],
+            false,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            3,
+            formualizer_parse::parser::parse("=SUM(Orders[seats])").unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        engine.evaluate_cell("Sheet1", 1, 3).unwrap(),
+        Some(LiteralValue::Number(2.0))
+    );
+    engine.resize_table("Orders", 4).unwrap();
+    assert_eq!(
+        engine.evaluate_cell("Sheet1", 1, 3).unwrap(),
+        Some(LiteralValue::Number(9.0))
+    );
+
+    let (_, journal) = engine
+        .action_atomic_journal("shrink", |tx| {
+            tx.resize_table("Orders", 2)?;
+            Ok(())
+        })
+        .unwrap();
+    assert!(
+        journal
+            .graph
+            .events
+            .iter()
+            .any(|event| matches!(event, ChangeEvent::TableResized { .. }))
+    );
+    assert_eq!(
+        engine.evaluate_cell("Sheet1", 1, 3).unwrap(),
+        Some(LiteralValue::Number(2.0))
+    );
+    let mut undo = UndoEngine::new();
+    undo.push_action(journal);
+    engine.undo_action(&mut undo).unwrap();
+    assert_eq!(engine.table_metadata("Orders").unwrap().end_row, 4);
+    assert_eq!(
+        engine.evaluate_cell("Sheet1", 1, 3).unwrap(),
+        Some(LiteralValue::Number(9.0))
+    );
+    engine.redo_action(&mut undo).unwrap();
+    assert_eq!(engine.table_metadata("Orders").unwrap().end_row, 2);
+    assert_eq!(
+        engine.evaluate_cell("Sheet1", 1, 3).unwrap(),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert!(engine.resize_table("Orders", 0).is_err());
+    assert!(engine.resize_table("Orders", 1).is_err());
+    assert!(engine.resize_table("Orders", 1_048_577).is_err());
+}
+
+#[test]
 fn structured_ref_this_row_column_rewrites_to_concrete_cell() {
     let ctx = crate::test_workbook::TestWorkbook::new();
     let mut engine: Engine<_> = Engine::new(ctx, EvalConfig::default());

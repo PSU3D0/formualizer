@@ -1007,6 +1007,12 @@ pub struct Workbook {
 }
 
 trait WorkbookActionOps {
+    fn resize_table(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+    ) -> Result<formualizer_eval::engine::TableMetadata, IoError>;
+
     fn set_value(
         &mut self,
         sheet: &str,
@@ -1088,6 +1094,15 @@ pub struct WorkbookAction<'a> {
 }
 
 impl WorkbookAction<'_> {
+    /// Resize a native table as part of this reversible action.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+    ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
+        self.ops.resize_table(name, new_end_row)
+    }
+
     #[inline]
     pub fn set_value(
         &mut self,
@@ -1848,6 +1863,21 @@ impl Workbook {
                     tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
                 }
                 impl WorkbookActionOps for TxOps<'_, '_> {
+                    fn resize_table(
+                        &mut self,
+                        name: &str,
+                        new_end_row: u32,
+                    ) -> Result<formualizer_eval::engine::TableMetadata, IoError>
+                    {
+                        self.tx
+                            .resize_table(name, new_end_row)
+                            .map_err(|e| match e {
+                                formualizer_eval::engine::EditorError::Excel(excel) => {
+                                    IoError::Engine(excel)
+                                }
+                                other => IoError::from_backend("editor", other),
+                            })
+                    }
                     fn set_value(
                         &mut self,
                         sheet: &str,
@@ -1990,6 +2020,20 @@ impl Workbook {
                 tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
             }
             impl WorkbookActionOps for TxOps<'_, '_> {
+                fn resize_table(
+                    &mut self,
+                    name: &str,
+                    new_end_row: u32,
+                ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
+                    self.tx
+                        .resize_table(name, new_end_row)
+                        .map_err(|e| match e {
+                            formualizer_eval::engine::EditorError::Excel(excel) => {
+                                IoError::Engine(excel)
+                            }
+                            other => IoError::from_backend("editor", other),
+                        })
+                }
                 fn set_value(
                     &mut self,
                     sheet: &str,
@@ -3655,6 +3699,18 @@ impl Workbook {
             headers,
             totals_row,
         )
+    }
+
+    /// Resize a native table, retaining at least one body row. Undo/redo restores
+    /// the previous extent together with any cell edits in the same action.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+    ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
+        self.action("resize_table", |action| {
+            action.resize_table(name, new_end_row)
+        })
     }
 
     /// Metadata for every defined table, ordered by name.

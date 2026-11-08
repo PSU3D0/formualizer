@@ -498,6 +498,23 @@ impl<'g> VertexEditor<'g> {
 
     // Transaction support
 
+    /// Resize native table metadata and record a reversible change.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_range: crate::reference::RangeRef,
+    ) -> Result<(), EditorError> {
+        let old_range = self.graph.resize_table(name, new_range)?;
+        if old_range != new_range {
+            self.log_change(ChangeEvent::TableResized {
+                name: name.to_string(),
+                old_range,
+                new_range,
+            });
+        }
+        Ok(())
+    }
+
     // Transaction support has been moved to TransactionContext
     // which coordinates ChangeLog, TransactionManager, and VertexEditor
 
@@ -549,6 +566,11 @@ impl<'g> VertexEditor<'g> {
                     // formula back revives it.
                     self.graph.retire_cell_for_replay(addr);
                 }
+            }
+            ChangeEvent::TableResized {
+                name, old_range, ..
+            } => {
+                self.graph.resize_table(&name, old_range)?;
             }
             ChangeEvent::SetRowVisibility { .. } => {
                 // Engine-level sidecar metadata; handled by Engine replay/rollback paths.
