@@ -82,6 +82,112 @@ fn edits_inside_a_runtime_table_propagate() {
 }
 
 #[test]
+fn resize_without_cell_edits_invalidates_structured_references_and_is_reversible() {
+    for changelog in [false, true] {
+        let mut config = formualizer_workbook::WorkbookConfig::ephemeral();
+        config.enable_changelog = changelog;
+        let mut wb = Workbook::new_with_config(config);
+        wb.add_sheet("S").unwrap();
+        wb.set_values(
+            "S",
+            2,
+            1,
+            &[
+                vec![LiteralValue::Number(10.0)],
+                vec![LiteralValue::Number(20.0)],
+                vec![LiteralValue::Number(30.0)],
+            ],
+        )
+        .unwrap();
+        wb.define_table(
+            "Orders",
+            "S",
+            (1, 1, 2, 1),
+            vec!["seats".into()],
+            true,
+            false,
+        )
+        .unwrap();
+        wb.set_formula("S", 1, 3, "=SUM(Orders[seats])").unwrap();
+        wb.set_formula("S", 2, 3, "=C1*2").unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 2, 3), Some(LiteralValue::Number(20.0)));
+        assert_eq!(wb.resize_table("orders", 4).unwrap().end_row, 4);
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 2, 3), Some(LiteralValue::Number(120.0)));
+        // New row stripes must follow a grow even after evaluation caches warm.
+        wb.action("edit expanded row", |tx| {
+            tx.set_value("S", 4, 1, LiteralValue::Number(40.0))
+        })
+        .unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 2, 3), Some(LiteralValue::Number(140.0)));
+        wb.undo().unwrap();
+        wb.undo().unwrap();
+        assert_eq!(wb.table_metadata("Orders").unwrap().end_row, 2);
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 2, 3), Some(LiteralValue::Number(20.0)));
+        wb.redo().unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 2, 3), Some(LiteralValue::Number(120.0)));
+        // Changes outside a shrunken table no longer affect its aggregate.
+        wb.resize_table("Orders", 2).unwrap();
+        wb.set_value("S", 4, 1, LiteralValue::Number(99.0)).unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 2, 3), Some(LiteralValue::Number(20.0)));
+        assert!(wb.resize_table("Orders", 1).is_err());
+        assert!(wb.resize_table("Orders", 1_048_577).is_err());
+        assert!(wb.resize_table("missing", 4).is_err());
+    }
+}
+
+#[test]
+fn failed_action_restores_table_extent_values_and_future_invalidation() {
+    for changelog in [false, true] {
+        let mut config = formualizer_workbook::WorkbookConfig::ephemeral();
+        config.enable_changelog = changelog;
+        let mut wb = Workbook::new_with_config(config);
+        wb.add_sheet("S").unwrap();
+        wb.set_value("S", 2, 1, LiteralValue::Number(10.0)).unwrap();
+        wb.define_table(
+            "Orders",
+            "S",
+            (1, 1, 2, 1),
+            vec!["seats".into()],
+            true,
+            false,
+        )
+        .unwrap();
+        wb.set_formula("S", 1, 3, "=SUM(Orders[seats])").unwrap();
+        wb.evaluate_all().unwrap();
+        let failed = wb.action("resize then fail", |tx| {
+            tx.resize_table("Orders", 100)?;
+            tx.set_value("S", 100, 1, LiteralValue::Number(99.0))?;
+            tx.set_formula("S", 1, 4, "=INVALID((")
+        });
+        assert!(failed.is_err());
+        assert_eq!(wb.table_metadata("Orders").unwrap().end_row, 2);
+        assert_eq!(
+            wb.get_value("S", 100, 1).unwrap_or(LiteralValue::Empty),
+            LiteralValue::Empty
+        );
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 1, 3), Some(LiteralValue::Number(10.0)));
+        wb.action("future resize", |tx| {
+            tx.resize_table("Orders", 100)?;
+            tx.set_value("S", 100, 1, LiteralValue::Number(99.0))
+        })
+        .unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 1, 3), Some(LiteralValue::Number(109.0)));
+        wb.undo().unwrap();
+        assert_eq!(wb.table_metadata("Orders").unwrap().end_row, 2);
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("S", 1, 3), Some(LiteralValue::Number(10.0)));
+    }
+}
+
+#[test]
 fn defined_tables_are_listed_with_their_metadata() {
     let mut wb = workbook_with_data();
     wb.define_table(

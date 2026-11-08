@@ -77,6 +77,10 @@ pub(crate) struct ScanRetention {
 pub(crate) struct ReadOptions {
     #[cfg(feature = "xlsx-recalc")]
     pub(crate) policy: ReadPolicy,
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) sparse_dimensions: bool,
+    #[cfg(feature = "xlsx-recalc")]
+    pub(crate) allow_data_tables: bool,
     pub(crate) cancel: Option<CancelToken>,
     pub(crate) limits: ReadLimits,
 }
@@ -105,6 +109,10 @@ impl Default for ReadOptions {
         Self {
             #[cfg(feature = "xlsx-recalc")]
             policy: ReadPolicy::Compatible,
+            #[cfg(feature = "xlsx-recalc")]
+            sparse_dimensions: false,
+            #[cfg(feature = "xlsx-recalc")]
+            allow_data_tables: false,
             cancel: None,
             limits: ReadLimits {
                 #[cfg(feature = "xlsx-recalc")]
@@ -128,6 +136,8 @@ impl From<&crate::cache_recalculate::XlsxRecalculateOptions> for ReadOptions {
     fn from(options: &crate::cache_recalculate::XlsxRecalculateOptions) -> Self {
         Self {
             policy: ReadPolicy::Strict,
+            sparse_dimensions: options.profile == crate::XlsxRecalculateProfile::Workbook,
+            allow_data_tables: options.profile == crate::XlsxRecalculateProfile::Workbook,
             cancel: options.cancel.clone(),
             limits: ReadLimits {
                 max_input_bytes: options.limits.max_input_bytes,

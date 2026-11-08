@@ -396,6 +396,15 @@ impl PyLiteralValue {
         }
     }
 
+    /// Typed engine payload, including FunctionPanicked attribution, for error cells.
+    #[getter]
+    pub fn error_extra(&self, py: Python<'_>) -> Option<PyObject> {
+        match &self.inner {
+            LiteralValue::Error(e) => crate::errors::error_extra_to_py(py, e.extra()),
+            _ => None,
+        }
+    }
+
     /// If this is an error and has location, return (row, col); otherwise None
     #[getter]
     pub fn error_location(&self) -> Option<(u32, u32)> {
@@ -491,6 +500,12 @@ pub(crate) fn literal_to_py(py: Python<'_>, value: &LiteralValue) -> PyResult<Py
             let dict = PyDict::new(py);
             dict.set_item("type", "Error")?;
             dict.set_item("kind", format!("{:?}", err.kind))?;
+            if matches!(
+                err.extra(),
+                formualizer::common::error::ExcelErrorExtra::FunctionPanicked { .. }
+            ) {
+                dict.set_item("extra", crate::errors::error_extra_to_py(py, err.extra()))?;
+            }
             if let Some(msg) = err.message() {
                 dict.set_item("message", msg)?;
             }

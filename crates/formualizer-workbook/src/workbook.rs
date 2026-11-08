@@ -679,8 +679,17 @@ impl formualizer_eval::function::Function for WorkbookCustomFunction {
                 unwrap_scalar_array(value),
             )),
             Ok(Err(err)) => Err(err),
-            Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
-                .with_message("Custom function callback panicked")),
+            Err(payload) => {
+                _ctx.report_unavailable_operation(
+                    formualizer_eval::operation_diagnostics::UnavailableOperation::FunctionPanicked {
+                        name: self.canonical_name.clone(),
+                    },
+                );
+                Err(ExcelError::from_function_panic(
+                    &self.canonical_name,
+                    &*payload,
+                ))
+            }
         }
     }
 }
@@ -781,8 +790,17 @@ impl formualizer_eval::function::Function for WorkbookWasmFunction {
                 unwrap_scalar_array(value),
             )),
             Ok(Err(err)) => Err(err),
-            Err(_) => Err(ExcelError::new(ExcelErrorKind::Value)
-                .with_message("WASM function runtime panicked")),
+            Err(payload) => {
+                _ctx.report_unavailable_operation(
+                    formualizer_eval::operation_diagnostics::UnavailableOperation::FunctionPanicked {
+                        name: self.canonical_name.clone(),
+                    },
+                );
+                Err(ExcelError::from_function_panic(
+                    &self.canonical_name,
+                    &*payload,
+                ))
+            }
         }
     }
 }
@@ -961,6 +979,20 @@ impl formualizer_eval::traits::FunctionProvider for WBResolver {
 impl formualizer_eval::traits::Resolver for WBResolver {}
 impl formualizer_eval::traits::EvaluationContext for WBResolver {}
 
+#[cfg(test)]
+mod spill_history_tests;
+
+/// Incremental index of spill snapshots in the open outer action. Ordinary
+/// history events are visited once; snapshot cells are indexed once per clear.
+#[derive(Default)]
+struct SpillActionHistory {
+    next_event: usize,
+    spill_clear_revision: u64,
+    cells: std::collections::HashSet<formualizer_eval::reference::CellRef>,
+    #[cfg(test)]
+    events_inspected: usize,
+}
+
 /// Engine-backed workbook facade.
 pub struct Workbook {
     engine: formualizer_eval::engine::Engine<WBResolver>,
@@ -969,6 +1001,7 @@ pub struct Workbook {
     wasm_plugins: WasmPluginManager,
     enable_changelog: bool,
     log: formualizer_eval::engine::ChangeLog,
+    spill_action_history: SpillActionHistory,
     undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine,
     /// Workbook-level `<calcPr>` settings parsed at load (spec §9). The
     /// `iterate*` attributes are authoritative on the live engine config, but
@@ -985,6 +1018,13 @@ pub struct Workbook {
 }
 
 trait WorkbookActionOps {
+    fn resize_table_body(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+        empty_body: bool,
+    ) -> Result<formualizer_eval::engine::TableMetadata, IoError>;
+
     fn set_value(
         &mut self,
         sheet: &str,
@@ -1066,6 +1106,25 @@ pub struct WorkbookAction<'a> {
 }
 
 impl WorkbookAction<'_> {
+    /// Resize a native table as part of this reversible action.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+    ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
+        self.resize_table_body(name, new_end_row, false)
+    }
+
+    /// Set the logical body state while retaining a physical Excel row.
+    pub fn resize_table_body(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+        empty_body: bool,
+    ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
+        self.ops.resize_table_body(name, new_end_row, empty_body)
+    }
+
     #[inline]
     pub fn set_value(
         &mut self,
@@ -1233,6 +1292,7 @@ impl Workbook {
             wasm_plugins: WasmPluginManager::default(),
             enable_changelog: config.enable_changelog,
             log,
+            spill_action_history: SpillActionHistory::default(),
             undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
             calc_settings: None,
             name_import_diagnostics: Vec::new(),
@@ -1677,6 +1737,12 @@ impl Workbook {
     pub fn changelog(&self) -> &formualizer_eval::engine::ChangeLog {
         &self.log
     }
+    /// Whether an internal engine panic has permanently disabled work.
+    /// Reads may expose stale values; discard the workbook when true.
+    pub fn is_poisoned(&self) -> bool {
+        self.engine.is_poisoned()
+    }
+
     pub fn eval_config(&self) -> &formualizer_eval::engine::EvalConfig {
         &self.engine.config
     }
@@ -1768,12 +1834,21 @@ impl Workbook {
 
     pub fn begin_action(&mut self, description: impl Into<String>) {
         if self.enable_changelog {
+            if self.log.compound_depth() == 0 {
+                let history = &mut self.spill_action_history;
+                history.cells.clear();
+                history.next_event = self.log.len();
+                history.spill_clear_revision = self.log.spill_clear_revision();
+            }
             self.log.begin_compound(description.into());
         }
     }
     pub fn end_action(&mut self) {
         if self.enable_changelog {
             self.log.end_compound();
+            if self.log.compound_depth() == 0 {
+                self.spill_action_history.cells.clear();
+            }
         }
     }
 
@@ -1791,6 +1866,17 @@ impl Workbook {
         name: &str,
         f: impl FnOnce(&mut WorkbookAction<'_>) -> Result<T, IoError>,
     ) -> Result<T, IoError> {
+        self.engine.begin_deferred_dirty();
+        let result = self.action_inner(name, f);
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn action_inner<T>(
+        &mut self,
+        name: &str,
+        f: impl FnOnce(&mut WorkbookAction<'_>) -> Result<T, IoError>,
+    ) -> Result<T, IoError> {
         let mut user_err: Option<IoError> = None;
 
         if self.enable_changelog {
@@ -1799,6 +1885,22 @@ impl Workbook {
                     tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
                 }
                 impl WorkbookActionOps for TxOps<'_, '_> {
+                    fn resize_table_body(
+                        &mut self,
+                        name: &str,
+                        new_end_row: u32,
+                        empty_body: bool,
+                    ) -> Result<formualizer_eval::engine::TableMetadata, IoError>
+                    {
+                        self.tx
+                            .resize_table_body(name, new_end_row, empty_body)
+                            .map_err(|e| match e {
+                                formualizer_eval::engine::EditorError::Excel(excel) => {
+                                    IoError::Engine(excel)
+                                }
+                                other => IoError::from_backend("editor", other),
+                            })
+                    }
                     fn set_value(
                         &mut self,
                         sheet: &str,
@@ -1941,6 +2043,21 @@ impl Workbook {
                 tx: &'a mut formualizer_eval::engine::EngineAction<'e, WBResolver>,
             }
             impl WorkbookActionOps for TxOps<'_, '_> {
+                fn resize_table_body(
+                    &mut self,
+                    name: &str,
+                    new_end_row: u32,
+                    empty_body: bool,
+                ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
+                    self.tx
+                        .resize_table_body(name, new_end_row, empty_body)
+                        .map_err(|e| match e {
+                            formualizer_eval::engine::EditorError::Excel(excel) => {
+                                IoError::Engine(excel)
+                            }
+                            other => IoError::from_backend("editor", other),
+                        })
+                }
                 fn set_value(
                     &mut self,
                     sheet: &str,
@@ -2080,6 +2197,13 @@ impl Workbook {
         Ok(v)
     }
     pub fn undo(&mut self) -> Result<(), IoError> {
+        self.engine.begin_deferred_dirty();
+        let result = self.undo_inner();
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn undo_inner(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
             self.engine
                 .undo_logged(&mut self.undo, &mut self.log)
@@ -2092,6 +2216,13 @@ impl Workbook {
         Ok(())
     }
     pub fn redo(&mut self) -> Result<(), IoError> {
+        self.engine.begin_deferred_dirty();
+        let result = self.redo_inner();
+        self.engine.end_deferred_dirty();
+        result
+    }
+
+    fn redo_inner(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
             self.engine
                 .redo_logged(&mut self.undo, &mut self.log)
@@ -2102,6 +2233,11 @@ impl Workbook {
                 .map_err(|e| IoError::from_backend("editor", e))?;
         }
         Ok(())
+    }
+
+    /// Reserve Arrow storage for a batch without changing any cell values.
+    pub fn ensure_sheet_capacity(&mut self, sheet: &str, max_row: usize, max_col: usize) {
+        self.ensure_arrow_sheet_capacity(sheet, max_row, max_col);
     }
 
     fn ensure_arrow_sheet_capacity(&mut self, sheet: &str, min_rows: usize, min_cols: usize) {
@@ -2337,6 +2473,61 @@ impl Workbook {
         }
     }
 
+    // Empty table bodies need successful graph admission before materialization,
+    // including without a changelog.
+    fn formula_needs_graph_edit(&mut self, sheet: &str, row: u32, col: u32) -> bool {
+        self.engine.cell_in_empty_table(sheet, row, col)
+            || self.formula_needs_spill_history(sheet, row, col)
+    }
+
+    // Projection edits need graph history even in deferred mode. Also cover
+    // later cells in the same action after its first edit cleared the spill.
+    fn formula_needs_spill_history(&mut self, sheet: &str, row: u32, col: u32) -> bool {
+        if !self.enable_changelog {
+            return false;
+        }
+        if self.engine.cell_has_spill_projection(sheet, row, col) {
+            return true;
+        }
+        if self.log.compound_depth() == 0 {
+            return false;
+        }
+        let history = &mut self.spill_action_history;
+        let revision = self.log.spill_clear_revision();
+        if history.spill_clear_revision != revision {
+            let events = self.log.events();
+            for event in &events[history.next_event..] {
+                #[cfg(test)]
+                {
+                    history.events_inspected += 1;
+                }
+                match event {
+                    formualizer_eval::engine::ChangeEvent::CompoundStart { depth: 1, .. }
+                    | formualizer_eval::engine::ChangeEvent::CompoundEnd { depth: 1 } => {
+                        history.cells.clear();
+                    }
+                    formualizer_eval::engine::ChangeEvent::SpillCleared { old, .. } => {
+                        history.cells.extend(old.target_cells.iter().copied());
+                    }
+                    _ => {}
+                }
+            }
+            history.next_event = events.len();
+            history.spill_clear_revision = revision;
+        }
+        if history.cells.is_empty() {
+            return false;
+        }
+        let Some(sheet_id) = self.engine.sheet_id(sheet) else {
+            return false;
+        };
+        let cell = formualizer_eval::reference::CellRef::new(
+            sheet_id,
+            formualizer_eval::reference::Coord::from_excel(row, col, true, true),
+        );
+        history.cells.contains(&cell)
+    }
+
     pub fn set_formula(
         &mut self,
         sheet: &str,
@@ -2352,7 +2543,9 @@ impl Workbook {
             .enable_changelog
             .then(|| self.staged_formula_cell(sheet, row, col));
         if self.engine.config.defer_graph_building {
-            if self.engine.get_cell(sheet, row, col).is_some() {
+            if self.engine.get_cell(sheet, row, col).is_some()
+                || self.formula_needs_graph_edit(sheet, row, col)
+            {
                 let with_eq = if formula.starts_with('=') {
                     formula.to_string()
                 } else {
@@ -2542,7 +2735,10 @@ impl Workbook {
                 .engine
                 .sheet_id(sheet)
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
-            let defer_graph_building = self.engine.config.defer_graph_building;
+            let defer_graph_building = self.engine.config.defer_graph_building
+                && !cells.iter().any(|(&(r, c), d)| {
+                    d.formula.is_some() && self.formula_needs_graph_edit(sheet, r, c)
+                });
 
             // Capture per-cell old state from Arrow truth BEFORE applying the bulk edit.
             // In canonical mode the graph value cache is empty, so the editor cannot see
@@ -2611,12 +2807,14 @@ impl Workbook {
                                 };
                                 let ast = formualizer_parse::parser::parse(&with_eq)
                                     .map_err(|e| IoError::from_backend("parser", e))?;
-                                editor.set_cell_formula_with_old_state(
-                                    *cell,
-                                    ast,
-                                    old_value.clone(),
-                                    old_formula.clone(),
-                                );
+                                editor
+                                    .try_set_cell_formula_with_old_state(
+                                        *cell,
+                                        ast,
+                                        old_value.clone(),
+                                        old_formula.clone(),
+                                    )
+                                    .map_err(IoError::Engine)?;
                             }
                         }
                     }
@@ -2662,7 +2860,9 @@ impl Workbook {
                         .map_err(IoError::Engine)?;
                 }
                 if let Some(f) = d.formula.as_ref() {
-                    if self.engine.config.defer_graph_building {
+                    if self.engine.config.defer_graph_building
+                        && !self.formula_needs_graph_edit(sheet, r, c)
+                    {
                         self.engine.stage_formula_text(sheet, r, c, f.clone());
                     } else {
                         let with_eq = if f.starts_with('=') {
@@ -2849,7 +3049,12 @@ impl Workbook {
             self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
         }
 
-        if self.engine.config.defer_graph_building {
+        let needs_graph_edit = rows.iter().enumerate().any(|(ri, forms)| {
+            forms.iter().enumerate().any(|(ci, _)| {
+                self.formula_needs_graph_edit(sheet, start_row + ri as u32, start_col + ci as u32)
+            })
+        });
+        if self.engine.config.defer_graph_building && !needs_graph_edit {
             // Per-cell staged-formula deltas (see #126). Capture each cell's prior
             // staged text before overwriting so undo/redo can replay precisely.
             for (ri, rforms) in rows.iter().enumerate() {
@@ -3210,6 +3415,100 @@ impl Workbook {
             .map_err(IoError::Engine)
     }
 
+    /// Continue full recalculation until a cooperative stop boundary.
+    pub fn evaluate_all_until(
+        &mut self,
+        stop: formualizer_eval::engine::EvaluationStop,
+    ) -> Result<formualizer_eval::engine::EvaluationProgress, IoError> {
+        self.engine
+            .evaluate_all_until(stop)
+            .map_err(IoError::Engine)
+    }
+
+    /// Start an explicit recalculation job; evaluate_* calls are refused until it ends.
+    pub fn begin_recalc(
+        &mut self,
+        options: formualizer_eval::engine::RecalcJobOptions,
+    ) -> Result<(), formualizer_eval::engine::RecalcJobError> {
+        self.engine.begin_recalc(options)
+    }
+    /// Step the explicit job. A returned evaluation error ends the job.
+    pub fn step_recalc(
+        &mut self,
+        stop: formualizer_eval::engine::EvaluationStop,
+    ) -> Result<formualizer_eval::engine::StepReport, formualizer_eval::engine::RecalcJobError>
+    {
+        self.engine.step_recalc(stop)
+    }
+    /// Replace the pending viewport priority; families remain indivisible.
+    pub fn prioritize_recalc(
+        &mut self,
+        targets: &[formualizer_eval::engine::EvaluationTarget],
+    ) -> Result<(), formualizer_eval::engine::RecalcJobError> {
+        self.engine.prioritize_recalc(targets)
+    }
+    /// Drive a job with access to this Workbook between steps.
+    ///
+    /// Breaking pauses an active job. Finished and Cancelled are terminal.
+    /// Step failures end the job and are returned without an IoError wrapper.
+    pub fn recalc_with(
+        &mut self,
+        options: formualizer_eval::engine::RecalcJobOptions,
+        stop_per_step: formualizer_eval::engine::EvaluationStop,
+        mut on_step: impl FnMut(
+            &mut Self,
+            &formualizer_eval::engine::StepReport,
+        ) -> std::ops::ControlFlow<()>,
+    ) -> Result<formualizer_eval::engine::RecalcOutcome, formualizer_eval::engine::RecalcJobError>
+    {
+        use formualizer_eval::engine::{RecalcOutcome, StepPhase};
+        self.begin_recalc(options)?;
+        loop {
+            let report = self.step_recalc(stop_per_step.clone())?;
+            let flow = on_step(self, &report);
+            if let Some(result) = report.result {
+                return Ok(RecalcOutcome::Finished(result));
+            }
+            if report.phase == StepPhase::Cancelled || !self.has_active_recalc_job() {
+                return Ok(RecalcOutcome::Cancelled);
+            }
+            if flow.is_break() {
+                return Ok(RecalcOutcome::Paused);
+            }
+        }
+    }
+
+    /// End an explicit job, keeping installed work and pending dirtiness.
+    pub fn cancel_recalc(&mut self) -> Option<formualizer_eval::engine::StepReport> {
+        self.engine.cancel_recalc()
+    }
+    /// Whether this Workbook owns an active explicit job.
+    pub fn has_active_recalc_job(&self) -> bool {
+        self.engine.has_active_recalc_job()
+    }
+    /// Zero-based inclusive viewport coordinates.
+    pub fn has_pending_in_rect(
+        &self,
+        sheet: formualizer_common::SheetId,
+        r0: u32,
+        c0: u32,
+        r1: u32,
+        c1: u32,
+    ) -> bool {
+        self.engine.has_pending_in_rect(sheet, r0, c0, r1, c1)
+    }
+    /// Zero-based inclusive viewport coordinates.
+    pub fn pending_cells_in_rect(
+        &self,
+        sheet: formualizer_common::SheetId,
+        r0: u32,
+        c0: u32,
+        r1: u32,
+        c1: u32,
+    ) -> formualizer_eval::engine::TargetEvalDelta {
+        self.engine.pending_cells_in_rect(sheet, r0, c0, r1, c1)
+    }
+
     pub fn evaluate_all_cancellable(
         &mut self,
         cancel: formualizer_eval::engine::CancelToken,
@@ -3430,6 +3729,18 @@ impl Workbook {
             headers,
             totals_row,
         )
+    }
+
+    /// Resize a native table, retaining at least one body row. Undo/redo restores
+    /// the previous extent together with any cell edits in the same action.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_end_row: u32,
+    ) -> Result<formualizer_eval::engine::TableMetadata, IoError> {
+        self.action("resize_table", |action| {
+            action.resize_table(name, new_end_row)
+        })
     }
 
     /// Metadata for every defined table, ordered by name.

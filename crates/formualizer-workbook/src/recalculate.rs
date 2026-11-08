@@ -58,9 +58,10 @@ pub struct RecalculateSummary {
     pub errors: usize,
     pub sheets: BTreeMap<String, RecalculateSheetSummary>,
     pub error_summary: BTreeMap<String, RecalculateErrorSummary>,
-    /// Every function the engine does not implement that a formula cell's
-    /// error names (`Unknown function: NAME`), with the number of error
-    /// cells attributed to it. Complete regardless of the location limit.
+    /// Unknown-function cell incidence, complete regardless of sample limit.
+    /// Source recalculation uses executed logical grid/cell reasons, including
+    /// caught results; named/unlocated roots are separate operation diagnostics.
+    /// Legacy resident recalculation derives this map from final error payloads.
     pub unknown_functions: BTreeMap<String, usize>,
 }
 

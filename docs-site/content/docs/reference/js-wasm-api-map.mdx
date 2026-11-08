@@ -46,14 +46,55 @@ For quick operations, use these standalone functions:
 
 The `Workbook` class manages stateful evaluation across multiple sheets and cells.
 
-- `constructor()`: Create a new empty workbook.
-- `fromJson(json: string)`: Load workbook state from a JSON string.
+- `constructor(options?: WorkbookLoadOptions)`: Create a new empty workbook.
+- `fromJson(json: string, options?: WorkbookLoadOptions)`: Load workbook state from a JSON string.
+- `fromXlsxBytes(bytes: Uint8Array | ArrayBufferLike, options?: WorkbookLoadOptions)`: Load workbook state from XLSX bytes.
 - `addSheet(name: string)`: Add a new sheet to the workbook.
 - `setValue(sheet: string, row: number, col: number, value: any)`: Set a literal value.
 - `setFormula(sheet: string, row: number, col: number, formula: string)`: Set a formula.
 - `evaluateCell(sheet: string, row: number, col: number)`: Evaluate a specific cell.
 - `evaluateAll()`: Re-evaluate all dirty cells in the workbook.
 - `sheet(name: string)`: Returns a sheet facade with helper methods like `setValues` and `setFormulas`.
+
+## Recalculation jobs
+
+| API | Behavior |
+| --- | --- |
+| `wb.beginRecalc(options?)` | Returns the generated `RecalcJob` runtime class with typed methods; defaults: `collectDeltas: true`, `maxDeltaRecords: 1024`, no priority |
+| `job.step(budgetMs?)` | Detached `StepReport`; null/undefined means no soft deadline; zero progresses |
+| `job.prioritize(ranges)` | Replaces queued priority with bounded, 1-based inclusive rectangles |
+| `job.active`, `job.cancel()` | Query activity or terminate this generation, retaining installed results |
+| `wb.hasActiveRecalcJob` | Whether an engine job is active |
+| `wb.hasPendingInRect(area)`, `wb.pendingCellsInRect(area)` | Bounded viewport query; pending cells use `{ sheet, row, column }` |
+| `wb.recalc({ budgetMs = 5, onStep, ...jobOptions }?)` | Synchronous driver; `onStep(report, job) === false` pauses |
+| `wb.evaluateWithYield({ budgetMs = 5, onProgress, signal, yieldControl, ...jobOptions }?)` | Awaited progress and task turns; abort rejects AbortError |
+
+`RecalcOutcome` is a discriminated union: `{ status: 'Finished', result }`, `{ status: 'Paused', job }`, or `{ status: 'Cancelled' }`. The async driver never pauses from callback return values. Both drivers hold exclusive ownership through terminal callbacks and cancel their owned generation on hook failure while preserving the original exception.
+
+`StepReport.phase` is BuildingGraph, Scheduling, Evaluating, Finished or Cancelled. Only Finished has a non-null `result` (`computedVertices`, `cycleErrors`, `elapsedMs`). Every report includes `progress`, `stepComputed`, `stepElapsedMs`, `changed`, `overflowSheets` and nullable `longestUnit`. `progress.totalExact` describes whether the current pass total is proven fixed; progress can replan after edits.
+
+Exported types include `RecalcJobOptions`, `RecalcOptions`, `EvaluateWithYieldOptions`, `RecalcJob`, `StepReport`, `RecalcProgress`, `RecalcLongestUnit`, `RecalcResult`, `RecalcOutcome`, `RecalcJobError`, `RecalcEvaluationCause` and `RecalcJobActiveError`. Job errors expose stable `code` fields, including `ALREADY_PENDING` with boolean `explicit` and `EVALUATION` with structured `cause`. Ordinary evaluation refusal preserves its existing error kind and adds `code: 'RECALC_JOB_ACTIVE'`.
+
+See [Interruptible Recalculation](/docs/guides/interruptible-recalculation) for cancellation, resource limits, atomic step overruns, ownership and runnable examples. Internal generated bridge helpers are reserved for the facade.
+
+## Worker Orchestration (`formualizer/worker`)
+
+The subpath export `formualizer/worker` provides a zero-WASM client proxy (`createWorkbookWorker`), a worker-side host dispatcher (`attachWorkbookWorker`), and an in-process `MessageChannel` pair helper (`createInProcessWorkbookWorker`). A browser module worker entry point is exported as `formualizer/worker-entry`.
+
+| API | Behavior |
+| --- | --- |
+| `createWorkbookWorker(endpoint, options?)` | Connect a client to a DOM `Worker`/`MessagePort` or Node `worker_threads` `Worker`/`MessagePort`; supports initial `source` (`empty`, `json`, `xlsx`), `autoRecalc`, `autoRecalcBudgetMs`, `maxDeltaRecords`, `terminateOnDispose` |
+| `attachWorkbookWorker(endpoint, options?)` | Attach the worker host to `self`, `parentPort`, or a `MessagePort`; accepts pre-loaded `runtime`, worker-side `functions`, `allowFunctionFromSource`, `clearFunctionsOnLoad`, and `importModule` |
+| `createInProcessWorkbookWorker(options?)` | Create an in-process `MessageChannel` host + client pair |
+| `client.state`, `client.hasInFlightMutations`, `client.onStatusChange(fn)` | Inspect `{ revision, evaluatedRevision, ackClientSeq, recalcStatus, hasActiveJob }` and causal optimistic-edit state |
+| `client.loadEmpty`, `client.loadFromJson`, `client.loadFromXlsxBytes` | Reset/reload the worker workbook (`revision` resets to `0`, `ackClientSeq` advances, `transfer: true` supported for XLSX bytes) |
+| `client.setValue`, `client.setFormula`, `client.setValues`, `client.setFormulas`, `client.editBatch` | Mutate cells or run ordered batches (with optional `actionDescription` undo grouping), advancing `revision` and scheduling `autoRecalc` when enabled |
+| `client.getValue`, `client.getValueWithState`, `client.getFormula`, `client.readRange`, `client.readRangeWithState` | Read cached values or `{ data, ...state }` without creating missing sheets |
+| `client.subscribeViewport(options)` | Subscribe a 1-based inclusive rectangle in `values` (`grid` or `patches`), `snapshots`, `deltas`, or transferable `columnar` (`tags`, `numbers`, `strings`, `pendingBitset`) mode with automatic job priority and credit-based flow control |
+| `client.recalc`, `client.recalcStream`, `client.beginRecalc`, `client.stepRecalc`, `client.pauseRecalc`, `client.cancelRecalc`, `client.prioritize` | Drive or stream interruptible recalculation across the worker boundary with `AbortSignal` and pause/inspect/repair/resume support |
+| `client.evaluateAll`, `client.evaluateCell`, `client.evaluateCells`, `client.createSheetPortSession`, `client.evaluateSheetPort`, `client.recalculateXlsxBytes` | One-shot evaluation, stateful/stateless SheetPort, and transferable cache-only XLSX recalculation (automatically coordinating with implicit `autoRecalc` jobs) |
+| `client.registerFunctionModule`, `client.registerFunctionFromSource`, `client.unregisterFunction`, `client.listFunctions` | Register and manage worker-side custom functions |
+| `client.dispose()`, `client[Symbol.asyncDispose]()` | Free worker jobs, sessions, cached sheet handles, and workbook; terminates endpoint unless `terminateOnDispose: false` |
 
 ## Custom Functions
 

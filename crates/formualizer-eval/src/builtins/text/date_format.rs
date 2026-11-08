@@ -16,7 +16,7 @@
 //! placeholders other than fractional seconds, fill and padding, conditions
 //! and the system date tags) return [`Fallback::Unsupported`].
 
-use super::number_format::{Fallback, colour_tag, split_sections};
+use super::number_format::{Fallback, colour_tag, split_sections_with_routing};
 use formualizer_common::{DateSystem, try_serial_to_display_date_parts_for};
 
 const SECONDS_PER_DAY: u64 = 86_400;
@@ -78,15 +78,39 @@ impl Token {
 ///
 /// Returns [`Fallback::Unsupported`] when the selected section holds no date
 /// or time code, so the caller can try its other renderers.
+#[cfg(test)]
 pub(super) fn format_datetime(
     system: DateSystem,
     value: f64,
     code: &str,
 ) -> Result<String, Fallback> {
+    format_datetime_outcome(system, value, code).and_then(|outcome| match outcome {
+        DateFormatOutcome::Covered(text)
+        | DateFormatOutcome::UnverifiedLocale(text)
+        | DateFormatOutcome::UnverifiedConditionalRouting(text) => Ok(text),
+        DateFormatOutcome::UnverifiedConditionalInvalid => Err(Fallback::Invalid),
+    })
+}
+
+/// A selected section's rendering result does not establish conditional routing
+/// or the semantics of an ignored locale directive.
+pub(super) enum DateFormatOutcome {
+    Covered(String),
+    UnverifiedLocale(String),
+    UnverifiedConditionalRouting(String),
+    UnverifiedConditionalInvalid,
+}
+
+pub(super) fn format_datetime_outcome(
+    system: DateSystem,
+    value: f64,
+    code: &str,
+) -> Result<DateFormatOutcome, Fallback> {
     if !value.is_finite() {
         return Err(Fallback::Unsupported);
     }
-    let sections = split_sections(code)?;
+    let parsed = split_sections_with_routing(code)?;
+    let sections = parsed.sections;
     if sections.len() > 4 {
         return Err(Fallback::Invalid);
     }
@@ -97,8 +121,32 @@ pub(super) fn format_datetime(
     } else {
         (sections[0], value.abs(), value < 0.0)
     };
-    let tokens = tokenize(section)?;
+    // Every exit after positional selection is provisional when conditional
+    // routing is unresolved. Structural/split errors above are independent.
+    match format_selected_section(system, section, magnitude, automatic_minus) {
+        Err(Fallback::Invalid) if parsed.conditional_routing => {
+            Ok(DateFormatOutcome::UnverifiedConditionalInvalid)
+        }
+        Err(reason) => Err(reason),
+        Ok((text, unverified_locale)) => Ok(if parsed.conditional_routing {
+            DateFormatOutcome::UnverifiedConditionalRouting(text)
+        } else if unverified_locale {
+            DateFormatOutcome::UnverifiedLocale(text)
+        } else {
+            DateFormatOutcome::Covered(text)
+        }),
+    }
+}
+
+fn format_selected_section(
+    system: DateSystem,
+    section: &str,
+    magnitude: f64,
+    automatic_minus: bool,
+) -> Result<(String, bool), Fallback> {
+    let (tokens, unverified_locale) = tokenize(section)?;
     if !tokens.iter().any(Token::is_code) {
+        // TEXT continues to its already-unverified final heuristic.
         return Err(Fallback::Unsupported);
     }
     // Excel cannot show a negative date or time (`TEXT(-1,"yyyy")` is
@@ -106,12 +154,14 @@ pub(super) fn format_datetime(
     if automatic_minus {
         return Err(Fallback::Invalid);
     }
-    render(system, magnitude, &tokens)
+    let text = render(system, magnitude, &tokens)?;
+    Ok((text, unverified_locale))
 }
 
-fn tokenize(section: &str) -> Result<Vec<Token>, Fallback> {
+fn tokenize(section: &str) -> Result<(Vec<Token>, bool), Fallback> {
     let chars: Vec<char> = section.chars().collect();
     let mut tokens = Vec::new();
+    let mut unverified_locale = false;
     let mut literal = String::new();
     let mut i = 0;
     let flush = |literal: &mut String, tokens: &mut Vec<Token>| {
@@ -169,6 +219,9 @@ fn tokenize(section: &str) -> Result<Vec<Token>, Fallback> {
                     if id.to_ascii_lowercase().starts_with("f") && id.len() >= 4 {
                         return Err(Fallback::Unsupported);
                     }
+                    // The tag is admitted here, but its locale is not interpreted.
+                    // Preserve the rendering without certifying that directive.
+                    unverified_locale = true;
                     literal.push_str(symbol);
                 } else {
                     match colour_tag(&tag) {
@@ -226,7 +279,7 @@ fn tokenize(section: &str) -> Result<Vec<Token>, Fallback> {
     }
     flush(&mut literal, &mut tokens);
     resolve_minutes(&mut tokens);
-    Ok(tokens)
+    Ok((tokens, unverified_locale))
 }
 
 /// Fractional-second digits (`.0` to `.000`) straight after a seconds code

@@ -223,6 +223,14 @@ fn apply_forward_change_event(
             let mut editor = VertexEditor::new(graph);
             editor.set_cell_formula(*addr, new.clone());
         }
+        ChangeEvent::TableResized {
+            name,
+            new_range,
+            new_empty_body,
+            ..
+        } => {
+            graph.resize_table_body(name, *new_range, *new_empty_body)?;
+        }
         ChangeEvent::SetRowVisibility { .. } => {
             // Engine-level sidecar metadata; applied by Engine undo/redo orchestration.
         }
@@ -292,12 +300,7 @@ fn apply_forward_change_event(
             let _ = editor.update_name(name, new_definition.clone(), *scope);
         }
         ChangeEvent::SpillCommitted { anchor, new, .. } => {
-            let _ = graph.commit_spill_region_atomic_with_fault(
-                *anchor,
-                new.target_cells.clone(),
-                new.values.clone(),
-                None,
-            );
+            let _ = graph.restore_spill_snapshot(*anchor, new);
         }
         ChangeEvent::SpillCleared { anchor, .. } => {
             graph.clear_spill_region(*anchor);

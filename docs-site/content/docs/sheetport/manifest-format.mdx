@@ -125,6 +125,33 @@ Tables use a `layout` selector to handle dynamic data sizes.
   - `until_marker`: Stop when a specific string is encountered.
   - `sheet_end`: Read until the end of the worksheet.
 
+## Native Excel Tables
+
+A table port can bind to an Excel table by name instead of a sheet layout. This needs the `full-v0` capability profile.
+
+```yaml
+capabilities: { profile: full-v0 }
+ports:
+  - id: orders
+    dir: in
+    shape: table
+    location: { table: { name: Orders, area: body } }
+    schema:
+      kind: table
+      columns:
+        - { name: order_id, type: string }
+        - { name: region, type: string }
+        - { name: seats, type: number }
+```
+
+Schema columns match the table's columns by header name, in any order. A table can have other columns the manifest does not map.
+
+- `area` is `body` (the default), `header` or `totals`. Inputs write to the body.
+- Writing an input resizes the table to the number of rows supplied. Rows past the new end are cleared in the mapped columns, and formulas using structured references such as `SUM(Orders[seats])` follow the new extent.
+- Writing zero rows keeps the single blank body row Excel requires, but the table reads back as empty.
+- With the workbook changelog enabled, a write is one undoable action: undo restores both the cell values and the table's previous size.
+- A table with a totals row accepts writes that keep its row count but refuses writes that would resize it. Duplicate column mappings are refused.
+
 ## Supply Planning Example
 
 This example demonstrates a complete manifest for a supply planning workbook.

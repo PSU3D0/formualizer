@@ -189,6 +189,7 @@ where
         let chunks: Result<Vec<_>, ExcelError> = split
             .par_iter()
             .map(|&(unit, memo)| {
+                let _callbacks = crate::external_callbacks::enter(self.resolver.callbacks.clone());
                 if cancel_flag.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
                     return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(
                         "Parallel evaluation cancelled during execution".to_string(),
@@ -265,23 +266,42 @@ where
         // parallel chunks); see `criteria.rs`.
         let criteria_plan = (self.config.family_kernels
             && (members.len() > 1 || shared_memo.is_some()))
-        .then(|| super::criteria::CriteriaPlan::plan(&self.resolved_functions, ds, template))
+        .then(|| {
+            super::criteria::CriteriaPlan::plan(
+                &self.resolved_functions,
+                self.operation_diagnostic_collector.is_some(),
+                ds,
+                template,
+            )
+        })
         .flatten()
+        .filter(|plan| {
+            self.operation_diagnostic_collector.is_none()
+                || plan.diagnostic_replay_safe(&self.resolved_functions, ds)
+        })
         .filter(|_| !members.iter().any(|&v| self.graph.is_volatile(v)));
-        let local_index;
-        let criteria_index = match &criteria_plan {
-            Some(plan) => {
-                let run_len = shared_memo.map_or(run.len, |shared| shared.run_len);
-                let build = || self.build_criteria_index(plan, ds, sheet_name, run_len);
-                match shared_memo {
-                    Some(shared) => shared.criteria.get_or_init(build).as_ref(),
-                    None => {
-                        local_index = build();
-                        local_index.as_ref()
+        let local_index = std::sync::OnceLock::new();
+        let criteria_name = match ds.get_node(template) {
+            Some(crate::engine::arena::AstNodeData::Function { name_id, .. }) => {
+                ds.resolve_ast_string(*name_id)
+            }
+            _ => "CRITERIA",
+        };
+        let criteria_index_result =
+            crate::function::catch_function_panic(criteria_name, || match &criteria_plan {
+                Some(plan) => {
+                    let run_len = shared_memo.map_or(run.len, |shared| shared.run_len);
+                    let build = || self.build_criteria_index(plan, ds, sheet_name, run_len);
+                    match shared_memo {
+                        Some(shared) => shared.criteria.get_or_init(build).as_ref(),
+                        None => local_index.get_or_init(build).as_ref(),
                     }
                 }
-            }
-            None => None,
+                None => None,
+            });
+        let criteria_index = match criteria_index_result {
+            Ok(index) => index,
+            Err(error) => return self.panicked_run(run, members.len(), error),
         };
         // Program 3: the template's run-invariant calls (a lookup's
         // invariant column index, a name's MATCH) are computed once, at the
@@ -370,20 +390,46 @@ where
             #[cfg(test)]
             self.family_members_for_test
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if let (Some(plan), Some(index)) = (&criteria_plan, criteria_index)
-                && let Some(value) = self.criteria_member(
-                    plan,
-                    index,
-                    &interpreter,
-                    ds,
-                    sheet_name,
-                    row_delta,
-                    col_delta,
-                )
-            {
+            let criteria_probe = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
+            let criteria_value = crate::function::catch_function_panic(criteria_name, || {
+                match (&criteria_plan, criteria_index) {
+                    (Some(plan), Some(index)) => self.criteria_member(
+                        plan,
+                        index,
+                        &interpreter,
+                        ds,
+                        sheet_name,
+                        row_delta,
+                        col_delta,
+                    ),
+                    _ => None,
+                }
+            });
+            let criteria_value = match criteria_value {
+                Ok(value) => value,
+                Err(error) => {
+                    drop(criteria_probe);
+                    // No result has been installed; fail the run atomically.
+                    return self.panicked_run(run, members.len(), error);
+                }
+            };
+            let criteria_value = if criteria_probe.as_ref().is_some_and(|p| p.encountered()) {
+                None
+            } else {
+                criteria_value
+            };
+            drop(criteria_probe);
+            if let Some(value) = criteria_value {
                 // Debug builds: the kernel's result is the walk's.
                 #[cfg(debug_assertions)]
                 {
+                    let _silence = self
+                        .operation_diagnostic_collector
+                        .as_ref()
+                        .map(|c| c.scope(crate::operation_diagnostics::Mode::Suppressed));
                     let walked = interpreter
                         .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
                         .map(|cv| {
@@ -415,6 +461,10 @@ where
                 ));
                 continue;
             }
+            let key_probe = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
             let key = match &memo_plan {
                 Some(plan) if memo.active() => plan
                     .key_args
@@ -429,11 +479,25 @@ where
                     .collect::<Option<super::memo::MemoKey>>(),
                 _ => None,
             };
+            let key = if key_probe.as_ref().is_some_and(|p| p.encountered()) {
+                None
+            } else {
+                key
+            };
+            drop(key_probe);
+            let result_probe = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Inherit));
             let result = match key.as_ref().and_then(|key| memo.get(key)) {
                 Some(hit) => {
                     // Debug builds: a reused result is the walk's result.
                     #[cfg(debug_assertions)]
                     {
+                        let _silence = self
+                            .operation_diagnostic_collector
+                            .as_ref()
+                            .map(|c| c.scope(crate::operation_diagnostics::Mode::Suppressed));
                         let walked = interpreter
                             .evaluate_arena_ast_with_offset(template, row_delta, col_delta, ds, reg)
                             .map(|cv| {
@@ -471,12 +535,15 @@ where
                             cv,
                             self.config.spill.max_spill_cells,
                         );
-                        if let Some(key) = key {
+                        if let Some(key) = key
+                            && !result_probe.as_ref().is_some_and(|p| p.encountered())
+                        {
                             memo.insert(key, (value.clone(), format));
                         }
                         (value, format)
                     }),
             };
+            drop(result_probe);
             let value = result
                 .map(|(value, format)| {
                     self.record_derived_format_at(cell_ref, format);
@@ -507,8 +574,13 @@ where
         }
         let names =
             |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
-        let program =
-            super::lift::LiftProgram::compile(&self.resolved_functions, ds, template, &names)?;
+        let program = super::lift::LiftProgram::compile(
+            &self.resolved_functions,
+            self.operation_diagnostic_collector.is_some(),
+            ds,
+            template,
+            &names,
+        )?;
         let mut bound = Vec::new();
         let mut cells = Vec::with_capacity(members.len());
         for (i, &v) in members.iter().enumerate() {
@@ -521,7 +593,18 @@ where
             }
             cells.push(cell_ref);
         }
+        // Lift speculates pure branches. If an unavailable operation was
+        // encountered, leave this exceptional run to logical per-member walks.
+        let probe = self
+            .operation_diagnostic_collector
+            .as_ref()
+            .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
         let lifted = self.evaluate_run_lifted(&program, run, anchor, members.len())?;
+        let unavailable = probe.as_ref().is_some_and(|p| p.encountered());
+        drop(probe);
+        if unavailable {
+            return None;
+        }
         #[cfg(test)]
         {
             self.family_members_for_test
@@ -570,6 +653,10 @@ where
         #[cfg(debug_assertions)]
         for ((&v, value), &cell) in members.iter().zip(&values).zip(&cells) {
             let lifted_format = self.derived_formats.get(&cell);
+            let _silence = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Suppressed));
             let oracle = self
                 .evaluate_vertex_immutable(v)
                 .unwrap_or_else(LiteralValue::Error);
@@ -605,8 +692,13 @@ where
         let literals = LiteralPlan::new(ds, template, anchor);
         let names =
             |name: &str, as_arg: bool| self.lift_name_is_run_constant(run.sheet, name, as_arg);
-        let program =
-            super::lift::LiftProgram::compile(&self.resolved_functions, ds, template, &names)?;
+        let program = super::lift::LiftProgram::compile(
+            &self.resolved_functions,
+            self.operation_diagnostic_collector.is_some(),
+            ds,
+            template,
+            &names,
+        )?;
         // Every member has the template's literal row (a formula cell's
         // authority id is its vertex id).
         #[cfg(debug_assertions)]
@@ -630,7 +722,16 @@ where
                 }
             }
         }
+        let probe = self
+            .operation_diagnostic_collector
+            .as_ref()
+            .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
         let lifted = self.evaluate_chain_lifted(&program, run, anchor, members.len())?;
+        let unavailable = probe.as_ref().is_some_and(|p| p.encountered());
+        drop(probe);
+        if unavailable {
+            return None;
+        }
         #[cfg(test)]
         self.chained_members_for_test
             .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
@@ -656,8 +757,17 @@ where
         let reg = self.graph.sheet_reg();
         let mut out = crate::interpreter::InvariantValues::default();
         for &node in nodes {
+            let probe = self
+                .operation_diagnostic_collector
+                .as_ref()
+                .map(|c| c.scope(crate::operation_diagnostics::Mode::Speculative));
             let value =
                 interpreter.evaluate_arena_ast_with_offset(node, row_delta, col_delta, ds, reg);
+            let unavailable = probe.as_ref().is_some_and(|p| p.encountered());
+            drop(probe);
+            if unavailable {
+                continue;
+            }
             let entry = match value {
                 Ok(crate::traits::CalcValue::Scalar(v)) => (v, None),
                 Ok(crate::traits::CalcValue::AnnotatedScalar(v, f)) => (v, Some(f)),
@@ -702,7 +812,12 @@ where
             return None;
         }
         let kernel = super::kernels::AggregateKernel::plan(self, ds, template, run.sheet)?;
-        let values = kernel.run(self, anchor, run.row0, members.len(), run.col)?;
+        let values = match crate::function::catch_function_panic(kernel.name(), || {
+            kernel.run(self, anchor, run.row0, members.len(), run.col)
+        }) {
+            Ok(values) => values?,
+            Err(error) => return Some(self.panicked_run(run, members.len(), error)),
+        };
         for (i, &v) in members.iter().enumerate() {
             let cell = crate::reference::CellRef::new(
                 run.sheet,
@@ -711,6 +826,10 @@ where
             self.record_derived_format_at(cell, None);
             #[cfg(debug_assertions)]
             {
+                let _silence = self
+                    .operation_diagnostic_collector
+                    .as_ref()
+                    .map(|c| c.scope(crate::operation_diagnostics::Mode::Suppressed));
                 let oracle = self
                     .evaluate_vertex_immutable(v)
                     .unwrap_or_else(LiteralValue::Error);
@@ -1074,5 +1193,33 @@ where
             }
         }
         Ok(true)
+    }
+}
+
+impl<R: EvaluationContext> Engine<R> {
+    pub(super) fn panicked_run(
+        &self,
+        run: LayerRun,
+        len: usize,
+        error: ExcelError,
+    ) -> Vec<LiteralValue> {
+        if let formualizer_common::ExcelErrorExtra::FunctionPanicked { function, .. } =
+            error.extra()
+            && let Some(collector) = &self.operation_diagnostic_collector
+        {
+            for i in 0..len {
+                let cell = crate::reference::CellRef::new(
+                    run.sheet,
+                    Coord::new(run.row0 + i as u32, run.col, true, true),
+                );
+                collector.record(
+                    Some(cell),
+                    crate::operation_diagnostics::UnavailableOperation::FunctionPanicked {
+                        name: function.to_ascii_uppercase(),
+                    },
+                );
+            }
+        }
+        vec![LiteralValue::Error(error); len]
     }
 }

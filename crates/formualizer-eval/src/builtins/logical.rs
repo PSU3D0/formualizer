@@ -504,7 +504,7 @@ impl Function for IfFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Option<Result<formualizer_parse::parser::ReferenceType, ExcelError>> {
-        match try_resolve_if_reference_or_value(args) {
+        match try_resolve_if_reference_or_value(args, _ctx) {
             Ok(Some(result)) => resolution_to_reference(Ok(result)),
             Ok(None) => None,
             Err(error) => Some(Err(error)),
@@ -517,7 +517,7 @@ impl Function for IfFn {
         _ctx: &dyn FunctionContext<'b>,
         value_fallback: &dyn Fn() -> Result<crate::traits::CalcValue<'b>, ExcelError>,
     ) -> Result<FunctionResolution<'b>, ExcelError> {
-        match try_resolve_if_reference_or_value(args)? {
+        match try_resolve_if_reference_or_value(args, _ctx)? {
             Some(result) => Ok(result),
             None => value_fallback().map(FunctionResolution::Value),
         }
@@ -564,8 +564,10 @@ impl Function for IfFn {
         };
 
         if b {
+            report_if_selected_function_reference(&args[1], _ctx);
             args[1].value()
         } else if let Some(arg) = args.get(2) {
+            report_if_selected_function_reference(arg, _ctx);
             arg.value()
         } else {
             Ok(crate::traits::CalcValue::Scalar(LiteralValue::Boolean(
@@ -575,8 +577,27 @@ impl Function for IfFn {
     }
 }
 
+/// Record only the actually selected producer boundary. The Core query is
+/// metadata-only and respects real names/locals; unknown binding presence is
+/// uncertainty, never absence proof. Raw Callable values are not bare
+/// function references and continue through their existing value path.
+fn report_if_selected_function_reference<'b>(
+    arg: &ArgumentHandle<'_, 'b>,
+    ctx: &dyn FunctionContext<'b>,
+) {
+    if arg.function_value_reference_intent().is_some() {
+        ctx.report_unavailable_operation(
+            crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                name: "IF".into(),
+                mode: "function_reference_selected_value",
+            },
+        );
+    }
+}
+
 fn try_resolve_if_reference_or_value<'b>(
     args: &[ArgumentHandle<'_, 'b>],
+    ctx: &dyn FunctionContext<'b>,
 ) -> Result<Option<FunctionResolution<'b>>, ExcelError> {
     if args.len() < 2 || args.len() > 3 {
         return Ok(Some(FunctionResolution::Value(
@@ -612,8 +633,10 @@ fn try_resolve_if_reference_or_value<'b>(
         }
     };
     if selected {
+        report_if_selected_function_reference(&args[1], ctx);
         args[1].resolve_reference_or_value().map(Some)
     } else if let Some(arg) = args.get(2) {
+        report_if_selected_function_reference(arg, ctx);
         arg.resolve_reference_or_value().map(Some)
     } else {
         Ok(Some(FunctionResolution::Value(
@@ -688,13 +711,17 @@ fn eval_array_if<'b>(
     }
     // An unused branch contributes only a singleton shape, and is not evaluated.
     let yes = if needs_true {
+        report_if_selected_function_reference(&args[1], ctx);
         grid(args[1].value()?)
     } else {
         Grid::Scalar(LiteralValue::Empty)
     };
     let no = if needs_false {
         match args.get(2) {
-            Some(arg) => grid(arg.value()?),
+            Some(arg) => {
+                report_if_selected_function_reference(arg, ctx);
+                grid(arg.value()?)
+            }
             None => Grid::Scalar(LiteralValue::Boolean(false)),
         }
     } else {

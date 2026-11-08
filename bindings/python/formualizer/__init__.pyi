@@ -3,10 +3,12 @@
 
 from . import visitor as visitor
 from ._types import ReferenceLike as ReferenceLike
+from ._source_types import *
 from .formualizer_py import *
 
 __all__ = [
     "ASTNode",
+    "CancelToken",
     "Cell",
     "CellRef",
     "CellSnapshot",
@@ -33,15 +35,22 @@ __all__ = [
     "RangeAddress",
     "RangePage",
     "RangeRef",
+    "RecalcIterator",
+    "RecalcJob",
+    "RecalcOutcome",
+    "RecalcResult",
     "RefWalker",
     "ReferenceKind",
     "SemanticReference",
     "Sheet",
     "SheetPortSession",
+    "SlowUnitReport",
     "SpillRole",
     "SpillRoleKind",
     "Staleness",
     "StateStamp",
+    "StepProgress",
+    "StepReport",
     "TableRef",
     "Token",
     "TokenSubType",
@@ -71,6 +80,12 @@ __all__ = [
     "recalculate_xlsx_bytes",
     "recalculate_xlsx_file",
     "tokenize",
+    "RecalcJobError",
+    "NoActiveJobError",
+    "RecalcAlreadyPendingError",
+    "EnginePoisonedError",
+    "RecalcJobActiveError",
+    "CalculationDeferred",
     "DependencyStateUnavailableError",
     "ExcelEvaluationError",
     "FormualizerHostError",
@@ -95,4 +110,10 @@ __all__ = [
     "TokenizerError",
     "ReferenceLike",
     "visitor",
+    "SourceCalculationPolicy",
+    "SourceRecalculateLimits",
+    "SourceRecalculateResult",
+    "SourceOperationDiagnostics",
+    "SourceUnavailableOperation",
+    "SourceDependencyEvidence",
 ]

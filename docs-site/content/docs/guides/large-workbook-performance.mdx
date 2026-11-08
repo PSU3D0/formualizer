@@ -51,6 +51,10 @@ let outputs = wb.evaluate_cells(&[("Summary", 10, 2), ("Summary", 11, 2)])?;
 
 Targeted evaluation is often enough for API-style spreadsheet workflows.
 
+## Keep an interactive host responsive
+
+Rust hosts can spread recalculation over calls, retain a schedule, and prioritize a visible viewport. See [Interruptible Recalculation](/docs/guides/interruptible-recalculation) for soft budgets, progress, cancellation and pending values. Graph and schedule builds and individual family runs remain atomic.
+
 ## Copied-formula families
 
 Copied formulas that share a shape (a column of `=B2*C2`, `=B3*C3`, ...) are evaluated together as one family over Arrow columns. This is the default and needs no configuration.

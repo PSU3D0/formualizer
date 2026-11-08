@@ -15,6 +15,12 @@ pub(super) fn unchanged(
         worksheet_parts_changed: 0,
         clock_now_utc: None,
         external_links_used: 0,
+        calculation: None,
+        coverage: crate::SourceCalculationCoverage::Complete,
+        coverage_scope: crate::SourceCoverageScope::None,
+        caches_invalidated: 0,
+        calculation_flags_changed: false,
+        operation_diagnostics: Default::default(),
     }
 }
 /// The validated value of one source formula, exactly as the scalar writer
@@ -45,7 +51,7 @@ pub(super) fn validated_result(
     Ok(value)
 }
 /// Count one evaluated source formula (anchors included) in the summary.
-/// A `#NAME?` without a message gets the reason its own formula gives.
+/// Missing payloads stay unknown except for proven root unknown calls.
 pub(super) fn record_result(
     summary: &mut RecalculateSummary,
     engine: &Engine<WBResolver>,
@@ -53,19 +59,74 @@ pub(super) fn record_result(
     cell: &sheet::FormulaMark,
     value: &LiteralValue,
     limit: usize,
+    coverage: &availability::Coverage,
 ) {
     let location = || format!("{sheet}!{}", cell.address());
-    match value {
-        LiteralValue::Error(error)
-            if error.kind == formualizer_common::ExcelErrorKind::Name
-                && error.message().is_none() =>
-        {
-            let mut error = error.clone();
-            error.set_message(error_reasons::name_error_reason(
-                engine, sheet, cell.row, cell.col,
-            ));
-            summary.record(sheet, location, &LiteralValue::Error(error), limit);
-        }
-        _ => summary.record(sheet, location, value, limit),
+    summary.record(sheet, location, value, limit);
+    let LiteralValue::Error(error) = value else {
+        return;
+    };
+    if error.kind != formualizer_common::ExcelErrorKind::Name
+        || error.message().is_some_and(|message| !message.is_empty())
+    {
+        return;
     }
+    let entry = summary
+        .error_summary
+        .get_mut("#NAME?")
+        .expect("recorded error");
+    // Only enrich a retained location, never allocate reasons for truncated cells.
+    if entry.count > limit || entry.messages.last().is_none_or(Option::is_some) {
+        return;
+    }
+    if let Some(message) = root_unknown_reason(engine, sheet, cell, coverage) {
+        *entry.messages.last_mut().expect("retained location") = Some(message);
+    }
+}
+
+/// Unknown dispatch returns #NAME? before evaluating arguments (tree and arena
+/// interpreters). Match executed evidence as well as the unmodified source root;
+/// syntax alone, or an unknown call inside a wrapper, cannot prove a final cause.
+fn root_unknown_reason(
+    engine: &Engine<WBResolver>,
+    sheet: &str,
+    cell: &sheet::FormulaMark,
+    coverage: &availability::Coverage,
+) -> Option<String> {
+    // Exclude declared arrays, dynamic metadata and shared formula envelopes.
+    // In particular, never infer through implicit intersection or postfix calls.
+    if cell.formula_kind != "normal" || cell.cm().is_some() || cell.array_ref().is_some() {
+        return None;
+    }
+    let source = if cell.formula_text.starts_with('=') {
+        std::borrow::Cow::Borrowed(cell.formula_text.as_str())
+    } else {
+        std::borrow::Cow::Owned(format!("={}", cell.formula_text))
+    };
+    let stream = formualizer_parse::TokenStream::new(&source).ok()?;
+    let ast = formualizer_parse::parser::Parser::from_token_stream(&stream)
+        .parse()
+        .ok()?;
+    let formualizer_parse::ASTNodeType::Function { name, .. } = ast.node_type else {
+        return None;
+    };
+    if name.starts_with('@') || engine.has_name(&name, Some(sheet)) {
+        return None;
+    }
+    let sheet_id = engine.sheet_id(sheet)?;
+    coverage.final_reason_roots.iter().find_map(|root| {
+        let at = root.cell?;
+        if at.sheet_id != sheet_id
+            || at.coord.row() + 1 != cell.row
+            || at.coord.col() + 1 != cell.col
+        {
+            return None;
+        }
+        match root.operation.as_ref() {
+            formualizer_eval::operation_diagnostics::UnavailableOperation::UnknownFunction {
+                name: executed,
+            } if executed.eq_ignore_ascii_case(&name) => Some(format!("Unknown function: {name}")),
+            _ => None,
+        }
+    })
 }

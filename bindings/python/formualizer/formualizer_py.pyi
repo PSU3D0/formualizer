@@ -7,6 +7,7 @@ import enum
 import typing
 __all__ = [
     "ASTNode",
+    "CancelToken",
     "Cell",
     "CellRef",
     "CellSnapshot",
@@ -33,15 +34,22 @@ __all__ = [
     "RangeAddress",
     "RangePage",
     "RangeRef",
+    "RecalcIterator",
+    "RecalcJob",
+    "RecalcOutcome",
+    "RecalcResult",
     "RefWalker",
     "ReferenceKind",
     "SemanticReference",
     "Sheet",
     "SheetPortSession",
+    "SlowUnitReport",
     "SpillRole",
     "SpillRoleKind",
     "Staleness",
     "StateStamp",
+    "StepProgress",
+    "StepReport",
     "TableRef",
     "Token",
     "TokenSubType",
@@ -71,6 +79,12 @@ __all__ = [
     "recalculate_xlsx_bytes",
     "recalculate_xlsx_file",
     "tokenize",
+    "RecalcJobError",
+    "NoActiveJobError",
+    "RecalcAlreadyPendingError",
+    "EnginePoisonedError",
+    "RecalcJobActiveError",
+    "CalculationDeferred",
     "DependencyStateUnavailableError",
     "ExcelEvaluationError",
     "FormualizerHostError",
@@ -167,6 +181,13 @@ class ASTNode:
         """
     def __repr__(self) -> builtins.str: ...
     def __str__(self) -> builtins.str: ...
+
+@typing.final
+class CancelToken:
+    @property
+    def cancelled(self) -> builtins.bool: ...
+    def __new__(cls) -> CancelToken: ...
+    def cancel(self) -> None: ...
 
 @typing.final
 class Cell:
@@ -772,6 +793,11 @@ class LiteralValue:
         If this is an error, return the error message; otherwise None
         """
     @property
+    def error_extra(self) -> typing.Optional[typing.Any]:
+        r"""
+        Typed engine payload, including FunctionPanicked attribution, for error cells.
+        """
+    @property
     def error_location(self) -> typing.Optional[tuple[builtins.int, builtins.int]]:
         r"""
         If this is an error and has location, return (row, col); otherwise None
@@ -1020,6 +1046,41 @@ class RangeRef:
     def __str__(self) -> builtins.str: ...
 
 @typing.final
+class RecalcIterator:
+    def __iter__(self) -> RecalcIterator: ...
+    def __next__(self) -> StepReport: ...
+
+@typing.final
+class RecalcJob:
+    @property
+    def active(self) -> builtins.bool: ...
+    def step(self, budget_ms: typing.Optional[builtins.float] = None, *, cancel: typing.Optional[CancelToken] = None) -> StepReport: ...
+    def prioritize(self, ranges: typing.Sequence[tuple[builtins.str, builtins.int, builtins.int, builtins.int, builtins.int]]) -> None: ...
+    def cancel(self) -> typing.Optional[StepReport]: ...
+    def __enter__(self) -> RecalcJob: ...
+    def __exit__(self, _exc_type: typing.Any, _exc: typing.Any, _traceback: typing.Any) -> None: ...
+    def iter(self, budget_ms: typing.Optional[builtins.float] = 5.0) -> RecalcIterator: ...
+
+@typing.final
+class RecalcOutcome:
+    @property
+    def status(self) -> builtins.str: ...
+    @property
+    def result(self) -> typing.Optional[RecalcResult]: ...
+    @property
+    def job(self) -> typing.Optional[RecalcJob]: ...
+    def __new__(cls, status: builtins.str, result: typing.Optional[RecalcResult], job: typing.Optional[RecalcJob]) -> RecalcOutcome: ...
+
+@typing.final
+class RecalcResult:
+    @property
+    def computed_vertices(self) -> builtins.int: ...
+    @property
+    def cycle_errors(self) -> builtins.int: ...
+    @property
+    def elapsed_ms(self) -> builtins.float: ...
+
+@typing.final
 class RefWalker:
     r"""
     Iterator over reference-like objects found in an AST.
@@ -1245,6 +1306,17 @@ class SheetPortSession:
         """
 
 @typing.final
+class SlowUnitReport:
+    @property
+    def kind(self) -> builtins.str: ...
+    @property
+    def representative_cell(self) -> typing.Optional[tuple[builtins.str, builtins.int, builtins.int]]: ...
+    @property
+    def vertex_count(self) -> builtins.int: ...
+    @property
+    def elapsed_ms(self) -> builtins.float: ...
+
+@typing.final
 class SpillRole:
     @property
     def kind(self) -> SpillRoleKind: ...
@@ -1275,6 +1347,42 @@ class StateStamp:
     def __eq__(self, other: typing.Any, /) -> builtins.bool: ...
     def __ne__(self, other: typing.Any, /) -> builtins.bool: ...
     def __hash__(self) -> builtins.int: ...
+
+@typing.final
+class StepProgress:
+    @property
+    def pass_(self) -> builtins.int: ...
+    @property
+    def completed_in_pass(self) -> builtins.int: ...
+    @property
+    def scheduled_in_pass(self) -> builtins.int: ...
+    @property
+    def cumulative(self) -> builtins.int: ...
+    @property
+    def total_exact(self) -> builtins.bool: ...
+    @property
+    def staged_remaining(self) -> builtins.int: ...
+    @property
+    def priority_pending(self) -> builtins.bool: ...
+
+@typing.final
+class StepReport:
+    @property
+    def phase(self) -> builtins.str: ...
+    @property
+    def progress(self) -> StepProgress: ...
+    @property
+    def step_computed(self) -> builtins.int: ...
+    @property
+    def step_elapsed_ms(self) -> builtins.float: ...
+    @property
+    def changed(self) -> builtins.list[tuple[builtins.str, builtins.int, builtins.int, builtins.int, builtins.int]]: ...
+    @property
+    def overflow_sheets(self) -> builtins.list[builtins.str]: ...
+    @property
+    def longest_unit(self) -> typing.Optional[SlowUnitReport]: ...
+    @property
+    def result(self) -> typing.Optional[RecalcResult]: ...
 
 @typing.final
 class TableRef:
@@ -1566,6 +1674,14 @@ class Workbook:
         """
     @property
     def sheet_names(self) -> builtins.list[builtins.str]: ...
+    @property
+    def has_active_recalc_job(self) -> builtins.bool: ...
+    @property
+    def is_poisoned(self) -> builtins.bool:
+        r"""
+        Engine or workbook-lock poison state. True means discard this workbook.
+        This health query reports a poisoned lock without recovering its contents.
+        """
     def inspect_cell(self, address: builtins.str, *, include_values: builtins.bool = True) -> CellSnapshotReport:
         r"""
         Inspect one cell without evaluating it. Raises `InspectionError`; inspect its `code` attribute for a stable category.
@@ -1842,6 +1958,29 @@ class Workbook:
         such as `"+02:00"`, or an offset in seconds — the same spelling as
         `SheetPortSession.evaluate_once(deterministic_timezone=...)`.
         Omitted means UTC.
+        """
+    def recalc(self, budget_ms: typing.Optional[builtins.float] = 5.0, *, on_step: typing.Optional[typing.Callable[[StepReport], object]] = None, priority: typing.Optional[typing.Sequence[tuple[builtins.str, builtins.int, builtins.int, builtins.int, builtins.int]]] = None) -> RecalcOutcome:
+        r"""
+        Recalculate cooperatively. on_step(report) may return False to pause.
+        """
+    def evaluate_async(self, budget_ms: typing.Optional[builtins.float] = 5.0, *, on_progress: typing.Optional[typing.Callable[[StepReport], object]] = None, priority: typing.Optional[typing.Sequence[tuple[builtins.str, builtins.int, builtins.int, builtins.int, builtins.int]]] = None) -> typing.Coroutine[typing.Any, typing.Any, RecalcResult | None]:
+        r"""
+        Await cooperative recalculation; progress callbacks run on the event loop.
+        """
+    def begin_recalc(self, *, collect_deltas: builtins.bool = True, max_delta_records: builtins.int = 1024, priority: typing.Optional[typing.Sequence[tuple[builtins.str, builtins.int, builtins.int, builtins.int, builtins.int]]] = None) -> RecalcJob:
+        r"""
+        Start a cooperative recalculation. Priority uses 1-based inclusive rectangles.
+        """
+    def _reserve_async_recalc(self) -> None: ...
+    def _release_async_recalc(self) -> None: ...
+    def _begin_async_recalc(self, *, priority: typing.Optional[typing.Sequence[tuple[builtins.str, builtins.int, builtins.int, builtins.int, builtins.int]]] = None) -> RecalcJob: ...
+    def has_pending_in_rect(self, sheet: builtins.str, r0: builtins.int, c0: builtins.int, r1: builtins.int, c1: builtins.int) -> builtins.bool:
+        r"""
+        Raw formula dirtiness in a 1-based inclusive viewport.
+        """
+    def pending_cells_in_rect(self, sheet: builtins.str, r0: builtins.int, c0: builtins.int, r1: builtins.int, c1: builtins.int) -> builtins.list[tuple[builtins.str, builtins.int, builtins.int, builtins.int, builtins.int]]:
+        r"""
+        Conservative pending rectangles; coordinates are 1-based inclusive.
         """
     def evaluate_all(self) -> None: ...
     def last_cycle_telemetry(self) -> CycleTelemetry:
@@ -2201,7 +2340,7 @@ def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] =
         `umya-spreadsheet` implementation.
     """
 
-def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached') -> typing.Any:
+def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached', profile: builtins.str = 'strict', calculation: SourceCalculationPolicy | None = None, require_complete: builtins.bool = False, limits: SourceRecalculateLimits | None = None, physical_telemetry: builtins.bool = False) -> SourceRecalculateResult:
     r"""
     Recalculate XLSX formula caches in memory without rewriting unrelated package parts.
     Returns a dictionary with output ``bytes``, a ``summary``, and formula/cache/worksheet counts.
@@ -2221,7 +2360,7 @@ def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional
     it; ``"refuse"`` raises ``OSError`` instead when any formula reads one.
     """
 
-def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached') -> typing.Any:
+def recalculate_xlsx_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached', profile: builtins.str = 'strict', calculation: SourceCalculationPolicy | None = None, require_complete: builtins.bool = False, limits: SourceRecalculateLimits | None = None, physical_telemetry: builtins.bool = False) -> SourceRecalculateResult:
     r"""
     Recalculate XLSX formula caches from a path using atomic output replacement.
     Returns the same dictionary as ``recalculate_xlsx_bytes``.
@@ -2263,10 +2402,31 @@ def tokenize(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = N
 
 # Exceptions created with pyo3::create_exception! are public runtime types but
 # are not currently discovered by pyo3-stub-gen's inventory.
+class RecalcJobError(Exception): ...
+class NoActiveJobError(RecalcJobError): ...
+class RecalcAlreadyPendingError(RecalcJobError):
+    explicit: bool
+class EnginePoisonedError(RecalcJobError): ...
+class RecalcJobActiveError(ExcelEvaluationError): ...
+class CalculationDeferred(Exception):
+    kind: str
+    reason: str
+    context: str
 class TokenizerError(Exception): ...
 class ParserError(Exception): ...
 class FormualizerHostError(Exception): ...
-class ExcelEvaluationError(Exception): ...
+class ExcelEvaluationError(Exception):
+    kind: str
+    excel_kind: str
+    message: str | None
+    excel_message: str | None
+    context: dict[str, typing.Any] | None
+    extra: dict[str, typing.Any] | None
+    # Present on resource failures; cancellation uses kind == "Cancelled".
+    resource_reason: str
+    limit: int
+    observed: int
+    request_id: int | None
 class InspectionError(Exception): ...
 class SheetNotFoundError(InspectionError): ...
 class InvalidInspectionAddressError(InspectionError): ...
@@ -2307,3 +2467,4 @@ if typing.TYPE_CHECKING:
         NameResolutionKind.Cell, NameResolutionKind.Range, NameResolutionKind.Literal, NameResolutionKind.Formula, NameResolutionKind.Unresolved, NameResolutionKind.Unknown,
         TraceLinkKindType.Formula, TraceLinkKindType.SpillAnchor, TraceLinkKindType.SpillReader, TraceLinkKindType.Unknown,
     )
+from ._source_types import SourceCalculationPolicy, SourceRecalculateLimits, SourceRecalculateResult

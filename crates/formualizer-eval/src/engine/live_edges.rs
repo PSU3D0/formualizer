@@ -443,6 +443,15 @@ impl<'a, R: EvaluationContext, S: ReadSink> FunctionProvider for RecordingContex
 }
 
 impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingContext<'a, R, S> {
+    fn named_binding_presence(&self, name: &str, current_sheet: &str) -> Option<bool> {
+        self.engine.named_binding_presence(name, current_sheet)
+    }
+    fn operation_diagnostic_collector(
+        &self,
+    ) -> Option<&crate::operation_diagnostics::OperationDiagnosticCollector> {
+        self.engine.operation_diagnostic_collector()
+    }
+
     /* ── intercept-and-record ── */
 
     fn resolve_range_view<'c>(
@@ -535,6 +544,9 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
         current_sheet: &str,
     ) -> Result<Option<ReferenceInfo>, ExcelError> {
         self.engine.inspect_reference(reference, current_sheet)
+    }
+    fn has_formula_at_cell(&self, cell: CellRef) -> Result<bool, ExcelError> {
+        self.engine.has_formula_at_cell(cell)
     }
     fn formula_text_at_cell(&self, cell: CellRef) -> Result<Option<String>, ExcelError> {
         self.engine.formula_text_at_cell(cell)

@@ -32,16 +32,23 @@ struct GridWrite<'a> {
     grid: Vec<Vec<LiteralValue>>,
 }
 
-struct PreparedWrite {
-    sheet: String,
-    row: u32,
-    col: u32,
-    value: LiteralValue,
+enum PreparedWrite {
+    Cell {
+        sheet: String,
+        row: u32,
+        col: u32,
+        value: LiteralValue,
+    },
+    TableResize {
+        name: String,
+        new_end_row: u32,
+        empty_body: bool,
+    },
 }
 
 impl PreparedWrite {
     fn new(sheet: String, row: u32, col: u32, value: LiteralValue) -> Self {
-        Self {
+        Self::Cell {
             sheet,
             row,
             col,
@@ -241,10 +248,41 @@ impl<'a> SheetPort<'a> {
     }
 
     fn apply_writes(&mut self, writes: Vec<PreparedWrite>) -> Result<(), SheetPortError> {
+        let mut extents: BTreeMap<&str, (u32, u32)> = BTreeMap::new();
+        for write in &writes {
+            if let PreparedWrite::Cell {
+                sheet, row, col, ..
+            } = write
+            {
+                let extent = extents.entry(sheet).or_default();
+                extent.0 = extent.0.max(*row);
+                extent.1 = extent.1.max(*col);
+            }
+        }
+        for (sheet, (row, col)) in extents {
+            self.workbook
+                .ensure_sheet_capacity(sheet, row as usize, col as usize);
+        }
         self.workbook
             .action("sheetport.write_inputs", move |action| {
                 for write in writes {
-                    action.set_value(&write.sheet, write.row, write.col, write.value)?;
+                    match write {
+                        PreparedWrite::Cell {
+                            sheet,
+                            row,
+                            col,
+                            value,
+                        } => {
+                            action.set_value(&sheet, row, col, value)?;
+                        }
+                        PreparedWrite::TableResize {
+                            name,
+                            new_end_row,
+                            empty_body,
+                        } => {
+                            action.resize_table_body(&name, new_end_row, empty_body)?;
+                        }
+                    }
                 }
                 Ok(())
             })
@@ -834,10 +872,11 @@ impl<'a> SheetPort<'a> {
             }
             indices.push(matches[0]);
         }
-        if indices.windows(2).any(|pair| pair[1] != pair[0] + 1) {
+        let distinct: std::collections::BTreeSet<_> = indices.iter().copied().collect();
+        if distinct.len() != indices.len() {
             return Err(SheetPortError::UnsupportedSelector {
                 port: binding.id.clone(),
-                reason: "requested native table columns must be contiguous and ordered".to_string(),
+                reason: "requested native table columns must be distinct".to_string(),
             });
         }
         Ok((metadata, indices))
@@ -912,6 +951,9 @@ impl<'a> SheetPort<'a> {
                             .saturating_sub(u32::from(metadata.totals_row)),
                     ),
                 };
+                if matches!(area, TableArea::Body) && metadata.empty_body {
+                    return Ok(PortValue::Table(TableValue::new(Vec::new())));
+                }
                 let mut rows = Vec::new();
                 if start_row <= end_row {
                     for row in start_row..=end_row {
@@ -1318,13 +1360,79 @@ impl<'a> SheetPort<'a> {
                 Ok(())
             }
             crate::location::TableLocation::Table(selector) => {
-                Err(SheetPortError::UnsupportedSelector {
-                    port: binding.id.clone(),
-                    reason: format!(
-                        "native table `{}` selectors are not supported yet",
-                        selector.name
-                    ),
-                })
+                if !matches!(selector.area.unwrap_or(TableArea::Body), TableArea::Body) {
+                    return Err(SheetPortError::UnsupportedSelector {
+                        port: binding.id.clone(),
+                        reason: "native table writes require area: body".to_string(),
+                    });
+                }
+                let (metadata, indices) =
+                    self.validate_native_table_columns(binding, table, &selector.name)?;
+                let body_start_row = metadata.start_row + u32::from(metadata.header_row);
+                let old_body_end_row = metadata.end_row - u32::from(metadata.totals_row);
+                let existing_row_count = if old_body_end_row >= body_start_row {
+                    old_body_end_row - body_start_row + 1
+                } else {
+                    0
+                };
+                let new_row_count = u32::try_from(value.rows.len()).map_err(|_| {
+                    SheetPortError::UnsupportedSelector {
+                        port: binding.id.clone(),
+                        reason: "native table row count exceeds the sheet grid".to_string(),
+                    }
+                })?;
+                if metadata.totals_row && new_row_count != existing_row_count {
+                    return Err(SheetPortError::UnsupportedSelector {
+                        port: binding.id.clone(),
+                        reason: "dynamically resized input tables cannot have a totals row"
+                            .to_string(),
+                    });
+                }
+                check_write_fits_grid(
+                    &binding.id,
+                    body_start_row,
+                    new_row_count.max(1),
+                    metadata.start_col,
+                    metadata.end_col - metadata.start_col + 1,
+                )?;
+                for (row_offset, row) in value.rows.into_iter().enumerate() {
+                    for (column, &col_offset) in table.columns.iter().zip(&indices) {
+                        writes.push(PreparedWrite::new(
+                            metadata.sheet.clone(),
+                            body_start_row + row_offset as u32,
+                            metadata.start_col + col_offset as u32,
+                            row.values
+                                .get(&column.name)
+                                .cloned()
+                                .unwrap_or(LiteralValue::Empty),
+                        ));
+                    }
+                }
+                if new_row_count < existing_row_count {
+                    for row in (body_start_row + new_row_count)..=old_body_end_row {
+                        for &col_offset in &indices {
+                            writes.push(PreparedWrite::new(
+                                metadata.sheet.clone(),
+                                row,
+                                metadata.start_col + col_offset as u32,
+                                LiteralValue::Empty,
+                            ));
+                        }
+                    }
+                }
+                // A logically empty input retains one blank Excel table body row.
+                // A fixed-size table with totals keeps its totals row in place.
+                let new_end_row = if metadata.totals_row {
+                    metadata.end_row
+                } else {
+                    body_start_row + new_row_count.max(1) - 1
+                };
+                writes.push(PreparedWrite::TableResize {
+                    name: metadata.name,
+                    new_end_row,
+                    empty_body: new_row_count == 0,
+                });
+                Ok(())
             }
         }
     }

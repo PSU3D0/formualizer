@@ -290,6 +290,9 @@ impl<R: EvaluationContext> Engine<R> {
     /// family's root template, never a chain of copies. `None` means the
     /// caller parses the formula as before.
     #[doc(hidden)]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn stage_relocated_text(
         &mut self,
         grouper: &mut FormulaFamilyGrouper,
@@ -298,6 +301,7 @@ impl<R: EvaluationContext> Engine<R> {
         text: &str,
         shared: Option<u64>,
     ) -> Option<FormulaIngestRecord> {
+        self.assert_not_poisoned();
         if !self.source_families_active() {
             return None;
         }
@@ -423,6 +427,9 @@ impl<R: EvaluationContext> Engine<R> {
     /// its shared-formula family (`shared`) when that has none yet. Only
     /// for a successful parse of exactly `text`.
     #[doc(hidden)]
+    ///
+    /// # Panics
+    /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn note_parsed_text(
         &mut self,
         grouper: &mut FormulaFamilyGrouper,
@@ -433,6 +440,7 @@ impl<R: EvaluationContext> Engine<R> {
         record: &FormulaIngestRecord,
         shared: Option<u64>,
     ) {
+        self.assert_not_poisoned();
         if !self.source_families_active() {
             return;
         }

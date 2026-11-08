@@ -51,6 +51,18 @@ The `Workbook` type in `formualizer-workbook` is the central coordinator.
 - `set_formula(address, formula)`: Update a cell with a formula string.
 - `evaluate(address)`: Trigger evaluation for a specific cell and its dependencies.
 
+### Interruptible Recalculation
+
+`formualizer_eval::engine` exports `EvaluationStop`, `EvaluationProgress`, `RecalcJobOptions`, `RecalcJobError`, `RecalcOutcome`, `StepReport`, `StepPhase`, `StepProgress`, `StepDelta`, `SlowUnitKind` and `SlowUnitReport`.
+
+- `evaluate_all_until(stop)`: implicit continuation returning Complete or Incomplete.
+- `begin_recalc(options)`, `step_recalc(stop)`, `prioritize_recalc(targets)`: explicit job control returning typed job errors.
+- `recalc_with(options, stop_per_step, on_step)`: callback driver returning Finished, Cancelled or Paused; the callback receives mutable Engine or Workbook access.
+- `cancel_recalc()`, `has_active_recalc_job()`: lifecycle control.
+- `has_pending_in_rect(...)`, `pending_cells_in_rect(...)`: zero-based inclusive viewport queries.
+
+Workbook exposes the same methods; explicit job methods return `RecalcJobError` directly. Existing evaluation methods retain their error types, with `ExcelErrorExtra::RecalcJobActive` identifying a refused request. See [Interruptible Recalculation](/docs/guides/interruptible-recalculation).
+
 ### SheetPort Runtime
 `SheetPort` and `SheetPortSession` in `formualizer-sheetport` provide structured I/O.
 

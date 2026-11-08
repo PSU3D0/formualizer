@@ -112,6 +112,10 @@ pub enum ResourceExhaustionReason {
     GraphVertices,
     GraphEdges,
     MaterializationCells,
+    OperationEvidenceRoots,
+    OperationEvidenceTextBytes,
+    /// Combined affected-region and uncertainty items, not grid cells/bytes.
+    DependencyClosureOutputItems,
     ArithmeticOverflow,
 }
 
@@ -126,6 +130,9 @@ impl ResourceExhaustionReason {
             Self::GraphVertices => "graph_vertices",
             Self::GraphEdges => "graph_edges",
             Self::MaterializationCells => "materialization_cells",
+            Self::OperationEvidenceRoots => "operation_evidence_roots",
+            Self::OperationEvidenceTextBytes => "operation_evidence_text_bytes",
+            Self::DependencyClosureOutputItems => "dependency_closure_output_items",
             Self::ArithmeticOverflow => "arithmetic_overflow",
         }
     }
@@ -209,6 +216,18 @@ pub enum ExcelErrorExtra {
     /// No additional payload (the vast majority of errors).
     #[default]
     None,
+
+    /// An evaluation request was refused because an explicit recalculation job is active.
+    RecalcJobActive,
+
+    /// A Rust function unwound. Non-string panic payloads have no message.
+    FunctionPanicked {
+        function: String,
+        message: Option<String>,
+    },
+
+    /// An earlier engine-internal unwind makes further work unsafe.
+    EnginePoisoned,
 
     /// `#SPILL!` – information about the intended spill size.
     Spill {
@@ -323,6 +342,20 @@ impl From<ExcelErrorKind> for ExcelError {
 }
 
 impl ExcelError {
+    /// Convert an unwinding Rust function panic to a typed #VALUE! error.
+    pub fn from_function_panic(function: &str, payload: &(dyn std::any::Any + Send)) -> Self {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned());
+        Self::new(ExcelErrorKind::Value)
+            .with_message("Function callback panicked")
+            .with_extra(ExcelErrorExtra::FunctionPanicked {
+                function: function.to_owned(),
+                message,
+            })
+    }
+
     /// Basic constructor (no message, no location, no extra).
     pub fn new(kind: ExcelErrorKind) -> Self {
         kind.into()
@@ -490,7 +523,10 @@ impl fmt::Display for ExcelError {
 
         // Optional kind-specific payload - keep it terse for logs.
         match self.extra() {
-            ExcelErrorExtra::None => {}
+            ExcelErrorExtra::None
+            | ExcelErrorExtra::RecalcJobActive
+            | ExcelErrorExtra::FunctionPanicked { .. }
+            | ExcelErrorExtra::EnginePoisoned => {}
             ExcelErrorExtra::Spill {
                 expected_rows,
                 expected_cols,

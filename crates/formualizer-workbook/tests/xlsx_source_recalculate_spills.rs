@@ -1190,6 +1190,34 @@ fn rich_error_value_metadata_on_formula_cells_is_recomputed() {
 }
 
 #[test]
+fn partial_publication_discards_rich_value_metadata_with_cache() {
+    use formualizer_workbook::SourceCalculationCoverage;
+    for cache in ["<v>#VALUE!</v>", ""] {
+        let source = edit(
+            blocked_by_text_with_rich_error(),
+            SHEET,
+            "<c r=\"E1\" t=\"e\" cm=\"1\" vm=\"1\"><f t=\"array\" ref=\"E1\">_xlfn.SEQUENCE(3)</f><v>#VALUE!</v></c>",
+            &format!("<c r=\"E1\" s=\"1\" t=\"e\" vm=\"1\"><f>GAP_RICH_CACHE(1)</f>{cache}</c>"),
+        );
+        let out =
+            recalculate_xlsx_bytes(&pack(&source), XlsxRecalculateOptions::workbook()).unwrap();
+        assert_eq!(out.coverage, SourceCalculationCoverage::Partial);
+        let x = parse_sheet(&sheet_xml(&out.bytes));
+        let cell = x.cell("E1");
+        assert_eq!(cell.formula, "GAP_RICH_CACHE(1)");
+        assert_eq!(cell.attrs.get("s").map(String::as_str), Some("1"));
+        assert_eq!(cell.attrs.get("vm"), None);
+        assert_eq!(cell.attrs.get("t"), None);
+        assert_eq!(cell.v, None);
+        assert_eq!(unpack(&out.bytes).get(METADATA), source.get(METADATA));
+        let repeat =
+            recalculate_xlsx_bytes(&out.bytes, XlsxRecalculateOptions::workbook()).unwrap();
+        assert_eq!(repeat.bytes, out.bytes);
+        assert_eq!(repeat.caches_invalidated, 0);
+    }
+}
+
+#[test]
 fn rich_value_metadata_on_a_literal_cell_is_refused() {
     refused(
         recalculate_xlsx_bytes(

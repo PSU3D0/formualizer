@@ -1,0 +1,38 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Formualizer recalculation smoke</title>
+<script type="importmap">{"imports":{"formualizer":"./index.js","formualizer/worker":"./worker.js"}}</script>
+<p id="result" data-status="running">Running local WASM facade examples…</p>
+<script type="module">
+import { viewportExample } from './examples/recalc-viewport.mjs';
+import { asyncExample } from './examples/recalc-async.mjs';
+import { pauseExample } from './examples/recalc-pause.mjs';
+import { createWorkbookWorker } from 'formualizer/worker';
+const result = document.querySelector('#result');
+try {
+  const messages = [viewportExample(), await asyncExample(), pauseExample()];
+  result.textContent = 'In-thread examples passed; starting real Worker…';
+  const client = await createWorkbookWorker(new Worker('./worker-entry.js', { type: 'module' }), { autoRecalc: true });
+  try {
+    await client.addSheet('Worker');
+    let frames = 0;
+    const sub = await client.subscribeViewport({
+      rect: { sheet: 'Worker', startRow: 1, startColumn: 1, endRow: 4, endColumn: 2 },
+      mode: 'columnar', onFrame(frame) { if (frame.columnar.tags instanceof Uint8Array) frames++; },
+    });
+    await client.setValue('Worker', 1, 1, 20);
+    await client.setFormula('Worker', 2, 1, '=A1+22');
+    await client.recalc({ budgetMs: 0 });
+    if (await client.getValue('Worker', 2, 1) !== 42 || !frames) throw new Error('Browser worker failed');
+    await sub.setRect({ ...sub.rect, endRow: 5 });
+    await sub.refresh(); await sub.unsubscribe();
+    messages.push('WORKER_BROWSER_OK: real Worker, columnar transfer, auto-recalc, scroll');
+  } finally { await client.dispose(); }
+  result.textContent = 'RECALC_BROWSER_OK: ' + messages.join('; ');
+  result.dataset.status = 'passed';
+} catch (error) {
+  result.textContent = String(error.stack ?? error);
+  result.dataset.status = 'failed';
+  throw error;
+}
+</script>

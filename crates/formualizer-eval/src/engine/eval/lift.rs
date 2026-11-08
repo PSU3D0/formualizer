@@ -73,12 +73,17 @@ pub(super) fn pure_listed_function(
         .iter()
         .any(|f| f.eq_ignore_ascii_case(name))
         && functions.get_named(name).is_some_and(|fun| {
-            !fun.caps().intersects(
-                FnCaps::VOLATILE
-                    | FnCaps::DYNAMIC_DEPENDENCY
-                    | FnCaps::LOCAL_ENVIRONMENT
-                    | FnCaps::MAY_SPILL,
-            )
+            let caps =
+                crate::external_callbacks::metadata(fun, crate::function::FnCaps::empty, || {
+                    fun.caps()
+                });
+            caps.contains(FnCaps::PURE)
+                && !caps.intersects(
+                    FnCaps::VOLATILE
+                        | FnCaps::DYNAMIC_DEPENDENCY
+                        | FnCaps::LOCAL_ENVIRONMENT
+                        | FnCaps::MAY_SPILL,
+                )
         })
 }
 
@@ -178,12 +183,13 @@ impl LiftProgram {
     /// where a range is not intersected with the member).
     pub(super) fn compile(
         functions: &crate::interpreter::ResolvedFunctions,
+        evidence: bool,
         ds: &DataStore,
         template: AstNodeId,
         names: &dyn Fn(&str, bool) -> bool,
     ) -> Option<Self> {
         let mut program = Self { nodes: Vec::new() };
-        program.compile_node(functions, ds, template, names)?;
+        program.compile_node(functions, evidence, ds, template, names)?;
         // A template that is itself one run-invariant call (or name) stays
         // on the walk, member by member, like the walk's own invariant
         // binding (`invariant_subtrees` leaves the root out): lifting it
@@ -307,6 +313,7 @@ impl LiftProgram {
     fn compile_node(
         &mut self,
         functions: &crate::interpreter::ResolvedFunctions,
+        evidence: bool,
         ds: &DataStore,
         id: AstNodeId,
         names: &dyn Fn(&str, bool) -> bool,
@@ -343,7 +350,7 @@ impl LiftProgram {
             AstNodeData::UnaryOp { operator, expr_id } => {
                 let op = static_unary(*operator)?;
                 let expr_id = *expr_id;
-                let child = self.compile_node(functions, ds, expr_id, names)?;
+                let child = self.compile_node(functions, evidence, ds, expr_id, names)?;
                 LiftNode::Unary { op, child }
             }
             AstNodeData::BinaryOp {
@@ -353,8 +360,8 @@ impl LiftProgram {
             } => {
                 let op = static_binary(*operator)?;
                 let (left_id, right_id) = (*left_id, *right_id);
-                let left = self.compile_node(functions, ds, left_id, names)?;
-                let right = self.compile_node(functions, ds, right_id, names)?;
+                let left = self.compile_node(functions, evidence, ds, left_id, names)?;
+                let right = self.compile_node(functions, evidence, ds, right_id, names)?;
                 LiftNode::Binary { op, left, right }
             }
             AstNodeData::Function { .. } if Self::invariant(functions, ds, id, names) => {
@@ -368,9 +375,10 @@ impl LiftProgram {
             AstNodeData::Function { name_id, .. } => {
                 // Only the built-in IF (an override keeps `family_kernel`
                 // `None`), with the arities its `eval` accepts.
-                let fun = functions.get(*name_id)?;
+                let fun = functions.get_for_optimized_call(*name_id, evidence)?;
                 use crate::function::FamilyKernel as K;
-                let kernel = fun.family_kernel()?;
+                let kernel =
+                    crate::external_callbacks::metadata(fun, || None, || fun.family_kernel())?;
                 let args = ds.get_args(id)?;
                 let arity_ok = match kernel {
                     K::If => (2..=3).contains(&args.len()),
@@ -399,7 +407,7 @@ impl LiftProgram {
                     let args: smallvec::SmallVec<[AstNodeId; 4]> = args.iter().copied().collect();
                     let mut compiled = smallvec::SmallVec::new();
                     for arg in args {
-                        compiled.push(self.compile_node(functions, ds, arg, names)?);
+                        compiled.push(self.compile_node(functions, evidence, ds, arg, names)?);
                     }
                     self.nodes.push(LiftNode::Builtin {
                         kernel,
@@ -408,10 +416,10 @@ impl LiftProgram {
                     return Some(self.nodes.len() - 1);
                 }
                 let args: smallvec::SmallVec<[AstNodeId; 3]> = args.iter().copied().collect();
-                let cond = self.compile_node(functions, ds, args[0], names)?;
-                let then = self.compile_node(functions, ds, args[1], names)?;
+                let cond = self.compile_node(functions, evidence, ds, args[0], names)?;
+                let then = self.compile_node(functions, evidence, ds, args[1], names)?;
                 let otherwise = match args.get(2) {
-                    Some(&arg) => Some(self.compile_node(functions, ds, arg, names)?),
+                    Some(&arg) => Some(self.compile_node(functions, evidence, ds, arg, names)?),
                     None => None,
                 };
                 LiftNode::If {
@@ -559,12 +567,30 @@ where
                         Some(k) => take(&mut columns, *k),
                         None => Column::Const(Ok((LiteralValue::Boolean(false), None))),
                     };
-                    Column::Lane(Lane::choose(cond, then, otherwise, n))
+                    match crate::function::catch_function_panic("IF", || {
+                        Lane::choose(cond, then, otherwise, n)
+                    }) {
+                        Ok(lane) => Column::Lane(lane),
+                        Err(error) => {
+                            self.panicked_run(run, n, error.clone());
+                            Column::Const(Err(error))
+                        }
+                    }
                 }
                 LiftNode::Builtin { kernel, args } => {
                     let args: smallvec::SmallVec<[Column; 4]> =
                         args.iter().map(|&k| take(&mut columns, k)).collect();
-                    Column::Lane(Lane::builtin(*kernel, &args, n, self.config.date_system))
+                    match crate::function::catch_function_panic(kernel.name(), || {
+                        Lane::builtin(*kernel, &args, n, self.config.date_system)
+                    }) {
+                        Ok(lane) => Column::Lane(lane),
+                        Err(error) => {
+                            // Per-member error values; caller's speculative scope
+                            // requests logical walks before publishing any result.
+                            self.panicked_run(run, n, error.clone());
+                            Column::Const(Err(error))
+                        }
+                    }
                 }
                 // Once per run, exactly as the walk evaluates it for the
                 // first member (every member sees the same cells).

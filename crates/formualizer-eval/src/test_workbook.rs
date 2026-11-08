@@ -271,6 +271,9 @@ impl TestWorkbook {
 
 /* ─────────────────────── trait impls ─────────────────────── */
 impl EvaluationContext for TestWorkbook {
+    fn named_binding_presence(&self, name: &str, _current_sheet: &str) -> Option<bool> {
+        Some(self.named.contains_key(name))
+    }
     fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
         self.cancellation_token.clone()
     }

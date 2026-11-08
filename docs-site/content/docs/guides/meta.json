@@ -4,6 +4,7 @@
     "index",
     "workbook-edits-and-batching",
     "large-workbook-performance",
+    "interruptible-recalculation",
     "circular-references-and-cycle-detection",
     "iterative-calculation",
     "custom-functions-rust-python-js",

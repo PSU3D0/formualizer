@@ -499,34 +499,40 @@ fn inspect_semantics_with_identity_metadata(
     count_call!(inspect_semantics);
     let mut issues = Vec::new();
     let inspected_caps = inspected(
+        function.as_ref(),
         &mut issues,
         SemanticConformanceIssue::CapabilityPanicked,
         || function.caps(),
     );
     let caps = inspected_caps.unwrap_or_else(FnCaps::empty);
     let precision = inspected(
+        function.as_ref(),
         &mut issues,
         SemanticConformanceIssue::DependencyContractPanicked,
         || function.dependency_contract(arity),
     )
     .flatten();
     let explicit = inspected(
+        function.as_ref(),
         &mut issues,
         SemanticConformanceIssue::SemanticContractPanicked,
         || function.semantic_contract(arity),
     )
     .flatten();
     let schema = inspected(
+        function.as_ref(),
         &mut issues,
         SemanticConformanceIssue::ArgumentSchemaPanicked,
         || function.arg_schema(),
     );
     let min_args = inspected(
+        function.as_ref(),
         &mut issues,
         SemanticConformanceIssue::ArityMetadataPanicked,
         || function.min_args(),
     );
     let variadic = inspected(
+        function.as_ref(),
         &mut issues,
         SemanticConformanceIssue::VariadicMetadataPanicked,
         || function.variadic(),
@@ -705,11 +711,12 @@ fn schema_allows_arity(
 }
 
 fn inspected<T>(
+    function: &dyn Function,
     issues: &mut Vec<SemanticConformanceIssue>,
     issue: SemanticConformanceIssue,
     inspect: impl FnOnce() -> T,
 ) -> Option<T> {
-    match catch_unwind(AssertUnwindSafe(inspect)) {
+    match crate::external_callbacks::inspect_metadata(function, inspect) {
         Ok(value) => Some(value),
         Err(_) => {
             issues.push(issue);
@@ -1040,7 +1047,10 @@ impl RegistryPlanningSnapshot {
 
             for (key, function) in &runtime_functions {
                 if !capabilities.contains_key(key)
-                    && let Ok(caps) = catch_unwind(AssertUnwindSafe(|| function.caps()))
+                    && let Ok(caps) =
+                        crate::external_callbacks::inspect_metadata(function.as_ref(), || {
+                            function.caps()
+                        })
                 {
                     capabilities.insert(key.clone(), caps);
                 }
@@ -1202,6 +1212,43 @@ impl crate::traits::FunctionProvider for RegistryPlanningSnapshot {
     }
 }
 
+/// Cached reporting provenance, independent of public optimization promises.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ProviderReporting {
+    #[default]
+    Unverified,
+    ExplicitProvider,
+    SealedBuiltin,
+}
+/// Inspect once when capturing the executing callable. A local override cannot
+/// inherit the sealed builtin's reporting witness from its name or flags.
+pub(crate) fn operation_reporting_contract(
+    ns: &str,
+    name: &str,
+    function: &Arc<dyn Function>,
+) -> ProviderReporting {
+    let builtin = {
+        let state = REGISTRY
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        resolve_key_read_only(&state, &(norm(ns), norm(name))).is_some_and(|(_, registered)| {
+            registered.trusted_builtin && Arc::ptr_eq(function, &registered.function)
+        })
+    };
+    // Sealed provenance takes precedence over an instance's public promise.
+    if builtin {
+        ProviderReporting::SealedBuiltin
+    } else if crate::external_callbacks::metadata(
+        function.as_ref(),
+        || false,
+        || function.reports_known_limitations(),
+    ) {
+        ProviderReporting::ExplicitProvider
+    } else {
+        ProviderReporting::Unverified
+    }
+}
+
 pub fn resolve(ns: &str, name: &str) -> Option<ResolvedFunction> {
     resolve_entry(ns, name).map(to_resolved)
 }
@@ -1259,7 +1306,7 @@ pub(crate) fn resolve_semantic_identity<P: crate::traits::FunctionProvider + ?Si
         return None;
     }
     let contract = resolved.semantics.contract?;
-    let argument_by_ref = catch_unwind(AssertUnwindSafe(|| {
+    let argument_by_ref = crate::external_callbacks::inspect_metadata(runtime.as_ref(), || {
         let schema = runtime.arg_schema();
         let repeating = schema.iter().find(|argument| argument.repeating.is_some());
         (0..arity)
@@ -1270,13 +1317,15 @@ pub(crate) fn resolve_semantic_identity<P: crate::traits::FunctionProvider + ?Si
                     .is_some_and(|argument| argument.by_ref)
             })
             .collect()
-    }))
+    })
     .ok()?;
     Some(FunctionSemanticIdentity {
         namespace: resolved.namespace,
         canonical_name: resolved.canonical_name,
         generation: resolved.semantics.generation,
-        caps: runtime.caps(),
+        caps: crate::external_callbacks::metadata(runtime.as_ref(), FnCaps::empty, || {
+            runtime.caps()
+        }),
         contract,
         argument_by_ref,
     })

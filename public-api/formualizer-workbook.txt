@@ -767,13 +767,32 @@ impl core::fmt::Debug for formualizer_workbook::cache_recalculate::ExternalLinkP
 pub fn formualizer_workbook::cache_recalculate::ExternalLinkPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
 impl core::marker::StructuralPartialEq for formualizer_workbook::cache_recalculate::ExternalLinkPolicy
+pub enum formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::Strict
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::Workbook
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+impl core::cmp::Eq for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+impl core::cmp::PartialEq for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::eq(&self, &formualizer_workbook::cache_recalculate::XlsxRecalculateProfile) -> bool
+impl core::default::Default for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::default() -> formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+impl core::marker::StructuralPartialEq for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
 pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_affected_regions: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_affected_scratch_bytes: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_affected_work: u64
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_cells: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_columns: u32
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_entries: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_expanded_bytes: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_formula_cells: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_input_bytes: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_operation_roots: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_operation_text_bytes: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_output_bytes: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_worksheet_bytes: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::max_xml_depth: usize
@@ -784,11 +803,17 @@ pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::default()
 impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
 pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::calculation: core::option::Option<formualizer_workbook::source_calculation::SourceCalculationPolicy>
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::error_location_limit: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::eval_config: formualizer_eval::engine::EvalConfig
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::external_links: formualizer_workbook::cache_recalculate::ExternalLinkPolicy
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::limits: formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::physical_telemetry: bool
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::profile: formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::require_complete: bool
+impl formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::workbook() -> Self
 impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
 pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
 impl core::default::Default for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
@@ -798,9 +823,15 @@ pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::fmt(&sel
 pub struct formualizer_workbook::cache_recalculate::XlsxRecalculateResult
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::bytes: alloc::vec::Vec<u8>
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::cache_cells_changed: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::caches_invalidated: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::calculation: core::option::Option<formualizer_workbook::source_calculation::ResolvedSourceCalculation>
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::calculation_flags_changed: bool
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::clock_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::coverage: formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::coverage_scope: formualizer_workbook::source_outcome::SourceCoverageScope
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::external_links_used: usize
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::formula_cells: usize
+pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::operation_diagnostics: formualizer_workbook::source_outcome::SourceOperationDiagnostics
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::summary: formualizer_workbook::recalculate::RecalculateSummary
 pub formualizer_workbook::cache_recalculate::XlsxRecalculateResult::worksheet_parts_changed: usize
 impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateResult
@@ -816,10 +847,31 @@ pub fn formualizer_workbook::calc_pr::parse_calc_pr(&[u8]) -> core::option::Opti
 pub fn formualizer_workbook::calc_pr::rewrite_calc_pr_in_workbook_xml(&str, &formualizer_workbook::traits::CalcSettings) -> alloc::string::String
 pub fn formualizer_workbook::calc_pr::rewrite_calc_pr_in_zip(&[u8], &formualizer_workbook::traits::CalcSettings) -> core::result::Result<alloc::vec::Vec<u8>, std::io::error::Error>
 pub mod formualizer_workbook::error
+pub enum formualizer_workbook::error::CalculationDeferredReason
+pub formualizer_workbook::error::CalculationDeferredReason::AffectedArrayCoverageUnverified
+pub formualizer_workbook::error::CalculationDeferredReason::DependencyCoverageUnavailable
+pub formualizer_workbook::error::CalculationDeferredReason::IterativeInitialStateUnverified
+pub formualizer_workbook::error::CalculationDeferredReason::KnownCoverageIncomplete
+pub formualizer_workbook::error::CalculationDeferredReason::UnlocatedOperation
+pub formualizer_workbook::error::CalculationDeferredReason::WorkbookPrecisionUnverified
+impl core::clone::Clone for formualizer_workbook::error::CalculationDeferredReason
+pub fn formualizer_workbook::error::CalculationDeferredReason::clone(&self) -> formualizer_workbook::error::CalculationDeferredReason
+impl core::cmp::Eq for formualizer_workbook::error::CalculationDeferredReason
+impl core::cmp::PartialEq for formualizer_workbook::error::CalculationDeferredReason
+pub fn formualizer_workbook::error::CalculationDeferredReason::eq(&self, &formualizer_workbook::error::CalculationDeferredReason) -> bool
+impl core::fmt::Debug for formualizer_workbook::error::CalculationDeferredReason
+pub fn formualizer_workbook::error::CalculationDeferredReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_workbook::error::CalculationDeferredReason
+pub fn formualizer_workbook::error::CalculationDeferredReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::error::CalculationDeferredReason
+impl core::marker::StructuralPartialEq for formualizer_workbook::error::CalculationDeferredReason
 pub enum formualizer_workbook::error::IoError
 pub formualizer_workbook::error::IoError::Backend
 pub formualizer_workbook::error::IoError::Backend::backend: alloc::string::String
 pub formualizer_workbook::error::IoError::Backend::message: alloc::string::String
+pub formualizer_workbook::error::IoError::CalculationDeferred
+pub formualizer_workbook::error::IoError::CalculationDeferred::context: alloc::string::String
+pub formualizer_workbook::error::IoError::CalculationDeferred::reason: formualizer_workbook::error::CalculationDeferredReason
 pub formualizer_workbook::error::IoError::CellError
 pub formualizer_workbook::error::IoError::CellError::col: alloc::string::String
 pub formualizer_workbook::error::IoError::CellError::message: alloc::string::String
@@ -831,6 +883,9 @@ pub formualizer_workbook::error::IoError::FormulaParser::col: alloc::string::Str
 pub formualizer_workbook::error::IoError::FormulaParser::message: alloc::string::String
 pub formualizer_workbook::error::IoError::FormulaParser::row: u32
 pub formualizer_workbook::error::IoError::FormulaParser::sheet: alloc::string::String
+pub formualizer_workbook::error::IoError::InvalidOptions
+pub formualizer_workbook::error::IoError::InvalidOptions::field: alloc::string::String
+pub formualizer_workbook::error::IoError::InvalidOptions::message: alloc::string::String
 pub formualizer_workbook::error::IoError::Io(std::io::error::Error)
 pub formualizer_workbook::error::IoError::Json(serde_json::error::Error)
 pub formualizer_workbook::error::IoError::LoadBudgetExceeded
@@ -965,6 +1020,300 @@ impl core::default::Default for formualizer_workbook::session::IoConfig
 pub fn formualizer_workbook::session::IoConfig::default() -> Self
 impl core::fmt::Debug for formualizer_workbook::session::IoConfig
 pub fn formualizer_workbook::session::IoConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub mod formualizer_workbook::source_calculation
+pub enum formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub formualizer_workbook::source_calculation::CalculationSettingOrigin::Caller
+pub formualizer_workbook::source_calculation::CalculationSettingOrigin::ExcelDefault
+pub formualizer_workbook::source_calculation::CalculationSettingOrigin::Workbook
+impl core::clone::Clone for formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::clone(&self) -> formualizer_workbook::source_calculation::CalculationSettingOrigin
+impl core::cmp::Eq for formualizer_workbook::source_calculation::CalculationSettingOrigin
+impl core::cmp::PartialEq for formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::eq(&self, &formualizer_workbook::source_calculation::CalculationSettingOrigin) -> bool
+impl core::fmt::Debug for formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_calculation::CalculationSettingOrigin
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::CalculationSettingOrigin
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub enum formualizer_workbook::source_calculation::SourceIterationInitialState
+pub formualizer_workbook::source_calculation::SourceIterationInitialState::ColdStart
+pub formualizer_workbook::source_calculation::SourceIterationInitialState::RequireVerified
+impl core::clone::Clone for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::clone(&self) -> formualizer_workbook::source_calculation::SourceIterationInitialState
+impl core::cmp::Eq for formualizer_workbook::source_calculation::SourceIterationInitialState
+impl core::cmp::PartialEq for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::eq(&self, &formualizer_workbook::source_calculation::SourceIterationInitialState) -> bool
+impl core::default::Default for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::default() -> formualizer_workbook::source_calculation::SourceIterationInitialState
+impl core::fmt::Debug for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_calculation::SourceIterationInitialState
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::SourceIterationInitialState
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_workbook::source_calculation::SourceIterationPolicy
+pub formualizer_workbook::source_calculation::SourceIterationPolicy::Disabled
+pub formualizer_workbook::source_calculation::SourceIterationPolicy::Iterate
+pub formualizer_workbook::source_calculation::SourceIterationPolicy::Iterate::max_change: core::option::Option<f64>
+pub formualizer_workbook::source_calculation::SourceIterationPolicy::Iterate::max_iterations: core::option::Option<u32>
+pub formualizer_workbook::source_calculation::SourceIterationPolicy::Workbook
+impl core::clone::Clone for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::clone(&self) -> formualizer_workbook::source_calculation::SourceIterationPolicy
+impl core::cmp::PartialEq for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::eq(&self, &formualizer_workbook::source_calculation::SourceIterationPolicy) -> bool
+impl core::default::Default for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::default() -> formualizer_workbook::source_calculation::SourceIterationPolicy
+impl core::fmt::Debug for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_calculation::SourceIterationPolicy
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::SourceIterationPolicy
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+pub struct formualizer_workbook::source_calculation::ResolvedSourceCalculation
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::cycle: formualizer_eval::engine::CycleConfig
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::date_system: formualizer_common::value::DateSystem
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::fixed_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::iteration_initial_state: formualizer_workbook::source_calculation::SourceIterationInitialState
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::iteration_origin: formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::max_change_origin: core::option::Option<formualizer_workbook::source_calculation::CalculationSettingOrigin>
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::max_elapsed_ms: core::option::Option<u64>
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::max_iterations_origin: core::option::Option<formualizer_workbook::source_calculation::CalculationSettingOrigin>
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::max_work_units: core::option::Option<u64>
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::timezone: formualizer_eval::timezone::TimeZoneSpec
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::warnings: alloc::vec::Vec<formualizer_workbook::source_calculation::SourceCalculationWarning>
+pub formualizer_workbook::source_calculation::ResolvedSourceCalculation::workbook_seed: u64
+impl core::clone::Clone for formualizer_workbook::source_calculation::ResolvedSourceCalculation
+pub fn formualizer_workbook::source_calculation::ResolvedSourceCalculation::clone(&self) -> formualizer_workbook::source_calculation::ResolvedSourceCalculation
+impl core::fmt::Debug for formualizer_workbook::source_calculation::ResolvedSourceCalculation
+pub fn formualizer_workbook::source_calculation::ResolvedSourceCalculation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::ResolvedSourceCalculation
+pub fn formualizer_workbook::source_calculation::ResolvedSourceCalculation::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+pub struct formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub formualizer_workbook::source_calculation::SourceCalculationPolicy::cycle_detection: formualizer_eval::engine::CycleDetection
+pub formualizer_workbook::source_calculation::SourceCalculationPolicy::fixed_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub formualizer_workbook::source_calculation::SourceCalculationPolicy::iteration: formualizer_workbook::source_calculation::SourceIterationPolicy
+pub formualizer_workbook::source_calculation::SourceCalculationPolicy::iteration_initial_state: formualizer_workbook::source_calculation::SourceIterationInitialState
+pub formualizer_workbook::source_calculation::SourceCalculationPolicy::max_elapsed_ms: core::option::Option<u64>
+pub formualizer_workbook::source_calculation::SourceCalculationPolicy::max_work_units: core::option::Option<u64>
+pub formualizer_workbook::source_calculation::SourceCalculationPolicy::timezone: core::option::Option<formualizer_eval::timezone::TimeZoneSpec>
+pub formualizer_workbook::source_calculation::SourceCalculationPolicy::workbook_seed: core::option::Option<u64>
+impl formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::resolve(&self, &formualizer_eval::engine::EvalConfig, &[u8], formualizer_common::value::DateSystem) -> core::result::Result<(formualizer_eval::engine::EvalConfig, formualizer_workbook::source_calculation::ResolvedSourceCalculation), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::validate(&self) -> core::result::Result<(), formualizer_workbook::error::IoError>
+impl core::clone::Clone for formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::clone(&self) -> formualizer_workbook::source_calculation::SourceCalculationPolicy
+impl core::default::Default for formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::default() -> Self
+impl core::fmt::Debug for formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+pub struct formualizer_workbook::source_calculation::SourceCalculationWarning
+pub formualizer_workbook::source_calculation::SourceCalculationWarning::field: &'static str
+pub formualizer_workbook::source_calculation::SourceCalculationWarning::message: alloc::string::String
+impl core::clone::Clone for formualizer_workbook::source_calculation::SourceCalculationWarning
+pub fn formualizer_workbook::source_calculation::SourceCalculationWarning::clone(&self) -> formualizer_workbook::source_calculation::SourceCalculationWarning
+impl core::cmp::Eq for formualizer_workbook::source_calculation::SourceCalculationWarning
+impl core::cmp::PartialEq for formualizer_workbook::source_calculation::SourceCalculationWarning
+pub fn formualizer_workbook::source_calculation::SourceCalculationWarning::eq(&self, &formualizer_workbook::source_calculation::SourceCalculationWarning) -> bool
+impl core::fmt::Debug for formualizer_workbook::source_calculation::SourceCalculationWarning
+pub fn formualizer_workbook::source_calculation::SourceCalculationWarning::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::SourceCalculationWarning
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::SourceCalculationWarning
+pub fn formualizer_workbook::source_calculation::SourceCalculationWarning::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub mod formualizer_workbook::source_limits
+pub struct formualizer_workbook::source_limits::SourceRecalculateLimits
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_affected_regions: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_affected_scratch_bytes: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_affected_work: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_cells: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_columns: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_entries: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_expanded_bytes: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_formula_cells: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_input_bytes: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_operation_roots: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_operation_text_bytes: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_output_bytes: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_worksheet_bytes: core::option::Option<u64>
+pub formualizer_workbook::source_limits::SourceRecalculateLimits::max_xml_depth: core::option::Option<u64>
+impl formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::apply(&self, &mut formualizer_workbook::cache_recalculate::XlsxRecalculateLimits) -> core::result::Result<(), formualizer_workbook::error::IoError>
+impl core::clone::Clone for formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::clone(&self) -> formualizer_workbook::source_limits::SourceRecalculateLimits
+impl core::default::Default for formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::default() -> formualizer_workbook::source_limits::SourceRecalculateLimits
+impl core::fmt::Debug for formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> formualizer_workbook::source_limits::SourceRecalculateLimits where formualizer_workbook::source_limits::SourceRecalculateLimits: core::default::Default
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::deserialize<__D>(__D) -> core::result::Result<formualizer_workbook::source_limits::SourceRecalculateLimits, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+pub mod formualizer_workbook::source_outcome
+pub enum formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub formualizer_workbook::source_outcome::SourceCalculationCoverage::Complete
+pub formualizer_workbook::source_outcome::SourceCalculationCoverage::Partial
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::clone(&self) -> formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::eq(&self, &formualizer_workbook::source_outcome::SourceCalculationCoverage) -> bool
+impl core::default::Default for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::default() -> formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub enum formualizer_workbook::source_outcome::SourceCoverageScope
+pub formualizer_workbook::source_outcome::SourceCoverageScope::Conservative
+pub formualizer_workbook::source_outcome::SourceCoverageScope::None
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::clone(&self) -> formualizer_workbook::source_outcome::SourceCoverageScope
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceCoverageScope
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::eq(&self, &formualizer_workbook::source_outcome::SourceCoverageScope) -> bool
+impl core::default::Default for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::default() -> formualizer_workbook::source_outcome::SourceCoverageScope
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_outcome::SourceCoverageScope
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceCoverageScope
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub enum formualizer_workbook::source_outcome::SourceModeVerification
+pub formualizer_workbook::source_outcome::SourceModeVerification::Unavailable
+pub formualizer_workbook::source_outcome::SourceModeVerification::Unverified
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::clone(&self) -> formualizer_workbook::source_outcome::SourceModeVerification
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceModeVerification
+impl core::cmp::Ord for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::cmp(&self, &formualizer_workbook::source_outcome::SourceModeVerification) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::eq(&self, &formualizer_workbook::source_outcome::SourceModeVerification) -> bool
+impl core::cmp::PartialOrd for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::partial_cmp(&self, &formualizer_workbook::source_outcome::SourceModeVerification) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_outcome::SourceModeVerification
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceModeVerification
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub enum formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::FunctionPanicked
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::FunctionPanicked::name: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::InternalResult
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::InternalResult::token: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::PostfixInvocation
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::SourceFeature
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::SourceFeature::name: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnimplementedFunction
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnimplementedFunction::name: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnimplementedFunctionMode
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnimplementedFunctionMode::mode: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnimplementedFunctionMode::name: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnknownFunction
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnknownFunction::name: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnverifiedFunctionMode
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnverifiedFunctionMode::mode: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnverifiedFunctionMode::name: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnverifiedProvider
+pub formualizer_workbook::source_outcome::SourceUnavailableOperation::UnverifiedProvider::name: alloc::string::String
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub fn formualizer_workbook::source_outcome::SourceUnavailableOperation::clone(&self) -> formualizer_workbook::source_outcome::SourceUnavailableOperation
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceUnavailableOperation
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub fn formualizer_workbook::source_outcome::SourceUnavailableOperation::eq(&self, &formualizer_workbook::source_outcome::SourceUnavailableOperation) -> bool
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub fn formualizer_workbook::source_outcome::SourceUnavailableOperation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceUnavailableOperation
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub fn formualizer_workbook::source_outcome::SourceUnavailableOperation::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::conservative_unknown_dynamic: bool
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::publication_membership_work_bound: u64
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::query_work: u64
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::relation: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::requested_capacity_peak_bytes: usize
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::semantic_reads_unattested: bool
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::source_domain: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::uncertain_regions: usize
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::unknown_facts: usize
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::unknown_reasons: alloc::collections::btree::map::BTreeMap<alloc::string::String, usize>
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::witnessed_regions: usize
+pub formualizer_workbook::source_outcome::SourceDependencyEvidence::work: u64
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub fn formualizer_workbook::source_outcome::SourceDependencyEvidence::clone(&self) -> formualizer_workbook::source_outcome::SourceDependencyEvidence
+impl core::default::Default for formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub fn formualizer_workbook::source_outcome::SourceDependencyEvidence::default() -> formualizer_workbook::source_outcome::SourceDependencyEvidence
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub fn formualizer_workbook::source_outcome::SourceDependencyEvidence::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub fn formualizer_workbook::source_outcome::SourceDependencyEvidence::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub formualizer_workbook::source_outcome::SourceFunctionIncidence::cell_reason_count: usize
+pub formualizer_workbook::source_outcome::SourceFunctionIncidence::named_reason_count: usize
+pub formualizer_workbook::source_outcome::SourceFunctionIncidence::unlocated_reason_count: usize
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionIncidence::clone(&self) -> formualizer_workbook::source_outcome::SourceFunctionIncidence
+impl core::default::Default for formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionIncidence::default() -> formualizer_workbook::source_outcome::SourceFunctionIncidence
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionIncidence::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionIncidence::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+pub formualizer_workbook::source_outcome::SourceFunctionModeIncidence::incidence: formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub formualizer_workbook::source_outcome::SourceFunctionModeIncidence::mode: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceFunctionModeIncidence::name: alloc::string::String
+pub formualizer_workbook::source_outcome::SourceFunctionModeIncidence::verification: formualizer_workbook::source_outcome::SourceModeVerification
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionModeIncidence::clone(&self) -> formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionModeIncidence::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionModeIncidence::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::dependency_evidence: core::option::Option<formualizer_workbook::source_outcome::SourceDependencyEvidence>
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::function_modes: alloc::vec::Vec<formualizer_workbook::source_outcome::SourceFunctionModeIncidence>
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::logical_cell_reason_count: usize
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::logical_named_reason_count: usize
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::logical_root_cell_count: usize
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::physical_function_dispatches: core::option::Option<u64>
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::physical_unavailable_observations: core::option::Option<u64>
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::samples: alloc::vec::Vec<formualizer_workbook::source_outcome::SourceOperationSample>
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::samples_truncated: usize
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::source_regions: usize
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::unavailable_functions: alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_workbook::source_outcome::SourceFunctionIncidence>
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::unavailable_result_cells: usize
+pub formualizer_workbook::source_outcome::SourceOperationDiagnostics::workbook_features: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub fn formualizer_workbook::source_outcome::SourceOperationDiagnostics::clone(&self) -> formualizer_workbook::source_outcome::SourceOperationDiagnostics
+impl core::default::Default for formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub fn formualizer_workbook::source_outcome::SourceOperationDiagnostics::default() -> formualizer_workbook::source_outcome::SourceOperationDiagnostics
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub fn formualizer_workbook::source_outcome::SourceOperationDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub fn formualizer_workbook::source_outcome::SourceOperationDiagnostics::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::source_outcome::SourceOperationSample
+pub formualizer_workbook::source_outcome::SourceOperationSample::location: core::option::Option<alloc::string::String>
+pub formualizer_workbook::source_outcome::SourceOperationSample::operation: formualizer_workbook::source_outcome::SourceUnavailableOperation
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceOperationSample
+pub fn formualizer_workbook::source_outcome::SourceOperationSample::clone(&self) -> formualizer_workbook::source_outcome::SourceOperationSample
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceOperationSample
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceOperationSample
+pub fn formualizer_workbook::source_outcome::SourceOperationSample::eq(&self, &formualizer_workbook::source_outcome::SourceOperationSample) -> bool
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceOperationSample
+pub fn formualizer_workbook::source_outcome::SourceOperationSample::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceOperationSample
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceOperationSample
+pub fn formualizer_workbook::source_outcome::SourceOperationSample::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 pub mod formualizer_workbook::traits
 pub enum formualizer_workbook::traits::AccessGranularity
 pub formualizer_workbook::traits::AccessGranularity::Cell
@@ -1667,12 +2016,14 @@ pub fn formualizer_workbook::workbook::Workbook::attach_wasm_module_bytes(&mut s
 pub fn formualizer_workbook::workbook::Workbook::attach_wasm_module_file(&mut self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::attach_wasm_modules_dir(&mut self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::begin_action(&mut self, impl core::convert::Into<alloc::string::String>)
+pub fn formualizer_workbook::workbook::Workbook::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_workbook::workbook::Workbook::begin_tx<'a, W: formualizer_workbook::traits::SpreadsheetWriter>(&'a mut self, &'a mut W) -> formualizer_workbook::transaction::WriteTransaction<'a, W>
 pub fn formualizer_workbook::workbook::Workbook::bind_wasm_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, formualizer_workbook::workbook::WasmFunctionSpec) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan(&self) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::cached_external_link_indices(&self) -> &[usize]
+pub fn formualizer_workbook::workbook::Workbook::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
 pub fn formualizer_workbook::workbook::Workbook::changelog(&self) -> &formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_workbook::workbook::Workbook::define_named_range(&mut self, &str, &formualizer_common::range::RangeAddress, formualizer_workbook::traits::NamedRangeScope) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::define_table(&mut self, &str, &str, (u32, u32, u32, u32), alloc::vec::Vec<alloc::string::String>, bool, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -1683,9 +2034,11 @@ pub fn formualizer_workbook::workbook::Workbook::duplicate_sheet(&mut self, &str
 pub fn formualizer_workbook::workbook::Workbook::end_action(&mut self)
 pub fn formualizer_workbook::workbook::Workbook::engine(&self) -> &formualizer_eval::engine::eval::Engine<formualizer_workbook::workbook::WBResolver>
 pub fn formualizer_workbook::workbook::Workbook::engine_mut(&mut self) -> &mut formualizer_eval::engine::eval::Engine<formualizer_workbook::workbook::WBResolver>
+pub fn formualizer_workbook::workbook::Workbook::ensure_sheet_capacity(&mut self, &str, usize, usize)
 pub fn formualizer_workbook::workbook::Workbook::eval_config(&self) -> &formualizer_eval::engine::EvalConfig
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all(&mut self) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all_cancellable(&mut self, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::evaluate_all_until(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::EvaluationProgress, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all_with_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all_with_delta_policy(&mut self, formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all_with_target_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_workbook::error::IoError>
@@ -1711,12 +2064,15 @@ pub fn formualizer_workbook::workbook::Workbook::get_eval_plan(&self, &[(&str, u
 pub fn formualizer_workbook::workbook::Workbook::get_eval_plan_with_options(&mut self, &[(&str, u32, u32)], bool) -> core::result::Result<formualizer_eval::engine::eval::EvalPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::get_formula(&self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_workbook::workbook::Workbook::get_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
+pub fn formualizer_workbook::workbook::Workbook::has_active_recalc_job(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_name(&self, &str, core::option::Option<&str>) -> bool
+pub fn formualizer_workbook::workbook::Workbook::has_pending_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_sheet(&self, &str) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_staged_formulas(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_bytes(&self, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_file(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_modules_dir(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
+pub fn formualizer_workbook::workbook::Workbook::is_poisoned(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::is_row_hidden(&self, &str, u32) -> core::result::Result<bool, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::last_formula_ingest_report(&self) -> core::option::Option<formualizer_eval::engine::formula_ingest::FormulaIngestReport>
 pub fn formualizer_workbook::workbook::Workbook::list_custom_functions(&self) -> alloc::vec::Vec<formualizer_workbook::workbook::CustomFnInfo>
@@ -1727,17 +2083,21 @@ pub fn formualizer_workbook::workbook::Workbook::named_range_address(&self, &str
 pub fn formualizer_workbook::workbook::Workbook::new() -> Self
 pub fn formualizer_workbook::workbook::Workbook::new_with_config(formualizer_workbook::workbook::WorkbookConfig) -> Self
 pub fn formualizer_workbook::workbook::Workbook::new_with_mode(formualizer_workbook::workbook::WorkbookMode) -> Self
+pub fn formualizer_workbook::workbook::Workbook::pending_cells_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_all(&mut self) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_cells(&mut self, &[(&str, u32, u32)]) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_ranges(&mut self, &[formualizer_common::range::RangeAddress]) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_sheets<'a, I: core::iter::traits::collect::IntoIterator<Item = &'a str>>(&mut self, I) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::prioritize_recalc(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_workbook::workbook::Workbook::read_range(&self, &formualizer_common::range::RangeAddress) -> alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>
+pub fn formualizer_workbook::workbook::Workbook::recalc_with(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions, formualizer_eval::engine::resumable::EvaluationStop, impl core::ops::function::FnMut(&mut Self, &formualizer_eval::engine::resumable::StepReport) -> core::ops::control_flow::ControlFlow<()>) -> core::result::Result<formualizer_eval::engine::resumable::RecalcOutcome, formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_workbook::workbook::Workbook::redo(&mut self) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::register_custom_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, alloc::sync::Arc<dyn formualizer_workbook::workbook::CustomFnHandler>) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::register_wasm_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, formualizer_workbook::workbook::WasmFunctionSpec) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::register_wasm_module_bytes(&mut self, &str, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::rename_sheet(&mut self, &str, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_workbook::workbook::Workbook::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::resolved_name_value(&self, &str, core::option::Option<&str>) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_workbook::workbook::Workbook::set_actor_id(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::set_changelog_enabled(&mut self, bool)
@@ -1753,6 +2113,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
 pub fn formualizer_workbook::workbook::Workbook::sheet_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn formualizer_workbook::workbook::Workbook::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_workbook::workbook::Workbook::table_metadata(&self, &str) -> core::option::Option<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_workbook::workbook::Workbook::tables(&self) -> alloc::vec::Vec<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_workbook::workbook::Workbook::to_xlsx_bytes(&self) -> core::result::Result<alloc::vec::Vec<u8>, formualizer_workbook::error::IoError>
@@ -1780,6 +2141,8 @@ pub fn formualizer_workbook::workbook::Workbook::write_range(&mut self, &str, al
 pub fn formualizer_workbook::workbook::Workbook::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 pub struct formualizer_workbook::workbook::WorkbookAction<'a>
 impl formualizer_workbook::workbook::WorkbookAction<'_>
+pub fn formualizer_workbook::workbook::WorkbookAction<'_>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::WorkbookAction<'_>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::WorkbookAction<'_>::set_formula(&mut self, &str, u32, u32, &str) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::WorkbookAction<'_>::set_row_hidden(&mut self, &str, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::WorkbookAction<'_>::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -1845,6 +2208,39 @@ pub fn formualizer_workbook::traits::AccessGranularity::clone(&self) -> formuali
 impl core::fmt::Debug for formualizer_workbook::traits::AccessGranularity
 pub fn formualizer_workbook::traits::AccessGranularity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_workbook::traits::AccessGranularity
+pub enum formualizer_workbook::CalculationDeferredReason
+pub formualizer_workbook::CalculationDeferredReason::AffectedArrayCoverageUnverified
+pub formualizer_workbook::CalculationDeferredReason::DependencyCoverageUnavailable
+pub formualizer_workbook::CalculationDeferredReason::IterativeInitialStateUnverified
+pub formualizer_workbook::CalculationDeferredReason::KnownCoverageIncomplete
+pub formualizer_workbook::CalculationDeferredReason::UnlocatedOperation
+pub formualizer_workbook::CalculationDeferredReason::WorkbookPrecisionUnverified
+impl core::clone::Clone for formualizer_workbook::error::CalculationDeferredReason
+pub fn formualizer_workbook::error::CalculationDeferredReason::clone(&self) -> formualizer_workbook::error::CalculationDeferredReason
+impl core::cmp::Eq for formualizer_workbook::error::CalculationDeferredReason
+impl core::cmp::PartialEq for formualizer_workbook::error::CalculationDeferredReason
+pub fn formualizer_workbook::error::CalculationDeferredReason::eq(&self, &formualizer_workbook::error::CalculationDeferredReason) -> bool
+impl core::fmt::Debug for formualizer_workbook::error::CalculationDeferredReason
+pub fn formualizer_workbook::error::CalculationDeferredReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_workbook::error::CalculationDeferredReason
+pub fn formualizer_workbook::error::CalculationDeferredReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::error::CalculationDeferredReason
+impl core::marker::StructuralPartialEq for formualizer_workbook::error::CalculationDeferredReason
+pub enum formualizer_workbook::CalculationSettingOrigin
+pub formualizer_workbook::CalculationSettingOrigin::Caller
+pub formualizer_workbook::CalculationSettingOrigin::ExcelDefault
+pub formualizer_workbook::CalculationSettingOrigin::Workbook
+impl core::clone::Clone for formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::clone(&self) -> formualizer_workbook::source_calculation::CalculationSettingOrigin
+impl core::cmp::Eq for formualizer_workbook::source_calculation::CalculationSettingOrigin
+impl core::cmp::PartialEq for formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::eq(&self, &formualizer_workbook::source_calculation::CalculationSettingOrigin) -> bool
+impl core::fmt::Debug for formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_calculation::CalculationSettingOrigin
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::CalculationSettingOrigin
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 pub enum formualizer_workbook::CsvArrayPolicy
 pub formualizer_workbook::CsvArrayPolicy::Blank
 pub formualizer_workbook::CsvArrayPolicy::Error
@@ -1878,6 +2274,9 @@ pub enum formualizer_workbook::IoError
 pub formualizer_workbook::IoError::Backend
 pub formualizer_workbook::IoError::Backend::backend: alloc::string::String
 pub formualizer_workbook::IoError::Backend::message: alloc::string::String
+pub formualizer_workbook::IoError::CalculationDeferred
+pub formualizer_workbook::IoError::CalculationDeferred::context: alloc::string::String
+pub formualizer_workbook::IoError::CalculationDeferred::reason: formualizer_workbook::error::CalculationDeferredReason
 pub formualizer_workbook::IoError::CellError
 pub formualizer_workbook::IoError::CellError::col: alloc::string::String
 pub formualizer_workbook::IoError::CellError::message: alloc::string::String
@@ -1889,6 +2288,9 @@ pub formualizer_workbook::IoError::FormulaParser::col: alloc::string::String
 pub formualizer_workbook::IoError::FormulaParser::message: alloc::string::String
 pub formualizer_workbook::IoError::FormulaParser::row: u32
 pub formualizer_workbook::IoError::FormulaParser::sheet: alloc::string::String
+pub formualizer_workbook::IoError::InvalidOptions
+pub formualizer_workbook::IoError::InvalidOptions::field: alloc::string::String
+pub formualizer_workbook::IoError::InvalidOptions::message: alloc::string::String
 pub formualizer_workbook::IoError::Io(std::io::error::Error)
 pub formualizer_workbook::IoError::Json(serde_json::error::Error)
 pub formualizer_workbook::IoError::LoadBudgetExceeded
@@ -1964,6 +2366,124 @@ impl core::fmt::Debug for formualizer_workbook::recalculate::RecalculateStatus
 pub fn formualizer_workbook::recalculate::RecalculateStatus::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_workbook::recalculate::RecalculateStatus
 impl core::marker::StructuralPartialEq for formualizer_workbook::recalculate::RecalculateStatus
+pub enum formualizer_workbook::SourceCalculationCoverage
+pub formualizer_workbook::SourceCalculationCoverage::Complete
+pub formualizer_workbook::SourceCalculationCoverage::Partial
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::clone(&self) -> formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::eq(&self, &formualizer_workbook::source_outcome::SourceCalculationCoverage) -> bool
+impl core::default::Default for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::default() -> formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceCalculationCoverage
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub fn formualizer_workbook::source_outcome::SourceCalculationCoverage::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub enum formualizer_workbook::SourceCoverageScope
+pub formualizer_workbook::SourceCoverageScope::Conservative
+pub formualizer_workbook::SourceCoverageScope::None
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::clone(&self) -> formualizer_workbook::source_outcome::SourceCoverageScope
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceCoverageScope
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::eq(&self, &formualizer_workbook::source_outcome::SourceCoverageScope) -> bool
+impl core::default::Default for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::default() -> formualizer_workbook::source_outcome::SourceCoverageScope
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_outcome::SourceCoverageScope
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceCoverageScope
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceCoverageScope
+pub fn formualizer_workbook::source_outcome::SourceCoverageScope::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub enum formualizer_workbook::SourceIterationInitialState
+pub formualizer_workbook::SourceIterationInitialState::ColdStart
+pub formualizer_workbook::SourceIterationInitialState::RequireVerified
+impl core::clone::Clone for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::clone(&self) -> formualizer_workbook::source_calculation::SourceIterationInitialState
+impl core::cmp::Eq for formualizer_workbook::source_calculation::SourceIterationInitialState
+impl core::cmp::PartialEq for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::eq(&self, &formualizer_workbook::source_calculation::SourceIterationInitialState) -> bool
+impl core::default::Default for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::default() -> formualizer_workbook::source_calculation::SourceIterationInitialState
+impl core::fmt::Debug for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_calculation::SourceIterationInitialState
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::SourceIterationInitialState
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::source_calculation::SourceIterationInitialState
+pub fn formualizer_workbook::source_calculation::SourceIterationInitialState::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_workbook::SourceIterationPolicy
+pub formualizer_workbook::SourceIterationPolicy::Disabled
+pub formualizer_workbook::SourceIterationPolicy::Iterate
+pub formualizer_workbook::SourceIterationPolicy::Iterate::max_change: core::option::Option<f64>
+pub formualizer_workbook::SourceIterationPolicy::Iterate::max_iterations: core::option::Option<u32>
+pub formualizer_workbook::SourceIterationPolicy::Workbook
+impl core::clone::Clone for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::clone(&self) -> formualizer_workbook::source_calculation::SourceIterationPolicy
+impl core::cmp::PartialEq for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::eq(&self, &formualizer_workbook::source_calculation::SourceIterationPolicy) -> bool
+impl core::default::Default for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::default() -> formualizer_workbook::source_calculation::SourceIterationPolicy
+impl core::fmt::Debug for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_calculation::SourceIterationPolicy
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::SourceIterationPolicy
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::source_calculation::SourceIterationPolicy
+pub fn formualizer_workbook::source_calculation::SourceIterationPolicy::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+pub enum formualizer_workbook::SourceModeVerification
+pub formualizer_workbook::SourceModeVerification::Unavailable
+pub formualizer_workbook::SourceModeVerification::Unverified
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::clone(&self) -> formualizer_workbook::source_outcome::SourceModeVerification
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceModeVerification
+impl core::cmp::Ord for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::cmp(&self, &formualizer_workbook::source_outcome::SourceModeVerification) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::eq(&self, &formualizer_workbook::source_outcome::SourceModeVerification) -> bool
+impl core::cmp::PartialOrd for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::partial_cmp(&self, &formualizer_workbook::source_outcome::SourceModeVerification) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::source_outcome::SourceModeVerification
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceModeVerification
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceModeVerification
+pub fn formualizer_workbook::source_outcome::SourceModeVerification::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub enum formualizer_workbook::SourceUnavailableOperation
+pub formualizer_workbook::SourceUnavailableOperation::FunctionPanicked
+pub formualizer_workbook::SourceUnavailableOperation::FunctionPanicked::name: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::InternalResult
+pub formualizer_workbook::SourceUnavailableOperation::InternalResult::token: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::PostfixInvocation
+pub formualizer_workbook::SourceUnavailableOperation::SourceFeature
+pub formualizer_workbook::SourceUnavailableOperation::SourceFeature::name: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::UnimplementedFunction
+pub formualizer_workbook::SourceUnavailableOperation::UnimplementedFunction::name: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::UnimplementedFunctionMode
+pub formualizer_workbook::SourceUnavailableOperation::UnimplementedFunctionMode::mode: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::UnimplementedFunctionMode::name: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::UnknownFunction
+pub formualizer_workbook::SourceUnavailableOperation::UnknownFunction::name: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::UnverifiedFunctionMode
+pub formualizer_workbook::SourceUnavailableOperation::UnverifiedFunctionMode::mode: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::UnverifiedFunctionMode::name: alloc::string::String
+pub formualizer_workbook::SourceUnavailableOperation::UnverifiedProvider
+pub formualizer_workbook::SourceUnavailableOperation::UnverifiedProvider::name: alloc::string::String
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub fn formualizer_workbook::source_outcome::SourceUnavailableOperation::clone(&self) -> formualizer_workbook::source_outcome::SourceUnavailableOperation
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceUnavailableOperation
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub fn formualizer_workbook::source_outcome::SourceUnavailableOperation::eq(&self, &formualizer_workbook::source_outcome::SourceUnavailableOperation) -> bool
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub fn formualizer_workbook::source_outcome::SourceUnavailableOperation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceUnavailableOperation
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceUnavailableOperation
+pub fn formualizer_workbook::source_outcome::SourceUnavailableOperation::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 pub enum formualizer_workbook::WorkbookMode
 pub formualizer_workbook::WorkbookMode::Ephemeral
 pub formualizer_workbook::WorkbookMode::Interactive
@@ -2082,6 +2602,20 @@ impl core::fmt::Debug for formualizer_workbook::XlsxReadError
 pub fn formualizer_workbook::XlsxReadError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::fmt::Display for formualizer_workbook::XlsxReadError
 pub fn formualizer_workbook::XlsxReadError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub enum formualizer_workbook::XlsxRecalculateProfile
+pub formualizer_workbook::XlsxRecalculateProfile::Strict
+pub formualizer_workbook::XlsxRecalculateProfile::Workbook
+impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+impl core::cmp::Eq for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+impl core::cmp::PartialEq for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::eq(&self, &formualizer_workbook::cache_recalculate::XlsxRecalculateProfile) -> bool
+impl core::default::Default for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::default() -> formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateProfile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+impl core::marker::StructuralPartialEq for formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
 pub struct formualizer_workbook::AdapterLoadStats
 pub formualizer_workbook::AdapterLoadStats::formula_cells_handed_to_engine: core::option::Option<u64>
 pub formualizer_workbook::AdapterLoadStats::formula_cells_observed: core::option::Option<u64>
@@ -2477,6 +3011,25 @@ pub fn formualizer_workbook::recalculate::RecalculateSummary::default() -> Self
 impl core::fmt::Debug for formualizer_workbook::recalculate::RecalculateSummary
 pub fn formualizer_workbook::recalculate::RecalculateSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_workbook::recalculate::RecalculateSummary
+pub struct formualizer_workbook::ResolvedSourceCalculation
+pub formualizer_workbook::ResolvedSourceCalculation::cycle: formualizer_eval::engine::CycleConfig
+pub formualizer_workbook::ResolvedSourceCalculation::date_system: formualizer_common::value::DateSystem
+pub formualizer_workbook::ResolvedSourceCalculation::fixed_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub formualizer_workbook::ResolvedSourceCalculation::iteration_initial_state: formualizer_workbook::source_calculation::SourceIterationInitialState
+pub formualizer_workbook::ResolvedSourceCalculation::iteration_origin: formualizer_workbook::source_calculation::CalculationSettingOrigin
+pub formualizer_workbook::ResolvedSourceCalculation::max_change_origin: core::option::Option<formualizer_workbook::source_calculation::CalculationSettingOrigin>
+pub formualizer_workbook::ResolvedSourceCalculation::max_elapsed_ms: core::option::Option<u64>
+pub formualizer_workbook::ResolvedSourceCalculation::max_iterations_origin: core::option::Option<formualizer_workbook::source_calculation::CalculationSettingOrigin>
+pub formualizer_workbook::ResolvedSourceCalculation::max_work_units: core::option::Option<u64>
+pub formualizer_workbook::ResolvedSourceCalculation::timezone: formualizer_eval::timezone::TimeZoneSpec
+pub formualizer_workbook::ResolvedSourceCalculation::warnings: alloc::vec::Vec<formualizer_workbook::source_calculation::SourceCalculationWarning>
+pub formualizer_workbook::ResolvedSourceCalculation::workbook_seed: u64
+impl core::clone::Clone for formualizer_workbook::source_calculation::ResolvedSourceCalculation
+pub fn formualizer_workbook::source_calculation::ResolvedSourceCalculation::clone(&self) -> formualizer_workbook::source_calculation::ResolvedSourceCalculation
+impl core::fmt::Debug for formualizer_workbook::source_calculation::ResolvedSourceCalculation
+pub fn formualizer_workbook::source_calculation::ResolvedSourceCalculation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::ResolvedSourceCalculation
+pub fn formualizer_workbook::source_calculation::ResolvedSourceCalculation::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
 pub struct formualizer_workbook::SheetData
 pub formualizer_workbook::SheetData::cells: alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>
 pub formualizer_workbook::SheetData::date_system_1904: bool
@@ -2491,6 +3044,145 @@ impl core::clone::Clone for formualizer_workbook::traits::SheetData
 pub fn formualizer_workbook::traits::SheetData::clone(&self) -> formualizer_workbook::traits::SheetData
 impl core::fmt::Debug for formualizer_workbook::traits::SheetData
 pub fn formualizer_workbook::traits::SheetData::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_workbook::SourceCalculationPolicy
+pub formualizer_workbook::SourceCalculationPolicy::cycle_detection: formualizer_eval::engine::CycleDetection
+pub formualizer_workbook::SourceCalculationPolicy::fixed_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub formualizer_workbook::SourceCalculationPolicy::iteration: formualizer_workbook::source_calculation::SourceIterationPolicy
+pub formualizer_workbook::SourceCalculationPolicy::iteration_initial_state: formualizer_workbook::source_calculation::SourceIterationInitialState
+pub formualizer_workbook::SourceCalculationPolicy::max_elapsed_ms: core::option::Option<u64>
+pub formualizer_workbook::SourceCalculationPolicy::max_work_units: core::option::Option<u64>
+pub formualizer_workbook::SourceCalculationPolicy::timezone: core::option::Option<formualizer_eval::timezone::TimeZoneSpec>
+pub formualizer_workbook::SourceCalculationPolicy::workbook_seed: core::option::Option<u64>
+impl formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::resolve(&self, &formualizer_eval::engine::EvalConfig, &[u8], formualizer_common::value::DateSystem) -> core::result::Result<(formualizer_eval::engine::EvalConfig, formualizer_workbook::source_calculation::ResolvedSourceCalculation), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::validate(&self) -> core::result::Result<(), formualizer_workbook::error::IoError>
+impl core::clone::Clone for formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::clone(&self) -> formualizer_workbook::source_calculation::SourceCalculationPolicy
+impl core::default::Default for formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::default() -> Self
+impl core::fmt::Debug for formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::source_calculation::SourceCalculationPolicy
+pub fn formualizer_workbook::source_calculation::SourceCalculationPolicy::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+pub struct formualizer_workbook::SourceCalculationWarning
+pub formualizer_workbook::SourceCalculationWarning::field: &'static str
+pub formualizer_workbook::SourceCalculationWarning::message: alloc::string::String
+impl core::clone::Clone for formualizer_workbook::source_calculation::SourceCalculationWarning
+pub fn formualizer_workbook::source_calculation::SourceCalculationWarning::clone(&self) -> formualizer_workbook::source_calculation::SourceCalculationWarning
+impl core::cmp::Eq for formualizer_workbook::source_calculation::SourceCalculationWarning
+impl core::cmp::PartialEq for formualizer_workbook::source_calculation::SourceCalculationWarning
+pub fn formualizer_workbook::source_calculation::SourceCalculationWarning::eq(&self, &formualizer_workbook::source_calculation::SourceCalculationWarning) -> bool
+impl core::fmt::Debug for formualizer_workbook::source_calculation::SourceCalculationWarning
+pub fn formualizer_workbook::source_calculation::SourceCalculationWarning::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::SourceCalculationWarning
+impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::SourceCalculationWarning
+pub fn formualizer_workbook::source_calculation::SourceCalculationWarning::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::SourceDependencyEvidence
+pub formualizer_workbook::SourceDependencyEvidence::conservative_unknown_dynamic: bool
+pub formualizer_workbook::SourceDependencyEvidence::publication_membership_work_bound: u64
+pub formualizer_workbook::SourceDependencyEvidence::query_work: u64
+pub formualizer_workbook::SourceDependencyEvidence::relation: alloc::string::String
+pub formualizer_workbook::SourceDependencyEvidence::requested_capacity_peak_bytes: usize
+pub formualizer_workbook::SourceDependencyEvidence::semantic_reads_unattested: bool
+pub formualizer_workbook::SourceDependencyEvidence::source_domain: alloc::string::String
+pub formualizer_workbook::SourceDependencyEvidence::uncertain_regions: usize
+pub formualizer_workbook::SourceDependencyEvidence::unknown_facts: usize
+pub formualizer_workbook::SourceDependencyEvidence::unknown_reasons: alloc::collections::btree::map::BTreeMap<alloc::string::String, usize>
+pub formualizer_workbook::SourceDependencyEvidence::witnessed_regions: usize
+pub formualizer_workbook::SourceDependencyEvidence::work: u64
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub fn formualizer_workbook::source_outcome::SourceDependencyEvidence::clone(&self) -> formualizer_workbook::source_outcome::SourceDependencyEvidence
+impl core::default::Default for formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub fn formualizer_workbook::source_outcome::SourceDependencyEvidence::default() -> formualizer_workbook::source_outcome::SourceDependencyEvidence
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub fn formualizer_workbook::source_outcome::SourceDependencyEvidence::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceDependencyEvidence
+pub fn formualizer_workbook::source_outcome::SourceDependencyEvidence::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::SourceFunctionIncidence
+pub formualizer_workbook::SourceFunctionIncidence::cell_reason_count: usize
+pub formualizer_workbook::SourceFunctionIncidence::named_reason_count: usize
+pub formualizer_workbook::SourceFunctionIncidence::unlocated_reason_count: usize
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionIncidence::clone(&self) -> formualizer_workbook::source_outcome::SourceFunctionIncidence
+impl core::default::Default for formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionIncidence::default() -> formualizer_workbook::source_outcome::SourceFunctionIncidence
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionIncidence::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionIncidence::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::SourceFunctionModeIncidence
+pub formualizer_workbook::SourceFunctionModeIncidence::incidence: formualizer_workbook::source_outcome::SourceFunctionIncidence
+pub formualizer_workbook::SourceFunctionModeIncidence::mode: alloc::string::String
+pub formualizer_workbook::SourceFunctionModeIncidence::name: alloc::string::String
+pub formualizer_workbook::SourceFunctionModeIncidence::verification: formualizer_workbook::source_outcome::SourceModeVerification
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionModeIncidence::clone(&self) -> formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionModeIncidence::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceFunctionModeIncidence
+pub fn formualizer_workbook::source_outcome::SourceFunctionModeIncidence::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::SourceOperationDiagnostics
+pub formualizer_workbook::SourceOperationDiagnostics::dependency_evidence: core::option::Option<formualizer_workbook::source_outcome::SourceDependencyEvidence>
+pub formualizer_workbook::SourceOperationDiagnostics::function_modes: alloc::vec::Vec<formualizer_workbook::source_outcome::SourceFunctionModeIncidence>
+pub formualizer_workbook::SourceOperationDiagnostics::logical_cell_reason_count: usize
+pub formualizer_workbook::SourceOperationDiagnostics::logical_named_reason_count: usize
+pub formualizer_workbook::SourceOperationDiagnostics::logical_root_cell_count: usize
+pub formualizer_workbook::SourceOperationDiagnostics::physical_function_dispatches: core::option::Option<u64>
+pub formualizer_workbook::SourceOperationDiagnostics::physical_unavailable_observations: core::option::Option<u64>
+pub formualizer_workbook::SourceOperationDiagnostics::samples: alloc::vec::Vec<formualizer_workbook::source_outcome::SourceOperationSample>
+pub formualizer_workbook::SourceOperationDiagnostics::samples_truncated: usize
+pub formualizer_workbook::SourceOperationDiagnostics::source_regions: usize
+pub formualizer_workbook::SourceOperationDiagnostics::unavailable_functions: alloc::collections::btree::map::BTreeMap<alloc::string::String, formualizer_workbook::source_outcome::SourceFunctionIncidence>
+pub formualizer_workbook::SourceOperationDiagnostics::unavailable_result_cells: usize
+pub formualizer_workbook::SourceOperationDiagnostics::workbook_features: alloc::vec::Vec<alloc::string::String>
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub fn formualizer_workbook::source_outcome::SourceOperationDiagnostics::clone(&self) -> formualizer_workbook::source_outcome::SourceOperationDiagnostics
+impl core::default::Default for formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub fn formualizer_workbook::source_outcome::SourceOperationDiagnostics::default() -> formualizer_workbook::source_outcome::SourceOperationDiagnostics
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub fn formualizer_workbook::source_outcome::SourceOperationDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceOperationDiagnostics
+pub fn formualizer_workbook::source_outcome::SourceOperationDiagnostics::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::SourceOperationSample
+pub formualizer_workbook::SourceOperationSample::location: core::option::Option<alloc::string::String>
+pub formualizer_workbook::SourceOperationSample::operation: formualizer_workbook::source_outcome::SourceUnavailableOperation
+impl core::clone::Clone for formualizer_workbook::source_outcome::SourceOperationSample
+pub fn formualizer_workbook::source_outcome::SourceOperationSample::clone(&self) -> formualizer_workbook::source_outcome::SourceOperationSample
+impl core::cmp::Eq for formualizer_workbook::source_outcome::SourceOperationSample
+impl core::cmp::PartialEq for formualizer_workbook::source_outcome::SourceOperationSample
+pub fn formualizer_workbook::source_outcome::SourceOperationSample::eq(&self, &formualizer_workbook::source_outcome::SourceOperationSample) -> bool
+impl core::fmt::Debug for formualizer_workbook::source_outcome::SourceOperationSample
+pub fn formualizer_workbook::source_outcome::SourceOperationSample::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_workbook::source_outcome::SourceOperationSample
+impl serde_core::ser::Serialize for formualizer_workbook::source_outcome::SourceOperationSample
+pub fn formualizer_workbook::source_outcome::SourceOperationSample::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub struct formualizer_workbook::SourceRecalculateLimits
+pub formualizer_workbook::SourceRecalculateLimits::max_affected_regions: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_affected_scratch_bytes: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_affected_work: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_cells: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_columns: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_entries: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_expanded_bytes: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_formula_cells: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_input_bytes: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_operation_roots: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_operation_text_bytes: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_output_bytes: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_worksheet_bytes: core::option::Option<u64>
+pub formualizer_workbook::SourceRecalculateLimits::max_xml_depth: core::option::Option<u64>
+impl formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::apply(&self, &mut formualizer_workbook::cache_recalculate::XlsxRecalculateLimits) -> core::result::Result<(), formualizer_workbook::error::IoError>
+impl core::clone::Clone for formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::clone(&self) -> formualizer_workbook::source_limits::SourceRecalculateLimits
+impl core::default::Default for formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::default() -> formualizer_workbook::source_limits::SourceRecalculateLimits
+impl core::fmt::Debug for formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'de> formualizer_workbook::source_limits::SourceRecalculateLimits where formualizer_workbook::source_limits::SourceRecalculateLimits: core::default::Default
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::deserialize<__D>(__D) -> core::result::Result<formualizer_workbook::source_limits::SourceRecalculateLimits, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::source_limits::SourceRecalculateLimits
+pub fn formualizer_workbook::source_limits::SourceRecalculateLimits::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
 pub struct formualizer_workbook::TableDefinition
 pub formualizer_workbook::TableDefinition::header_row: bool
 pub formualizer_workbook::TableDefinition::headers: alloc::vec::Vec<alloc::string::String>
@@ -2731,12 +3423,14 @@ pub fn formualizer_workbook::workbook::Workbook::attach_wasm_module_bytes(&mut s
 pub fn formualizer_workbook::workbook::Workbook::attach_wasm_module_file(&mut self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::attach_wasm_modules_dir(&mut self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::begin_action(&mut self, impl core::convert::Into<alloc::string::String>)
+pub fn formualizer_workbook::workbook::Workbook::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_workbook::workbook::Workbook::begin_tx<'a, W: formualizer_workbook::traits::SpreadsheetWriter>(&'a mut self, &'a mut W) -> formualizer_workbook::transaction::WriteTransaction<'a, W>
 pub fn formualizer_workbook::workbook::Workbook::bind_wasm_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, formualizer_workbook::workbook::WasmFunctionSpec) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan(&self) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::cached_external_link_indices(&self) -> &[usize]
+pub fn formualizer_workbook::workbook::Workbook::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
 pub fn formualizer_workbook::workbook::Workbook::changelog(&self) -> &formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_workbook::workbook::Workbook::define_named_range(&mut self, &str, &formualizer_common::range::RangeAddress, formualizer_workbook::traits::NamedRangeScope) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::define_table(&mut self, &str, &str, (u32, u32, u32, u32), alloc::vec::Vec<alloc::string::String>, bool, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
@@ -2747,9 +3441,11 @@ pub fn formualizer_workbook::workbook::Workbook::duplicate_sheet(&mut self, &str
 pub fn formualizer_workbook::workbook::Workbook::end_action(&mut self)
 pub fn formualizer_workbook::workbook::Workbook::engine(&self) -> &formualizer_eval::engine::eval::Engine<formualizer_workbook::workbook::WBResolver>
 pub fn formualizer_workbook::workbook::Workbook::engine_mut(&mut self) -> &mut formualizer_eval::engine::eval::Engine<formualizer_workbook::workbook::WBResolver>
+pub fn formualizer_workbook::workbook::Workbook::ensure_sheet_capacity(&mut self, &str, usize, usize)
 pub fn formualizer_workbook::workbook::Workbook::eval_config(&self) -> &formualizer_eval::engine::EvalConfig
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all(&mut self) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all_cancellable(&mut self, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::evaluate_all_until(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::EvaluationProgress, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all_with_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all_with_delta_policy(&mut self, formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::evaluate_all_with_target_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_workbook::error::IoError>
@@ -2775,12 +3471,15 @@ pub fn formualizer_workbook::workbook::Workbook::get_eval_plan(&self, &[(&str, u
 pub fn formualizer_workbook::workbook::Workbook::get_eval_plan_with_options(&mut self, &[(&str, u32, u32)], bool) -> core::result::Result<formualizer_eval::engine::eval::EvalPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::get_formula(&self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_workbook::workbook::Workbook::get_value(&self, &str, u32, u32) -> core::option::Option<formualizer_common::value::LiteralValue>
+pub fn formualizer_workbook::workbook::Workbook::has_active_recalc_job(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_name(&self, &str, core::option::Option<&str>) -> bool
+pub fn formualizer_workbook::workbook::Workbook::has_pending_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_sheet(&self, &str) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_staged_formulas(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_bytes(&self, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_file(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_modules_dir(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
+pub fn formualizer_workbook::workbook::Workbook::is_poisoned(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::is_row_hidden(&self, &str, u32) -> core::result::Result<bool, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::last_formula_ingest_report(&self) -> core::option::Option<formualizer_eval::engine::formula_ingest::FormulaIngestReport>
 pub fn formualizer_workbook::workbook::Workbook::list_custom_functions(&self) -> alloc::vec::Vec<formualizer_workbook::workbook::CustomFnInfo>
@@ -2791,17 +3490,21 @@ pub fn formualizer_workbook::workbook::Workbook::named_range_address(&self, &str
 pub fn formualizer_workbook::workbook::Workbook::new() -> Self
 pub fn formualizer_workbook::workbook::Workbook::new_with_config(formualizer_workbook::workbook::WorkbookConfig) -> Self
 pub fn formualizer_workbook::workbook::Workbook::new_with_mode(formualizer_workbook::workbook::WorkbookMode) -> Self
+pub fn formualizer_workbook::workbook::Workbook::pending_cells_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_all(&mut self) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_cells(&mut self, &[(&str, u32, u32)]) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_ranges(&mut self, &[formualizer_common::range::RangeAddress]) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_sheets<'a, I: core::iter::traits::collect::IntoIterator<Item = &'a str>>(&mut self, I) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::prepare_graph_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::target_preparation::PreparedTargetGraphReport, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::prioritize_recalc(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_workbook::workbook::Workbook::read_range(&self, &formualizer_common::range::RangeAddress) -> alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>
+pub fn formualizer_workbook::workbook::Workbook::recalc_with(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions, formualizer_eval::engine::resumable::EvaluationStop, impl core::ops::function::FnMut(&mut Self, &formualizer_eval::engine::resumable::StepReport) -> core::ops::control_flow::ControlFlow<()>) -> core::result::Result<formualizer_eval::engine::resumable::RecalcOutcome, formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_workbook::workbook::Workbook::redo(&mut self) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::register_custom_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, alloc::sync::Arc<dyn formualizer_workbook::workbook::CustomFnHandler>) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::register_wasm_function(&mut self, &str, formualizer_workbook::workbook::CustomFnOptions, formualizer_workbook::workbook::WasmFunctionSpec) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::register_wasm_module_bytes(&mut self, &str, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::rename_sheet(&mut self, &str, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_workbook::workbook::Workbook::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::resolved_name_value(&self, &str, core::option::Option<&str>) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_workbook::workbook::Workbook::set_actor_id(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::set_changelog_enabled(&mut self, bool)
@@ -2817,6 +3520,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
 pub fn formualizer_workbook::workbook::Workbook::sheet_names(&self) -> alloc::vec::Vec<alloc::string::String>
+pub fn formualizer_workbook::workbook::Workbook::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_eval::engine::resumable::RecalcJobError>
 pub fn formualizer_workbook::workbook::Workbook::table_metadata(&self, &str) -> core::option::Option<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_workbook::workbook::Workbook::tables(&self) -> alloc::vec::Vec<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_workbook::workbook::Workbook::to_xlsx_bytes(&self) -> core::result::Result<alloc::vec::Vec<u8>, formualizer_workbook::error::IoError>
@@ -2904,12 +3608,17 @@ impl core::fmt::Debug for formualizer_workbook::XlsxLoadLimits
 pub fn formualizer_workbook::XlsxLoadLimits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_workbook::XlsxLoadLimits
 pub struct formualizer_workbook::XlsxRecalculateLimits
+pub formualizer_workbook::XlsxRecalculateLimits::max_affected_regions: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_affected_scratch_bytes: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_affected_work: u64
 pub formualizer_workbook::XlsxRecalculateLimits::max_cells: usize
 pub formualizer_workbook::XlsxRecalculateLimits::max_columns: u32
 pub formualizer_workbook::XlsxRecalculateLimits::max_entries: usize
 pub formualizer_workbook::XlsxRecalculateLimits::max_expanded_bytes: usize
 pub formualizer_workbook::XlsxRecalculateLimits::max_formula_cells: usize
 pub formualizer_workbook::XlsxRecalculateLimits::max_input_bytes: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_operation_roots: usize
+pub formualizer_workbook::XlsxRecalculateLimits::max_operation_text_bytes: usize
 pub formualizer_workbook::XlsxRecalculateLimits::max_output_bytes: usize
 pub formualizer_workbook::XlsxRecalculateLimits::max_worksheet_bytes: usize
 pub formualizer_workbook::XlsxRecalculateLimits::max_xml_depth: usize
@@ -2920,11 +3629,17 @@ pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::default()
 impl core::fmt::Debug for formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
 pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateLimits::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_workbook::XlsxRecalculateOptions
+pub formualizer_workbook::XlsxRecalculateOptions::calculation: core::option::Option<formualizer_workbook::source_calculation::SourceCalculationPolicy>
 pub formualizer_workbook::XlsxRecalculateOptions::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
 pub formualizer_workbook::XlsxRecalculateOptions::error_location_limit: usize
 pub formualizer_workbook::XlsxRecalculateOptions::eval_config: formualizer_eval::engine::EvalConfig
 pub formualizer_workbook::XlsxRecalculateOptions::external_links: formualizer_workbook::cache_recalculate::ExternalLinkPolicy
 pub formualizer_workbook::XlsxRecalculateOptions::limits: formualizer_workbook::cache_recalculate::XlsxRecalculateLimits
+pub formualizer_workbook::XlsxRecalculateOptions::physical_telemetry: bool
+pub formualizer_workbook::XlsxRecalculateOptions::profile: formualizer_workbook::cache_recalculate::XlsxRecalculateProfile
+pub formualizer_workbook::XlsxRecalculateOptions::require_complete: bool
+impl formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
+pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::workbook() -> Self
 impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
 pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::clone(&self) -> formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
 impl core::default::Default for formualizer_workbook::cache_recalculate::XlsxRecalculateOptions
@@ -2934,9 +3649,15 @@ pub fn formualizer_workbook::cache_recalculate::XlsxRecalculateOptions::fmt(&sel
 pub struct formualizer_workbook::XlsxRecalculateResult
 pub formualizer_workbook::XlsxRecalculateResult::bytes: alloc::vec::Vec<u8>
 pub formualizer_workbook::XlsxRecalculateResult::cache_cells_changed: usize
+pub formualizer_workbook::XlsxRecalculateResult::caches_invalidated: usize
+pub formualizer_workbook::XlsxRecalculateResult::calculation: core::option::Option<formualizer_workbook::source_calculation::ResolvedSourceCalculation>
+pub formualizer_workbook::XlsxRecalculateResult::calculation_flags_changed: bool
 pub formualizer_workbook::XlsxRecalculateResult::clock_now_utc: core::option::Option<chrono::datetime::DateTime<chrono::offset::utc::Utc>>
+pub formualizer_workbook::XlsxRecalculateResult::coverage: formualizer_workbook::source_outcome::SourceCalculationCoverage
+pub formualizer_workbook::XlsxRecalculateResult::coverage_scope: formualizer_workbook::source_outcome::SourceCoverageScope
 pub formualizer_workbook::XlsxRecalculateResult::external_links_used: usize
 pub formualizer_workbook::XlsxRecalculateResult::formula_cells: usize
+pub formualizer_workbook::XlsxRecalculateResult::operation_diagnostics: formualizer_workbook::source_outcome::SourceOperationDiagnostics
 pub formualizer_workbook::XlsxRecalculateResult::summary: formualizer_workbook::recalculate::RecalculateSummary
 pub formualizer_workbook::XlsxRecalculateResult::worksheet_parts_changed: usize
 impl core::clone::Clone for formualizer_workbook::cache_recalculate::XlsxRecalculateResult

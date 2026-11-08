@@ -26,6 +26,7 @@ pub mod history;
 pub mod host;
 pub mod identity;
 pub mod level_index;
+pub(crate) mod observed;
 // Remove the temporary allowance when the evaluator calls the driver.
 #[allow(dead_code)]
 pub(crate) mod plan_control;

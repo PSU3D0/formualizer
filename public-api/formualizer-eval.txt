@@ -89,6 +89,7 @@ pub formualizer_eval::arrow_store::OverlayValue::DateTime(f64)
 pub formualizer_eval::arrow_store::OverlayValue::Duration(f64)
 pub formualizer_eval::arrow_store::OverlayValue::Empty
 pub formualizer_eval::arrow_store::OverlayValue::Error(u8)
+pub formualizer_eval::arrow_store::OverlayValue::FunctionPanicked(alloc::sync::Arc<formualizer_common::error::ExcelError>)
 pub formualizer_eval::arrow_store::OverlayValue::Number(f64)
 pub formualizer_eval::arrow_store::OverlayValue::Pending
 pub formualizer_eval::arrow_store::OverlayValue::Text(alloc::sync::Arc<str>)
@@ -1370,12 +1371,25 @@ pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, 
 pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
 pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_active_recalc_job(&self) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::pending_cells_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
+pub fn formualizer_eval::engine::eval::Engine<R>::prioritize_recalc(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::recalc_with(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions, formualizer_eval::engine::resumable::EvaluationStop, impl core::ops::function::FnMut(&mut Self, &formualizer_eval::engine::resumable::StepReport) -> core::ops::control_flow::ControlFlow<()>) -> core::result::Result<formualizer_eval::engine::resumable::RecalcOutcome, formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_eval::engine::resumable::RecalcJobError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::current_read_affected_closure(&self, &[AffectedRoot], ClosureLimits) -> core::result::Result<CurrentReadClosure<'_>, ClosureError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell_result(&self, &formualizer_common::grid_address::CellAddress) -> core::result::Result<formualizer_eval::engine::inspect::CellResultState, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::precedents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::PrecedentOptions) -> core::result::Result<formualizer_eval::engine::inspect::PrecedentReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::range_page(&self, &formualizer_common::grid_address::RangeArea, &formualizer_eval::engine::inspect::RangePageOptions) -> core::result::Result<formualizer_eval::engine::inspect::RangePage, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::trace(&self, &[formualizer_common::grid_address::CellAddress], &formualizer_eval::engine::inspect::TraceOptions) -> core::result::Result<formualizer_eval::engine::inspect::TraceGraph, formualizer_eval::engine::inspect::InspectError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::is_poisoned(&self) -> bool
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::action<T>(&mut self, impl core::convert::AsRef<str>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::action_atomic<T>(&mut self, impl core::convert::Into<alloc::string::String>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -1393,9 +1407,12 @@ pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan(&self) -> co
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_has_spill_projection(&self, &str, u32, u32) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_in_empty_table(&self, &str, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
+pub fn formualizer_eval::engine::eval::Engine<R>::configure_operation_diagnostics(&mut self, formualizer_eval::operation_diagnostics::OperationDiagnosticOptions)
 pub fn formualizer_eval::engine::eval::Engine<R>::declare_dynamic_array_anchor(&mut self, &str, u32, u32) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::declare_fixed_array_formula(&mut self, &str, u32, u32, u32, u32) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::default_sheet_id(&self) -> formualizer_eval::reference::SheetId
@@ -1410,8 +1427,10 @@ pub fn formualizer_eval::engine::eval::Engine<R>::delete_name(&mut self, &str, f
 pub fn formualizer_eval::engine::eval::Engine<R>::delete_name_with_logger(&mut self, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog, &str, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::delete_rows(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::dirty_propagation_visits(&self) -> u64
+pub fn formualizer_eval::engine::eval::Engine<R>::disable_operation_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::duplicate_sheet(&mut self, &str, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::edit_with_logger<T>(&mut self, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'_>) -> T) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::eval::Engine<R>::enable_operation_diagnostics(&mut self, usize)
 pub fn formualizer_eval::engine::eval::Engine<R>::end_batch(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::end_deferred_dirty(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_recalc_plan(&mut self, &formualizer_eval::engine::eval::RecalcPlan) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
@@ -1453,6 +1472,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::named_ranges_iter(&self) -> im
 pub fn formualizer_eval::engine::eval::Engine<R>::named_ranges_snapshot(&self) -> alloc::vec::Vec<formualizer_eval::engine::named_range::NamedRangeSnapshot>
 pub fn formualizer_eval::engine::eval::Engine<R>::named_ranges_snapshot_for_sheet(&self, formualizer_eval::reference::SheetId) -> alloc::vec::Vec<formualizer_eval::engine::named_range::NamedRangeSnapshot>
 pub fn formualizer_eval::engine::eval::Engine<R>::new(R, formualizer_eval::engine::EvalConfig) -> Self
+pub fn formualizer_eval::engine::eval::Engine<R>::operation_diagnostics(&self) -> core::result::Result<core::option::Option<formualizer_eval::operation_diagnostics::OperationDiagnostics>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::overlay_memory_usage(&self) -> usize
 pub fn formualizer_eval::engine::eval::Engine<R>::prepare_graph_for_targets(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::PreparedTargetGraphReport, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::redo_action(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -1462,6 +1482,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::rename_sheet(&mut self, formua
 pub fn formualizer_eval::engine::eval::Engine<R>::rename_staged_formula_sheet(&mut self, &str, &str)
 pub fn formualizer_eval::engine::eval::Engine<R>::reset_ensure_touched(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::reset_evaluation_resource_telemetry(&mut self)
+pub fn formualizer_eval::engine::eval::Engine<R>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view_sheet_ref<'c>(&'c self, &formualizer_common::address::SheetRef<'_>, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolved_name_value(&self, &str, core::option::Option<&str>) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -1496,6 +1518,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::staged_formula_count(&self) ->
 pub fn formualizer_eval::engine::eval::Engine<R>::table_metadata(&self, &str) -> core::option::Option<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_eval::engine::eval::Engine<R>::tables(&self) -> alloc::vec::Vec<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_eval::engine::eval::Engine<R>::take_formula_parse_diagnostics(&mut self) -> alloc::vec::Vec<formualizer_eval::engine::FormulaParseDiagnostic>
+pub fn formualizer_eval::engine::eval::Engine<R>::take_operation_diagnostics(&mut self) -> core::result::Result<core::option::Option<formualizer_eval::operation_diagnostics::OperationDiagnostics>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::temporal_egress(&self) -> formualizer_eval::engine::TemporalEgress
 pub fn formualizer_eval::engine::eval::Engine<R>::undo_action(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::undo_logged(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -1512,6 +1535,7 @@ impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::tra
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all(&mut self) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_cancellable(&mut self, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_for_snapshot(&mut self, core::option::Option<formualizer_eval::engine::cancel::CancelToken>) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_until(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::EvaluationProgress, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta_policy(&mut self, formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_target_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_common::error::ExcelError>
@@ -1523,6 +1547,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_cells_with_delta_poli
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_cells_with_target_delta(&mut self, &[(&str, u32, u32)]) -> core::result::Result<(alloc::vec::Vec<core::option::Option<formualizer_common::value::LiteralValue>>, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_until_cancellable(&mut self, &[&str], formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_eval_plan(&self, &[(&str, u32, u32)]) -> core::result::Result<formualizer_eval::engine::eval::EvalPlan, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_resumable_evaluation(&self) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::pending_snapshot_iterative_members(&self) -> usize
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_logged(&mut self, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
@@ -1539,10 +1565,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::date_system(&self) -> formualizer_common::value::DateSystem
 pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::eval::Engine<R>::materialized_array_cells(&self) -> u64
+pub fn formualizer_eval::engine::eval::Engine<R>::named_binding_presence(&self, &str, &str) -> core::option::Option<bool>
 pub fn formualizer_eval::engine::eval::Engine<R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
+pub fn formualizer_eval::engine::eval::Engine<R>::operation_diagnostic_collector(&self) -> core::option::Option<&formualizer_eval::operation_diagnostics::OperationDiagnosticCollector>
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -1584,6 +1613,8 @@ pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::delete_rows(&mut sel
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::insert_columns(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::insert_rows(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::name(&self) -> &str
+pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_formula(&mut self, &str, u32, u32, formualizer_parse::parser::ASTNode) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_row_hidden(&mut self, &str, u32, bool, formualizer_eval::engine::row_visibility::RowVisibilitySource) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -1660,6 +1691,7 @@ pub struct formualizer_eval::engine::eval::ShimSpillManager
 impl core::default::Default for formualizer_eval::engine::eval::ShimSpillManager
 pub fn formualizer_eval::engine::eval::ShimSpillManager::default() -> formualizer_eval::engine::eval::ShimSpillManager
 #[non_exhaustive] pub struct formualizer_eval::engine::eval::TableMetadata
+pub formualizer_eval::engine::eval::TableMetadata::empty_body: bool
 pub formualizer_eval::engine::eval::TableMetadata::end_col: u32
 pub formualizer_eval::engine::eval::TableMetadata::end_row: u32
 pub formualizer_eval::engine::eval::TableMetadata::header_row: bool
@@ -1961,6 +1993,12 @@ pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedForm
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaCellChanged::old: core::option::Option<alloc::string::String>
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaCellChanged::row: u32
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaCellChanged::sheet: alloc::string::String
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::name: alloc::string::String
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::new_empty_body: bool
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::new_range: formualizer_eval::reference::RangeRef
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::old_empty_body: bool
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::old_range: formualizer_eval::reference::RangeRef
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::UpdateName
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::UpdateName::name: alloc::string::String
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::UpdateName::new_definition: formualizer_eval::engine::named_range::NamedDefinition
@@ -2012,6 +2050,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -2229,6 +2268,8 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex(&mut self, formualizer_eval::engine::vertex::VertexId) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex_at(&mut self, formualizer_eval::reference::CellRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula_with_old_state(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode, core::option::Option<formualizer_common::value::LiteralValue>, core::option::Option<formualizer_parse::parser::ASTNode>) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_value(&mut self, formualizer_eval::reference::CellRef, formualizer_common::value::LiteralValue) -> formualizer_eval::engine::vertex::VertexId
@@ -2382,6 +2423,8 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex(&mut self, formualizer_eval::engine::vertex::VertexId) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex_at(&mut self, formualizer_eval::reference::CellRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula_with_old_state(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode, core::option::Option<formualizer_common::value::LiteralValue>, core::option::Option<formualizer_parse::parser::ASTNode>) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_value(&mut self, formualizer_eval::reference::CellRef, formualizer_common::value::LiteralValue) -> formualizer_eval::engine::vertex::VertexId
@@ -2510,6 +2553,12 @@ pub formualizer_eval::engine::graph::ChangeEvent::StagedFormulaCellChanged::new:
 pub formualizer_eval::engine::graph::ChangeEvent::StagedFormulaCellChanged::old: core::option::Option<alloc::string::String>
 pub formualizer_eval::engine::graph::ChangeEvent::StagedFormulaCellChanged::row: u32
 pub formualizer_eval::engine::graph::ChangeEvent::StagedFormulaCellChanged::sheet: alloc::string::String
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::name: alloc::string::String
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::new_empty_body: bool
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::new_range: formualizer_eval::reference::RangeRef
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::old_empty_body: bool
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::old_range: formualizer_eval::reference::RangeRef
 pub formualizer_eval::engine::graph::ChangeEvent::UpdateName
 pub formualizer_eval::engine::graph::ChangeEvent::UpdateName::name: alloc::string::String
 pub formualizer_eval::engine::graph::ChangeEvent::UpdateName::new_definition: formualizer_eval::engine::named_range::NamedDefinition
@@ -2585,6 +2634,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -2713,6 +2763,8 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::set_source_table_versio
 impl formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::define_table(&mut self, &str, formualizer_eval::reference::RangeRef, bool, alloc::vec::Vec<alloc::string::String>, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::delete_table(&mut self, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<formualizer_eval::reference::RangeRef, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<formualizer_eval::reference::RangeRef, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::table_names(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn formualizer_eval::engine::graph::DependencyGraph::update_table(&mut self, &str, formualizer_eval::reference::RangeRef, bool, alloc::vec::Vec<alloc::string::String>, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 impl formualizer_eval::engine::graph::DependencyGraph
@@ -3490,10 +3542,13 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::data_sn
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::date_system(&self) -> formualizer_common::value::DateSystem
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::materialized_array_cells(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::named_binding_presence(&self, &str, &str) -> core::option::Option<bool>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::operation_diagnostic_collector(&self) -> core::option::Option<&formualizer_eval::operation_diagnostics::OperationDiagnosticCollector>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -4449,6 +4504,158 @@ impl core::marker::Copy for formualizer_eval::engine::resource_observability::Fo
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::FormulaPlaneTopologyRequestStats
 pub const formualizer_eval::engine::resource_observability::FORMULA_PLANE_ROUTE_EVENT_CAPACITY: usize
 pub const formualizer_eval::engine::resource_observability::FORMULA_PLANE_ROUTE_EVENT_SHEET_CAPACITY: usize
+pub mod formualizer_eval::engine::resumable
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::EvaluationProgress
+pub formualizer_eval::engine::resumable::EvaluationProgress::Complete(formualizer_eval::engine::eval::EvalResult)
+pub formualizer_eval::engine::resumable::EvaluationProgress::Incomplete(formualizer_eval::engine::resumable::IncompleteEvaluation)
+impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationProgress
+pub fn formualizer_eval::engine::resumable::EvaluationProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::RecalcJobError
+pub formualizer_eval::engine::resumable::RecalcJobError::AlreadyPending
+pub formualizer_eval::engine::resumable::RecalcJobError::AlreadyPending::explicit: bool
+pub formualizer_eval::engine::resumable::RecalcJobError::Evaluation(formualizer_common::error::ExcelError)
+pub formualizer_eval::engine::resumable::RecalcJobError::NoActiveJob
+pub formualizer_eval::engine::resumable::RecalcJobError::Poisoned
+impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::from(formualizer_common::error::ExcelError) -> Self
+impl core::error::Error for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::RecalcOutcome
+pub formualizer_eval::engine::resumable::RecalcOutcome::Cancelled
+pub formualizer_eval::engine::resumable::RecalcOutcome::Finished(formualizer_eval::engine::eval::EvalResult)
+pub formualizer_eval::engine::resumable::RecalcOutcome::Paused
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcOutcome
+pub fn formualizer_eval::engine::resumable::RecalcOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::SlowUnitKind
+pub formualizer_eval::engine::resumable::SlowUnitKind::Cycle
+pub formualizer_eval::engine::resumable::SlowUnitKind::FamilyRun
+pub formualizer_eval::engine::resumable::SlowUnitKind::GraphBuild
+pub formualizer_eval::engine::resumable::SlowUnitKind::ScheduleBuild
+pub formualizer_eval::engine::resumable::SlowUnitKind::SingleCell
+impl core::clone::Clone for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::clone(&self) -> formualizer_eval::engine::resumable::SlowUnitKind
+impl core::cmp::Eq for formualizer_eval::engine::resumable::SlowUnitKind
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::eq(&self, &formualizer_eval::engine::resumable::SlowUnitKind) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::SlowUnitKind
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::SlowUnitKind
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::StepPhase
+pub formualizer_eval::engine::resumable::StepPhase::BuildingGraph
+pub formualizer_eval::engine::resumable::StepPhase::Cancelled
+pub formualizer_eval::engine::resumable::StepPhase::Evaluating
+pub formualizer_eval::engine::resumable::StepPhase::Finished
+pub formualizer_eval::engine::resumable::StepPhase::Scheduling
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::clone(&self) -> formualizer_eval::engine::resumable::StepPhase
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepPhase
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::eq(&self, &formualizer_eval::engine::resumable::StepPhase) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StepPhase
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepPhase
+#[non_exhaustive] pub enum formualizer_eval::engine::resumable::StopReason
+pub formualizer_eval::engine::resumable::StopReason::Cancelled
+pub formualizer_eval::engine::resumable::StopReason::Deadline
+impl core::clone::Clone for formualizer_eval::engine::resumable::StopReason
+pub fn formualizer_eval::engine::resumable::StopReason::clone(&self) -> formualizer_eval::engine::resumable::StopReason
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StopReason
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StopReason
+pub fn formualizer_eval::engine::resumable::StopReason::eq(&self, &formualizer_eval::engine::resumable::StopReason) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StopReason
+pub fn formualizer_eval::engine::resumable::StopReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StopReason
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StopReason
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::EvaluationStop
+pub formualizer_eval::engine::resumable::EvaluationStop::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
+pub formualizer_eval::engine::resumable::EvaluationStop::soft_deadline: core::option::Option<core::time::Duration>
+impl formualizer_eval::engine::resumable::EvaluationStop
+pub fn formualizer_eval::engine::resumable::EvaluationStop::after(core::time::Duration) -> Self
+pub fn formualizer_eval::engine::resumable::EvaluationStop::cancel(formualizer_eval::engine::cancel::CancelToken) -> Self
+pub fn formualizer_eval::engine::resumable::EvaluationStop::none() -> Self
+pub fn formualizer_eval::engine::resumable::EvaluationStop::with_cancel(self, formualizer_eval::engine::cancel::CancelToken) -> Self
+impl core::clone::Clone for formualizer_eval::engine::resumable::EvaluationStop
+pub fn formualizer_eval::engine::resumable::EvaluationStop::clone(&self) -> formualizer_eval::engine::resumable::EvaluationStop
+impl core::default::Default for formualizer_eval::engine::resumable::EvaluationStop
+pub fn formualizer_eval::engine::resumable::EvaluationStop::default() -> formualizer_eval::engine::resumable::EvaluationStop
+impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationStop
+pub fn formualizer_eval::engine::resumable::EvaluationStop::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::IncompleteEvaluation
+pub formualizer_eval::engine::resumable::IncompleteEvaluation::computed_vertices: usize
+pub formualizer_eval::engine::resumable::IncompleteEvaluation::reason: formualizer_eval::engine::resumable::StopReason
+impl core::fmt::Debug for formualizer_eval::engine::resumable::IncompleteEvaluation
+pub fn formualizer_eval::engine::resumable::IncompleteEvaluation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::RecalcJobOptions
+pub formualizer_eval::engine::resumable::RecalcJobOptions::collect_deltas: bool
+pub formualizer_eval::engine::resumable::RecalcJobOptions::initial_priority: alloc::vec::Vec<formualizer_eval::engine::EvaluationTarget>
+pub formualizer_eval::engine::resumable::RecalcJobOptions::max_delta_records: usize
+impl core::clone::Clone for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::clone(&self) -> formualizer_eval::engine::resumable::RecalcJobOptions
+impl core::default::Default for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::SlowUnitReport
+pub formualizer_eval::engine::resumable::SlowUnitReport::elapsed: core::time::Duration
+pub formualizer_eval::engine::resumable::SlowUnitReport::kind: formualizer_eval::engine::resumable::SlowUnitKind
+pub formualizer_eval::engine::resumable::SlowUnitReport::representative_cell: core::option::Option<formualizer_common::address::PackedSheetCell>
+pub formualizer_eval::engine::resumable::SlowUnitReport::vertex_count: usize
+impl core::clone::Clone for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::clone(&self) -> formualizer_eval::engine::resumable::SlowUnitReport
+impl core::cmp::Eq for formualizer_eval::engine::resumable::SlowUnitReport
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::eq(&self, &formualizer_eval::engine::resumable::SlowUnitReport) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::SlowUnitReport
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::StepDelta
+pub formualizer_eval::engine::resumable::StepDelta::delta: formualizer_eval::engine::eval_delta::TargetEvalDelta
+pub formualizer_eval::engine::resumable::StepDelta::overflow_sheets: alloc::vec::Vec<formualizer_common::address::SheetId>
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::clone(&self) -> formualizer_eval::engine::resumable::StepDelta
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepDelta
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::eq(&self, &formualizer_eval::engine::resumable::StepDelta) -> bool
+impl core::default::Default for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::default() -> formualizer_eval::engine::resumable::StepDelta
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepDelta
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::StepProgress
+pub formualizer_eval::engine::resumable::StepProgress::completed_in_pass: usize
+pub formualizer_eval::engine::resumable::StepProgress::cumulative_computed_vertices: usize
+pub formualizer_eval::engine::resumable::StepProgress::pass: u32
+pub formualizer_eval::engine::resumable::StepProgress::priority_pending: bool
+pub formualizer_eval::engine::resumable::StepProgress::scheduled_in_pass: usize
+pub formualizer_eval::engine::resumable::StepProgress::staged_formulas_remaining: usize
+pub formualizer_eval::engine::resumable::StepProgress::total_exact: bool
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::clone(&self) -> formualizer_eval::engine::resumable::StepProgress
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepProgress
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::eq(&self, &formualizer_eval::engine::resumable::StepProgress) -> bool
+impl core::default::Default for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::default() -> formualizer_eval::engine::resumable::StepProgress
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StepProgress
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepProgress
+#[non_exhaustive] pub struct formualizer_eval::engine::resumable::StepReport
+pub formualizer_eval::engine::resumable::StepReport::changed: formualizer_eval::engine::resumable::StepDelta
+pub formualizer_eval::engine::resumable::StepReport::longest_unit: core::option::Option<formualizer_eval::engine::resumable::SlowUnitReport>
+pub formualizer_eval::engine::resumable::StepReport::phase: formualizer_eval::engine::resumable::StepPhase
+pub formualizer_eval::engine::resumable::StepReport::progress: formualizer_eval::engine::resumable::StepProgress
+pub formualizer_eval::engine::resumable::StepReport::result: core::option::Option<formualizer_eval::engine::eval::EvalResult>
+pub formualizer_eval::engine::resumable::StepReport::step_computed_vertices: usize
+pub formualizer_eval::engine::resumable::StepReport::step_elapsed: core::time::Duration
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepReport
+pub fn formualizer_eval::engine::resumable::StepReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod formualizer_eval::engine::row_visibility
 pub enum formualizer_eval::engine::row_visibility::RowVisibilitySource
 pub formualizer_eval::engine::row_visibility::RowVisibilitySource::Filter
@@ -4748,10 +4955,13 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::data_
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::date_system(&self) -> formualizer_common::value::DateSystem
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::materialized_array_cells(&self) -> u64
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::named_binding_presence(&self, &str, &str) -> core::option::Option<bool>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::operation_diagnostic_collector(&self) -> core::option::Option<&formualizer_eval::operation_diagnostics::OperationDiagnosticCollector>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -4907,6 +5117,12 @@ pub formualizer_eval::engine::ChangeEvent::StagedFormulaCellChanged::new: core::
 pub formualizer_eval::engine::ChangeEvent::StagedFormulaCellChanged::old: core::option::Option<alloc::string::String>
 pub formualizer_eval::engine::ChangeEvent::StagedFormulaCellChanged::row: u32
 pub formualizer_eval::engine::ChangeEvent::StagedFormulaCellChanged::sheet: alloc::string::String
+pub formualizer_eval::engine::ChangeEvent::TableResized
+pub formualizer_eval::engine::ChangeEvent::TableResized::name: alloc::string::String
+pub formualizer_eval::engine::ChangeEvent::TableResized::new_empty_body: bool
+pub formualizer_eval::engine::ChangeEvent::TableResized::new_range: formualizer_eval::reference::RangeRef
+pub formualizer_eval::engine::ChangeEvent::TableResized::old_empty_body: bool
+pub formualizer_eval::engine::ChangeEvent::TableResized::old_range: formualizer_eval::reference::RangeRef
 pub formualizer_eval::engine::ChangeEvent::UpdateName
 pub formualizer_eval::engine::ChangeEvent::UpdateName::name: alloc::string::String
 pub formualizer_eval::engine::ChangeEvent::UpdateName::new_definition: formualizer_eval::engine::named_range::NamedDefinition
@@ -5113,6 +5329,11 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_ledger::EvaluationI
 pub fn formualizer_eval::engine::resource_ledger::EvaluationIncompleteReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_ledger::EvaluationIncompleteReason
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_ledger::EvaluationIncompleteReason
+#[non_exhaustive] pub enum formualizer_eval::engine::EvaluationProgress
+pub formualizer_eval::engine::EvaluationProgress::Complete(formualizer_eval::engine::eval::EvalResult)
+pub formualizer_eval::engine::EvaluationProgress::Incomplete(formualizer_eval::engine::resumable::IncompleteEvaluation)
+impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationProgress
+pub fn formualizer_eval::engine::resumable::EvaluationProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum formualizer_eval::engine::EvaluationRequestKind
 pub formualizer_eval::engine::EvaluationRequestKind::Cell
 pub formualizer_eval::engine::EvaluationRequestKind::Cells
@@ -5516,6 +5737,26 @@ pub fn formualizer_eval::engine::PrepareScope::fmt(&self, &mut core::fmt::Format
 impl core::hash::Hash for formualizer_eval::engine::PrepareScope
 pub fn formualizer_eval::engine::PrepareScope::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::PrepareScope
+#[non_exhaustive] pub enum formualizer_eval::engine::RecalcJobError
+pub formualizer_eval::engine::RecalcJobError::AlreadyPending
+pub formualizer_eval::engine::RecalcJobError::AlreadyPending::explicit: bool
+pub formualizer_eval::engine::RecalcJobError::Evaluation(formualizer_common::error::ExcelError)
+pub formualizer_eval::engine::RecalcJobError::NoActiveJob
+pub formualizer_eval::engine::RecalcJobError::Poisoned
+impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::from(formualizer_common::error::ExcelError) -> Self
+impl core::error::Error for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for formualizer_eval::engine::resumable::RecalcJobError
+pub fn formualizer_eval::engine::resumable::RecalcJobError::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub enum formualizer_eval::engine::RecalcOutcome
+pub formualizer_eval::engine::RecalcOutcome::Cancelled
+pub formualizer_eval::engine::RecalcOutcome::Finished(formualizer_eval::engine::eval::EvalResult)
+pub formualizer_eval::engine::RecalcOutcome::Paused
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcOutcome
+pub fn formualizer_eval::engine::resumable::RecalcOutcome::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 #[non_exhaustive] pub enum formualizer_eval::engine::ResourceLedgerError
 pub formualizer_eval::engine::ResourceLedgerError::Exhausted(formualizer_common::error::ResourceExhaustionDetail)
 pub formualizer_eval::engine::ResourceLedgerError::ReleaseUnderflow
@@ -5571,6 +5812,21 @@ impl core::fmt::Debug for formualizer_eval::engine::SheetIndexMode
 pub fn formualizer_eval::engine::SheetIndexMode::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::SheetIndexMode
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::SheetIndexMode
+#[non_exhaustive] pub enum formualizer_eval::engine::SlowUnitKind
+pub formualizer_eval::engine::SlowUnitKind::Cycle
+pub formualizer_eval::engine::SlowUnitKind::FamilyRun
+pub formualizer_eval::engine::SlowUnitKind::GraphBuild
+pub formualizer_eval::engine::SlowUnitKind::ScheduleBuild
+pub formualizer_eval::engine::SlowUnitKind::SingleCell
+impl core::clone::Clone for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::clone(&self) -> formualizer_eval::engine::resumable::SlowUnitKind
+impl core::cmp::Eq for formualizer_eval::engine::resumable::SlowUnitKind
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::eq(&self, &formualizer_eval::engine::resumable::SlowUnitKind) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::SlowUnitKind
+pub fn formualizer_eval::engine::resumable::SlowUnitKind::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::SlowUnitKind
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::SlowUnitKind
 pub enum formualizer_eval::engine::SpillBoundsPolicy
 pub formualizer_eval::engine::SpillBoundsPolicy::Strict
 pub formualizer_eval::engine::SpillBoundsPolicy::Truncate
@@ -5645,6 +5901,33 @@ impl core::fmt::Debug for formualizer_eval::engine::SpillVisibility
 pub fn formualizer_eval::engine::SpillVisibility::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::SpillVisibility
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::SpillVisibility
+#[non_exhaustive] pub enum formualizer_eval::engine::StepPhase
+pub formualizer_eval::engine::StepPhase::BuildingGraph
+pub formualizer_eval::engine::StepPhase::Cancelled
+pub formualizer_eval::engine::StepPhase::Evaluating
+pub formualizer_eval::engine::StepPhase::Finished
+pub formualizer_eval::engine::StepPhase::Scheduling
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::clone(&self) -> formualizer_eval::engine::resumable::StepPhase
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepPhase
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::eq(&self, &formualizer_eval::engine::resumable::StepPhase) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepPhase
+pub fn formualizer_eval::engine::resumable::StepPhase::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StepPhase
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepPhase
+#[non_exhaustive] pub enum formualizer_eval::engine::StopReason
+pub formualizer_eval::engine::StopReason::Cancelled
+pub formualizer_eval::engine::StopReason::Deadline
+impl core::clone::Clone for formualizer_eval::engine::resumable::StopReason
+pub fn formualizer_eval::engine::resumable::StopReason::clone(&self) -> formualizer_eval::engine::resumable::StopReason
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StopReason
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StopReason
+pub fn formualizer_eval::engine::resumable::StopReason::eq(&self, &formualizer_eval::engine::resumable::StopReason) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StopReason
+pub fn formualizer_eval::engine::resumable::StopReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StopReason
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StopReason
 pub enum formualizer_eval::engine::StripeType
 pub formualizer_eval::engine::StripeType::Block
 pub formualizer_eval::engine::StripeType::Column
@@ -5832,6 +6115,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_corre
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_enabled(&mut self, bool)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_max_changelog_events(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_reason(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::spill_clear_revision(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from(&mut self, usize) -> alloc::vec::Vec<formualizer_eval::engine::graph::editor::change_log::ChangeEvent>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
@@ -6024,6 +6308,8 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::set_source_table_versio
 impl formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::define_table(&mut self, &str, formualizer_eval::reference::RangeRef, bool, alloc::vec::Vec<alloc::string::String>, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::delete_table(&mut self, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<formualizer_eval::reference::RangeRef, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<formualizer_eval::reference::RangeRef, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::table_names(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn formualizer_eval::engine::graph::DependencyGraph::update_table(&mut self, &str, formualizer_eval::reference::RangeRef, bool, alloc::vec::Vec<alloc::string::String>, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 impl formualizer_eval::engine::graph::DependencyGraph
@@ -6041,12 +6327,25 @@ pub fn formualizer_eval::engine::eval::Engine<R>::intern_formula_ast(&mut self, 
 pub fn formualizer_eval::engine::eval::Engine<R>::note_staged_formula(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, formualizer_eval::engine::arena::ast::AstNodeId)
 pub fn formualizer_eval::engine::eval::Engine<R>::stage_formula_ast(&mut self, &mut formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper, u32, u32, &formualizer_parse::parser::ASTNode, core::option::Option<alloc::sync::Arc<str>>) -> formualizer_eval::engine::formula_ingest::FormulaIngestRecord
 impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::begin_recalc(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_active_recalc_job(&self) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::pending_cells_in_rect(&self, formualizer_eval::reference::SheetId, u32, u32, u32, u32) -> formualizer_eval::engine::eval_delta::TargetEvalDelta
+pub fn formualizer_eval::engine::eval::Engine<R>::prioritize_recalc(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<(), formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::recalc_with(&mut self, formualizer_eval::engine::resumable::RecalcJobOptions, formualizer_eval::engine::resumable::EvaluationStop, impl core::ops::function::FnMut(&mut Self, &formualizer_eval::engine::resumable::StepReport) -> core::ops::control_flow::ControlFlow<()>) -> core::result::Result<formualizer_eval::engine::resumable::RecalcOutcome, formualizer_eval::engine::resumable::RecalcJobError>
+pub fn formualizer_eval::engine::eval::Engine<R>::step_recalc(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::StepReport, formualizer_eval::engine::resumable::RecalcJobError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::current_read_affected_closure(&self, &[AffectedRoot], ClosureLimits) -> core::result::Result<CurrentReadClosure<'_>, ClosureError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
 pub fn formualizer_eval::engine::eval::Engine<R>::dependents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::DependentsOptions) -> core::result::Result<formualizer_eval::engine::inspect::DependentsReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::SnapshotOptions) -> core::result::Result<formualizer_eval::engine::inspect::CellSnapshotReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_cell_result(&self, &formualizer_common::grid_address::CellAddress) -> core::result::Result<formualizer_eval::engine::inspect::CellResultState, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::precedents(&self, &formualizer_common::grid_address::CellAddress, &formualizer_eval::engine::inspect::PrecedentOptions) -> core::result::Result<formualizer_eval::engine::inspect::PrecedentReport, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::range_page(&self, &formualizer_common::grid_address::RangeArea, &formualizer_eval::engine::inspect::RangePageOptions) -> core::result::Result<formualizer_eval::engine::inspect::RangePage, formualizer_eval::engine::inspect::InspectError>
 pub fn formualizer_eval::engine::eval::Engine<R>::trace(&self, &[formualizer_common::grid_address::CellAddress], &formualizer_eval::engine::inspect::TraceOptions) -> core::result::Result<formualizer_eval::engine::inspect::TraceGraph, formualizer_eval::engine::inspect::InspectError>
+impl<R: formualizer_eval::traits::EvaluationContext> formualizer_eval::engine::eval::Engine<R>
+pub fn formualizer_eval::engine::eval::Engine<R>::is_poisoned(&self) -> bool
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::action<T>(&mut self, impl core::convert::AsRef<str>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::action_atomic<T>(&mut self, impl core::convert::Into<alloc::string::String>, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::eval::EngineAction<'_, R>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -6064,9 +6363,12 @@ pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan(&self) -> co
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_has_spill_projection(&self, &str, u32, u32) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_in_empty_table(&self, &str, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
+pub fn formualizer_eval::engine::eval::Engine<R>::configure_operation_diagnostics(&mut self, formualizer_eval::operation_diagnostics::OperationDiagnosticOptions)
 pub fn formualizer_eval::engine::eval::Engine<R>::declare_dynamic_array_anchor(&mut self, &str, u32, u32) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::declare_fixed_array_formula(&mut self, &str, u32, u32, u32, u32) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::default_sheet_id(&self) -> formualizer_eval::reference::SheetId
@@ -6081,8 +6383,10 @@ pub fn formualizer_eval::engine::eval::Engine<R>::delete_name(&mut self, &str, f
 pub fn formualizer_eval::engine::eval::Engine<R>::delete_name_with_logger(&mut self, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog, &str, formualizer_eval::engine::named_range::NameScope) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::delete_rows(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::dirty_propagation_visits(&self) -> u64
+pub fn formualizer_eval::engine::eval::Engine<R>::disable_operation_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::duplicate_sheet(&mut self, &str, &str) -> core::result::Result<formualizer_eval::reference::SheetId, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::edit_with_logger<T>(&mut self, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog, impl core::ops::function::FnOnce(&mut formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'_>) -> T) -> core::result::Result<T, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::eval::Engine<R>::enable_operation_diagnostics(&mut self, usize)
 pub fn formualizer_eval::engine::eval::Engine<R>::end_batch(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::end_deferred_dirty(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_recalc_plan(&mut self, &formualizer_eval::engine::eval::RecalcPlan) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
@@ -6124,6 +6428,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::named_ranges_iter(&self) -> im
 pub fn formualizer_eval::engine::eval::Engine<R>::named_ranges_snapshot(&self) -> alloc::vec::Vec<formualizer_eval::engine::named_range::NamedRangeSnapshot>
 pub fn formualizer_eval::engine::eval::Engine<R>::named_ranges_snapshot_for_sheet(&self, formualizer_eval::reference::SheetId) -> alloc::vec::Vec<formualizer_eval::engine::named_range::NamedRangeSnapshot>
 pub fn formualizer_eval::engine::eval::Engine<R>::new(R, formualizer_eval::engine::EvalConfig) -> Self
+pub fn formualizer_eval::engine::eval::Engine<R>::operation_diagnostics(&self) -> core::result::Result<core::option::Option<formualizer_eval::operation_diagnostics::OperationDiagnostics>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::overlay_memory_usage(&self) -> usize
 pub fn formualizer_eval::engine::eval::Engine<R>::prepare_graph_for_targets(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::PreparedTargetGraphReport, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::redo_action(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -6133,6 +6438,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::rename_sheet(&mut self, formua
 pub fn formualizer_eval::engine::eval::Engine<R>::rename_staged_formula_sheet(&mut self, &str, &str)
 pub fn formualizer_eval::engine::eval::Engine<R>::reset_ensure_touched(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::reset_evaluation_resource_telemetry(&mut self)
+pub fn formualizer_eval::engine::eval::Engine<R>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view_sheet_ref<'c>(&'c self, &formualizer_common::address::SheetRef<'_>, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolved_name_value(&self, &str, core::option::Option<&str>) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -6167,6 +6474,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::staged_formula_count(&self) ->
 pub fn formualizer_eval::engine::eval::Engine<R>::table_metadata(&self, &str) -> core::option::Option<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_eval::engine::eval::Engine<R>::tables(&self) -> alloc::vec::Vec<formualizer_eval::engine::eval::TableMetadata>
 pub fn formualizer_eval::engine::eval::Engine<R>::take_formula_parse_diagnostics(&mut self) -> alloc::vec::Vec<formualizer_eval::engine::FormulaParseDiagnostic>
+pub fn formualizer_eval::engine::eval::Engine<R>::take_operation_diagnostics(&mut self) -> core::result::Result<core::option::Option<formualizer_eval::operation_diagnostics::OperationDiagnostics>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::temporal_egress(&self) -> formualizer_eval::engine::TemporalEgress
 pub fn formualizer_eval::engine::eval::Engine<R>::undo_action(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::Engine<R>::undo_logged(&mut self, &mut formualizer_eval::engine::graph::editor::undo_engine::UndoEngine, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -6183,6 +6491,7 @@ impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::tra
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all(&mut self) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_cancellable(&mut self, formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_for_snapshot(&mut self, core::option::Option<formualizer_eval::engine::cancel::CancelToken>) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_until(&mut self, formualizer_eval::engine::resumable::EvaluationStop) -> core::result::Result<formualizer_eval::engine::resumable::EvaluationProgress, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_delta_policy(&mut self, formualizer_eval::engine::eval_delta::EvalDeltaCompatibilityPolicy) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::EvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_with_target_delta(&mut self) -> core::result::Result<(formualizer_eval::engine::eval::EvalResult, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_common::error::ExcelError>
@@ -6194,6 +6503,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_cells_with_delta_poli
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_cells_with_target_delta(&mut self, &[(&str, u32, u32)]) -> core::result::Result<(alloc::vec::Vec<core::option::Option<formualizer_common::value::LiteralValue>>, formualizer_eval::engine::eval_delta::TargetEvalDelta), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_until_cancellable(&mut self, &[&str], formualizer_eval::engine::cancel::CancelToken) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::get_eval_plan(&self, &[(&str, u32, u32)]) -> core::result::Result<formualizer_eval::engine::eval::EvalPlan, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_pending_resumable_evaluation(&self) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::pending_snapshot_iterative_members(&self) -> usize
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::evaluate_all_logged(&mut self, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog) -> core::result::Result<formualizer_eval::engine::eval::EvalResult, formualizer_common::error::ExcelError>
@@ -6210,10 +6521,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::date_system(&self) -> formualizer_common::value::DateSystem
 pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::eval::Engine<R>::materialized_array_cells(&self) -> u64
+pub fn formualizer_eval::engine::eval::Engine<R>::named_binding_presence(&self, &str, &str) -> core::option::Option<bool>
 pub fn formualizer_eval::engine::eval::Engine<R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
+pub fn formualizer_eval::engine::eval::Engine<R>::operation_diagnostic_collector(&self) -> core::option::Option<&formualizer_eval::operation_diagnostics::OperationDiagnosticCollector>
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -6255,6 +6569,8 @@ pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::delete_rows(&mut sel
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::insert_columns(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::insert_rows(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::name(&self) -> &str
+pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_formula(&mut self, &str, u32, u32, formualizer_parse::parser::ASTNode) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_row_hidden(&mut self, &str, u32, bool, formualizer_eval::engine::row_visibility::RowVisibilitySource) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -6545,6 +6861,20 @@ impl core::fmt::Debug for formualizer_eval::engine::resource_observability::Eval
 pub fn formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::resource_observability::EvaluationResourceRequestStats
+#[non_exhaustive] pub struct formualizer_eval::engine::EvaluationStop
+pub formualizer_eval::engine::EvaluationStop::cancel: core::option::Option<formualizer_eval::engine::cancel::CancelToken>
+pub formualizer_eval::engine::EvaluationStop::soft_deadline: core::option::Option<core::time::Duration>
+impl formualizer_eval::engine::resumable::EvaluationStop
+pub fn formualizer_eval::engine::resumable::EvaluationStop::after(core::time::Duration) -> Self
+pub fn formualizer_eval::engine::resumable::EvaluationStop::cancel(formualizer_eval::engine::cancel::CancelToken) -> Self
+pub fn formualizer_eval::engine::resumable::EvaluationStop::none() -> Self
+pub fn formualizer_eval::engine::resumable::EvaluationStop::with_cancel(self, formualizer_eval::engine::cancel::CancelToken) -> Self
+impl core::clone::Clone for formualizer_eval::engine::resumable::EvaluationStop
+pub fn formualizer_eval::engine::resumable::EvaluationStop::clone(&self) -> formualizer_eval::engine::resumable::EvaluationStop
+impl core::default::Default for formualizer_eval::engine::resumable::EvaluationStop
+pub fn formualizer_eval::engine::resumable::EvaluationStop::default() -> formualizer_eval::engine::resumable::EvaluationStop
+impl core::fmt::Debug for formualizer_eval::engine::resumable::EvaluationStop
+pub fn formualizer_eval::engine::resumable::EvaluationStop::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::FormulaFamilyGrouper
 impl formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper
 pub fn formualizer_eval::engine::formula_ingest::FormulaFamilyGrouper::members(&self) -> u64
@@ -6770,6 +7100,11 @@ pub fn formualizer_eval::engine::journal::GraphUndoBatch::default() -> formualiz
 impl core::fmt::Debug for formualizer_eval::engine::journal::GraphUndoBatch
 pub fn formualizer_eval::engine::journal::GraphUndoBatch::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::journal::GraphUndoBatch
+#[non_exhaustive] pub struct formualizer_eval::engine::IncompleteEvaluation
+pub formualizer_eval::engine::IncompleteEvaluation::computed_vertices: usize
+pub formualizer_eval::engine::IncompleteEvaluation::reason: formualizer_eval::engine::resumable::StopReason
+impl core::fmt::Debug for formualizer_eval::engine::resumable::IncompleteEvaluation
+pub fn formualizer_eval::engine::resumable::IncompleteEvaluation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::Layer
 pub formualizer_eval::engine::Layer::vertices: alloc::vec::Vec<formualizer_eval::engine::vertex::VertexId>
 impl formualizer_eval::engine::scheduler::Layer
@@ -6875,6 +7210,16 @@ impl core::default::Default for formualizer_eval::engine::graph::editor::vertex_
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary::default() -> formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::RangeSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::RecalcJobOptions
+pub formualizer_eval::engine::RecalcJobOptions::collect_deltas: bool
+pub formualizer_eval::engine::RecalcJobOptions::initial_priority: alloc::vec::Vec<formualizer_eval::engine::EvaluationTarget>
+pub formualizer_eval::engine::RecalcJobOptions::max_delta_records: usize
+impl core::clone::Clone for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::clone(&self) -> formualizer_eval::engine::resumable::RecalcJobOptions
+impl core::default::Default for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::engine::resumable::RecalcJobOptions
+pub fn formualizer_eval::engine::resumable::RecalcJobOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::RecalcPlan
 impl formualizer_eval::engine::eval::RecalcPlan
 pub fn formualizer_eval::engine::eval::RecalcPlan::has_dynamic_refs(&self) -> bool
@@ -6994,6 +7339,19 @@ impl core::default::Default for formualizer_eval::engine::graph::editor::vertex_
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary::default() -> formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct formualizer_eval::engine::SlowUnitReport
+pub formualizer_eval::engine::SlowUnitReport::elapsed: core::time::Duration
+pub formualizer_eval::engine::SlowUnitReport::kind: formualizer_eval::engine::resumable::SlowUnitKind
+pub formualizer_eval::engine::SlowUnitReport::representative_cell: core::option::Option<formualizer_common::address::PackedSheetCell>
+pub formualizer_eval::engine::SlowUnitReport::vertex_count: usize
+impl core::clone::Clone for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::clone(&self) -> formualizer_eval::engine::resumable::SlowUnitReport
+impl core::cmp::Eq for formualizer_eval::engine::resumable::SlowUnitReport
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::eq(&self, &formualizer_eval::engine::resumable::SlowUnitReport) -> bool
+impl core::fmt::Debug for formualizer_eval::engine::resumable::SlowUnitReport
+pub fn formualizer_eval::engine::resumable::SlowUnitReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::SlowUnitReport
 pub struct formualizer_eval::engine::SpillConfig
 pub formualizer_eval::engine::SpillConfig::bounds_policy: formualizer_eval::engine::SpillBoundsPolicy
 pub formualizer_eval::engine::SpillConfig::buffer_mode: formualizer_eval::engine::SpillBufferMode
@@ -7014,6 +7372,48 @@ impl core::fmt::Debug for formualizer_eval::engine::SpillConfig
 pub fn formualizer_eval::engine::SpillConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::engine::SpillConfig
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::SpillConfig
+#[non_exhaustive] pub struct formualizer_eval::engine::StepDelta
+pub formualizer_eval::engine::StepDelta::delta: formualizer_eval::engine::eval_delta::TargetEvalDelta
+pub formualizer_eval::engine::StepDelta::overflow_sheets: alloc::vec::Vec<formualizer_common::address::SheetId>
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::clone(&self) -> formualizer_eval::engine::resumable::StepDelta
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepDelta
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::eq(&self, &formualizer_eval::engine::resumable::StepDelta) -> bool
+impl core::default::Default for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::default() -> formualizer_eval::engine::resumable::StepDelta
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepDelta
+pub fn formualizer_eval::engine::resumable::StepDelta::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepDelta
+#[non_exhaustive] pub struct formualizer_eval::engine::StepProgress
+pub formualizer_eval::engine::StepProgress::completed_in_pass: usize
+pub formualizer_eval::engine::StepProgress::cumulative_computed_vertices: usize
+pub formualizer_eval::engine::StepProgress::pass: u32
+pub formualizer_eval::engine::StepProgress::priority_pending: bool
+pub formualizer_eval::engine::StepProgress::scheduled_in_pass: usize
+pub formualizer_eval::engine::StepProgress::staged_formulas_remaining: usize
+pub formualizer_eval::engine::StepProgress::total_exact: bool
+impl core::clone::Clone for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::clone(&self) -> formualizer_eval::engine::resumable::StepProgress
+impl core::cmp::Eq for formualizer_eval::engine::resumable::StepProgress
+impl core::cmp::PartialEq for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::eq(&self, &formualizer_eval::engine::resumable::StepProgress) -> bool
+impl core::default::Default for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::default() -> formualizer_eval::engine::resumable::StepProgress
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepProgress
+pub fn formualizer_eval::engine::resumable::StepProgress::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::engine::resumable::StepProgress
+impl core::marker::StructuralPartialEq for formualizer_eval::engine::resumable::StepProgress
+#[non_exhaustive] pub struct formualizer_eval::engine::StepReport
+pub formualizer_eval::engine::StepReport::changed: formualizer_eval::engine::resumable::StepDelta
+pub formualizer_eval::engine::StepReport::longest_unit: core::option::Option<formualizer_eval::engine::resumable::SlowUnitReport>
+pub formualizer_eval::engine::StepReport::phase: formualizer_eval::engine::resumable::StepPhase
+pub formualizer_eval::engine::StepReport::progress: formualizer_eval::engine::resumable::StepProgress
+pub formualizer_eval::engine::StepReport::result: core::option::Option<formualizer_eval::engine::eval::EvalResult>
+pub formualizer_eval::engine::StepReport::step_computed_vertices: usize
+pub formualizer_eval::engine::StepReport::step_elapsed: core::time::Duration
+impl core::fmt::Debug for formualizer_eval::engine::resumable::StepReport
+pub fn formualizer_eval::engine::resumable::StepReport::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::StripeKey
 pub formualizer_eval::engine::StripeKey::index: u32
 pub formualizer_eval::engine::StripeKey::sheet_id: formualizer_eval::reference::SheetId
@@ -7029,6 +7429,7 @@ impl core::hash::Hash for formualizer_eval::engine::graph::StripeKey
 pub fn formualizer_eval::engine::graph::StripeKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::graph::StripeKey
 #[non_exhaustive] pub struct formualizer_eval::engine::TableMetadata
+pub formualizer_eval::engine::TableMetadata::empty_body: bool
 pub formualizer_eval::engine::TableMetadata::end_col: u32
 pub formualizer_eval::engine::TableMetadata::end_row: u32
 pub formualizer_eval::engine::TableMetadata::header_row: bool
@@ -7129,6 +7530,8 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex(&mut self, formualizer_eval::engine::vertex::VertexId) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex_at(&mut self, formualizer_eval::reference::CellRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula_with_old_state(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode, core::option::Option<formualizer_common::value::LiteralValue>, core::option::Option<formualizer_parse::parser::ASTNode>) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_value(&mut self, formualizer_eval::reference::CellRef, formualizer_common::value::LiteralValue) -> formualizer_eval::engine::vertex::VertexId
@@ -7443,6 +7846,7 @@ pub fn formualizer_eval::function::Function::min_args(&self) -> usize
 pub fn formualizer_eval::function::Function::name(&self) -> &'static str
 pub fn formualizer_eval::function::Function::namespace(&self) -> &'static str
 pub fn formualizer_eval::function::Function::propagate_format(&self, &formualizer_eval::traits::CalcValue<'_>) -> core::option::Option<formualizer_eval::format::FormatId>
+pub fn formualizer_eval::function::Function::reports_known_limitations(&self) -> bool
 pub fn formualizer_eval::function::Function::resolve_reference_or_value<'a, 'b, 'c>(&self, &'c [formualizer_eval::traits::ArgumentHandle<'a, 'b>], &dyn formualizer_eval::traits::FunctionContext<'b>, &dyn core::ops::function::Fn() -> core::result::Result<formualizer_eval::traits::CalcValue<'b>, formualizer_common::error::ExcelError>) -> core::result::Result<FunctionResolution<'b>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::function::Function::semantic_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticContract>
 pub fn formualizer_eval::function::Function::variadic(&self) -> bool
@@ -7803,6 +8207,103 @@ impl core::fmt::Debug for formualizer_eval::locale::Locale
 pub fn formualizer_eval::locale::Locale::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::Copy for formualizer_eval::locale::Locale
 impl core::marker::StructuralPartialEq for formualizer_eval::locale::Locale
+pub mod formualizer_eval::operation_diagnostics
+pub enum formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+pub formualizer_eval::operation_diagnostics::OperationDiagnosticScope::RequestEvents
+impl core::clone::Clone for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticScope::clone(&self) -> formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+impl core::cmp::Eq for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+impl core::cmp::PartialEq for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticScope::eq(&self, &formualizer_eval::operation_diagnostics::OperationDiagnosticScope) -> bool
+impl core::default::Default for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticScope::default() -> formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+impl core::fmt::Debug for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticScope::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+impl core::marker::StructuralPartialEq for formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+pub enum formualizer_eval::operation_diagnostics::UnavailableOperation
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::FunctionPanicked
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::FunctionPanicked::name: alloc::string::String
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::PostfixInvocation
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnimplementedFunction
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnimplementedFunction::name: alloc::string::String
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode::mode: &'static str
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode::name: alloc::string::String
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnknownFunction
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnknownFunction::name: alloc::string::String
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode::mode: &'static str
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode::name: alloc::string::String
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnverifiedProvider
+pub formualizer_eval::operation_diagnostics::UnavailableOperation::UnverifiedProvider::name: alloc::string::String
+impl core::clone::Clone for formualizer_eval::operation_diagnostics::UnavailableOperation
+pub fn formualizer_eval::operation_diagnostics::UnavailableOperation::clone(&self) -> formualizer_eval::operation_diagnostics::UnavailableOperation
+impl core::cmp::Eq for formualizer_eval::operation_diagnostics::UnavailableOperation
+impl core::cmp::Ord for formualizer_eval::operation_diagnostics::UnavailableOperation
+pub fn formualizer_eval::operation_diagnostics::UnavailableOperation::cmp(&self, &formualizer_eval::operation_diagnostics::UnavailableOperation) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_eval::operation_diagnostics::UnavailableOperation
+pub fn formualizer_eval::operation_diagnostics::UnavailableOperation::eq(&self, &formualizer_eval::operation_diagnostics::UnavailableOperation) -> bool
+impl core::cmp::PartialOrd for formualizer_eval::operation_diagnostics::UnavailableOperation
+pub fn formualizer_eval::operation_diagnostics::UnavailableOperation::partial_cmp(&self, &formualizer_eval::operation_diagnostics::UnavailableOperation) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for formualizer_eval::operation_diagnostics::UnavailableOperation
+pub fn formualizer_eval::operation_diagnostics::UnavailableOperation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::operation_diagnostics::UnavailableOperation
+pub fn formualizer_eval::operation_diagnostics::UnavailableOperation::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_eval::operation_diagnostics::UnavailableOperation
+pub struct formualizer_eval::operation_diagnostics::OperationDiagnosticCollector
+impl formualizer_eval::operation_diagnostics::OperationDiagnosticCollector
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticCollector::new(usize) -> Self
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticCollector::record(&self, core::option::Option<formualizer_eval::reference::CellRef>, formualizer_eval::operation_diagnostics::UnavailableOperation)
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticCollector::snapshot(&self) -> core::result::Result<formualizer_eval::operation_diagnostics::OperationDiagnostics, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticCollector::take_snapshot(&mut self) -> core::result::Result<formualizer_eval::operation_diagnostics::OperationDiagnostics, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticCollector::with_options(formualizer_eval::operation_diagnostics::OperationDiagnosticOptions) -> Self
+pub struct formualizer_eval::operation_diagnostics::OperationDiagnosticOptions
+pub formualizer_eval::operation_diagnostics::OperationDiagnosticOptions::max_operation_text_bytes: core::option::Option<usize>
+pub formualizer_eval::operation_diagnostics::OperationDiagnosticOptions::max_roots: core::option::Option<usize>
+pub formualizer_eval::operation_diagnostics::OperationDiagnosticOptions::physical_telemetry: bool
+pub formualizer_eval::operation_diagnostics::OperationDiagnosticOptions::sample_limit: usize
+pub formualizer_eval::operation_diagnostics::OperationDiagnosticOptions::track_unverified_providers: bool
+impl core::clone::Clone for formualizer_eval::operation_diagnostics::OperationDiagnosticOptions
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticOptions::clone(&self) -> formualizer_eval::operation_diagnostics::OperationDiagnosticOptions
+impl core::default::Default for formualizer_eval::operation_diagnostics::OperationDiagnosticOptions
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticOptions::default() -> Self
+impl core::fmt::Debug for formualizer_eval::operation_diagnostics::OperationDiagnosticOptions
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnosticOptions::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for formualizer_eval::operation_diagnostics::OperationDiagnosticOptions
+pub struct formualizer_eval::operation_diagnostics::OperationDiagnostics
+pub formualizer_eval::operation_diagnostics::OperationDiagnostics::logical_cell_reason_count: usize
+pub formualizer_eval::operation_diagnostics::OperationDiagnostics::logical_named_reason_count: usize
+pub formualizer_eval::operation_diagnostics::OperationDiagnostics::logical_root_cell_count: usize
+pub formualizer_eval::operation_diagnostics::OperationDiagnostics::physical_function_dispatches: core::option::Option<u64>
+pub formualizer_eval::operation_diagnostics::OperationDiagnostics::physical_unavailable_observations: core::option::Option<u64>
+pub formualizer_eval::operation_diagnostics::OperationDiagnostics::roots: alloc::vec::Vec<formualizer_eval::operation_diagnostics::OperationRoot>
+pub formualizer_eval::operation_diagnostics::OperationDiagnostics::samples: alloc::vec::Vec<formualizer_eval::operation_diagnostics::OperationRoot>
+pub formualizer_eval::operation_diagnostics::OperationDiagnostics::scope: formualizer_eval::operation_diagnostics::OperationDiagnosticScope
+impl core::clone::Clone for formualizer_eval::operation_diagnostics::OperationDiagnostics
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnostics::clone(&self) -> formualizer_eval::operation_diagnostics::OperationDiagnostics
+impl core::default::Default for formualizer_eval::operation_diagnostics::OperationDiagnostics
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnostics::default() -> formualizer_eval::operation_diagnostics::OperationDiagnostics
+impl core::fmt::Debug for formualizer_eval::operation_diagnostics::OperationDiagnostics
+pub fn formualizer_eval::operation_diagnostics::OperationDiagnostics::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct formualizer_eval::operation_diagnostics::OperationRoot
+pub formualizer_eval::operation_diagnostics::OperationRoot::cell: core::option::Option<formualizer_eval::reference::CellRef>
+pub formualizer_eval::operation_diagnostics::OperationRoot::named_vertex: core::option::Option<formualizer_eval::engine::vertex::VertexId>
+pub formualizer_eval::operation_diagnostics::OperationRoot::operation: alloc::sync::Arc<formualizer_eval::operation_diagnostics::UnavailableOperation>
+impl core::clone::Clone for formualizer_eval::operation_diagnostics::OperationRoot
+pub fn formualizer_eval::operation_diagnostics::OperationRoot::clone(&self) -> formualizer_eval::operation_diagnostics::OperationRoot
+impl core::cmp::Eq for formualizer_eval::operation_diagnostics::OperationRoot
+impl core::cmp::Ord for formualizer_eval::operation_diagnostics::OperationRoot
+pub fn formualizer_eval::operation_diagnostics::OperationRoot::cmp(&self, &formualizer_eval::operation_diagnostics::OperationRoot) -> core::cmp::Ordering
+impl core::cmp::PartialEq for formualizer_eval::operation_diagnostics::OperationRoot
+pub fn formualizer_eval::operation_diagnostics::OperationRoot::eq(&self, &formualizer_eval::operation_diagnostics::OperationRoot) -> bool
+impl core::cmp::PartialOrd for formualizer_eval::operation_diagnostics::OperationRoot
+pub fn formualizer_eval::operation_diagnostics::OperationRoot::partial_cmp(&self, &formualizer_eval::operation_diagnostics::OperationRoot) -> core::option::Option<core::cmp::Ordering>
+impl core::fmt::Debug for formualizer_eval::operation_diagnostics::OperationRoot
+pub fn formualizer_eval::operation_diagnostics::OperationRoot::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for formualizer_eval::operation_diagnostics::OperationRoot
+pub fn formualizer_eval::operation_diagnostics::OperationRoot::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::StructuralPartialEq for formualizer_eval::operation_diagnostics::OperationRoot
 pub mod formualizer_eval::planner
 pub enum formualizer_eval::planner::ExecStrategy
 pub formualizer_eval::planner::ExecStrategy::ArgParallel
@@ -8171,10 +8672,12 @@ pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_criteria_mask(&
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::materialized_array_cells(&self) -> u64
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::report_unavailable_operation(&self, formualizer_eval::operation_diagnostics::UnavailableOperation)
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::resolve_range_view(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'a>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::rng_for_current(&self, u64) -> rand::rngs::small::SmallRng
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
@@ -8228,10 +8731,13 @@ pub fn formualizer_eval::traits::EvaluationContext::data_snapshot_id(&self) -> u
 pub fn formualizer_eval::traits::EvaluationContext::date_system(&self) -> formualizer_common::value::DateSystem
 pub fn formualizer_eval::traits::EvaluationContext::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::traits::EvaluationContext::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::traits::EvaluationContext::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::traits::EvaluationContext::materialized_array_cells(&self) -> u64
+pub fn formualizer_eval::traits::EvaluationContext::named_binding_presence(&self, &str, &str) -> core::option::Option<bool>
 pub fn formualizer_eval::traits::EvaluationContext::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
+pub fn formualizer_eval::traits::EvaluationContext::operation_diagnostic_collector(&self) -> core::option::Option<&formualizer_eval::operation_diagnostics::OperationDiagnosticCollector>
 pub fn formualizer_eval::traits::EvaluationContext::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::traits::EvaluationContext::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::traits::EvaluationContext::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8260,10 +8766,13 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::data_sn
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::date_system(&self) -> formualizer_common::value::DateSystem
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::materialized_array_cells(&self) -> u64
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::named_binding_presence(&self, &str, &str) -> core::option::Option<bool>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::operation_diagnostic_collector(&self) -> core::option::Option<&formualizer_eval::operation_diagnostics::OperationDiagnosticCollector>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8292,10 +8801,13 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::data_
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::date_system(&self) -> formualizer_common::value::DateSystem
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::materialized_array_cells(&self) -> u64
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::named_binding_presence(&self, &str, &str) -> core::option::Option<bool>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::operation_diagnostic_collector(&self) -> core::option::Option<&formualizer_eval::operation_diagnostics::OperationDiagnosticCollector>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8324,10 +8836,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::data_snapshot_id(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::date_system(&self) -> formualizer_common::value::DateSystem
 pub fn formualizer_eval::engine::eval::Engine<R>::format_class(&self, formualizer_eval::format::FormatId) -> core::option::Option<formualizer_common::numfmt::FormatClass>
 pub fn formualizer_eval::engine::eval::Engine<R>::formula_text_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<core::option::Option<alloc::string::String>, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::engine::eval::Engine<R>::materialized_array_cells(&self) -> u64
+pub fn formualizer_eval::engine::eval::Engine<R>::named_binding_presence(&self, &str, &str) -> core::option::Option<bool>
 pub fn formualizer_eval::engine::eval::Engine<R>::nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
+pub fn formualizer_eval::engine::eval::Engine<R>::operation_diagnostic_collector(&self) -> core::option::Option<&formualizer_eval::operation_diagnostics::OperationDiagnosticCollector>
 pub fn formualizer_eval::engine::eval::Engine<R>::recalc_epoch(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::record_cell_derived_format(&self, &str, u32, u32, core::option::Option<formualizer_eval::format::FormatId>)
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_cell_format(&self, core::option::Option<&str>, u32, u32, &str) -> core::option::Option<formualizer_eval::format::FormatId>
@@ -8357,6 +8872,7 @@ pub fn formualizer_eval::traits::Function::min_args(&self) -> usize
 pub fn formualizer_eval::traits::Function::name(&self) -> &'static str
 pub fn formualizer_eval::traits::Function::namespace(&self) -> &'static str
 pub fn formualizer_eval::traits::Function::propagate_format(&self, &formualizer_eval::traits::CalcValue<'_>) -> core::option::Option<formualizer_eval::format::FormatId>
+pub fn formualizer_eval::traits::Function::reports_known_limitations(&self) -> bool
 pub fn formualizer_eval::traits::Function::resolve_reference_or_value<'a, 'b, 'c>(&self, &'c [formualizer_eval::traits::ArgumentHandle<'a, 'b>], &dyn formualizer_eval::traits::FunctionContext<'b>, &dyn core::ops::function::Fn() -> core::result::Result<formualizer_eval::traits::CalcValue<'b>, formualizer_common::error::ExcelError>) -> core::result::Result<FunctionResolution<'b>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::Function::semantic_contract(&self, usize) -> core::option::Option<formualizer_eval::function_contract::FunctionSemanticContract>
 pub fn formualizer_eval::traits::Function::variadic(&self) -> bool
@@ -8374,10 +8890,12 @@ pub fn formualizer_eval::traits::FunctionContext::get_criteria_mask(&self, &form
 pub fn formualizer_eval::traits::FunctionContext::get_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
 pub fn formualizer_eval::traits::FunctionContext::get_nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::traits::FunctionContext::get_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
+pub fn formualizer_eval::traits::FunctionContext::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::FunctionContext::inspect_reference(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::FunctionContext::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::traits::FunctionContext::materialized_array_cells(&self) -> u64
 pub fn formualizer_eval::traits::FunctionContext::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::traits::FunctionContext::report_unavailable_operation(&self, formualizer_eval::operation_diagnostics::UnavailableOperation)
 pub fn formualizer_eval::traits::FunctionContext::resolve_range_view(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'ctx>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::FunctionContext::rng_for_current(&self, u64) -> rand::rngs::small::SmallRng
 pub fn formualizer_eval::traits::FunctionContext::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
@@ -8399,10 +8917,12 @@ pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_criteria_mask(&
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_lookup_index(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::lookup_index_cache::LookupAxis) -> core::option::Option<alloc::sync::Arc<formualizer_eval::engine::lookup_index_cache::LookupIndex>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_nested_subtotal_cells(&self, &formualizer_eval::engine::range_view::RangeView<'_>, bool) -> core::option::Option<alloc::vec::Vec<(usize, usize, usize)>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::get_row_visibility_mask(&self, &formualizer_eval::engine::range_view::RangeView<'_>, formualizer_eval::engine::row_visibility::VisibilityMaskMode) -> core::option::Option<alloc::sync::Arc<arrow_array::array::boolean_array::BooleanArray>>
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::has_formula_at_cell(&self, formualizer_eval::reference::CellRef) -> core::result::Result<bool, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::inspect_reference(&self, &formualizer_parse::parser::ReferenceType) -> core::result::Result<core::option::Option<formualizer_eval::traits::ReferenceInfo>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::locale(&self) -> formualizer_eval::locale::Locale
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::materialized_array_cells(&self) -> u64
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::recalc_epoch(&self) -> u64
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::report_unavailable_operation(&self, formualizer_eval::operation_diagnostics::UnavailableOperation)
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::resolve_range_view(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'a>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::rng_for_current(&self, u64) -> rand::rngs::small::SmallRng
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>

@@ -173,6 +173,21 @@ impl Function for LetFn {
                 Err(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
             };
 
+            // This binding is now actually being evaluated, even if the body
+            // later leaves it unused. Inspect only its current lexical env;
+            // do not inspect later bindings, invoke callbacks, or infer intent
+            // from the legacy error/value returned by value_with_env.
+            if args[pair_idx + 1]
+                .function_value_reference_intent_in_env(&env)
+                .is_some()
+            {
+                _ctx.report_unavailable_operation(
+                    crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                        name: self.name().into(),
+                        mode: "function_reference_binding",
+                    },
+                );
+            }
             let bound_reference = args[pair_idx + 1].bound_reference_in_env(&env);
             let bound = args[pair_idx + 1].value_with_env(env.clone())?;
             env = env.with_binding(&name, binding_from_calc_value(bound, bound_reference));

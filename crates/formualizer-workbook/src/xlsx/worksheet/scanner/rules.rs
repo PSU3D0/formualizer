@@ -246,7 +246,8 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
             if range.3 > context.options.limits.max_columns {
                 return Err(unsupported("worksheet width limit", "worksheet"));
             }
-            if area > context.options.limits.max_cells as u64 {
+            if !context.options.sparse_dimensions && area > context.options.limits.max_cells as u64
+            {
                 return Err(unsupported("worksheet dimension cell limit", "worksheet"));
             }
             self.dimension = Some(range);
@@ -689,20 +690,22 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                     cell.has_formula = true;
                     self.open_cell.formula = FormulaState::default();
                     let kind_attribute = attrs.attribute("", "t");
-                    self.open_cell.formula.kind =
-                        match kind_attribute.as_ref().map_or("normal", |a| &*a.value) {
-                            "normal" => "normal",
-                            "shared" => "shared",
-                            "array" => "array",
-                            "dataTable" if !STRICT => "dataTable",
-                            _ if !STRICT => "unsupported",
-                            "dataTable" => {
-                                return Err(unsupported("data-table formula", "worksheet"));
-                            }
-                            _ => {
-                                return Err(unsupported("unknown formula kind", "worksheet"));
-                            }
-                        };
+                    self.open_cell.formula.kind = match kind_attribute
+                        .as_ref()
+                        .map_or("normal", |a| &*a.value)
+                    {
+                        "normal" => "normal",
+                        "shared" => "shared",
+                        "array" => "array",
+                        "dataTable" if !STRICT || context.options.allow_data_tables => "dataTable",
+                        _ if !STRICT => "unsupported",
+                        "dataTable" => {
+                            return Err(unsupported("data-table formula", "worksheet"));
+                        }
+                        _ => {
+                            return Err(unsupported("unknown formula kind", "worksheet"));
+                        }
+                    };
                     self.open_cell.formula.open = span.clone();
                     self.open_cell.formula.raw_kind_span = kind_attribute
                         .as_ref()
@@ -746,6 +749,22 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
                             dynamic.array_ref = Some(rect);
                             dynamic.array_ref_span = Some(extent.span.clone());
                         }
+                    } else if STRICT && self.open_cell.formula.kind == "dataTable" {
+                        if self.index.is_none() {
+                            *context.needs_index = true;
+                            return Err(unsupported(NEEDS_INDEX, "worksheet"));
+                        }
+                        let rect = SourceRect::parse(attrs.required("ref")?)?;
+                        if (rect.first_row, rect.first_col) != (cell.row, cell.col) {
+                            return Err(unsupported(
+                                "data-table anchor is not top-left of its extent",
+                                "worksheet",
+                            ));
+                        }
+                        if rect.last_col > context.options.limits.max_columns {
+                            return Err(unsupported("data-table width limit", "worksheet"));
+                        }
+                        cell.dynamic.get_or_insert_default().data_table_ref = Some(rect);
                     } else if STRICT && extent.is_some() && self.open_cell.formula.kind != "shared"
                     {
                         return Err(unsupported("non-shared formula extent", "worksheet"));
@@ -908,8 +927,11 @@ impl<'a, const STRICT: bool> SheetState<'a, STRICT> {
             }
             if STRICT
                 && cell.has_formula
-                && self.open_cell.formula.kind == "array"
-                && let Some(extent) = cell.dynamic.as_ref().and_then(|d| d.array_ref)
+                && matches!(self.open_cell.formula.kind, "array" | "dataTable")
+                && let Some(extent) = cell
+                    .dynamic
+                    .as_ref()
+                    .and_then(|d| d.array_ref.or(d.data_table_ref))
             {
                 // cm/XLDAPR and legacy array anchors share the same
                 // validated top-left source extent. Do not resolve

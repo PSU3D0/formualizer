@@ -21,6 +21,15 @@ pub struct XlsxRecalculateLimits {
     pub max_cells: usize,
     /// Limits the width of the native per-column ingestion builders.
     pub max_columns: u32,
+    /// Exact logical operation evidence roots and distinct owned text capacity.
+    pub max_operation_roots: usize,
+    pub max_operation_text_bytes: usize,
+    /// Dependency query plus a pre-admitted publication membership work bound,
+    /// root/returned items, and requested owned-vector capacity. These are not
+    /// total RSS/CPU bounds.
+    pub max_affected_work: u64,
+    pub max_affected_regions: usize,
+    pub max_affected_scratch_bytes: usize,
 }
 impl Default for XlsxRecalculateLimits {
     fn default() -> Self {
@@ -34,6 +43,11 @@ impl Default for XlsxRecalculateLimits {
             max_xml_depth: 128,
             max_cells: 8_000_000,
             max_columns: 256,
+            max_operation_roots: 100_000,
+            max_operation_text_bytes: 8 << 20,
+            max_affected_work: 10_000_000,
+            max_affected_regions: 100_000,
+            max_affected_scratch_bytes: 32 << 20,
         }
     }
 }
@@ -52,27 +66,61 @@ pub enum ExternalLinkPolicy {
     /// published.
     Refuse,
 }
+/// Source admission/publication policy. Strict preserves the historical guards.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum XlsxRecalculateProfile {
+    #[default]
+    Strict,
+    Workbook,
+}
+
 /// The source date system is authoritative; other evaluation policies come from `eval_config`.
 #[derive(Debug, Clone)]
 pub struct XlsxRecalculateOptions {
+    pub profile: XlsxRecalculateProfile,
+    /// Require no known feature/initial-state gaps; valid Excel errors are allowed.
+    pub require_complete: bool,
     pub eval_config: EvalConfig,
+    /// Portable source-aware overrides. None preserves the legacy raw config route.
+    pub calculation: Option<crate::SourceCalculationPolicy>,
     pub cancel: Option<CancelToken>,
     pub limits: XlsxRecalculateLimits,
     pub error_location_limit: usize,
+    /// Opt in to measured physical dispatch/observation counters. Disabled
+    /// metrics are reported as None, distinct from a measured zero.
+    pub physical_telemetry: bool,
     /// See [`ExternalLinkPolicy`]; defaults to reading cached values.
     pub external_links: ExternalLinkPolicy,
 }
 impl Default for XlsxRecalculateOptions {
     fn default() -> Self {
         Self {
+            profile: XlsxRecalculateProfile::Strict,
+            require_complete: false,
             eval_config: EvalConfig::default(),
+            calculation: None,
             cancel: None,
             limits: XlsxRecalculateLimits::default(),
             error_location_limit: DEFAULT_ERROR_LOCATION_LIMIT,
+            physical_telemetry: false,
             external_links: ExternalLinkPolicy::default(),
         }
     }
 }
+impl XlsxRecalculateOptions {
+    /// Opt into workbook-aware settings and sparse source admission.
+    /// Byte, actual-cell, formula and output limits remain explicit and bounded.
+    pub fn workbook() -> Self {
+        let mut options = Self {
+            profile: XlsxRecalculateProfile::Workbook,
+            calculation: Some(crate::SourceCalculationPolicy::default()),
+            ..Default::default()
+        };
+        options.limits.max_columns = 16_384;
+        options
+    }
+}
+
 /// `cache_cells_changed` counts physical caches actually patched, not engine deltas.
 #[derive(Debug, Clone)]
 pub struct XlsxRecalculateResult {
@@ -93,4 +141,11 @@ pub struct XlsxRecalculateResult {
     /// Links are never refreshed: these values are the ones Excel last
     /// stored in the workbook.
     pub external_links_used: usize,
+    /// Effective portable settings and their origins, when explicitly requested.
+    pub calculation: Option<crate::ResolvedSourceCalculation>,
+    pub coverage: crate::SourceCalculationCoverage,
+    pub coverage_scope: crate::SourceCoverageScope,
+    pub caches_invalidated: usize,
+    pub calculation_flags_changed: bool,
+    pub operation_diagnostics: crate::SourceOperationDiagnostics,
 }

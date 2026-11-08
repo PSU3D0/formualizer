@@ -1924,10 +1924,163 @@ impl Function for AggregateFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
+        // Validate options and array-form arity before selecting an unavailable
+        // operation. An invalid call must not acquire an AGGREGATE root.
+        let options = match parse_strict_int_arg(&args[1]) {
+            Ok(v) if (0..=7).contains(&v) => v,
+            Ok(_) => {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+        if (14..=19).contains(&function_num) && args.get(3).is_none_or(ArgumentHandle::is_omitted) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new_value(),
+            )));
+        }
         let op = if (1..=11).contains(&function_num) {
             aggregate_op_from_function_num(function_num)
                 .expect("validated AGGREGATE function_num maps to operation")
         } else if (12..=19).contains(&function_num) {
+            let array_form = function_num >= 14;
+            if array_form && args.len() != 4 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_value(),
+                )));
+            }
+            let visibility = if options % 2 == 1 {
+                VisibilityPolicy::ExcludeManualOrFilterHidden
+            } else {
+                VisibilityPolicy::IncludeAll
+            };
+            let error_policy = if matches!(options, 2 | 3 | 6 | 7) {
+                ErrorPolicy::Ignore
+            } else {
+                ErrorPolicy::Propagate
+            };
+            let nested = if options <= 3 {
+                NestedPolicy::SkipSubtotalAndAggregate
+            } else {
+                NestedPolicy::IncludeNested
+            };
+            // Reuse established data traversal/visibility/error policies without
+            // including array-form k as another data point. No unavailable
+            // receipt may precede a propagated data error.
+            let data_args = if array_form { &args[..3] } else { args };
+            let data = match AggregateCollector::collect_args(
+                data_args,
+                2,
+                ctx,
+                AggregateOp::Sum,
+                visibility,
+                error_policy,
+                nested,
+            ) {
+                Ok(data) => data,
+                Err(error) => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                }
+            };
+            let n = data.numeric_values.len();
+            let mut unverified = data.numeric_values.iter().any(|value| !value.is_finite());
+            // Direct text/logical/date coercion is not established by the
+            // numeric array/range domain fixtures. Preserve uncertainty rather
+            // than assert that a skipped/coerced scalar is a valid domain.
+            for arg in data_args.iter().skip(2) {
+                if matches!(
+                    arg.value()?.as_scalar(),
+                    Some(
+                        LiteralValue::Text(_)
+                            | LiteralValue::Boolean(_)
+                            | LiteralValue::Date(_)
+                            | LiteralValue::DateTime(_)
+                            | LiteralValue::Time(_)
+                            | LiteralValue::Duration(_)
+                    )
+                ) {
+                    unverified = true;
+                }
+            }
+            if array_form {
+                let raw_k = args[3].value()?.into_literal();
+                if let LiteralValue::Error(error) = raw_k {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                }
+                if matches!(raw_k, LiteralValue::Array(_)) {
+                    unverified = true;
+                } else {
+                    let k = match coerce_num(&raw_k) {
+                        Ok(k) if k.is_finite() => k,
+                        Ok(_) => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                                ExcelError::new_num(),
+                            )));
+                        }
+                        Err(error) => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                                error,
+                            )));
+                        }
+                    };
+                    let valid = match function_num {
+                        14 | 15 => k.trunc() >= 1.0 && k.trunc() <= n as f64,
+                        16 => (0.0..=1.0).contains(&k),
+                        17 => (0.0..=4.0).contains(&k.trunc()),
+                        18 => {
+                            k > 0.0
+                                && k < 1.0
+                                && k * (n as f64 + 1.0) >= 1.0
+                                && k * (n as f64 + 1.0) <= n as f64
+                        }
+                        19 => {
+                            (1.0..=3.0).contains(&k.trunc())
+                                && k.trunc() / 4.0 * (n as f64 + 1.0) >= 1.0
+                                && k.trunc() / 4.0 * (n as f64 + 1.0) <= n as f64
+                        }
+                        _ => unreachable!(),
+                    };
+                    // An uncertain data coercion may change n, but cannot make
+                    // a syntactically invalid percentile/quartile k valid.
+                    let independent_invalid = match function_num {
+                        14 | 15 => k.trunc() < 1.0,
+                        16 | 18 => {
+                            !(0.0..=1.0).contains(&k)
+                                || (function_num == 18 && (k == 0.0 || k == 1.0))
+                        }
+                        17 => !(0.0..=4.0).contains(&k.trunc()),
+                        19 => !(1.0..=3.0).contains(&k.trunc()),
+                        _ => false,
+                    };
+                    if independent_invalid || (!unverified && !valid) {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                            ExcelError::new_num(),
+                        )));
+                    }
+                }
+            }
+            if array_form && !unverified && n == 0 {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new_num(),
+                )));
+            }
+            if unverified {
+                ctx.report_unavailable_operation(
+                    crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                        name: self.name().into(),
+                        mode: "data_or_k_domain",
+                    },
+                );
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    ExcelError::new(ExcelErrorKind::NImpl),
+                )));
+            }
+            ctx.report_unavailable_operation(
+                crate::operation_diagnostics::UnavailableOperation::UnimplementedFunction {
+                    name: "AGGREGATE".into(),
+                },
+            );
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::NImpl),
             )));
@@ -1937,18 +2090,8 @@ impl Function for AggregateFn {
             )));
         };
 
-        let options = match parse_strict_int_arg(&args[1]) {
-            Ok(v) => v,
-            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
-        };
-
         // Options 0-3 skip nested SUBTOTAL and AGGREGATE cells; 4-7 count
         // them. Odd options skip hidden rows, 2-3 and 6-7 skip errors.
-        if !(0..=7).contains(&options) {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_value(),
-            )));
-        }
         let visibility = if options % 2 == 1 {
             VisibilityPolicy::ExcludeManualOrFilterHidden
         } else {

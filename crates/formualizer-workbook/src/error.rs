@@ -1,8 +1,53 @@
 use formualizer_common::error::ExcelError;
 use thiserror::Error;
 
+/// A known calculation gap after package admission, before publishing caches.
+/// Consumers may preserve their valid edited input with an explicit deferred receipt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalculationDeferredReason {
+    IterativeInitialStateUnverified,
+    KnownCoverageIncomplete,
+    WorkbookPrecisionUnverified,
+    DependencyCoverageUnavailable,
+    UnlocatedOperation,
+    AffectedArrayCoverageUnverified,
+}
+impl std::fmt::Display for CalculationDeferredReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IterativeInitialStateUnverified => {
+                f.write_str("iterative source initial state is unverified")
+            }
+            Self::WorkbookPrecisionUnverified => {
+                f.write_str("workbook precision-as-displayed semantics are unverified")
+            }
+            Self::KnownCoverageIncomplete => {
+                f.write_str("known calculation coverage is incomplete")
+            }
+            Self::DependencyCoverageUnavailable => {
+                f.write_str("safe affected dependency coverage is unavailable")
+            }
+            Self::UnlocatedOperation => {
+                f.write_str("unavailable operation has no attributable source origin")
+            }
+            Self::AffectedArrayCoverageUnverified => {
+                f.write_str("affected array publication is not yet isolated")
+            }
+        }
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum IoError {
+    #[error("Calculation deferred: {reason} ({context})")]
+    CalculationDeferred {
+        reason: CalculationDeferredReason,
+        context: String,
+    },
+
+    #[error("Invalid calculation option {field}: {message}")]
+    InvalidOptions { field: String, message: String },
+
     #[error("Backend error in {backend}: {message}")]
     Backend { backend: String, message: String },
 

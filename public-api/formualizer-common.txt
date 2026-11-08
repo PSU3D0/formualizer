@@ -364,11 +364,16 @@ pub fn formualizer_common::date_serial::try_serial_to_display_date_parts_for(for
 pub fn formualizer_common::date_serial::validate_excel_serial(formualizer_common::DateSystem, f64) -> core::result::Result<(), formualizer_common::ExcelError>
 pub mod formualizer_common::error
 #[non_exhaustive] pub enum formualizer_common::error::ExcelErrorExtra
+pub formualizer_common::error::ExcelErrorExtra::EnginePoisoned
+pub formualizer_common::error::ExcelErrorExtra::FunctionPanicked
+pub formualizer_common::error::ExcelErrorExtra::FunctionPanicked::function: alloc::string::String
+pub formualizer_common::error::ExcelErrorExtra::FunctionPanicked::message: core::option::Option<alloc::string::String>
 pub formualizer_common::error::ExcelErrorExtra::None
 pub formualizer_common::error::ExcelErrorExtra::PlanStale
 pub formualizer_common::error::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
 pub formualizer_common::error::ExcelErrorExtra::PreparationStale
 pub formualizer_common::error::ExcelErrorExtra::PreparationStale::reason: formualizer_common::PreparationStaleReason
+pub formualizer_common::error::ExcelErrorExtra::RecalcJobActive
 pub formualizer_common::error::ExcelErrorExtra::Resource
 pub formualizer_common::error::ExcelErrorExtra::Resource::detail: alloc::boxed::Box<formualizer_common::ResourceExhaustionDetail>
 pub formualizer_common::error::ExcelErrorExtra::Spill
@@ -483,9 +488,12 @@ pub fn formualizer_common::PreparationStaleReason::deserialize<__D>(__D) -> core
 pub formualizer_common::error::ResourceExhaustionReason::Admission
 pub formualizer_common::error::ResourceExhaustionReason::ArithmeticOverflow
 pub formualizer_common::error::ResourceExhaustionReason::Deadline
+pub formualizer_common::error::ResourceExhaustionReason::DependencyClosureOutputItems
 pub formualizer_common::error::ResourceExhaustionReason::GraphEdges
 pub formualizer_common::error::ResourceExhaustionReason::GraphVertices
 pub formualizer_common::error::ResourceExhaustionReason::MaterializationCells
+pub formualizer_common::error::ResourceExhaustionReason::OperationEvidenceRoots
+pub formualizer_common::error::ResourceExhaustionReason::OperationEvidenceTextBytes
 pub formualizer_common::error::ResourceExhaustionReason::RetainedMemory
 pub formualizer_common::error::ResourceExhaustionReason::ScratchMemory
 pub formualizer_common::error::ResourceExhaustionReason::WorkUnits
@@ -534,6 +542,7 @@ impl formualizer_common::ExcelError
 pub fn formualizer_common::ExcelError::context(&self) -> core::option::Option<&formualizer_common::ErrorContext>
 pub fn formualizer_common::ExcelError::extra(&self) -> &formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelError::from_error_string(&str) -> Self
+pub fn formualizer_common::ExcelError::from_function_panic(&str, &(dyn core::any::Any + core::marker::Send)) -> Self
 pub fn formualizer_common::ExcelError::message(&self) -> core::option::Option<&str>
 pub fn formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind) -> Self
 pub fn formualizer_common::ExcelError::new_circ() -> Self
@@ -923,11 +932,16 @@ pub fn formualizer_common::DateSystem::hash<__H: core::hash::Hasher>(&self, &mut
 impl core::marker::Copy for formualizer_common::DateSystem
 impl core::marker::StructuralPartialEq for formualizer_common::DateSystem
 #[non_exhaustive] pub enum formualizer_common::ExcelErrorExtra
+pub formualizer_common::ExcelErrorExtra::EnginePoisoned
+pub formualizer_common::ExcelErrorExtra::FunctionPanicked
+pub formualizer_common::ExcelErrorExtra::FunctionPanicked::function: alloc::string::String
+pub formualizer_common::ExcelErrorExtra::FunctionPanicked::message: core::option::Option<alloc::string::String>
 pub formualizer_common::ExcelErrorExtra::None
 pub formualizer_common::ExcelErrorExtra::PlanStale
 pub formualizer_common::ExcelErrorExtra::PlanStale::reason: formualizer_common::PlanStaleReason
 pub formualizer_common::ExcelErrorExtra::PreparationStale
 pub formualizer_common::ExcelErrorExtra::PreparationStale::reason: formualizer_common::PreparationStaleReason
+pub formualizer_common::ExcelErrorExtra::RecalcJobActive
 pub formualizer_common::ExcelErrorExtra::Resource
 pub formualizer_common::ExcelErrorExtra::Resource::detail: alloc::boxed::Box<formualizer_common::ResourceExhaustionDetail>
 pub formualizer_common::ExcelErrorExtra::Spill
@@ -1107,9 +1121,12 @@ pub fn formualizer_common::PreparationStaleReason::deserialize<__D>(__D) -> core
 pub formualizer_common::ResourceExhaustionReason::Admission
 pub formualizer_common::ResourceExhaustionReason::ArithmeticOverflow
 pub formualizer_common::ResourceExhaustionReason::Deadline
+pub formualizer_common::ResourceExhaustionReason::DependencyClosureOutputItems
 pub formualizer_common::ResourceExhaustionReason::GraphEdges
 pub formualizer_common::ResourceExhaustionReason::GraphVertices
 pub formualizer_common::ResourceExhaustionReason::MaterializationCells
+pub formualizer_common::ResourceExhaustionReason::OperationEvidenceRoots
+pub formualizer_common::ResourceExhaustionReason::OperationEvidenceTextBytes
 pub formualizer_common::ResourceExhaustionReason::RetainedMemory
 pub formualizer_common::ResourceExhaustionReason::ScratchMemory
 pub formualizer_common::ResourceExhaustionReason::WorkUnits
@@ -1367,6 +1384,7 @@ impl formualizer_common::ExcelError
 pub fn formualizer_common::ExcelError::context(&self) -> core::option::Option<&formualizer_common::ErrorContext>
 pub fn formualizer_common::ExcelError::extra(&self) -> &formualizer_common::ExcelErrorExtra
 pub fn formualizer_common::ExcelError::from_error_string(&str) -> Self
+pub fn formualizer_common::ExcelError::from_function_panic(&str, &(dyn core::any::Any + core::marker::Send)) -> Self
 pub fn formualizer_common::ExcelError::message(&self) -> core::option::Option<&str>
 pub fn formualizer_common::ExcelError::new(formualizer_common::ExcelErrorKind) -> Self
 pub fn formualizer_common::ExcelError::new_circ() -> Self

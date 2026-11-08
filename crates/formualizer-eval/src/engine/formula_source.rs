@@ -1315,7 +1315,9 @@ impl DeferredFormulaPackage {
             report,
             families,
             partitioned_families,
-            replay: Arc::new(std::sync::Mutex::new(replay)),
+            replay: Arc::new(std::sync::Mutex::new(
+                crate::guarded_replay::GuardedReplay::boxed(replay),
+            )),
             invalidated: Default::default(),
             suppressed: Default::default(),
             source_coordinates,
@@ -1364,6 +1366,7 @@ impl FormulaCompressedPreparation {
         replay: Arc<std::sync::Mutex<Box<dyn DeferredFormulaReplay>>>,
         suppressed: std::collections::BTreeSet<(u32, u32)>,
     ) -> Self {
+        crate::guarded_replay::GuardedReplay::shared(&replay);
         self.exact_replay = Some(replay);
         self.replay_disposition
             .extend_suppressed_excel_coords(suppressed);

@@ -37,20 +37,25 @@
 //! Every pass of the replan loops is armed under the authority. Commit
 //! granularity is legacy's (a cell in sequential layers, a phase group in
 //! parallel layers); cycle units evaluate on their own recorded path and
-//! are cleared at pass end as before. A self read (`A1 = INDIRECT("A1")`)
-//! is not stale: legacy evaluates it to a value, and legacy is the spec
-//! (design §8.2 case 2 plans a Δ here; not adopted).
+//! are cleared at pass end as before. A dynamic self read is stale too:
+//! its dependency becomes a replan hint so the existing cycle policy runs
+//! before a first-request numeric value can be committed.
 
 use super::Engine;
-use crate::engine::authority::geom::SYMBOL_SHEET;
+use crate::engine::authority::geom::{Rect, SYMBOL_SHEET};
 use crate::engine::live_edges::{ReadLog, ReadRect, RecordingContext};
 use crate::engine::scheduler::{Schedule, ScheduleUnit};
 use crate::engine::vertex::VertexId;
 use crate::interpreter::Interpreter;
+use crate::reference::CellRef;
 use crate::traits::EvaluationContext;
 use formualizer_common::{ExcelError, LiteralValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Mutex;
+
+#[cfg(test)]
+#[path = "tests/observed_value_binding.rs"]
+mod observed_value_binding;
 
 #[cfg(test)]
 mod tests {
@@ -144,6 +149,8 @@ mod tests {
 pub(crate) struct Freshness {
     /// The current pass enforces FR (its schedule has a dynamic reader).
     armed: bool,
+    /// Opaque pass identity; retained effects cannot attest another pass/engine.
+    pass_token: std::sync::Arc<()>,
     /// Stale readers of the current pass and the dirty cells they read.
     /// Written from evaluation (possibly parallel), read at commit.
     stale: Mutex<FxHashMap<VertexId, Vec<VertexId>>>,
@@ -169,10 +176,14 @@ pub(crate) struct Freshness {
     /// A spill existed when the pass began (it may have been cleared
     /// since): only then can a spill re-dirty a committed vertex (FR5).
     had_spills: bool,
+    // Changed spill regions in this slice, never the cumulative installed set.
+    spill_changes: smallvec::SmallVec<[(u16, Rect); 2]>,
     /// Stale readers dropped over the request (tests, telemetry).
     stale_total: u64,
     /// Passes stopped at a barrier over the request.
     barrier_stops: u64,
+    #[cfg(test)]
+    resumable_fr5_examined: usize,
 }
 
 impl<R: EvaluationContext> Engine<R> {
@@ -189,11 +200,13 @@ impl<R: EvaluationContext> Engine<R> {
         f.barrier = false;
         f.skipped.clear();
         f.committed.clear();
+        f.spill_changes.clear();
         f.stale_this_pass.clear();
         f.group_dropped.clear();
         f.stale.get_mut().unwrap().clear();
         f.fresh_reads.get_mut().unwrap().clear();
         f.armed = true;
+        f.pass_token = std::sync::Arc::new(());
         f.had_spills = self.graph.has_spill_anchors();
     }
 
@@ -402,6 +415,22 @@ impl<R: EvaluationContext> Engine<R> {
             .map(|(v, _)| *v)
             .filter(|v| !stale.contains_key(v) && !group_dropped.contains(v))
             .collect();
+        // Every result in this batch was computed before any publication.
+        // A new dynamic reader's installed-value proof does not exist yet:
+        // arrays commit first, before its scalar write installs that proof.
+        // Publish routing hints now so a spill can re-dirty the reader even
+        // on the first pass. Keep the one-use evidence staged for its actual
+        // write; these hints do not attest an installed value.
+        let fresh_reads = self.freshness.fresh_reads.get_mut().unwrap();
+        for &member in &members {
+            if let Some(reads) = fresh_reads.get(&member) {
+                self.graph.authority_host_mut().set_observed_with_value(
+                    member,
+                    reads.clone(),
+                    false,
+                );
+            }
+        }
         self.freshness.committed.extend(members.iter().copied());
         self.graph.clear_dirty_flags(&members);
         true
@@ -435,16 +464,83 @@ impl<R: EvaluationContext> Engine<R> {
     pub(super) fn freshness_mark_committed(&mut self, vertex: VertexId) {
         self.freshness.committed.insert(vertex);
         self.graph.clear_dirty_flags(&[vertex]);
-        // OR1: a published dynamic value's reads become its observed set.
-        if let Some(reads) = self
+    }
+
+    /// Transfer reads only to this evaluation's own final anchor write. The
+    /// native pipeline plans each dynamic result once per commit unit; synthetic
+    /// writes to another anchor stay ordinary and cannot consume its staging.
+    pub(super) fn freshness_bind_planned_result(
+        &mut self,
+        vertex: VertexId,
+        effects: &mut smallvec::SmallVec<[crate::engine::effects::Effect; 2]>,
+    ) {
+        use crate::engine::effects::{Effect, RecordedResult};
+        let Some(reads) = self
             .freshness
             .fresh_reads
             .get_mut()
             .unwrap()
             .remove(&vertex)
-        {
-            self.graph.authority_host_mut().set_observed(vertex, reads);
+        else {
+            return;
+        };
+        let Some(effect) = effects.iter_mut().rfind(
+            |effect| matches!(effect, Effect::WriteCell { vertex_id, .. } if *vertex_id == vertex),
+        ) else {
+            return;
+        };
+        let previous = std::mem::replace(
+            effect,
+            Effect::SpillClear {
+                anchor_vertex: vertex,
+            },
+        );
+        let Effect::WriteCell { value, .. } = previous else {
+            unreachable!()
+        };
+        *effect = Effect::WriteRecordedCell {
+            result: std::sync::Arc::new(RecordedResult::new(
+                vertex,
+                value,
+                self.freshness.pass_token.clone(),
+                reads,
+            )),
+        };
+    }
+
+    /// Called only after installation, or with `installed=false` to retain
+    /// routing hints when no grid value was written. Evidence is one-use.
+    pub(super) fn freshness_record_installed(
+        &mut self,
+        result: &crate::engine::effects::RecordedResult,
+        installed: bool,
+    ) {
+        if !self.freshness.armed || !result.belongs_to_pass(&self.freshness.pass_token) {
+            return;
         }
+        if let Some(reads) = result.take_reads() {
+            if installed {
+                self.graph
+                    .authority_host_mut()
+                    .set_observed(result.vertex(), reads);
+            } else {
+                self.graph.authority_host_mut().set_observed_with_value(
+                    result.vertex(),
+                    reads,
+                    false,
+                );
+            }
+        }
+    }
+
+    /// Failed outer requests cannot leave scheduling observations attesting
+    /// partially applied values, including a failure in final reconciliation.
+    pub(super) fn freshness_discard_read_evidence(&mut self) {
+        self.freshness.fresh_reads.get_mut().unwrap().clear();
+        self.freshness.armed = false;
+        self.graph
+            .authority_host_mut()
+            .invalidate_all_observed_values();
     }
 
     /// End of a pass. Armed: clear what legacy clears except stale readers,
@@ -514,6 +610,91 @@ impl<R: EvaluationContext> Engine<R> {
             }
     }
 
+    /// Journal successful spill publications and clears while the held-schedule
+    /// driver is armed. Ordinary evaluation keeps its existing FR5 path. The
+    /// regions cover both the old and new extents, including a shrinking tail.
+    /// Resolve their reader closure at settlement, after observed-read commits.
+    pub(super) fn freshness_note_spill_change(&mut self, old: &[CellRef], new: &[CellRef]) {
+        if !self.freshness.armed || self.resumable.is_none() {
+            return;
+        }
+        for cells in [old, new] {
+            let Some(first) = cells.first() else { continue };
+            let mut rect = Rect::new(
+                first.coord.row(),
+                first.coord.col(),
+                first.coord.row(),
+                first.coord.col(),
+            );
+            for cell in cells.iter().skip(1) {
+                debug_assert_eq!(cell.sheet_id, first.sheet_id);
+                rect.r0 = rect.r0.min(cell.coord.row());
+                rect.r1 = rect.r1.max(cell.coord.row());
+                rect.c0 = rect.c0.min(cell.coord.col());
+                rect.c1 = rect.c1.max(cell.coord.col());
+            }
+            self.freshness.spill_changes.push((first.sheet_id, rect));
+        }
+    }
+
+    /// Settle a partial pass without clearing unreached candidates. The caller
+    /// only supplies completed cycles (which use write-through installation).
+    /// Ordinary members are already cleared by commit. Buffered values still
+    /// awaiting installation must be dirty before FR5 propagation. Returns
+    /// (dirty work remains, the held order must be replanned).
+    pub(super) fn freshness_finish_interrupted_pass(
+        &mut self,
+        completed_cycles: &[VertexId],
+        installed_earlier: &mut crate::engine::idset::DenseIdSet,
+    ) -> Result<(bool, bool), ExcelError> {
+        // SCC tasks write through but do not mark their vertices committed.
+        // Match full-pass completion for these atomic, completed tasks only.
+        self.graph.clear_dirty_flags(completed_cycles);
+        let unflushed: Vec<_> = self.freshness.unflushed.iter().collect();
+        for &v in &unflushed {
+            self.graph.set_dirty(v, true);
+        }
+        installed_earlier.extend(
+            self.freshness
+                .committed
+                .iter()
+                .filter(|v| !self.freshness.unflushed.contains(v)),
+        );
+        installed_earlier.extend(completed_cycles.iter().copied());
+        // FR5 is output-sensitive: with no spill publication or clear this
+        // slice, there is no cumulative settlement work, even if the workbook
+        // contains other spills. Query the authority's indexed reader closure
+        // for changed regions only. A previously installed reader can still be
+        // dirty after a later spill write; its descendants may have committed
+        // and cleared themselves in between, so propagate from those roots.
+        let mut replan = false;
+        let regions = std::mem::take(&mut self.freshness.spill_changes);
+        if !regions.is_empty() {
+            self.require_unified_authority()?;
+            let affected = self.graph.authority_closure_of_rects(&regions);
+            #[cfg(test)]
+            {
+                self.freshness.resumable_fr5_examined += affected.len();
+            }
+            let redirtied: Vec<_> = affected
+                .into_iter()
+                .filter(|v| installed_earlier.contains(v) && self.graph.is_dirty(*v))
+                .collect();
+            if !redirtied.is_empty() {
+                self.graph.mark_dirty_many(&redirtied);
+                // A later slice of the old walk could otherwise publish a
+                // descendant using this dirty reader's previous value, then
+                // clear its dirty flag. Reorder at this spill boundary once,
+                // rather than rescanning earlier installations on every slice.
+                replan = true;
+            }
+        }
+        self.freshness.armed = false;
+        self.freshness.committed.clear();
+        self.freshness.unflushed.clear();
+        Ok((self.graph.has_dirty_evaluation_vertices(), replan))
+    }
+
     /// A request failed with a pass still armed (a commit preflight, a
     /// deadline, cancellation): legacy clears a pass's dirty flags only at
     /// its end, so a failed pass leaves every scheduled vertex dirty. Put
@@ -523,6 +704,7 @@ impl<R: EvaluationContext> Engine<R> {
             return;
         }
         self.freshness.armed = false;
+        self.freshness.spill_changes.clear();
         let committed: Vec<VertexId> = self.freshness.committed.iter().collect();
         self.freshness.committed.clear();
         for v in committed {
@@ -530,6 +712,11 @@ impl<R: EvaluationContext> Engine<R> {
                 self.graph.set_dirty(v, true);
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resumable_fr5_examined_for_test(&self) -> usize {
+        self.freshness.resumable_fr5_examined
     }
 
     pub(super) fn freshness_has_hints(&self) -> bool {
@@ -587,8 +774,36 @@ impl<R: EvaluationContext> Engine<R> {
                 })
                 .or_else(|error| self.fit_formula_error(vertex, error))
         };
-        let reads = log.take();
-        let dirty = self.freshness_dirty_reads(vertex, &reads);
+        self.freshness_record_reads(vertex, log.take());
+        Some(result)
+    }
+
+    /// Formula-backed symbols need the same runtime read tracking as grid
+    /// formulas; their dependency flags alone do not describe text targets.
+    pub(super) fn freshness_evaluate_name_recorded(
+        &self,
+        vertex: VertexId,
+        sheet_name: &str,
+        cell_ref: crate::reference::CellRef,
+        ast: &formualizer_parse::parser::ASTNode,
+    ) -> Option<Result<LiteralValue, ExcelError>> {
+        if !self.freshness.armed || !self.graph.is_dynamic(vertex) {
+            return None;
+        }
+        let log = ReadLog::default();
+        let result = {
+            let ctx = RecordingContext::new(self, &log);
+            Interpreter::new_with_cell(&ctx, sheet_name, cell_ref)
+                .with_resolved_functions(&self.resolved_functions)
+                .evaluate_ast(ast)
+                .map(|value| value.into_literal())
+        };
+        self.freshness_record_reads(vertex, log.take());
+        Some(result)
+    }
+
+    fn freshness_record_reads(&self, vertex: VertexId, reads: Vec<ReadRect>) {
+        let dirty = self.freshness_dirty_reads(&reads);
         if dirty.is_empty() {
             self.freshness
                 .fresh_reads
@@ -598,17 +813,12 @@ impl<R: EvaluationContext> Engine<R> {
         } else {
             self.freshness.stale.lock().unwrap().insert(vertex, dirty);
         }
-        Some(result)
     }
 
-    /// Formula vertices other than `reader` that are dirty (or committed
+    /// Formula vertices, including `reader`, that are dirty (or committed
     /// with their value still buffered) and covered by `reads`, plus dirty
     /// spill anchors whose extent meets a read.
-    fn freshness_dirty_reads(
-        &self,
-        reader: VertexId,
-        reads: &[(u16, u32, u32, u32, u32)],
-    ) -> Vec<VertexId> {
+    fn freshness_dirty_reads(&self, reads: &[(u16, u32, u32, u32, u32)]) -> Vec<VertexId> {
         let mut out = Vec::new();
         let Ok(store) = self.graph.authority_plan_store() else {
             return out;
@@ -628,7 +838,6 @@ impl<R: EvaluationContext> Engine<R> {
                         if let Some(v) = self
                             .graph
                             .authority_vertex_of_formula(id, (sheet, row, col))
-                            && v != reader
                             && (self.graph.is_dirty(v) || self.freshness.unflushed.contains(&v))
                         {
                             out.push(v);
@@ -637,7 +846,7 @@ impl<R: EvaluationContext> Engine<R> {
                 });
             }
             for anchor in self.graph.spill_anchors_in_region(sheet, r0, c0, r1, c1) {
-                if anchor != reader && self.graph.is_dirty(anchor) {
+                if self.graph.is_dirty(anchor) {
                     out.push(anchor);
                 }
             }

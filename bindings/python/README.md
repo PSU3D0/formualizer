@@ -32,6 +32,33 @@ pip install formualizer
 
 Prebuilt stable-ABI (`abi3`) wheels are published for Python 3.10 and newer on Linux (glibc and musl), macOS, and Windows. No Rust toolchain required.
 
+## Cooperative recalculation
+
+`Workbook.begin_recalc()` returns a job with `step(budget_ms=None)`, `iter(budget_ms=5)`, `prioritize(rectangles)`, `cancel()` and `active`. Use it as a context manager to cancel unfinished work on exit. Step reports include progress, changed rectangles and timing; read cell values separately. Rectangles are `(sheet_name, r0, c0, r1, c1)`, **1-based and inclusive**.
+
+```python
+with wb.begin_recalc(priority=[("Summary", 1, 1, 20, 10)]) as job:
+    for report in job.iter(budget_ms=5):
+        print(report.phase, report.progress.cumulative)
+
+# In an async function:
+result = await wb.evaluate_async(
+    budget_ms=5, on_progress=lambda report: print(report.phase)
+)
+```
+
+Native async steps run on a worker thread with the GIL released; callbacks run on the event loop. Admission and cancellation cleanup also run on workers. An atomic reservation makes a concurrent async driver fail promptly with `RecalcAlreadyPendingError`, including while a manual job is active or the first driver is still awaiting admission. Task cancellation waits for owned admission or the current step to stop, cancels any admitted job and re-raises. A new driver may begin after the prior driver returns. Pyodide yields between in-thread steps. Budgets are soft: families, cycles, graph construction and scheduling are indivisible. `None` means unlimited; zero still allows progress.
+
+`wb.recalc(5, on_step=callback)` is the synchronous driver; return `False` to pause and resume through the returned `outcome.job`. Existing `evaluate_*` calls raise `RecalcJobActiveError` while a job is active. Reads and edits between steps are allowed; use `has_pending_in_rect` / `pending_cells_in_rect` with `has_active_recalc_job` to interpret old values. See the [interruptible recalculation guide](https://www.formualizer.dev/docs/guides/interruptible-recalculation) for lifecycle, exceptions and limits.
+
+Runnable, self-contained examples (from this directory, with a compatible native build installed):
+
+- [Viewport grid](examples/interruptible_viewport_grid.py): prioritize visible cells, scroll, repaint changed rectangles and edit an assumption during a job.
+- [Async service](examples/interruptible_async_service.py): keep a heartbeat running, cancel a superseded what-if request and calculate its replacement.
+- [Pause and inspect](examples/interruptible_pause_inspect.py): pause a callback driver on a negative margin, repair the input and resume the same job.
+
+Run, for example, `python examples/interruptible_viewport_grid.py`. Each script checks its final results; timings and step counts depend on the machine and native build.
+
 ## Command line
 
 Native wheels include the `formualizer` command, which recalculates the cached formula values in an `.xlsx` after another tool has edited it:
@@ -258,6 +285,42 @@ still apply. Fresh unmarked 1x1 results have no spill identity (`A1#` returns
 was used. See [the precise eligibility and publication contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md).
 The file API preserves existing destination permissions and leaves it untouched
 on pre-publication failure; omitted `output` recalculates in place.
+
+### Source-aware calculation policy
+
+The native library remains strict by default. Opt into source-aware settings and sparse admission explicitly:
+
+```python
+result = fz.recalculate_xlsx_bytes(
+    payload,
+    profile="workbook",
+    calculation={
+        "workbookSeed": "18446744073709551615",
+        "fixedNowUtc": "2024-01-02T03:04:05Z",
+        "timezone": "utc",
+        "iterationInitialState": "require_verified",
+    },
+    require_complete=True,
+)
+```
+
+`recalculate_xlsx_file` accepts the same keywords. The nested `calculation` mapping uses the shared camelCase source policy: `iteration` (`mode: workbook|disabled|iterate`, with optional `maxIterations` and `maxChange` for `iterate`), `cycleDetection` (`runtime|static`), `workbookSeed` (decimal u64 string or JS-safe integer), `fixedNowUtc` (RFC3339), `timezone` (`utc|local|{"offsetSeconds": n}`), `maxElapsedMs`, `maxWorkUnits`, and `iterationInitialState` (`require_verified|cold_start`). Unknown fields, invalid types and bounds fail before package loading. The workbook header always owns the date system.
+
+Legacy deterministic keywords remain supported. With a source policy, explicit legacy seed, timestamp and timezone fill omitted nested fields; matching values are accepted and differing values raise `ValueError`. Legacy `deterministic_timezone` still requires legacy `deterministic_timestamp_utc`. Omitted legacy arguments never override nested values.
+
+Results include canonical `calculation` settings/origins/warnings (or `None` on the legacy route), `coverage`, `coverage_scope`, `caches_invalidated`, `calculation_flags_changed`, and full `operation_diagnostics` (camelCase nested fields, including scoped function incidence, unavailable result cells and bounded samples). Complete coverage means no known gaps under the declared assumptions; it is not an Excel-equivalence guarantee. Partial results clear affected caches while retaining independent results.
+
+`require_complete=True` rejects known gaps while allowing legitimate Excel error values. Catch `fz.CalculationDeferred` for typed `reason` and `context`; iterative source workbooks require verified initial state by default. Explicit `cold_start` uses a fresh evaluator state and is recorded as an assumption. Engine cancellation/resource failures retain `ExcelEvaluationError` fields; corrupt packages and output failures remain errors. A refusal never returns newly certified workbook bytes.
+
+Both source routes accept `limits=None` and `physical_telemetry=False`. The native strict or workbook preset is selected before explicit legacy keywords and limits are merged. Neither `calculation` nor `require_complete` selects the workbook preset.
+
+`limits` is a partial mapping with these camelCase fields: `maxInputBytes`, `maxEntries`, `maxExpandedBytes`, `maxWorksheetBytes`, `maxFormulaCells`, `maxOutputBytes`, `maxXmlDepth`, `maxCells`, `maxColumns`, `maxOperationRoots`, `maxOperationTextBytes`, `maxAffectedWork`, `maxAffectedRegions`, and `maxAffectedScratchBytes`. Missing fields preserve the preset and zero is an explicit bound. Counts and byte caps must be nonnegative integers within u32; `maxColumns` additionally cannot exceed 16384. `maxAffectedWork` must be a nonnegative JS-safe integer (at most 9007199254740991). Strings, booleans, fractions, arrays and null fields are invalid. Top-level `None` means no override. Invalid options fail before ZIP loading or destination access.
+
+Evidence roots/text and affected-query work/output/scratch exhaustion are fatal `ExcelEvaluationError` failures, including with `error_location_limit=0` or `require_complete=False`. Operation text bytes measure retained owned evidence text; scratch measures requested query capacity, not process RSS. Dependency evidence reports admitted query work plus the conservative publication membership work bound separately from `queryWork`. Its scope is the admitted workbook and fixed cached sources, with explicit semantic-read and unknown-dynamic caveats; it does not certify arbitrary provider reads or total CPU use.
+
+`operation_diagnostics.functionModes` and typed samples preserve unavailable modes, unverified modes and providers. Executed uncertainty (including caught gaps) prevents complete coverage; inactive branches and ordinary Excel errors alone do not. Samples can be truncated without dropping logical safety evidence. Default `physicalFunctionDispatches` and `physicalUnavailableObservations` are present as `None` (unmeasured). Explicit telemetry reports measured zero or positive counters; counters above the JS-safe domain use exact decimal strings. These counters are diagnostic and do not determine coverage.
+
+The package exports `SourceCalculationPolicy`, `SourceRecalculateLimits`, `SourceRecalculateResult`, `SourceOperationDiagnostics`, `SourceUnavailableOperation`, and `SourceDependencyEvidence` typing records. Generated source function stubs use these request/result shapes; runtime validation remains canonical Rust serde and policy validation.
 
 ### Parse and analyze formulas
 

@@ -35,6 +35,184 @@
 use crate::traits::CalcSettings;
 use formualizer_eval::engine::{CycleConfig, CyclePolicy};
 
+/// Decoded values shared by lenient loading and validated source admission.
+/// Invalid numeric values remain available to the legacy adapter; source
+/// resolution applies its existing default filters and reports invalid fields.
+#[cfg(any(feature = "xlsx-recalc", feature = "umya", feature = "umya3"))]
+#[derive(Debug, Clone)]
+pub(crate) struct ParsedCalcProperties {
+    pub settings: CalcSettings,
+    pub full_precision: Option<bool>,
+    pub invalid_fields: Vec<&'static str>,
+}
+
+#[cfg(any(feature = "xlsx-recalc", feature = "umya", feature = "umya3"))]
+impl ParsedCalcProperties {
+    pub(crate) const ATTRIBUTE_NAMES: [&'static str; 6] = [
+        "iterate",
+        "iterateCount",
+        "iterateDelta",
+        "calcMode",
+        "fullCalcOnLoad",
+        "fullPrecision",
+    ];
+
+    pub(crate) fn from_attributes<'a>(
+        attributes: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Self {
+        let mut out = Self {
+            settings: CalcSettings::default(),
+            full_precision: None,
+            invalid_fields: Vec::new(),
+        };
+        for (key, raw) in attributes {
+            let text = raw.trim();
+            match key {
+                "iterate" => match calc_bool(text) {
+                    Some(value) => out.settings.iterate = value,
+                    None => out.invalid_fields.push("iterate"),
+                },
+                "iterateCount" => match text.parse::<u32>() {
+                    Ok(value) => {
+                        out.settings.iterate_count = Some(value);
+                        if value == 0 {
+                            out.invalid_fields.push("iterateCount");
+                        }
+                    }
+                    Err(_) => out.invalid_fields.push("iterateCount"),
+                },
+                "iterateDelta" => match text.parse::<f64>() {
+                    Ok(value) => {
+                        out.settings.iterate_delta = Some(value);
+                        if !value.is_finite() || value < 0.0 {
+                            out.invalid_fields.push("iterateDelta");
+                        }
+                    }
+                    Err(_) => out.invalid_fields.push("iterateDelta"),
+                },
+                "calcMode" => out.settings.calc_mode = Some(raw.to_owned()),
+                "fullCalcOnLoad" => {
+                    let value = calc_bool(text);
+                    out.settings.full_calc_on_load = Some(value.unwrap_or(false));
+                    if value.is_none() {
+                        out.invalid_fields.push("fullCalcOnLoad");
+                    }
+                }
+                "fullPrecision" => match calc_bool(text) {
+                    Some(value) => out.full_precision = Some(value),
+                    None => out.invalid_fields.push("fullPrecision"),
+                },
+                _ => {}
+            }
+        }
+        out.invalid_fields.sort_unstable();
+        out.invalid_fields.dedup();
+        out
+    }
+}
+
+fn calc_bool(value: &str) -> Option<bool> {
+    match value.trim() {
+        "1" | "true" | "True" | "TRUE" | "on" => Some(true),
+        "0" | "false" | "False" | "FALSE" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// Namespace-aware standalone source reader. Package recalculation instead
+/// consumes the properties decoded during its existing metadata admission.
+#[cfg(feature = "xlsx-recalc")]
+pub(crate) fn read_source_calc_properties(
+    xml: &[u8],
+) -> Result<Option<ParsedCalcProperties>, crate::IoError> {
+    use quick_xml::{NsReader, events::Event, name::ResolveResult};
+    const MAIN_NS: &[u8] = b"http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    let bad = |message: &str| crate::IoError::Backend {
+        backend: "xlsx".into(),
+        message: message.into(),
+    };
+    let mut reader = NsReader::from_reader(xml);
+    let mut depth = 0usize;
+    let mut root_seen = false;
+    let mut properties = None;
+    loop {
+        let (namespace, event) = reader
+            .read_resolved_event()
+            .map_err(|error| bad(&error.to_string()))?;
+        match &event {
+            Event::Start(element) | Event::Empty(element) => {
+                let main = matches!(&namespace,
+                    ResolveResult::Bound(ns) if ns.as_ref() == MAIN_NS);
+                if depth == 0 {
+                    if root_seen || element.local_name().as_ref() != b"workbook" || !main {
+                        return Err(bad("expected one MAIN workbook root"));
+                    }
+                    root_seen = true;
+                }
+                if element.local_name().as_ref() == b"calcPr" {
+                    if depth != 1 || !main || properties.is_some() {
+                        return Err(bad("duplicate, misplaced or foreign calcPr"));
+                    }
+                    let mut attributes = Vec::new();
+                    for attribute in element.attributes() {
+                        let attribute = attribute.map_err(|error| bad(&error.to_string()))?;
+                        let key = std::str::from_utf8(attribute.key.as_ref())
+                            .map_err(|error| bad(&error.to_string()))?;
+                        let value = attribute
+                            .decode_and_unescape_value(reader.decoder())
+                            .map_err(|error| bad(&error.to_string()))?;
+                        // Validate namespace values like other XML attributes,
+                        // but do not interpret bindings as calculation properties.
+                        if key == "xmlns" || key.starts_with("xmlns:") {
+                            continue;
+                        }
+                        let local = attribute.key.local_name();
+                        let local = std::str::from_utf8(local.as_ref())
+                            .map_err(|error| bad(&error.to_string()))?;
+                        if key.contains(':')
+                            && ParsedCalcProperties::ATTRIBUTE_NAMES.contains(&local)
+                        {
+                            return Err(bad("foreign calculation-property lookalike"));
+                        }
+                        attributes.push((key.to_owned(), value.into_owned()));
+                    }
+                    properties = Some(ParsedCalcProperties::from_attributes(
+                        attributes
+                            .iter()
+                            .map(|(key, value)| (key.as_str(), value.as_str())),
+                    ));
+                }
+                if matches!(&event, Event::Start(_)) {
+                    depth = depth
+                        .checked_add(1)
+                        .ok_or_else(|| bad("XML depth overflow"))?;
+                }
+            }
+            Event::End(_) => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| bad("unbalanced workbook XML"))?;
+            }
+            Event::Text(text) if depth == 0 => {
+                if !text.iter().all(u8::is_ascii_whitespace) {
+                    return Err(bad("text outside workbook root"));
+                }
+            }
+            Event::CData(_) | Event::GeneralRef(_) if depth == 0 => {
+                return Err(bad("content outside workbook root"));
+            }
+            Event::DocType(_) => return Err(bad("workbook DTD is unsupported")),
+            Event::Eof => {
+                if !root_seen || depth != 0 {
+                    return Err(bad("unclosed or absent workbook root"));
+                }
+                return Ok(properties);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Parse the `<calcPr>` element from raw `xl/workbook.xml` bytes.
 ///
 /// Returns `None` when there is no `<calcPr>` element at all (so callers leave
@@ -44,7 +222,6 @@ use formualizer_eval::engine::{CycleConfig, CyclePolicy};
 pub fn parse_calc_pr(workbook_xml: &[u8]) -> Option<CalcSettings> {
     use quick_xml::Reader as XmlReader;
     use quick_xml::events::Event;
-    use quick_xml::name::QName;
 
     let mut xml = XmlReader::from_reader(workbook_xml);
     xml.config_mut().trim_text(true);
@@ -59,24 +236,26 @@ pub fn parse_calc_pr(workbook_xml: &[u8]) -> Option<CalcSettings> {
                 if e.local_name().as_ref() == b"calcPr" =>
             {
                 let decoder = xml.decoder();
-                let mut settings = CalcSettings::default();
-                for attr in e.attributes().filter_map(Result::ok) {
-                    let value = match attr.decode_and_unescape_value(decoder) {
-                        Ok(v) => v.into_owned(),
-                        Err(_) => continue,
-                    };
-                    match attr.key {
-                        QName(b"iterate") => settings.iterate = parse_xml_bool(&value),
-                        QName(b"iterateCount") => settings.iterate_count = value.parse().ok(),
-                        QName(b"iterateDelta") => settings.iterate_delta = value.parse().ok(),
-                        QName(b"calcMode") => settings.calc_mode = Some(value),
-                        QName(b"fullCalcOnLoad") => {
-                            settings.full_calc_on_load = Some(parse_xml_bool(&value))
-                        }
-                        _ => {}
-                    }
-                }
-                return Some(settings);
+                let attributes: Vec<_> = e
+                    .attributes()
+                    .filter_map(Result::ok)
+                    .filter_map(|attribute| {
+                        let key = std::str::from_utf8(attribute.key.as_ref()).ok()?.to_owned();
+                        let value = attribute
+                            .decode_and_unescape_value(decoder)
+                            .ok()?
+                            .into_owned();
+                        Some((key, value))
+                    })
+                    .collect();
+                return Some(
+                    ParsedCalcProperties::from_attributes(
+                        attributes
+                            .iter()
+                            .map(|(key, value)| (key.as_str(), value.as_str())),
+                    )
+                    .settings,
+                );
             }
             Ok(Event::Eof) => return None,
             Err(_) => return None,
@@ -87,7 +266,7 @@ pub fn parse_calc_pr(workbook_xml: &[u8]) -> Option<CalcSettings> {
 
 /// OOXML boolean attribute parsing: `"1"`/`"true"`/`"on"` → `true`.
 fn parse_xml_bool(value: &str) -> bool {
-    matches!(value.trim(), "1" | "true" | "True" | "TRUE" | "on")
+    calc_bool(value).unwrap_or(false)
 }
 
 /// Apply parsed [`CalcSettings`] onto an engine [`CycleConfig`] (spec §9 load
@@ -299,6 +478,130 @@ pub fn rewrite_calc_pr_in_zip(
 mod tests {
     use super::*;
     use formualizer_eval::engine::{CycleDetection, CyclePolicy};
+
+    #[test]
+    fn shared_decoder_retains_raw_invalid_numbers_and_precision_status() {
+        let properties = ParsedCalcProperties::from_attributes([
+            ("iterate", "bad"),
+            ("iterateCount", "0"),
+            ("iterateDelta", "NaN"),
+            ("fullPrecision", "bad"),
+            ("fullCalcOnLoad", "bad"),
+        ]);
+        assert!(!properties.settings.iterate);
+        assert_eq!(properties.settings.iterate_count, Some(0));
+        assert!(properties.settings.iterate_delta.unwrap().is_nan());
+        assert_eq!(properties.full_precision, None);
+        assert_eq!(
+            properties.invalid_fields,
+            [
+                "fullCalcOnLoad",
+                "fullPrecision",
+                "iterate",
+                "iterateCount",
+                "iterateDelta"
+            ]
+        );
+        for (count, delta) in [("-1", "-0.1"), ("bad", "inf"), ("1", "-inf")] {
+            let parsed = ParsedCalcProperties::from_attributes([
+                ("iterateCount", count),
+                ("iterateDelta", delta),
+            ]);
+            assert!(parsed.invalid_fields.contains(&"iterateDelta"));
+            assert_eq!(parsed.settings.iterate_count, count.parse().ok());
+        }
+    }
+
+    #[test]
+    fn shared_decoder_boolean_grammar_and_optional_values() {
+        for (text, expected) in [
+            ("1", true),
+            ("true", true),
+            ("True", true),
+            ("TRUE", true),
+            ("on", true),
+            ("0", false),
+            ("false", false),
+            ("False", false),
+            ("FALSE", false),
+            ("off", false),
+        ] {
+            let parsed = ParsedCalcProperties::from_attributes([
+                ("iterate", text),
+                ("fullCalcOnLoad", text),
+                ("fullPrecision", text),
+                ("iterateCount", " 42 "),
+                ("iterateDelta", " 0 "),
+                ("calcMode", " manual "),
+            ]);
+            assert_eq!(parsed.settings.iterate, expected);
+            assert_eq!(parsed.settings.full_calc_on_load, Some(expected));
+            assert_eq!(parsed.full_precision, Some(expected));
+            assert_eq!(parsed.settings.iterate_count, Some(42));
+            assert_eq!(parsed.settings.iterate_delta, Some(0.0));
+            assert_eq!(parsed.settings.calc_mode.as_deref(), Some(" manual "));
+            assert!(parsed.invalid_fields.is_empty());
+        }
+        let empty = ParsedCalcProperties::from_attributes([]);
+        assert_eq!(empty.full_precision, None);
+        assert!(empty.invalid_fields.is_empty());
+    }
+
+    #[test]
+    fn legacy_empty_and_lenient_admission_remain_distinct_from_source() {
+        assert!(parse_calc_pr(b"<workbook/>").is_none());
+        let empty = parse_calc_pr(b"<workbook><calcPr/></workbook>").unwrap();
+        assert!(!empty.iterate);
+        assert_eq!(empty.iterate_count, None);
+        // Ordinary loading historically accepts nested/foreign local names,
+        // returns the first element, and ignores qualified attributes.
+        let settings = parse_calc_pr(
+            br#"<workbook xmlns:f="urn:foreign"><ext>
+            <f:calcPr iterate="on" f:iterateCount="12" calcMode="manual" fullCalcOnLoad="bad"/>
+            <calcPr iterate="off"/></ext></workbook>"#,
+        )
+        .unwrap();
+        assert!(settings.iterate);
+        assert_eq!(settings.iterate_count, None);
+        assert_eq!(settings.calc_mode.as_deref(), Some("manual"));
+        assert_eq!(settings.full_calc_on_load, Some(false));
+    }
+
+    #[test]
+    fn legacy_numeric_whitespace_uses_shared_source_decoder_tolerance() {
+        // Deliberate compatibility expansion: legacy formerly parsed numeric
+        // strings without trimming. Both adapters now accept surrounding XML
+        // whitespace while retaining invalid numeric values for cycle filters.
+        let settings = parse_calc_pr(
+            br#"<workbook><calcPr iterate="on"
+            iterateCount=" 23 " iterateDelta=" 0.02 "/></workbook>"#,
+        )
+        .unwrap();
+        assert_eq!(settings.iterate_count, Some(23));
+        assert_eq!(settings.iterate_delta, Some(0.02));
+        assert_eq!(
+            apply_calc_settings_to_cycle(&settings, CycleConfig::default()),
+            CycleConfig::iterate(23, 0.02)
+        );
+    }
+
+    #[test]
+    fn legacy_retains_decoded_invalid_numbers_for_cycle_default_filtering() {
+        for (count, delta) in [("0", "-1"), ("bad", "NaN"), ("-2", "inf")] {
+            let xml = format!(
+                r#"<workbook><calcPr iterate="1" iterateCount="{count}" iterateDelta="{delta}"/></workbook>"#
+            );
+            let settings = parse_calc_pr(xml.as_bytes()).unwrap();
+            assert_eq!(settings.iterate_count, count.parse::<u32>().ok());
+            let actual = settings.iterate_delta.unwrap();
+            let expected = delta.parse::<f64>().unwrap();
+            assert!(actual == expected || actual.is_nan() && expected.is_nan());
+            assert_eq!(
+                apply_calc_settings_to_cycle(&settings, CycleConfig::default()),
+                CycleConfig::iterate_excel_defaults()
+            );
+        }
+    }
 
     #[test]
     fn parse_iterate_on_with_custom_values() {

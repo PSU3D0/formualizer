@@ -11,6 +11,36 @@ use crate::{
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_parse::parser::ReferenceType;
 
+/// Function code is an unwind boundary; engine bookkeeping stays outside it.
+pub(crate) fn catch_function_panic<T>(
+    name: &str,
+    run: impl FnOnce() -> T,
+) -> Result<T, ExcelError> {
+    catch_external_panic(run).map_err(|payload| ExcelError::from_function_panic(name, &*payload))
+}
+
+/// The only raw unwind catch used by execution/metadata/resolver adapters.
+pub(crate) fn catch_external_panic<T>(
+    run: impl FnOnce() -> T,
+) -> Result<T, Box<dyn std::any::Any + Send>> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(run))
+}
+
+/// Dispatch supports both ordinary values and optional reference results.
+pub(crate) trait PanicResult {
+    fn panicked(error: ExcelError) -> Self;
+}
+impl<T> PanicResult for Result<T, ExcelError> {
+    fn panicked(error: ExcelError) -> Self {
+        Err(error)
+    }
+}
+impl<T> PanicResult for Option<Result<T, ExcelError>> {
+    fn panicked(error: ExcelError) -> Self {
+        Some(Err(error))
+    }
+}
+
 /// One-pass result for a function used where either a reference or a value is valid.
 #[doc(hidden)]
 #[derive(Clone)]
@@ -145,6 +175,37 @@ pub enum FamilyKernel {
     Weekday,
 }
 
+impl FamilyKernel {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Sum => "SUM",
+            Self::Average => "AVERAGE",
+            Self::If => "IF",
+            Self::CriteriaAggregate => "CRITERIA",
+            Self::Lookup => "LOOKUP",
+            Self::Round => "ROUND",
+            Self::Abs => "ABS",
+            Self::Min => "MIN",
+            Self::Max => "MAX",
+            Self::And => "AND",
+            Self::Or => "OR",
+            Self::IfError => "IFERROR",
+            Self::Count => "COUNT",
+            Self::IsNumber => "ISNUMBER",
+            Self::IsText => "ISTEXT",
+            Self::IsLogical => "ISLOGICAL",
+            Self::IsBlank => "ISBLANK",
+            Self::IsError => "ISERROR",
+            Self::IsErr => "ISERR",
+            Self::IsNa => "ISNA",
+            Self::Year => "YEAR",
+            Self::Month => "MONTH",
+            Self::Day => "DAY",
+            Self::Weekday => "WEEKDAY",
+        }
+    }
+}
+
 pub trait Function: Send + Sync + 'static {
     /// Capability flags for this function
     fn caps(&self) -> FnCaps {
@@ -171,10 +232,11 @@ pub trait Function: Send + Sync + 'static {
         false
     }
     fn volatile(&self) -> bool {
-        self.caps().contains(FnCaps::VOLATILE)
+        crate::external_callbacks::dispatch_metadata(self, FnCaps::empty, || self.caps())
+            .contains(FnCaps::VOLATILE)
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        if self.min_args() > 0 {
+        if crate::external_callbacks::dispatch_metadata(self, || 0, || self.min_args()) > 0 {
             panic!("Non-zero min_args must have a valid arg_schema");
         } else {
             &[]
@@ -198,6 +260,16 @@ pub trait Function: Send + Sync + 'static {
         None
     }
 
+    /// Promise to report every known unavailable or unverified executed mode
+    /// through FunctionContext. This is independent of PURE/optimization flags
+    /// and does not certify numerical equivalence. The promise must remain
+    /// side-effect free and stable for this provider instance's lifetime.
+    /// Unattested providers default
+    /// to unknown coverage; crate-owned registrations have a sealed obligation.
+    fn reports_known_limitations(&self) -> bool {
+        false
+    }
+
     /// Explicit semantic classification for this call arity.
     ///
     /// The public default is intentionally untrusted. The registry supplies a
@@ -209,11 +281,19 @@ pub trait Function: Send + Sync + 'static {
     #[inline]
     fn function_salt(&self) -> u64 {
         // Stable hash of function name + namespace
-        let full_name = if self.namespace().is_empty() {
-            self.name().to_string()
-        } else {
-            format!("{}::{}", self.namespace(), self.name())
-        };
+        let full_name =
+            if crate::external_callbacks::dispatch_metadata(self, || "", || self.namespace())
+                .is_empty()
+            {
+                crate::external_callbacks::dispatch_metadata(self, || "", || self.name())
+                    .to_string()
+            } else {
+                format!(
+                    "{}::{}",
+                    crate::external_callbacks::dispatch_metadata(self, || "", || self.namespace()),
+                    crate::external_callbacks::dispatch_metadata(self, || "", || self.name())
+                )
+            };
         crate::rng::fnv1a64(full_name.as_bytes())
     }
 
@@ -231,7 +311,11 @@ pub trait Function: Send + Sync + 'static {
         &self,
         result: crate::traits::CalcValue<'a>,
     ) -> crate::traits::CalcValue<'a> {
-        let format = self.propagate_format(&result);
+        let format = crate::external_callbacks::dispatch_metadata(
+            self,
+            || None,
+            || self.propagate_format(&result),
+        );
         result.with_format(format)
     }
 
@@ -294,13 +378,21 @@ pub trait Function: Send + Sync + 'static {
         // validation cannot fail; only the min-arity check is meaningful.
         // (LET/LAMBDA already bypass validation via `dispatch` overrides for
         // the same reason.)
-        if self.caps().contains(FnCaps::SHORT_CIRCUIT) {
-            if args.len() < self.min_args() {
+        if crate::external_callbacks::dispatch_metadata(self, FnCaps::empty, || self.caps())
+            .contains(FnCaps::SHORT_CIRCUIT)
+        {
+            if args.len()
+                < crate::external_callbacks::dispatch_metadata(self, || 0, || self.min_args())
+            {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
                     ExcelError::new(formualizer_common::ExcelErrorKind::Value).with_message(
                         format!(
                             "Too few arguments: expected at least {}, got {}",
-                            self.min_args(),
+                            crate::external_callbacks::dispatch_metadata(
+                                self,
+                                || 0,
+                                || self.min_args()
+                            ),
                             args.len()
                         ),
                     ),
@@ -314,13 +406,21 @@ pub trait Function: Send + Sync + 'static {
         // Central argument validation (includes min-arity check)
         {
             use crate::args::{ValidationOptions, validate_and_prepare_inline};
-            let schema = self.arg_schema();
+            let schema = crate::external_callbacks::dispatch_metadata(
+                self,
+                || &[] as &'static [ArgSchema],
+                || self.arg_schema(),
+            );
             if let Err(e) = validate_and_prepare_inline(
                 args,
                 schema,
                 ValidationOptions {
                     warn_only: false,
-                    min_args: self.min_args(),
+                    min_args: crate::external_callbacks::dispatch_metadata(
+                        self,
+                        || 0,
+                        || self.min_args(),
+                    ),
                 },
             ) {
                 return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));

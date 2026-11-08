@@ -8,6 +8,14 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use wasm_bindgen::prelude::*;
 
+pub(crate) fn recalc_job_active_error() -> ExcelError {
+    ExcelError::new(ExcelErrorKind::Value)
+        .with_message(
+            "recalculation job is active; use step_recalc, prioritize_recalc, or cancel_recalc",
+        )
+        .with_extra(formualizer::common::ExcelErrorExtra::RecalcJobActive)
+}
+
 #[derive(Default)]
 struct JsCallbackRegistry {
     next_id: u64,
@@ -793,8 +801,10 @@ fn eval_plan_to_js(plan: &formualizer::EvalPlan) -> Result<JsValue, JsValue> {
 
 #[wasm_bindgen]
 pub struct Workbook {
-    inner: Arc<RwLock<formualizer::workbook::Workbook>>,
-    cancel_flag: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) inner: Arc<RwLock<formualizer::workbook::Workbook>>,
+    pub(crate) job_generation: Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) driver_generation: Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) cancel_flag: Arc<std::sync::atomic::AtomicBool>,
     callback_ids: Arc<RwLock<BTreeMap<String, u64>>>,
 }
 
@@ -802,6 +812,8 @@ impl Default for Workbook {
     fn default() -> Self {
         Self {
             inner: Arc::new(RwLock::new(formualizer::workbook::Workbook::new())),
+            job_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            driver_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
         }
@@ -812,6 +824,8 @@ impl Clone for Workbook {
     fn clone(&self) -> Self {
         Self {
             inner: Arc::clone(&self.inner),
+            job_generation: Arc::clone(&self.job_generation),
+            driver_generation: Arc::clone(&self.driver_generation),
             cancel_flag: Arc::clone(&self.cancel_flag),
             callback_ids: Arc::clone(&self.callback_ids),
         }
@@ -851,6 +865,8 @@ impl Workbook {
             inner: Arc::new(RwLock::new(
                 formualizer::workbook::Workbook::new_with_config(cfg),
             )),
+            job_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            driver_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
         })
@@ -884,6 +900,8 @@ impl Workbook {
             .map_err(|e| js_error(format!("load failed: {e}")))?;
             Ok(Workbook {
                 inner: Arc::new(RwLock::new(wb)),
+                job_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                driver_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
             })
@@ -960,6 +978,8 @@ impl Workbook {
             };
             Ok(Workbook {
                 inner: Arc::new(RwLock::new(wb)),
+                job_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                driver_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
                 cancel_flag: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 callback_ids: Arc::new(RwLock::new(BTreeMap::new())),
             })
@@ -1293,6 +1313,7 @@ impl Workbook {
 
         Ok(Sheet {
             wb: self.inner.clone(),
+            driver_generation: Arc::clone(&self.driver_generation),
             name,
         })
     }
@@ -1352,12 +1373,24 @@ impl Workbook {
     pub fn evaluate_cell(&self, sheet: String, row: u32, col: u32) -> Result<JsValue, JsValue> {
         validate_cell_coords(row, col)?;
 
-        let v = self
-            .inner
-            .write()
-            .map_err(|_| js_error("failed to lock workbook for write"))?
-            .evaluate_cell(&sheet, row, col)
-            .map_err(workbook_error_to_js)?;
+        let result = {
+            let mut wb = self
+                .inner
+                .write()
+                .map_err(|_| js_error("failed to lock workbook for write"))?;
+            if self
+                .driver_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 0
+            {
+                Err(formualizer::workbook::IoError::Engine(
+                    recalc_job_active_error(),
+                ))
+            } else {
+                wb.evaluate_cell(&sheet, row, col)
+            }
+        };
+        let v = result.map_err(workbook_error_to_js)?;
         Ok(literal_to_js(&v))
     }
 
@@ -1367,12 +1400,24 @@ impl Workbook {
             .inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?;
+        if wb.has_active_recalc_job()
+            || self
+                .driver_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 0
+        {
+            drop(wb);
+            return Err(workbook_error_to_js(
+                formualizer::workbook::IoError::Engine(recalc_job_active_error()),
+            ));
+        }
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        wb.evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
-            self.cancel_flag.clone(),
-        ))
-        .map_err(workbook_error_to_js)?;
+        let result = wb.evaluate_all_cancellable(
+            formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+        );
+        drop(wb);
+        result.map_err(workbook_error_to_js)?;
         Ok(())
     }
 
@@ -1401,15 +1446,26 @@ impl Workbook {
             .inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?;
+        if wb.has_active_recalc_job()
+            || self
+                .driver_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 0
+        {
+            drop(wb);
+            return Err(workbook_error_to_js(
+                formualizer::workbook::IoError::Engine(recalc_job_active_error()),
+            ));
+        }
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
 
-        let results = wb
-            .evaluate_cells_cancellable(
-                &refs,
-                formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
-            )
-            .map_err(workbook_error_to_js)?;
+        let results = wb.evaluate_cells_cancellable(
+            &refs,
+            formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+        );
+        drop(wb);
+        let results = results.map_err(workbook_error_to_js)?;
 
         let out = js_sys::Array::new();
         for v in results {
@@ -1603,6 +1659,7 @@ impl Workbook {
 #[wasm_bindgen]
 pub struct Sheet {
     wb: Arc<RwLock<formualizer::workbook::Workbook>>,
+    driver_generation: Arc<std::sync::atomic::AtomicU64>,
     name: String,
 }
 
@@ -1746,12 +1803,24 @@ impl Sheet {
     pub fn evaluate_cell(&self, row: u32, col: u32) -> Result<JsValue, JsValue> {
         validate_cell_coords(row, col)?;
 
-        let v = self
-            .wb
-            .write()
-            .map_err(|_| js_error("failed to lock workbook for write"))?
-            .evaluate_cell(&self.name, row, col)
-            .map_err(workbook_error_to_js)?;
+        let result = {
+            let mut wb = self
+                .wb
+                .write()
+                .map_err(|_| js_error("failed to lock workbook for write"))?;
+            if self
+                .driver_generation
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != 0
+            {
+                Err(formualizer::workbook::IoError::Engine(
+                    recalc_job_active_error(),
+                ))
+            } else {
+                wb.evaluate_cell(&self.name, row, col)
+            }
+        };
+        let v = result.map_err(workbook_error_to_js)?;
         Ok(literal_to_js(&v))
     }
 

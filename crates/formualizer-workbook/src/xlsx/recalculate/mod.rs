@@ -1,8 +1,7 @@
 //! Strict cache-only XLSX recalculation, without a rich document model.
 //! Unsupported package/formula cases fail before any output is published.
-pub(super) use crate::xlsx::metadata::dynamic as dynamic_metadata;
-mod error_reasons;
 pub(crate) use crate::cached_external_links as external_links;
+pub(super) use crate::xlsx::metadata::dynamic as dynamic_metadata;
 mod geometry;
 mod guards;
 pub(super) mod ownership;
@@ -22,6 +21,7 @@ pub(super) use crate::xlsx::ingest::names;
 pub(super) use crate::xlsx::ingest::values;
 pub(super) use crate::xlsx::metadata;
 pub(crate) use crate::xlsx::package;
+mod availability;
 mod clock;
 mod projection;
 mod summary;
@@ -261,6 +261,8 @@ pub(super) struct SourceAdmission<'a> {
     pub(super) date_system: DateSystem,
     pub(super) plans: Vec<SheetPlan>,
     pub(super) formula_count: usize,
+    precision_as_displayed: bool,
+    pub(super) calculation_properties: Option<crate::calc_pr::ParsedCalcProperties>,
     values: Vec<admission::ValueResult>,
     pub(super) native_metadata_error: Option<IoError>,
     pub(super) metadata: Option<dynamic_metadata::DynamicMetadata>,
@@ -282,6 +284,8 @@ pub(super) fn admit_source<'a>(
         metadata: metadata_part,
         external_links,
         defined_names,
+        precision_as_displayed,
+        calculation_properties,
     } = package::discover(&mut archive, options)?;
     let links = if external_links.is_empty() {
         None
@@ -385,7 +389,9 @@ pub(super) fn admit_source<'a>(
                     - u64::from(scan.bounds.0) * u64::from(scan.bounds.1))
                 .checked_add(u64::from(grown.0) * u64::from(grown.1))
                 .ok_or_else(|| unsupported("logical area overflow", "workbook"))?;
-                if logical_cells > options.limits.max_cells as u64 {
+                if options.profile == crate::XlsxRecalculateProfile::Strict
+                    && logical_cells > options.limits.max_cells as u64
+                {
                     return Err(unsupported("workbook logical cell limit", "workbook"));
                 }
                 scan.bounds = grown;
@@ -498,6 +504,8 @@ pub(super) fn admit_source<'a>(
         date_system,
         plans,
         formula_count,
+        precision_as_displayed,
+        calculation_properties,
         values,
         native_metadata_error: value_metadata.err(),
         metadata,
@@ -531,13 +539,36 @@ fn check_spill_policy(spill: &SpillConfig) -> Result<(), IoError> {
 /// original package bytes.
 pub fn recalculate_xlsx_bytes(
     bytes: &[u8],
-    options: XlsxRecalculateOptions,
+    mut options: XlsxRecalculateOptions,
 ) -> Result<XlsxRecalculateResult, IoError> {
-    // The engine would otherwise fall back to the system clock and the run
-    // would report an instant it did not use.
-    options.eval_config.deterministic_mode.validate()?;
+    if let Some(policy) = &options.calculation {
+        policy.validate()?;
+    } else {
+        options
+            .eval_config
+            .cycle
+            .validate()
+            .map_err(|message| IoError::InvalidOptions {
+                field: "eval_config.cycle".into(),
+                message,
+            })?;
+        // The engine would otherwise fall back to the system clock and the run
+        // would report an instant it did not use.
+        options.eval_config.deterministic_mode.validate()?;
+    }
     let mut clock = PhaseClock::from_env();
     let admission = admit_source(bytes, &options)?;
+    let resolved_calculation = if let Some(policy) = &options.calculation {
+        let (config, report) = policy.resolve_from_properties(
+            &options.eval_config,
+            admission.calculation_properties.as_ref(),
+            admission.date_system,
+        )?;
+        options.eval_config = config;
+        Some(report)
+    } else {
+        None
+    };
     clock.lap("admit (package, worksheet scan, tables)");
     if admission
         .plans
@@ -554,17 +585,73 @@ pub fn recalculate_xlsx_bytes(
         }
         let mut result = unchanged(bytes, formula_count, RecalculateSummary::default());
         result.clock_now_utc = clock_instant(&options);
+        result.calculation = resolved_calculation;
         return Ok(result);
     }
+    let invalid_full_precision = admission
+        .calculation_properties
+        .as_ref()
+        .is_some_and(|properties| properties.invalid_fields.contains(&"fullPrecision"));
+    let precision_gap = if formula_count == 0 {
+        None
+    } else if invalid_full_precision {
+        Some("invalid_full_precision")
+    } else if admission.precision_as_displayed {
+        Some("precision_as_displayed")
+    } else {
+        None
+    };
     let mut ingested = ingest_source(admission, &options, &mut clock)?;
-    let clock_now_utc = evaluate(&mut ingested.engine, &options)?;
-    clock.lap("evaluate (incl. deferred graph build)");
-    // Deferred graph building parses formulas during evaluation.
+    // An explicit refusal must not become a recoverable artifact outcome.
+    if options.profile == crate::XlsxRecalculateProfile::Workbook
+        && options.external_links == ExternalLinkPolicy::Refuse
+        && ingested.external_links_used > 0
+    {
+        return Err(unsupported(
+            "external link values",
+            format!(
+                "{} (recalculating would use the values cached in the workbook for {} external link{}; links are never refreshed)",
+                ingested
+                    .external_first_read
+                    .as_deref()
+                    .unwrap_or("workbook"),
+                ingested.external_links_used,
+                if ingested.external_links_used == 1 {
+                    ""
+                } else {
+                    "s"
+                }
+            ),
+        ));
+    }
+    let (clock_now_utc, cycle_errors) = evaluate(&mut ingested.engine, &options)?;
+    // Source parse refusals stay fatal ahead of recoverable coverage outcomes.
     refuse_parse_failure(&ingested.engine, ingested.refuse_parse_failures)?;
+    if precision_gap.is_some() && options.profile == crate::XlsxRecalculateProfile::Workbook {
+        return Err(IoError::CalculationDeferred {
+            reason: crate::CalculationDeferredReason::WorkbookPrecisionUnverified,
+            context: "source precision mode is invalid or precision-as-displayed; workbook-wide rounding semantics are unverified".into(),
+        });
+    }
+    let coverage = availability::collect(
+        &mut ingested.engine,
+        &ingested.sheets,
+        &ingested.plans,
+        &options,
+        cycle_errors,
+        precision_gap,
+    )?;
+    clock.lap("evaluate (incl. deferred graph build)");
     clock.families(&ingested.engine);
     let first_read = ingested.external_first_read.take();
-    let mut result =
-        publication::publish_caches(bytes, ingested, formula_count, &options, &mut clock)?;
+    let mut result = publication::publish_caches(
+        bytes,
+        ingested,
+        formula_count,
+        &options,
+        &coverage,
+        &mut clock,
+    )?;
     // Decided last, so every other refusal keeps its reason and a refusal
     // here means the run succeeds with cached values.
     if options.external_links == ExternalLinkPolicy::Refuse && result.external_links_used > 0 {
@@ -579,6 +666,20 @@ pub fn recalculate_xlsx_bytes(
         ));
     }
     result.clock_now_utc = clock_now_utc;
+    result.calculation = resolved_calculation;
+    result.summary.unknown_functions = coverage.unknown_functions;
+    result.coverage = if coverage.has_gaps {
+        crate::SourceCalculationCoverage::Partial
+    } else {
+        crate::SourceCalculationCoverage::Complete
+    };
+    result.coverage_scope =
+        if coverage.has_gaps && options.profile == crate::XlsxRecalculateProfile::Workbook {
+            crate::SourceCoverageScope::Conservative
+        } else {
+            crate::SourceCoverageScope::None
+        };
+    result.operation_diagnostics = coverage.diagnostics;
     clock.total(formula_count);
     Ok(result)
 }
@@ -752,7 +853,7 @@ fn declare_anchors(
 fn evaluate(
     engine: &mut Engine<WBResolver>,
     options: &XlsxRecalculateOptions,
-) -> Result<Option<DateTime<Utc>>, IoError> {
+) -> Result<(Option<DateTime<Utc>>, usize), IoError> {
     checkpoint(&options.cancel)?;
     let now = clock_instant(options);
     #[cfg(feature = "system-clock")]
@@ -763,9 +864,44 @@ fn evaluate(
             formualizer_eval::timezone::FixedClock::new(now, timezone.clone()),
         ));
     }
-    engine.evaluate_all_for_snapshot(options.cancel.clone())?;
+    let evaluated = engine.evaluate_all_for_snapshot(options.cancel.clone())?;
     checkpoint(&options.cancel)?;
-    Ok(now)
+    refuse_parse_failure(
+        engine,
+        options.eval_config.formula_parse_policy == FormulaParsePolicy::Strict,
+    )?;
+    let telemetry = engine.last_cycle_telemetry();
+    let source_state_unverified = options.calculation.as_ref().is_some_and(|policy| {
+        policy.iteration_initial_state == crate::SourceIterationInitialState::RequireVerified
+    }) && matches!(
+        options.eval_config.cycle.policy,
+        formualizer_eval::engine::CyclePolicy::Iterate { .. }
+    );
+    if telemetry.iterated_sccs > 0
+        || (source_state_unverified && telemetry.live_cycles_witnessed > 0)
+    {
+        match options
+            .calculation
+            .as_ref()
+            .map(|p| p.iteration_initial_state)
+        {
+            Some(crate::SourceIterationInitialState::RequireVerified) => {
+                return Err(IoError::CalculationDeferred {
+                    reason: crate::CalculationDeferredReason::IterativeInitialStateUnverified,
+                    context: "file settings resolved; no cache values published".into(),
+                });
+            }
+            None if engine.pending_snapshot_iterative_members() > 0 => {
+                // These were Dirty under the historical snapshot contract.
+                return Err(unsupported(
+                    "iterative source initial state was not selected",
+                    "strict source recalculation",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok((now, evaluated.cycle_errors))
 }
 /// Native bounded snapshot + same-directory temporary + atomic replace. This
 /// is not CAS against unrelated writers; callers retain their source authority.

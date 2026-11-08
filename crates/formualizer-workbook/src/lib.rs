@@ -6,6 +6,25 @@ pub mod cache_recalculate;
 mod cached_external_links;
 pub mod calc_pr;
 #[cfg(feature = "xlsx-recalc")]
+pub mod source_calculation;
+#[cfg(feature = "xlsx-recalc")]
+pub mod source_limits;
+#[cfg(feature = "xlsx-recalc")]
+pub mod source_outcome;
+#[cfg(feature = "xlsx-recalc")]
+pub use source_calculation::{
+    CalculationSettingOrigin, ResolvedSourceCalculation, SourceCalculationPolicy,
+    SourceCalculationWarning, SourceIterationInitialState, SourceIterationPolicy,
+};
+#[cfg(feature = "xlsx-recalc")]
+pub use source_limits::SourceRecalculateLimits;
+#[cfg(feature = "xlsx-recalc")]
+pub use source_outcome::{
+    SourceCalculationCoverage, SourceCoverageScope, SourceDependencyEvidence,
+    SourceFunctionIncidence, SourceFunctionModeIncidence, SourceModeVerification,
+    SourceOperationDiagnostics, SourceOperationSample, SourceUnavailableOperation,
+};
+#[cfg(feature = "xlsx-recalc")]
 mod xlsx;
 #[cfg(feature = "xlsx-recalc")]
 pub use cached_external_links::CachedExternalLinkValues;
@@ -52,10 +71,10 @@ pub use builtins::{ensure_builtins_loaded, register_function_dynamic, try_load_b
 pub use cache_recalculate::recalculate_xlsx_file;
 #[cfg(feature = "xlsx-recalc")]
 pub use cache_recalculate::{
-    ExternalLinkPolicy, XlsxRecalculateLimits, XlsxRecalculateOptions, XlsxRecalculateResult,
-    recalculate_xlsx_bytes,
+    ExternalLinkPolicy, XlsxRecalculateLimits, XlsxRecalculateOptions, XlsxRecalculateProfile,
+    XlsxRecalculateResult, recalculate_xlsx_bytes,
 };
-pub use error::{IoError, with_cell_context};
+pub use error::{CalculationDeferredReason, IoError, with_cell_context};
 #[cfg(any(feature = "umya", feature = "xlsx-recalc"))]
 pub use recalculate::{
     DEFAULT_ERROR_LOCATION_LIMIT, RecalculateErrorSummary, RecalculateSheetSummary,

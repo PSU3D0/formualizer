@@ -26,6 +26,12 @@
 use super::avl::ReserveError;
 use super::geom::BoxT;
 
+/// Request-local admission before index work; independent of retained counters.
+pub(crate) trait QueryWorkBudget {
+    type Error;
+    fn charge_work(&mut self, units: u64) -> Result<(), Self::Error>;
+}
+
 /// Buffer size and level-0 size.
 pub const BUF: usize = 64;
 /// R-tree fanout.
@@ -231,6 +237,59 @@ impl<L: Leaf> Tree<L> {
             let _ = point;
             out.push((l.bbox(), l.id(), self.is_dead(slot)));
         }
+    }
+
+    /// Fallible traversal, admitting misses, tombstones and stack expansion
+    /// before the work. It shares the fixed-stack layout with ordinary queries.
+    fn query_bounded<M: QueryWorkBudget>(
+        &self,
+        q: &BoxT,
+        meter: &mut M,
+        visit: &mut impl FnMut(u32, &mut M) -> Result<(), M::Error>,
+    ) -> Result<(), M::Error> {
+        meter.charge_work(1)?;
+        let n = self.leaves.len();
+        if n == 0 {
+            return Ok(());
+        }
+        let levels = self.nodes.len();
+        let mut stack = [(0usize, 0usize); 192];
+        let mut top = 1;
+        stack[0] = if levels == 0 {
+            (usize::MAX, 0)
+        } else {
+            (levels - 1, 0)
+        };
+        while top > 0 {
+            meter.charge_work(1)?;
+            top -= 1;
+            let (lvl, i) = stack[top];
+            if lvl == usize::MAX {
+                if overlaps(&self.leaves[i].bbox(), q) && !self.is_dead(i) {
+                    visit(self.leaves[i].id(), meter)?;
+                }
+                continue;
+            }
+            if !overlaps(&self.nodes[lvl][i], q) {
+                continue;
+            }
+            let child_count = if lvl == 0 {
+                n
+            } else {
+                self.nodes[lvl - 1].len()
+            };
+            let start = i * FAN;
+            for c in start..(start + FAN).min(child_count) {
+                meter.charge_work(1)?;
+                stack[top] = if lvl == 0 {
+                    (usize::MAX, c)
+                } else {
+                    (lvl - 1, c)
+                };
+                top += 1;
+            }
+        }
+        Ok(())
     }
 
     /// Visit the live leaves meeting `q` until `visit` returns false;
@@ -773,6 +832,30 @@ impl LevelIndex {
         (work, true)
     }
 
+    /// Visit with admission before each buffer test, level slot, tree visit
+    /// and stack expansion. The callback's error stops traversal immediately.
+    pub(crate) fn query_bounded<M: QueryWorkBudget>(
+        &self,
+        q: &BoxT,
+        meter: &mut M,
+        visit: &mut impl FnMut(u32, &mut M) -> Result<(), M::Error>,
+    ) -> Result<(), M::Error> {
+        for (b, id) in &self.buf {
+            meter.charge_work(1)?;
+            if overlaps(b, q) {
+                visit(*id, meter)?;
+            }
+        }
+        for level in &self.levels {
+            meter.charge_work(1)?;
+            if let Some(level) = level {
+                level.points.query_bounded(q, meter, visit)?;
+                level.boxes.query_bounded(q, meter, visit)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Number of non-empty levels.
     pub fn level_count(&self) -> usize {
         self.levels.iter().flatten().count()
@@ -1025,6 +1108,117 @@ impl IndexShadow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum QueryTestError {
+        Limit,
+        Callback,
+    }
+    struct QueryCap {
+        used: u64,
+        limit: u64,
+    }
+    impl QueryWorkBudget for QueryCap {
+        type Error = QueryTestError;
+        fn charge_work(&mut self, units: u64) -> Result<(), Self::Error> {
+            let next = self.used.checked_add(units).ok_or(QueryTestError::Limit)?;
+            if next > self.limit {
+                return Err(QueryTestError::Limit);
+            }
+            self.used = next;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn bounded_index_buffer_misses_require_admission() {
+        let mut index = LevelIndex::default();
+        let mut loc = vec![NONE; 10];
+        for i in 0..10 {
+            index.insert([i, 0, i, 0], i, &mut loc);
+        }
+        let mut cap = QueryCap { used: 0, limit: 0 };
+        let mut hits = 0;
+        assert_eq!(
+            index.query_bounded(&[999, 0, 999, 0], &mut cap, &mut |_, _| {
+                hits += 1;
+                Ok(())
+            }),
+            Err(QueryTestError::Limit),
+            "zero matching leaves is not zero index work"
+        );
+        assert_eq!(hits, 0);
+        assert_eq!(cap.used, 0, "denied work must not be performed");
+    }
+
+    #[test]
+    fn bounded_index_tree_and_dead_leaves_require_admission() {
+        let mut index = LevelIndex::default();
+        let mut loc = vec![NONE; 128];
+        for i in 0..128 {
+            index.insert([i, 0, i, 0], i, &mut loc);
+        }
+        for i in 0..100 {
+            index.remove(i, &mut loc);
+        }
+        let mut full = QueryCap {
+            used: 0,
+            limit: u64::MAX,
+        };
+        let mut hits = Vec::new();
+        index
+            .query_bounded(&[0, 0, 200, 0], &mut full, &mut |id, _| {
+                hits.push(id);
+                Ok(())
+            })
+            .unwrap();
+        hits.sort_unstable();
+        assert_eq!(hits, (100..128).collect::<Vec<_>>());
+        assert!(
+            full.used > 128,
+            "tree/dead/stack work must be admitted, not just 28 callbacks"
+        );
+        let needed = full.used;
+        let mut one_short = QueryCap {
+            used: 0,
+            limit: needed - 1,
+        };
+        assert_eq!(
+            index.query_bounded(&[0, 0, 200, 0], &mut one_short, &mut |_, _| Ok(())),
+            Err(QueryTestError::Limit)
+        );
+        assert!(one_short.used <= one_short.limit);
+        let mut exact = QueryCap {
+            used: 0,
+            limit: needed,
+        };
+        index
+            .query_bounded(&[0, 0, 200, 0], &mut exact, &mut |_, _| Ok(()))
+            .unwrap();
+        assert_eq!(exact.used, needed);
+    }
+
+    #[test]
+    fn bounded_index_callback_failure_stops_immediately() {
+        let mut index = LevelIndex::default();
+        let mut loc = vec![NONE; 128];
+        for i in 0..128 {
+            index.insert([i, 0, i, 0], i, &mut loc);
+        }
+        let mut cap = QueryCap {
+            used: 0,
+            limit: u64::MAX,
+        };
+        let mut hits = 0;
+        assert_eq!(
+            index.query_bounded(&[0, 0, 200, 0], &mut cap, &mut |_, _| {
+                hits += 1;
+                Err(QueryTestError::Callback)
+            }),
+            Err(QueryTestError::Callback)
+        );
+        assert_eq!(hits, 1);
+    }
 
     struct Rng(u64);
     impl Rng {

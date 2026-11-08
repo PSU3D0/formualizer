@@ -17,6 +17,7 @@ pub(crate) struct TableEntry {
     pub(crate) header_row: bool,
     pub(crate) headers: Vec<String>,
     pub(crate) totals_row: bool,
+    pub(crate) empty_body: bool,
     pub(crate) vertex: VertexId,
 }
 
@@ -125,6 +126,8 @@ impl DependencyGraph {
             header_row,
             headers,
             totals_row,
+            empty_body: range.start.coord.row() + 1 + u32::from(header_row)
+                > (range.end.coord.row() + 1).saturating_sub(u32::from(totals_row)),
             vertex,
         };
 
@@ -165,6 +168,8 @@ impl DependencyGraph {
             existing.header_row = header_row;
             existing.headers = headers;
             existing.totals_row = totals_row;
+            existing.empty_body = new_range.start.coord.row() + 1 + u32::from(header_row)
+                > (new_range.end.coord.row() + 1).saturating_sub(u32::from(totals_row));
         }
 
         // Propagate to dependents.
@@ -172,6 +177,81 @@ impl DependencyGraph {
         self.authority_note_symbol(Some(vertex));
         self.bump_symbol_revision();
         Ok(())
+    }
+
+    /// Resize only the row extent, preserving the table identity and columns.
+    pub fn resize_table(
+        &mut self,
+        name: &str,
+        new_range: RangeRef,
+    ) -> Result<RangeRef, ExcelError> {
+        self.resize_table_body(name, new_range, false)
+    }
+
+    pub fn resize_table_body(
+        &mut self,
+        name: &str,
+        new_range: RangeRef,
+        empty_body: bool,
+    ) -> Result<RangeRef, ExcelError> {
+        let entry = self.resolve_table_entry(name).cloned().ok_or_else(|| {
+            ExcelError::new(ExcelErrorKind::Name).with_message(format!("Unknown table: {name}"))
+        })?;
+        if new_range.start != entry.range.start
+            || new_range.end.sheet_id != entry.sheet_id()
+            || new_range.end.coord.col() != entry.range.end.coord.col()
+            || new_range.end.coord.row() < entry.range.start.coord.row()
+        {
+            return Err(ExcelError::new(ExcelErrorKind::Value)
+                .with_message("Table resize must preserve its sheet, start, and columns"));
+        }
+        let old_range = entry.range;
+        if old_range == new_range && entry.empty_body == empty_body {
+            return Ok(old_range);
+        }
+        let sheet_id = entry.sheet_id();
+        self.update_table(
+            name,
+            new_range,
+            entry.header_row,
+            entry.headers,
+            entry.totals_row,
+        )?;
+        let canon = self.canonical_table_name(name).expect("validated table");
+        self.tables
+            .get_mut(&canon)
+            .expect("validated table")
+            .empty_body = empty_body;
+        // Also invalidate ordinary cell/range readers in the old/new union.
+        self.mark_dirty_rects(&[(
+            sheet_id,
+            old_range.start.coord.row(),
+            old_range.end.coord.row().max(new_range.end.coord.row()),
+            old_range.start.coord.col(),
+            old_range.end.coord.col(),
+        )]);
+        Ok(old_range)
+    }
+
+    /// Logically empty tables whose reserved body contains this cell.
+    pub(crate) fn empty_tables_at(&self, cell: crate::reference::CellRef) -> Vec<TableEntry> {
+        self.tables
+            .values()
+            .filter(|t| {
+                t.empty_body
+                    && t.sheet_id() == cell.sheet_id
+                    && cell.coord.row() >= t.range.start.coord.row() + u32::from(t.header_row)
+                    && cell.coord.row()
+                        <= t.range
+                            .end
+                            .coord
+                            .row()
+                            .saturating_sub(u32::from(t.totals_row))
+                    && cell.coord.col() >= t.range.start.coord.col()
+                    && cell.coord.col() <= t.range.end.coord.col()
+            })
+            .cloned()
+            .collect()
     }
 
     pub fn delete_table(&mut self, name: &str) -> Result<(), ExcelError> {

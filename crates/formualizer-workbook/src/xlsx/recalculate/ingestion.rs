@@ -13,10 +13,12 @@ pub(super) fn ingest_source<'a>(
         date_system,
         plans,
         formula_count: _,
+        precision_as_displayed: _,
         values,
         native_metadata_error,
         metadata,
         external,
+        calculation_properties: _,
     } = admission;
     let anchors = plans.iter().any(|p| !p.ownership.anchors.is_empty());
     checkpoint(&options.cancel)?;
@@ -79,6 +81,17 @@ pub(super) fn ingest_source<'a>(
     checkpoint(&options.cancel)?;
     let mut config = options.eval_config.clone();
     config.date_system = date_system;
+    // Unverified source state must not spend a workbook's iteration budget
+    // before deciding to defer. Runtime/error mode identifies live cycles in
+    // one request while leaving acyclic workbooks fully calculable.
+    if options.calculation.as_ref().is_some_and(|policy| {
+        policy.iteration_initial_state == crate::SourceIterationInitialState::RequireVerified
+    }) && matches!(
+        config.cycle.policy,
+        formualizer_eval::engine::CyclePolicy::Iterate { .. }
+    ) {
+        config.cycle.policy = formualizer_eval::engine::CyclePolicy::Error;
+    }
     let refuse_parse_failures = config.formula_parse_policy == FormulaParsePolicy::Strict;
     if refuse_parse_failures {
         config.formula_parse_policy = FormulaParsePolicy::CoerceToError;
@@ -112,6 +125,15 @@ pub(super) fn ingest_source<'a>(
         .clone()
         .map_or_else(WBResolver::default, WBResolver::with_external_values);
     let mut engine: Engine<WBResolver> = Engine::new(resolver, config);
+    engine.configure_operation_diagnostics(
+        formualizer_eval::operation_diagnostics::OperationDiagnosticOptions {
+            sample_limit: options.error_location_limit,
+            physical_telemetry: options.physical_telemetry,
+            track_unverified_providers: true,
+            max_roots: Some(options.limits.max_operation_roots),
+            max_operation_text_bytes: Some(options.limits.max_operation_text_bytes),
+        },
+    );
     engine.set_workbook_load_limits(admission::load_limits(options));
     if let Some(values) = &external_values {
         engine.adopt_file_sheets(sheets.iter().map(|s| s.name.as_str()))?;

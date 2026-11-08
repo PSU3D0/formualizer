@@ -93,6 +93,18 @@ fn source_record(
         evidence.validate()?;
     }
     let event = cell.source_event(sequence);
+    // Known unsupported owned outputs never execute their opaque descriptor
+    // or seed dependent evaluation with saved source caches.
+    if cell.formula_kind == "dataTable" && cell.data_table_ref().is_some() {
+        return Ok(OwnedSpoolFormulaRecord::Ordinary {
+            sequence,
+            coord0: SourceCoord {
+                row: cell.row - 1,
+                col: cell.col - 1,
+            },
+            text: "NA()".into(),
+        });
+    }
     debug_assert_eq!(event.offset, event.envelope.cell.start);
     let coord0 = SourceCoord {
         row: event.row - 1,

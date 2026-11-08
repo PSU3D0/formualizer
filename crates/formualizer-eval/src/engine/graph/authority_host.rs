@@ -454,7 +454,7 @@ impl DependencyGraph {
             .copied()
             .filter(|&v| self.get_cell_ref(v).is_none() && self.authority.symbols.slot(v).is_some())
             .collect();
-        if let Err(e) = self.authority_set_symbol_nodes(&names) {
+        if let Err(e) = self.authority_set_symbol_nodes(&names, &touched) {
             self.authority.state = HostState::Failed(e);
             return;
         }
@@ -1284,7 +1284,35 @@ impl DependencyGraph {
         if rects.is_empty() {
             return Vec::new();
         }
-        let (cover, _) = self.authority.store.dependents(rects, TagFilter::All);
+        // Observations are planner hints as well as runtime reverse routes.
+        // Query their geometric index alongside static relations; a producer
+        // need not exist yet (e.g. the first publication into an empty spill
+        // child). Coverage differences bound the traversal to affected pieces.
+        let cover = if !self.authority.has_observed_routes() {
+            self.authority.store.dependents(rects, TagFilter::All).0
+        } else {
+            let mut cover = Cover::new();
+            let mut frontier = rects.to_vec();
+            let mut hits = Vec::new();
+            let mut readers = Vec::new();
+            while let Some((sheet, rect)) = frontier.pop() {
+                hits.clear();
+                readers.clear();
+                self.authority
+                    .store
+                    .direct_dependents(sheet, &rect, TagFilter::All, &mut hits);
+                self.authority.observed_readers(sheet, &rect, &mut readers);
+                for &reader in &readers {
+                    if let Some((s, r, c)) = self.authority_cell_of_vertex(reader) {
+                        hits.push((s, Rect::cell(r, c)));
+                    }
+                }
+                for &(s, r) in &hits {
+                    cover.insert_rect_fresh(s, &r, &mut frontier);
+                }
+            }
+            cover
+        };
         let ids = self.authority.store.ids();
         let mut out = Vec::new();
         let mut runs = Vec::new();
@@ -1809,6 +1837,15 @@ impl DependencyGraph {
             for key in self.authority_binding_keys(v) {
                 if let Some(waiting) = self.authority.unbound.remove(&key) {
                     work += waiting.len() as u64;
+                    // Rebuilding a healed name's facts does not invalidate its
+                    // cached value or its consumers. Mark the root now and
+                    // propagate through the authority after the new rows exist.
+                    for &reader in &waiting {
+                        if self.authority_symbol_live(reader) {
+                            self.mark_vertex_dirty(reader);
+                            self.authority_queue_dirty(reader);
+                        }
+                    }
                     nodes.extend(waiting);
                 }
             }
@@ -1816,7 +1853,7 @@ impl DependencyGraph {
         nodes.sort_unstable();
         nodes.dedup();
         work += nodes.len() as u64;
-        if let Err(e) = self.authority_set_symbol_nodes(&nodes) {
+        if let Err(e) = self.authority_set_symbol_nodes(&nodes, touched) {
             return Some(Err(e));
         }
         // Binding identities after the nodes' cell ids, as a rebuild
@@ -1872,8 +1909,22 @@ impl DependencyGraph {
     }
 
     /// Set the symbol nodes of live names `names` from their definitions,
-    /// recording the bindings each still waits on.
-    fn authority_set_symbol_nodes(&mut self, names: &[VertexId]) -> Result<(), AuthorityError> {
+    /// recording the bindings each still waits on. `touched` also carries
+    /// surviving grid readers collected before a retired symbol lost its row.
+    fn authority_set_symbol_nodes(
+        &mut self,
+        names: &[VertexId],
+        touched: &[VertexId],
+    ) -> Result<(), AuthorityError> {
+        // Preserve both kinds of surviving consumers across symbol retirement.
+        // Their old authority rows still carry the downstream relation until
+        // this name rebuild and the caller's later grid-row rebuild replace it.
+        if self.authority.has_observed() {
+            let seeds: Vec<_> = names.iter().chain(touched).copied().collect();
+            for consumer in self.authority_closure_vertices(&seeds) {
+                self.authority.forget_observed(consumer);
+            }
+        }
         for &v in names {
             let Some(slot) = self.authority.symbols.slot(v) else {
                 continue;
@@ -1882,6 +1933,9 @@ impl DependencyGraph {
                 continue;
             };
             self.authority.note_unbound(v, missing);
+            // Rebinding a symbol can change a dynamic name's runtime reads
+            // even when its AST is unchanged (for example, name shadowing).
+            self.authority.forget_observed(v);
             // A name's node carries the name vertex's id.
             self.authority.store.set_formula_given(cell, &facts, v.0)?;
             self.authority.incremental_mutations += 1;

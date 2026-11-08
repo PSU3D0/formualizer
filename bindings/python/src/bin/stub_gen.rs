@@ -77,7 +77,13 @@ fn main() -> Result<()> {
         contents = contents.replace(generated, corrected);
     }
 
-    let additional_public_exports = r#"    "DependencyStateUnavailableError",
+    let additional_public_exports = r#"    "RecalcJobError",
+    "NoActiveJobError",
+    "RecalcAlreadyPendingError",
+    "EnginePoisonedError",
+    "RecalcJobActiveError",
+    "CalculationDeferred",
+    "DependencyStateUnavailableError",
     "ExcelEvaluationError",
     "FormualizerHostError",
     "InspectionError",
@@ -112,10 +118,31 @@ fn main() -> Result<()> {
 
 # Exceptions created with pyo3::create_exception! are public runtime types but
 # are not currently discovered by pyo3-stub-gen's inventory.
+class RecalcJobError(Exception): ...
+class NoActiveJobError(RecalcJobError): ...
+class RecalcAlreadyPendingError(RecalcJobError):
+    explicit: bool
+class EnginePoisonedError(RecalcJobError): ...
+class RecalcJobActiveError(ExcelEvaluationError): ...
+class CalculationDeferred(Exception):
+    kind: str
+    reason: str
+    context: str
 class TokenizerError(Exception): ...
 class ParserError(Exception): ...
 class FormualizerHostError(Exception): ...
-class ExcelEvaluationError(Exception): ...
+class ExcelEvaluationError(Exception):
+    kind: str
+    excel_kind: str
+    message: str | None
+    excel_message: str | None
+    context: dict[str, typing.Any] | None
+    extra: dict[str, typing.Any] | None
+    # Present on resource failures; cancellation uses kind == "Cancelled".
+    resource_reason: str
+    limit: int
+    observed: int
+    request_id: int | None
 class InspectionError(Exception): ...
 class SheetNotFoundError(InspectionError): ...
 class InvalidInspectionAddressError(InspectionError): ...
@@ -171,6 +198,58 @@ if typing.TYPE_CHECKING:
         "    \"ReferenceLike\",\n    \"visitor\",\n",
     );
 
+    // The runtime records live in Python, while native functions transport the
+    // shared Rust DTOs. Keep generated signatures precise without inventing
+    // native runtime exports for these typing-only declarations.
+    let source_imports = "from ._source_types import SourceCalculationPolicy, SourceRecalculateLimits, SourceRecalculateResult\n";
+    contents.push_str(source_imports);
+    // Python's iterator protocol raises StopIteration rather than returning
+    // None; PyO3 uses Option only to encode that boundary in Rust.
+    contents = contents.replace(
+        "def __next__(self) -> typing.Optional[StepReport]:",
+        "def __next__(self) -> StepReport:",
+    );
+    let lines: Vec<String> = contents
+        .lines()
+        .map(|line| {
+            if line.starts_with("def recalculate_xlsx_bytes(")
+                || line.starts_with("def recalculate_xlsx_file(")
+            {
+                let mut line = line.to_owned();
+                for (name, shape) in [
+                    ("calculation", "SourceCalculationPolicy"),
+                    ("limits", "SourceRecalculateLimits"),
+                ] {
+                    let start = line.find(&format!("{name}: ")).expect("source argument");
+                    let end = start
+                        + line[start..]
+                            .find(" = None")
+                            .expect("optional source argument");
+                    line.replace_range(start..end, &format!("{name}: {shape} | None"));
+                }
+                line.replace("-> typing.Any:", "-> SourceRecalculateResult:")
+            } else if line.trim_start().starts_with("def evaluate_async(") {
+                line.replace(
+                    "on_progress: typing.Optional[typing.Any]",
+                    "on_progress: typing.Optional[typing.Callable[[StepReport], object]]",
+                )
+                .replace(
+                    "-> typing.Any:",
+                    "-> typing.Coroutine[typing.Any, typing.Any, RecalcResult | None]:",
+                )
+            } else if line.trim_start().starts_with("def recalc(") {
+                line.replace(
+                    "on_step: typing.Optional[typing.Any]",
+                    "on_step: typing.Optional[typing.Callable[[StepReport], object]]",
+                )
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect();
+    contents = lines.join("\n") + "\n";
+    public_all.insert_str(public_all.len() - 1,
+        "    \"SourceCalculationPolicy\",\n    \"SourceRecalculateLimits\",\n    \"SourceRecalculateResult\",\n    \"SourceOperationDiagnostics\",\n    \"SourceUnavailableOperation\",\n    \"SourceDependencyEvidence\",\n");
     fs::write(&private_stub_path, contents)?;
     fs::write(
         &public_stub_path,
@@ -180,6 +259,7 @@ if typing.TYPE_CHECKING:
 
 from . import visitor as visitor
 from ._types import ReferenceLike as ReferenceLike
+from ._source_types import *
 from .formualizer_py import *
 
 {public_all}

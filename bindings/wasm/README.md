@@ -24,6 +24,57 @@ Load Excel workbooks, change inputs, recalculate and read results—in the brows
 
 > This package is the WebAssembly library. The `formualizer recalc` command-line tool is the separate native package [`@formualizer/cli`](https://www.npmjs.com/package/@formualizer/cli) (`npx @formualizer/cli recalc book.xlsx`); it is not included here.
 
+## Interruptible recalculation
+
+Use `beginRecalc()` when your UI owns the loop, `recalc()` for synchronous progress/pause, or `evaluateWithYield()` to give the host event loop task turns between steps. They use the same engine-owned job: edits between steps replan dirty work, viewport priority changes which pending cells are visited first, and cancellation retains already installed values.
+
+```js
+const outcome = await wb.evaluateWithYield({
+  budgetMs: 5,
+  signal: controller.signal,
+  priority: [{ sheet: 'Model', startRow: 1, startColumn: 1, endRow: 40, endColumn: 12 }],
+  onProgress(report, job) {
+    // Repaint report.changed; on report.overflowSheets repaint visible cells.
+    // wb.pendingCellsInRect(viewport) distinguishes pending from current cells.
+  },
+});
+if (outcome.status === 'Finished') console.log(outcome.result.computedVertices);
+```
+
+`budgetMs` defaults to 5; `null` has no soft deadline and zero still progresses. Steps stop at atomic engine boundaries: a graph/schedule build, family, cycle or synchronous UDF may overrun the budget. This runs on the calling thread. The default asynchronous yield uses `setTimeout(0)`; a custom `yieldControl` must provide a task turn if timers/UI events need to run.
+
+`recalc({ onStep(report, job) { return false; } })` returns `{ status: 'Paused', job }` while the job is still active. Inspect or edit, then call `job.step(budgetMs)` until Finished, or `job.cancel()`. Cancellation wins over false; an explicit `wb.resetCancel()` can clear cooperative `wb.cancel()`, but cannot undo terminal job cancellation or an aborted signal. `evaluateWithYield` awaits `onProgress` and ignores its return value. Abort rejects with `AbortError`, including while awaiting progress/yield hooks. Hook failures preserve the original thrown value and cancel the owned job.
+
+Only one job/driver can own a workbook. Competing evaluation is refused, including during awaited terminal callbacks. A callback receives the owned job outside engine locks, so it may inspect, edit, reprioritize or cancel. Jobs retain the workbook after the original wrapper is freed; async abort also uses this retained owner. Explicitly freeing the job handle while a driver owns it is unsupported. End jobs explicitly; freeing a handle alone does not cancel.
+
+Reports are detached per-step objects. Only Finished carries `result`; `progress.totalExact === false` means the denominator is not proven fixed. `changed` is conservative, and `overflowSheets` means repaint the visible region of those sheets. Job rectangles use finite, 1-based inclusive coordinates. TypeScript exports `RecalcJob`, `RecalcJobOptions`, `StepReport`, `RecalcOutcome`, driver options, and error interfaces. See the [guide](https://www.formualizer.dev/docs/guides/interruptible-recalculation) for error codes and lifecycle details.
+
+### Run the local examples
+
+From this checkout's `bindings/wasm` directory, with cached Rust/WASM and pnpm tooling available:
+
+```sh
+pnpm install --offline --frozen-lockfile
+wasm-pack build --target bundler --out-dir pkg --dev --mode no-install -- --offline
+pnpm run build:ts
+pnpm run test:recalc-conformance
+pnpm run example:recalc
+```
+
+These commands use the local package's self-reference (`import ... from 'formualizer'`), never an installed release. Node 26 supports this bundler build's WASM module imports; older Node versions need a WASM-aware bundler/loader. The three assertion-bearing examples are `examples/recalc-viewport.mjs` (scroll, priority, edit, changed/pending), `recalc-async.mjs` (heartbeat, abort, supersede), and `recalc-pause.mjs` (inspect, repair, resume).
+
+For a browser smoke using the same built TypeScript facade and examples:
+
+```sh
+wasm-pack build --target web --out-dir pkg-node/recalc-browser/raw --dev --mode no-install -- --offline
+pnpm run example:recalc-browser:prepare
+uv run --no-project python -m http.server --bind 127.0.0.1 --directory pkg-node/recalc-browser 8000
+# Open http://127.0.0.1:8000/index.html
+# Expect #result[data-status="passed"] and RECALC_BROWSER_OK.
+```
+
+Preparation copies the compiled facade into ignored staging and substitutes only its raw import with a web-target initializer. It does not modify `pkg/` or `dist/`. Serve `.wasm` as `application/wasm`. Browser results must be checked in a browser; Node tests alone do not establish browser behavior.
+
 ## Installation
 
 ```bash
@@ -152,6 +203,37 @@ spills and spill publication across merges are refused. Safe ZIP/XML/cell/output
 limits remain in effect. Fresh unmarked 1x1 results have no spill identity
 (`A1#` returns `#REF!`). No Excel-equivalence claim is made; no Excel execution
 oracle was used. See [the precise eligibility contract](https://github.com/psu3d0/formualizer/blob/main/docs/cache-only-xlsx.md).
+
+### Source-aware calculation policy
+
+Native Formualizer remains strict by default. Pass `{ profile: 'workbook', calculation: {...}, requireComplete: true }` as the third argument to `recalculateXlsxBytes` to select source-aware settings and sparse admission:
+
+```ts
+const result = await recalculateXlsxBytes(input, undefined, {
+  profile: 'workbook',
+  calculation: {
+    workbookSeed: '18446744073709551615',
+    fixedNowUtc: '2024-01-02T03:04:05Z',
+    timezone: 'utc',
+    iterationInitialState: 'require_verified',
+  },
+  requireComplete: true,
+});
+```
+
+`SourceCalculationPolicy` is the shared portable request: `iteration` (`mode: workbook|disabled|iterate`; optional `maxIterations`/`maxChange` only for `iterate`), `cycleDetection` (`runtime|static`), exact decimal-string or JS-safe integer `workbookSeed`, RFC3339 `fixedNowUtc`, `timezone` (`utc|local|{offsetSeconds}`), `maxElapsedMs`, `maxWorkUnits`, and `iterationInitialState` (`require_verified|cold_start`). Unknown options, invalid types and bounds fail before package loading. The source header owns the date system.
+
+Options must be a plain object or null-prototype record with own enumerable string-keyed data properties. Nested `calculation` and `limits` values accept the same records and JSON scalar values; omit optional fields instead of supplying `undefined`. Maps, arrays, custom instances/prototypes, accessors, symbols, nonfinite numbers and cycles are rejected. Portable subrecords are bounded to 32 object ancestors, 4,096 portable nodes per request and 4,096 own properties per record and 65,536 UTF-16 units per string/key. Values are snapshotted once into the exact JSON request decoded upstream. Reflection on proxies may execute traps; a request either rejects or consumes the validated descriptor snapshot. Proxies are not categorically detected. Legacy bigint `rngSeed` and Date `deterministicTimestampUtc` remain supported at their existing top-level fields.
+
+Legacy `rngSeed`, `deterministicTimestampUtc` and `deterministicTimezone` remain available. They fill omitted nested fields; equal explicit values are accepted and conflicts fail. Legacy timezone still requires legacy timestamp. The result's bigint `seed` and `clock` reflect the effective policy.
+
+Results forward `calculation` settings/origins/warnings (or null on the legacy route), `coverage`, `coverage_scope`, `caches_invalidated`, `calculation_flags_changed`, and the full canonical `operation_diagnostics`, including function incidence, unavailable result cells and bounded samples. Complete coverage describes known gaps under declared assumptions, not numerical Excel equivalence. Partial output clears affected caches and retains independent results.
+
+`limits` is an optional partial `SourceRecalculateLimits` object with fourteen fields: `maxInputBytes`, `maxEntries`, `maxExpandedBytes`, `maxWorksheetBytes`, `maxFormulaCells`, `maxOutputBytes`, `maxXmlDepth`, `maxCells`, `maxColumns`, `maxOperationRoots`, `maxOperationTextBytes`, `maxAffectedWork`, `maxAffectedRegions`, and `maxAffectedScratchBytes`. Missing/null limits preserve the selected preset, missing fields preserve that field, and zero is an explicit bound. Supplied fields require nonnegative integers: bytes/counts fit u32, columns do not exceed 16,384, and affected work fits JS safe integers. Null fields, strings, booleans, fractions, negative/unsafe/nonfinite numbers are rejected. Presets are selected before legacy overrides; `requireComplete` does not select a profile.
+
+`physicalTelemetry` is a strict boolean, false by default (undefined is absent). Physical counters are present as null when unmeasured, measured zero as 0, and integers above the JS-safe range as exact decimal strings. Diagnostics retain typed executed function modes and unverified providers independently of bounded display samples. Dependency evidence concerns the `admitted_workbook_and_fixed_cached_sources` source domain; semantic reads remain unattested. Its `work` is `queryWork + publicationMembershipWorkBound`, including the conservative publication membership bound. These budgets do not promise universal CPU time or RSS bounds.
+
+`requireComplete` accepts legitimate Excel errors but rejects known gaps. Rejected promises retain `kind: 'CalculationDeferred'`, `reason`, and `context` for typed source deferral. Live source iteration defers until initial state is verified unless `cold_start` is explicitly selected and recorded. Cancellation, resource exhaustion, corrupt packages and output failures remain errors.
 
 ### SheetPort: a workbook as a typed function
 
@@ -393,3 +475,59 @@ wasm-pack test --node
 ## License
 
 Dual-licensed under [MIT](https://github.com/PSU3D0/formualizer/blob/main/LICENSE-MIT) or [Apache-2.0](https://github.com/PSU3D0/formualizer/blob/main/LICENSE-APACHE), at your option. Both license texts ship inside the package.
+
+
+## Workbook workers
+
+Import the worker client without loading WASM on the calling thread:
+
+```js
+import { createWorkbookWorker } from 'formualizer/worker';
+
+const client = await createWorkbookWorker(
+  new Worker(new URL('formualizer/worker-entry', import.meta.url), { type: 'module' }),
+  { autoRecalc: true, autoRecalcBudgetMs: 5 },
+);
+await client.addSheet('Model');
+const viewport = await client.subscribeViewport({
+  rect: { sheet: 'Model', startRow: 1, startColumn: 1, endRow: 40, endColumn: 12 },
+  mode: 'values',
+  onFrame(frame) {
+    // Keep optimistic edits whose clientSeq is greater than frame.ackClientSeq.
+    // frame.grid replaces a viewport; frame.patches updates individual cells.
+    console.log(frame.revision, frame.evaluatedRevision, frame.hasPending);
+  },
+});
+await client.setValue('Model', 1, 1, 20);
+await client.setFormula('Model', 2, 1, '=A1+22');
+await client.recalc({ budgetMs: 5 });
+await viewport.setRect({ ...viewport.rect, startRow: 10, endRow: 49 });
+await viewport.unsubscribe();
+await client.dispose();
+```
+
+Worker endpoints accept DOM Worker/MessagePort/worker-global APIs and Node worker_threads Worker/MessagePort/parentPort APIs. The packaged `worker-entry` targets browser module workers; in Node, use a small host entry:
+
+```js
+// workbook-host.mjs
+import { parentPort } from 'node:worker_threads';
+import * as runtime from 'formualizer';
+import { attachWorkbookWorker } from 'formualizer/worker';
+await attachWorkbookWorker(parentPort, { runtime });
+```
+
+Pass `new Worker(new URL('./workbook-host.mjs', import.meta.url))` to `createWorkbookWorker`. A custom browser host similarly calls `attachWorkbookWorker(self, { runtime })`. `createInProcessWorkbookWorker({ runtime, autoRecalc: true })` uses a MessageChannel for testing or a single-thread fallback. If runtime is omitted on a host, it dynamically imports and initializes `formualizer`. Your worker bundler/runtime must support the package's bundler-target WASM import; the client-only `formualizer/worker` entry has no static WASM dependency.
+
+Each mutation resolves with a `WorkerStateHeader`: `revision`, `evaluatedRevision`, `ackClientSeq`, `recalcStatus`, and `hasActiveJob`. Loads reset revision to zero while acknowledging the monotonic client sequence. `client.state`, `client.lastSentClientSeq`, `client.hasInFlightMutations`, and `onStatusChange` support optimistic views. Ordinary reads return their usual values; `getValueWithState` and `readRangeWithState` return `{ data, ...header }`. Cached reads never evaluate or create a missing sheet.
+
+Viewport modes are `values` (full grids or sparse patches), `snapshots` (inspection cells), `deltas` (locations/pending only), and `columnar` (transferable tags, numbers, string table, pending bitset). All coordinates are 1-based inclusive. Subscriptions prioritize their rectangles unless `prioritize: false`; `setRect` retargets them on active and future jobs. Intermediate updates skip unchanged viewports, coalesce dirty rectangles behind a one-frame credit, and honor `throttleMs` (default 16). Initial, manual, rect-change, and terminal refreshes flush immediately. Call `refresh()` for a full reread and `unsubscribe()` or `[Symbol.dispose]()` when finished. Columnar tags: 0 empty, 1 number, 2 boolean, 3 string, 4 error, 5 temporal/other JSON; `numbers` holds either the numeric value or the string-table index.
+
+The async RPC surface includes sheet/table/name metadata, scalar/block mutations, `editBatch`, action boundaries, undo/redo, temporal egress, inspection, dependency tracing, range pages, eval plans, telemetry, one-shot evaluation, parser/tokenizer helpers, and SheetPort sessions. `editBatch` accepts `{ op: 'setValue', sheet, row, col, value }`, formula/block equivalents, or `addSheet`; `{ actionDescription }` groups edits into a native undo action when changelog is enabled. An edit batch is ordered, not rollback-atomic on engine failure. `createSheetPortSession(manifestOrYaml)` returns an async session with manifest/port description, input/output reads, input writes, evaluation and disposal; `evaluateSheetPort` is the one-shot equivalent. Reload disposes old sessions and cached sheet handles.
+
+`autoRecalc` folds edits into one background job and yields a real task turn between steps. One-shot `evaluateAll`, `evaluateCell(s)`, and SheetPort evaluation cancel an implicit auto job first, preserve installed values, then reschedule background work. An explicit paused/driven job retains the engine's `RECALC_JOB_ACTIVE` refusal. `beginRecalc` starts/adopts a paused explicit job; `stepRecalc`, `pauseRecalc`, `prioritize`, and `cancelRecalc` control it. `recalc` resumes paused work and returns Finished/Paused/Cancelled; returning false from `onStep` pauses. `recalcStream` yields detached step reports; breaking defaults to pausing, or cancels with `pauseOnReturn: false`. Both drivers support AbortSignal, including cancellation while awaiting `onProgress`; abort rejects with AbortError. Budgets are soft: cancellation cannot preempt a running indivisible WASM unit.
+
+Register custom functions inside the host with `attachWorkbookWorker(endpoint, { functions })`, load a worker-side ESM module using `registerFunctionModule(url, { exportName: 'functions' })`, or explicitly opt into `allowFunctionFromSource: true` for `registerFunctionFromSource(name, source, options)`. Modules export a name-to-callback map (or callback/options entries); the registry persists across reloads unless the host sets `clearFunctionsOnLoad`. Source registration executes code and is disabled by default. `listFunctions` and `unregisterFunction` manage the same registry.
+
+`loadFromJson(json, options)` forwards workbook options just like the XLSX loader. `loadFromXlsxBytes(bytes, options, { transfer: true })` and `recalculateXlsxBytes(bytes, limit, options, { transfer: true })` transfer whole ArrayBuffers; typed subviews and Node Buffers are copied first so unrelated slab bytes are never detached. Cache-only XLSX output buffers transfer by default (disable with `transfer: false`). Error replies preserve domain fields, exact resource strings and recursive causes.
+
+Run `npm run test:worker-conformance` and `npm run example:worker`. The examples are `examples/worker-reactive-grid.mjs` and `examples/worker-rpc-service.mjs`; the browser fixture also verifies a real Worker. Dispose clients to free jobs, sessions, sheets and the workbook; workers terminate by default, configurable with `terminateOnDispose: false`.

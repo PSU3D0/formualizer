@@ -922,15 +922,15 @@ impl Function for ModFn {
 /* ───────────────────── Additional Math / Rounding ───────────────────── */
 
 #[derive(Debug)]
-pub struct CeilingFn; // CEILING(number, [significance]) legacy semantics simplified
+pub struct CeilingFn; // CEILING(number, [significance]) legacy rounding
 /// Rounds a number up to the nearest multiple of a significance.
 ///
-/// This implementation defaults significance to `1` and normalizes negative significance to positive.
+/// This implementation defaults significance to `1`.
 ///
 /// # Remarks
 /// - If `significance` is omitted, `1` is used.
 /// - `significance = 0` returns `#DIV/0!`.
-/// - Negative significance is treated as its absolute value in this fallback behavior.
+/// - When both arguments are negative, rounds away from zero; positive significance rounds toward positive infinity.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -1009,13 +1009,56 @@ impl Function for CeilingFn {
                 ExcelError::from_error_string("#DIV/0!"),
             )));
         }
-        if sig < 0.0 {
-            sig = sig.abs(); /* Excel nuances: #NUM! when sign mismatch; simplified TODO */
+        let away_from_zero = n < 0.0 && sig < 0.0;
+        sig = sig.abs();
+        let quotient = n / sig;
+        if away_from_zero
+            && n.is_finite()
+            && sig.is_finite()
+            && quotient.is_finite()
+            && Self::is_decimal_multiple(-n, sig)
+        {
+            // Binary division can place an exact decimal multiple just below
+            // an integer. Keep its original bits instead of flooring past it.
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(n)));
         }
-        let k = (n / sig).ceil();
+        let k = if away_from_zero {
+            quotient.floor()
+        } else {
+            quotient.ceil()
+        };
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
             k * sig,
         )))
+    }
+}
+
+impl CeilingFn {
+    /// Test exact divisibility in the same 15-significant-digit decimal view
+    /// used by the ROUND family. Both arguments are positive and finite.
+    /// Testing the operands avoids rounding a genuinely nonintegral quotient
+    /// to an integer merely because it is close to one.
+    fn is_decimal_multiple(magnitude: f64, significance: f64) -> bool {
+        let (number, number_exponent) = fifteen_digit_view(magnitude, true);
+        let (unit, unit_exponent) = fifteen_digit_view(significance, true);
+        if number_exponent < unit_exponent {
+            // Both coefficients have 15 digits, so magnitude < significance.
+            return false;
+        }
+        let modulus = u128::from(unit);
+        let mut remainder = u128::from(number) % modulus;
+        let mut power = 10_u128 % modulus;
+        let mut exponent = (number_exponent - unit_exponent) as u64;
+        // Compute (number * 10^exponent) % unit without constructing a huge
+        // power of ten. Reduced factors are < 10^15, so products fit u128.
+        while exponent != 0 {
+            if exponent & 1 != 0 {
+                remainder = remainder * power % modulus;
+            }
+            power = power * power % modulus;
+            exponent >>= 1;
+        }
+        remainder == 0
     }
 }
 

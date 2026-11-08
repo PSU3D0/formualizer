@@ -126,6 +126,20 @@ impl SheetPortSession {
     #[wasm_bindgen(js_name = "evaluateOnce")]
     pub fn evaluate_once(&mut self, options: JsValue) -> Result<JsValue, JsValue> {
         let eval_options = parse_eval_options(options)?;
+        if self
+            .workbook
+            .driver_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+            != 0
+        {
+            return Err(sheetport_error_to_js(
+                formualizer::SheetPortError::Workbook {
+                    source: formualizer::workbook::IoError::Engine(
+                        crate::workbook::recalc_job_active_error(),
+                    ),
+                },
+            ));
+        }
         let outputs =
             self.with_sheetport(move |sheetport| sheetport.evaluate_once(eval_options))?;
         snapshot_to_js(outputs.inner())
@@ -149,17 +163,20 @@ impl SheetPortSession {
         let mut guard = arc
             .write()
             .map_err(|_| js_error("failed to lock workbook"))?;
-        let bindings_clone = self.bindings.clone();
-        let mut sheetport = formualizer::SheetPort::from_bindings(&mut guard, bindings_clone)
-            .map_err(sheetport_error_to_js)?;
-        match f(&mut sheetport) {
-            Ok(value) => {
-                let (_, bindings) = sheetport.into_parts();
-                self.bindings = bindings;
-                Ok(value)
+        let result = (|| {
+            let bindings_clone = self.bindings.clone();
+            let mut sheetport = formualizer::SheetPort::from_bindings(&mut guard, bindings_clone)?;
+            match f(&mut sheetport) {
+                Ok(value) => {
+                    let (_, bindings) = sheetport.into_parts();
+                    self.bindings = bindings;
+                    Ok(value)
+                }
+                Err(err) => Err(err),
             }
-            Err(err) => Err(sheetport_error_to_js(err)),
-        }
+        })();
+        drop(guard);
+        result.map_err(sheetport_error_to_js)
     }
 }
 
@@ -168,10 +185,10 @@ fn bind_manifest(workbook: &Workbook, manifest: Manifest) -> Result<ManifestBind
     let mut guard = arc
         .write()
         .map_err(|_| js_error("failed to lock workbook"))?;
-    let sheetport =
-        formualizer::SheetPort::new(&mut guard, manifest).map_err(sheetport_error_to_js)?;
-    let (_, bindings) = sheetport.into_parts();
-    Ok(bindings)
+    let result =
+        formualizer::SheetPort::new(&mut guard, manifest).map(|sheetport| sheetport.into_parts().1);
+    drop(guard);
+    result.map_err(sheetport_error_to_js)
 }
 
 fn snapshot_to_js(map: &BTreeMap<String, PortValue>) -> Result<JsValue, JsValue> {

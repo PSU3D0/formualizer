@@ -14,6 +14,330 @@ fn err_kind(value: Option<LiteralValue>) -> Option<ExcelErrorKind> {
     }
 }
 
+// Error inspectors consume spreadsheet errors identically across argument carriers.
+#[test]
+fn error_consumers_inline_reference_tree_arena() {
+    let cases = [
+        ("ISERROR", true),
+        ("ISERR", true),
+        ("ISNA", false),
+        ("ISNUMBER", false),
+        ("ISTEXT", false),
+        ("ISLOGICAL", false),
+        ("ISBLANK", false),
+        ("ISNONTEXT", true),
+    ];
+    let mut failures = Vec::new();
+    for (source, kind) in [
+        ("MISSING_NAME", ExcelErrorKind::Name),
+        ("1/0", ExcelErrorKind::Div),
+        ("NA()", ExcelErrorKind::Na),
+    ] {
+        let wb = TestWorkbook::new().with_cell(
+            "Sheet1",
+            1,
+            1,
+            LiteralValue::Error(formualizer_common::ExcelError::new(kind)),
+        );
+        let tree = wb.interpreter();
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: false,
+                enable_parallel: false,
+                ..EvalConfig::default()
+            },
+        );
+        engine
+            .set_cell_formula("Sheet1", 1, 1, parse(format!("={source}")).unwrap())
+            .unwrap();
+        for (idx, (name, name_expected)) in cases.iter().enumerate() {
+            let expected = LiteralValue::Boolean(match *name {
+                "ISERR" => kind != ExcelErrorKind::Na,
+                "ISNA" => kind == ExcelErrorKind::Na,
+                _ => *name_expected,
+            });
+            for (carrier, arg) in [("inline", source), ("reference", "A1")] {
+                let formula = format!("={name}({arg})");
+                let ast = parse(&formula).unwrap();
+                let actual = tree.evaluate_ast(&ast).map(|v| v.into_literal());
+                if actual != Ok(expected.clone()) {
+                    failures.push(format!(
+                        "tree {carrier} {formula}: {actual:?}, expected {expected:?}"
+                    ));
+                }
+                let col = (idx * 2 + if carrier == "inline" { 2 } else { 3 }) as u32;
+                engine.set_cell_formula("Sheet1", 1, col, ast).unwrap();
+            }
+        }
+        for (i, arg) in [source, "A1"].iter().enumerate() {
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    1,
+                    20 + i as u32,
+                    parse(format!("=ERROR.TYPE({arg})")).unwrap(),
+                )
+                .unwrap();
+            let actual = tree
+                .evaluate_ast(&parse(format!("=ERROR.TYPE({arg})")).unwrap())
+                .map(|v| v.into_literal());
+            let code = match kind {
+                ExcelErrorKind::Name => 5,
+                ExcelErrorKind::Div => 2,
+                _ => 7,
+            };
+            let code_actual = actual.map(|v| match v {
+                LiteralValue::Int(n) => n,
+                LiteralValue::Number(n) => n as i64,
+                _ => -1,
+            });
+            if code_actual != Ok(code) {
+                failures.push(format!(
+                    "tree ERROR.TYPE({arg}): {code_actual:?}, expected {code}"
+                ));
+            }
+        }
+        engine.evaluate_all().unwrap();
+        for (idx, (name, name_expected)) in cases.iter().enumerate() {
+            let expected = Some(LiteralValue::Boolean(match *name {
+                "ISERR" => kind != ExcelErrorKind::Na,
+                "ISNA" => kind == ExcelErrorKind::Na,
+                _ => *name_expected,
+            }));
+            for col in [idx as u32 * 2 + 2, idx as u32 * 2 + 3] {
+                let actual = engine.get_cell_value("Sheet1", 1, col);
+                if actual != expected {
+                    failures.push(format!(
+                        "arena {name}({source}), col {col}: {actual:?}, expected {expected:?}"
+                    ));
+                }
+            }
+        }
+        for col in [20, 21] {
+            let expected = match kind {
+                ExcelErrorKind::Name => 5.0,
+                ExcelErrorKind::Div => 2.0,
+                _ => 7.0,
+            };
+            if engine.get_cell_value("Sheet1", 1, col) != num(expected) {
+                failures.push(format!(
+                    "arena ERROR.TYPE({source}), col {col}: {:?}",
+                    engine.get_cell_value("Sheet1", 1, col)
+                ));
+            }
+        }
+        for name in ["N", "T"] {
+            for arg in [source, "A1"] {
+                let actual = tree.evaluate_ast(&parse(format!("={name}({arg})")).unwrap());
+                let actual_kind = match actual {
+                    Err(e) => Some(e.kind),
+                    Ok(v) => err_kind(Some(v.into_literal())),
+                };
+                assert_eq!(actual_kind, Some(kind), "propagation control {name}({arg})");
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn registered_info_type_error_codes_tree_arena_family() {
+    let mut failures = Vec::new();
+    for family in [false, true] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: family,
+                enable_parallel: false,
+                ..super::common::arrow_eval_config()
+            },
+        );
+        for row in 1..=24 {
+            for (col, arg) in ["MISSING_NAME", "1/0", "NA()", "#VALUE!"]
+                .iter()
+                .enumerate()
+            {
+                engine
+                    .set_cell_formula(
+                        "Sheet1",
+                        row,
+                        col as u32 + 1,
+                        parse(format!("={arg}")).unwrap(),
+                    )
+                    .unwrap();
+                engine
+                    .set_cell_formula(
+                        "Sheet1",
+                        row,
+                        col as u32 + 5,
+                        parse(format!("=TYPE({arg})")).unwrap(),
+                    )
+                    .unwrap();
+                let letter = (b'A' + col as u8) as char;
+                engine
+                    .set_cell_formula(
+                        "Sheet1",
+                        row,
+                        col as u32 + 9,
+                        parse(format!("=TYPE({letter}{row})")).unwrap(),
+                    )
+                    .unwrap();
+            }
+        }
+        engine.evaluate_all().unwrap();
+        for row in 1..=24 {
+            for col in 5..=12 {
+                if engine.get_cell_value("Sheet1", row, col) != num(16.0) {
+                    failures.push(format!(
+                        "arena/family={family} row={row} col={col}: {:?}",
+                        engine.get_cell_value("Sheet1", row, col)
+                    ));
+                }
+            }
+        }
+        let tree = crate::interpreter::Interpreter::new(&engine, "Sheet1");
+        for arg in [
+            "MISSING_NAME",
+            "1/0",
+            "NA()",
+            "#VALUE!",
+            "A1",
+            "B1",
+            "C1",
+            "D1",
+        ] {
+            let result = tree
+                .evaluate_ast(&parse(format!("=TYPE({arg})")).unwrap())
+                .map(|v| v.into_literal());
+            if result != Ok(LiteralValue::Int(16)) {
+                failures.push(format!("tree TYPE({arg}): {result:?}"));
+            }
+        }
+        if family {
+            assert!(engine.family_members_for_test() > 0);
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn registered_info_isformula_metadata_edits() {
+    for family in [false, true] {
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                family_execution: family,
+                enable_parallel: false,
+                ..super::common::arrow_eval_config()
+            },
+        );
+        let sheet = engine.graph.sheet_id("Sheet1").unwrap();
+        engine
+            .define_name(
+                "FormulaCell",
+                NamedDefinition::Cell(abs_cell_ref(sheet, 1, 1)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine
+            .define_name(
+                "ConstantName",
+                NamedDefinition::Literal(LiteralValue::Int(2)),
+                NameScope::Workbook,
+            )
+            .unwrap();
+        engine.add_sheet("Data").unwrap();
+        engine
+            .set_cell_formula("Data", 1, 1, parse("=1/0").unwrap())
+            .unwrap();
+        for row in 1..=24 {
+            engine
+                .set_cell_formula("Sheet1", row, 1, parse("=1+1").unwrap())
+                .unwrap();
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    row,
+                    2,
+                    parse(format!("=ISFORMULA(A{row})")).unwrap(),
+                )
+                .unwrap();
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    row,
+                    3,
+                    parse(format!("=ISFORMULA(A{row}:A{row})")).unwrap(),
+                )
+                .unwrap();
+        }
+        let extras = [
+            ("ISFORMULA(FormulaCell)", true),
+            ("ISFORMULA(ConstantName)", false),
+            ("ISFORMULA(1+1)", false),
+            ("ISFORMULA(Z99)", false),
+            ("ISFORMULA(Data!A1)", true),
+            ("ISFORMULA(INDEX(A1:A2,1))", true),
+        ];
+        for (i, (formula, _)) in extras.iter().enumerate() {
+            engine
+                .set_cell_formula(
+                    "Sheet1",
+                    1,
+                    i as u32 + 4,
+                    parse(format!("={formula}")).unwrap(),
+                )
+                .unwrap();
+        }
+        for phase in 0..3 {
+            if phase > 0 {
+                for row in 1..=24 {
+                    if phase == 1 {
+                        engine
+                            .set_cell_value("Sheet1", row, 1, LiteralValue::Number(2.0))
+                            .unwrap();
+                    } else {
+                        engine
+                            .set_cell_formula("Sheet1", row, 1, parse("=1+1").unwrap())
+                            .unwrap();
+                    }
+                }
+            }
+            engine.evaluate_all().unwrap();
+            let expected = phase != 1;
+            for row in 1..=24 {
+                for col in [2, 3] {
+                    assert_eq!(
+                        engine.get_cell_value("Sheet1", row, col),
+                        Some(LiteralValue::Boolean(expected)),
+                        "metadata-only same-value edit phase={phase}, family={family}, row={row}, col={col}"
+                    );
+                }
+            }
+            for (i, (formula, base)) in extras.iter().enumerate() {
+                let expected = if i == 0 || i == 5 { expected } else { *base };
+                assert_eq!(
+                    engine.get_cell_value("Sheet1", 1, i as u32 + 4),
+                    Some(LiteralValue::Boolean(expected)),
+                    "{formula} phase={phase}, family={family}"
+                );
+                let tree = crate::interpreter::Interpreter::new(&engine, "Sheet1");
+                assert_eq!(
+                    tree.evaluate_ast(&parse(format!("={formula}")).unwrap())
+                        .unwrap()
+                        .into_literal(),
+                    LiteralValue::Boolean(expected),
+                    "tree {formula} phase={phase}"
+                );
+            }
+        }
+        // Workbook metadata is ineligible for elementwise lifting; use its
+        // ordinary reference-aware walk rather than broadening eligibility.
+        assert_eq!(engine.lifted_members_for_test(), 0);
+    }
+}
+
 fn num(value: f64) -> Option<LiteralValue> {
     Some(LiteralValue::Number(value))
 }
@@ -135,6 +459,60 @@ fn inspect_reference_covers_cells_ranges_names_tables_and_3d_without_materializi
         engine
             .inspect_reference(&ReferenceType::NamedRange("MissingName".into()), "Sheet1")
             .is_err()
+    );
+}
+
+#[test]
+fn formula_metadata_predicate_tracks_staged_compressed_and_edited_cells() {
+    use crate::traits::{DefaultFunctionContext, FunctionContext};
+
+    let mut engine = Engine::new(TestWorkbook::new(), super::common::arrow_eval_config());
+    let sheet = engine.sheet_id("Sheet1").unwrap();
+    let cell = abs_cell_ref(sheet, 1, 1);
+    assert!(!engine.has_formula_at_cell(cell).unwrap());
+    let staged = abs_cell_ref(sheet, 99, 2);
+    engine.stage_formula_text("Sheet1", 99, 2, "1+1".into());
+    assert!(engine.has_formula_at_cell(staged).unwrap());
+    assert_eq!(
+        engine.has_formula_at_cell(staged).unwrap(),
+        engine.formula_text_at_cell(staged).unwrap().is_some()
+    );
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    assert!(!engine.has_formula_at_cell(cell).unwrap());
+    for row in 1..=24 {
+        engine
+            .set_cell_formula("Sheet1", row, 1, parse("=1+1").unwrap())
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    let ctx = DefaultFunctionContext::new(&engine, None, "Sheet1");
+    for row in 1..=24 {
+        let cell = abs_cell_ref(sheet, row, 1);
+        assert!(engine.has_formula_at_cell(cell).unwrap());
+        assert!(ctx.has_formula_at_cell(cell).unwrap());
+        assert_eq!(
+            engine.has_formula_at_cell(cell).unwrap(),
+            engine.formula_text_at_cell(cell).unwrap().is_some()
+        );
+    }
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(2.0))
+        .unwrap();
+    assert!(!engine.has_formula_at_cell(cell).unwrap());
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=1/0").unwrap())
+        .unwrap();
+    assert!(engine.has_formula_at_cell(cell).unwrap());
+    let removed = engine.add_sheet("Removed").unwrap();
+    engine.remove_sheet(removed).unwrap();
+    assert_eq!(
+        engine
+            .has_formula_at_cell(abs_cell_ref(removed, 1, 1))
+            .unwrap_err()
+            .kind,
+        ExcelErrorKind::Ref
     );
 }
 

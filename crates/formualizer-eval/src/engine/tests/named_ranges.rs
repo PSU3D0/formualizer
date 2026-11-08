@@ -562,6 +562,719 @@ fn named_formula_reacts_to_cell_precedent_edits() {
     );
 }
 
+fn named_formula_definition(expression: &str) -> NamedDefinition {
+    NamedDefinition::Formula {
+        ast: parse(expression).unwrap(),
+        dependencies: Vec::new(),
+        range_deps: Vec::new(),
+    }
+}
+
+#[test]
+fn dynamic_formula_name_tracks_runtime_target_edits() {
+    let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+    e.set_cell_value("Sheet1", 1, 1, lit_num(1.0)).unwrap();
+    e.set_cell_value("Sheet1", 2, 1, lit_num(3.0)).unwrap();
+    e.set_cell_value("Sheet1", 1, 3, LiteralValue::Text("A1".into()))
+        .unwrap();
+    e.define_name(
+        "DynamicName",
+        named_formula_definition("=INDIRECT(C1)"),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.set_cell_formula("Sheet1", 1, 2, parse("=DynamicName").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(1.0)));
+    e.set_cell_value("Sheet1", 1, 1, lit_num(7.0)).unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(7.0)));
+    e.set_cell_value("Sheet1", 1, 3, LiteralValue::Text("A2".into()))
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(3.0)));
+    e.set_cell_value("Sheet1", 2, 1, lit_num(9.0)).unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(9.0)));
+}
+
+fn dynamic_name_rebinding_drops_obsolete_reads(literal: bool, targeted: bool) {
+    use crate::engine::EvaluationTarget;
+
+    let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+    for (row, value) in [(1, 10.0), (2, 20.0), (3, 30.0)] {
+        e.set_cell_value("Sheet1", row, 1, lit_num(value)).unwrap();
+    }
+    for (name, target, col) in [("DynamicName", "A1", 2), ("OtherName", "A3", 4)] {
+        e.define_name(
+            name,
+            named_formula_definition(&format!("=INDIRECT(\"{target}\")")),
+            NameScope::Workbook,
+        )
+        .unwrap();
+        e.set_cell_formula("Sheet1", 1, col, parse(format!("={name}")).unwrap())
+            .unwrap();
+    }
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(10.0)));
+    let name_vertex = e
+        .graph
+        .resolve_name_entry_in_scope("DynamicName", NameScope::Workbook)
+        .unwrap()
+        .vertex;
+    let other_vertex = e
+        .graph
+        .resolve_name_entry_in_scope("OtherName", NameScope::Workbook)
+        .unwrap()
+        .vertex;
+    assert!(e.graph.authority_host().observed(name_vertex).is_some());
+    let other_reads = e
+        .graph
+        .authority_host()
+        .observed(other_vertex)
+        .unwrap()
+        .to_vec();
+    let revision = e.graph.authority_host().rev_dyn();
+    e.update_name(
+        "DynamicName",
+        if literal {
+            NamedDefinition::Literal(lit_num(20.0))
+        } else {
+            named_formula_definition("=INDIRECT(\"A2\")")
+        },
+        NameScope::Workbook,
+    )
+    .unwrap();
+    let retired_before_plan = e.graph.authority_host().observed(name_vertex).is_none();
+    let revision_after_update = e.graph.authority_host().rev_dyn();
+    assert_eq!(
+        e.graph.authority_host().observed(other_vertex),
+        Some(other_reads.as_slice())
+    );
+    e.set_cell_formula("Sheet1", 1, 1, parse("=DynamicName").unwrap())
+        .unwrap();
+    for request in 0..3 {
+        let result = if targeted {
+            e.evaluate_targets(&[EvaluationTarget::Cell {
+                sheet: "Sheet1".into(),
+                row: 1,
+                col: 2,
+            }])
+        } else {
+            e.evaluate_all()
+        };
+        result.unwrap();
+        assert_eq!(
+            e.get_cell_value("Sheet1", 1, 2),
+            Some(lit_num(20.0)),
+            "literal={literal}, targeted={targeted}, request={request}"
+        );
+        // A targeted B1 request need not evaluate the independent A1 reader.
+        e.evaluate_all().unwrap();
+        for col in [1, 2] {
+            assert_eq!(
+                e.get_cell_value("Sheet1", 1, col),
+                Some(lit_num(20.0)),
+                "literal={literal}, targeted={targeted}, request={request}, col={col}"
+            );
+        }
+    }
+    assert!(
+        retired_before_plan,
+        "changed definition kept obsolete observations"
+    );
+    assert!(
+        revision_after_update > revision,
+        "dynamic schedule revision did not change"
+    );
+    assert_eq!(
+        e.graph.authority_host().observed(other_vertex),
+        Some(other_reads.as_slice())
+    );
+}
+
+#[test]
+fn dynamic_name_rebinding_dynamic_full() {
+    dynamic_name_rebinding_drops_obsolete_reads(false, false);
+}
+
+#[test]
+fn dynamic_name_rebinding_dynamic_targeted() {
+    dynamic_name_rebinding_drops_obsolete_reads(false, true);
+}
+
+#[test]
+fn dynamic_name_rebinding_literal_full() {
+    dynamic_name_rebinding_drops_obsolete_reads(true, false);
+}
+
+#[test]
+fn dynamic_name_rebinding_literal_targeted() {
+    dynamic_name_rebinding_drops_obsolete_reads(true, true);
+}
+
+#[test]
+fn dynamic_name_binding_change_retires_observations() {
+    let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+    e.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+    e.set_cell_value("Sheet1", 2, 1, lit_num(20.0)).unwrap();
+    e.define_name(
+        "Target",
+        NamedDefinition::Literal(LiteralValue::Text("A1".into())),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.define_name(
+        "DynamicName",
+        named_formula_definition("=INDIRECT(Target)"),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.set_cell_formula("Sheet1", 1, 2, parse("=DynamicName").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(10.0)));
+    let vertex = e
+        .graph
+        .resolve_name_entry_in_scope("DynamicName", NameScope::Workbook)
+        .unwrap()
+        .vertex;
+    assert!(e.graph.authority_host().observed(vertex).is_some());
+    let revision = e.graph.authority_host().rev_dyn();
+    e.update_name(
+        "Target",
+        NamedDefinition::Literal(LiteralValue::Text("A2".into())),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.set_cell_formula("Sheet1", 1, 1, parse("=DynamicName").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 1), Some(lit_num(20.0)));
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(20.0)));
+    assert!(e.graph.authority_host().rev_dyn() > revision);
+}
+
+fn transitive_name_observation_case(
+    hops: usize,
+    delete_redefine: bool,
+    targeted: bool,
+    grid_mask: u32,
+    missing_window: bool,
+) {
+    use crate::engine::EvaluationTarget;
+
+    let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+    for (row, value) in [(1, 10.0), (2, 20.0), (3, 30.0)] {
+        e.set_cell_value("Sheet1", row, 1, lit_num(value)).unwrap();
+    }
+    e.define_name(
+        "Target",
+        NamedDefinition::Literal(LiteralValue::Text("A1".into())),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    let mut previous = "Target".to_owned();
+    for i in 0..hops {
+        if grid_mask & (1 << i) != 0 {
+            let row = i as u32 + 1;
+            e.set_cell_formula("Sheet1", row, 3, parse(format!("={previous}")).unwrap())
+                .unwrap();
+            previous = format!("C{row}");
+        } else {
+            let alias = format!("AliasTarget{i}");
+            e.define_name(
+                &alias,
+                named_formula_definition(&format!("={previous}")),
+                NameScope::Workbook,
+            )
+            .unwrap();
+            previous = alias;
+        }
+    }
+    for (name, formula, col) in [
+        ("DynamicName", format!("=INDIRECT({previous})"), 2),
+        ("OtherName", "=INDIRECT(\"A3\")".into(), 4),
+    ] {
+        e.define_name(
+            name,
+            named_formula_definition(&formula),
+            NameScope::Workbook,
+        )
+        .unwrap();
+        e.set_cell_formula("Sheet1", 1, col, parse(format!("={name}")).unwrap())
+            .unwrap();
+    }
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(10.0)));
+    let vertex = e
+        .graph
+        .resolve_name_entry_in_scope("DynamicName", NameScope::Workbook)
+        .unwrap()
+        .vertex;
+    let other = e
+        .graph
+        .resolve_name_entry_in_scope("OtherName", NameScope::Workbook)
+        .unwrap()
+        .vertex;
+    assert!(e.graph.authority_host().observed(vertex).is_some());
+    let other_reads = e.graph.authority_host().observed(other).unwrap().to_vec();
+    let revision = e.graph.authority_host().rev_dyn();
+    let replacement = NamedDefinition::Literal(LiteralValue::Text("A2".into()));
+    let mut retired_in_missing_window = true;
+    let mut revision_advanced_in_missing_window = true;
+    if delete_redefine {
+        e.delete_name("Target", NameScope::Workbook).unwrap();
+        if missing_window {
+            retired_in_missing_window = e.graph.authority_host().observed(vertex).is_none();
+            revision_advanced_in_missing_window = e.graph.authority_host().rev_dyn() > revision;
+            assert_eq!(
+                e.graph.authority_host().observed(other),
+                Some(other_reads.as_slice())
+            );
+            let stats = e.evaluate_all().unwrap();
+            assert_eq!(stats.cycle_errors, 0);
+            let missing_value = e.get_cell_value("Sheet1", 1, 2);
+            assert!(
+                // INDIRECT receives a stored grid error as a value; its existing
+                // non-text argument contract returns #VALUE!, not #NAME?.
+                matches!(&missing_value, Some(LiteralValue::Error(error)) if error.kind == ExcelErrorKind::Value),
+                "missing binding value: {missing_value:?}"
+            );
+        }
+        e.define_name("Target", replacement, NameScope::Workbook)
+            .unwrap();
+    } else {
+        e.update_name("Target", replacement, NameScope::Workbook)
+            .unwrap();
+    }
+    let retired_before_plan = e.graph.authority_host().observed(vertex).is_none();
+    let revision_after_change = e.graph.authority_host().rev_dyn();
+    assert_eq!(
+        e.graph.authority_host().observed(other),
+        Some(other_reads.as_slice())
+    );
+    e.set_cell_formula("Sheet1", 1, 1, parse("=DynamicName").unwrap())
+        .unwrap();
+    let mut failures = Vec::new();
+    for request in 0..3 {
+        let stats = if targeted {
+            e.evaluate_targets(&[EvaluationTarget::Cell {
+                sheet: "Sheet1".into(),
+                row: 1,
+                col: 2,
+            }])
+        } else {
+            e.evaluate_all()
+        }
+        .unwrap();
+        let b1 = e.get_cell_value("Sheet1", 1, 2);
+        if b1 != Some(lit_num(20.0)) || stats.cycle_errors != 0 {
+            failures.push(format!(
+                "request={request}, B1={b1:?}, cycles={}",
+                stats.cycle_errors
+            ));
+        }
+        // B1-only demand leaves the independent A1 reader for a full request.
+        let stats = e.evaluate_all().unwrap();
+        for col in [1, 2] {
+            let actual = e.get_cell_value("Sheet1", 1, col);
+            if actual != Some(lit_num(20.0)) || stats.cycle_errors != 0 {
+                failures.push(format!(
+                    "retry={request}, col={col}, actual={actual:?}, cycles={}",
+                    stats.cycle_errors
+                ));
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "hops={hops}, grid_mask={grid_mask}, delete_redefine={delete_redefine}, missing_window={missing_window}, targeted={targeted}; expected 20 without cycles:\n{}",
+        failures.join("\n")
+    );
+    assert!(
+        retired_in_missing_window,
+        "deleted binding retained old consumer observations before the missing-binding request"
+    );
+    assert!(
+        revision_advanced_in_missing_window,
+        "dynamic revision did not advance before the missing-binding request"
+    );
+    assert!(
+        retired_before_plan,
+        "transitive binding consumer retained obsolete reads"
+    );
+    assert!(
+        revision_after_change > revision,
+        "dynamic schedule revision did not advance"
+    );
+    assert_eq!(
+        e.graph.authority_host().observed(other),
+        Some(other_reads.as_slice())
+    );
+}
+
+macro_rules! transitive_name_observation_tests {
+    ($(($name:ident, $hops:expr, $delete:expr, $targeted:expr)),* $(,)?) => {
+        $(#[test]
+        fn $name() {
+            transitive_name_observation_case($hops, $delete, $targeted, 0, false);
+        })*
+    };
+}
+
+transitive_name_observation_tests!(
+    (transitive_name_observations_0_update_full, 0, false, false),
+    (
+        transitive_name_observations_0_update_targeted,
+        0,
+        false,
+        true
+    ),
+    (transitive_name_observations_0_redefine_full, 0, true, false),
+    (
+        transitive_name_observations_0_redefine_targeted,
+        0,
+        true,
+        true
+    ),
+    (transitive_name_observations_1_update_full, 1, false, false),
+    (
+        transitive_name_observations_1_update_targeted,
+        1,
+        false,
+        true
+    ),
+    (transitive_name_observations_1_redefine_full, 1, true, false),
+    (
+        transitive_name_observations_1_redefine_targeted,
+        1,
+        true,
+        true
+    ),
+    (transitive_name_observations_2_update_full, 2, false, false),
+    (
+        transitive_name_observations_2_update_targeted,
+        2,
+        false,
+        true
+    ),
+    (transitive_name_observations_2_redefine_full, 2, true, false),
+    (
+        transitive_name_observations_2_redefine_targeted,
+        2,
+        true,
+        true
+    ),
+    (transitive_name_observations_3_update_full, 3, false, false),
+    (
+        transitive_name_observations_3_update_targeted,
+        3,
+        false,
+        true
+    ),
+    (transitive_name_observations_3_redefine_full, 3, true, false),
+    (
+        transitive_name_observations_3_redefine_targeted,
+        3,
+        true,
+        true
+    ),
+);
+
+macro_rules! mixed_grid_binding_tests {
+    ($(($name:ident, $hops:expr, $grid:expr, $delete:expr, $missing:expr, $targeted:expr)),* $(,)?) => {
+        $(#[test]
+        fn $name() {
+            transitive_name_observation_case($hops, $delete, $targeted, $grid, $missing);
+        })*
+    };
+}
+
+mixed_grid_binding_tests!(
+    (
+        mixed_grid_binding_grid_update_full,
+        1,
+        1,
+        false,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_update_targeted,
+        1,
+        1,
+        false,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_redefine_full,
+        1,
+        1,
+        true,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_redefine_targeted,
+        1,
+        1,
+        true,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_missing_full,
+        1,
+        1,
+        true,
+        true,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_missing_targeted,
+        1,
+        1,
+        true,
+        true,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_update_full,
+        2,
+        1,
+        false,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_update_targeted,
+        2,
+        1,
+        false,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_redefine_full,
+        2,
+        1,
+        true,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_redefine_targeted,
+        2,
+        1,
+        true,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_missing_full,
+        2,
+        1,
+        true,
+        true,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_missing_targeted,
+        2,
+        1,
+        true,
+        true,
+        true
+    ),
+    (
+        mixed_grid_binding_name_grid_update_full,
+        2,
+        2,
+        false,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_name_grid_update_targeted,
+        2,
+        2,
+        false,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_name_grid_redefine_full,
+        2,
+        2,
+        true,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_name_grid_redefine_targeted,
+        2,
+        2,
+        true,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_name_grid_missing_full,
+        2,
+        2,
+        true,
+        true,
+        false
+    ),
+    (
+        mixed_grid_binding_name_grid_missing_targeted,
+        2,
+        2,
+        true,
+        true,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_update_full,
+        3,
+        5,
+        false,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_update_targeted,
+        3,
+        5,
+        false,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_redefine_full,
+        3,
+        5,
+        true,
+        false,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_redefine_targeted,
+        3,
+        5,
+        true,
+        false,
+        true
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_missing_full,
+        3,
+        5,
+        true,
+        true,
+        false
+    ),
+    (
+        mixed_grid_binding_grid_name_grid_missing_targeted,
+        3,
+        5,
+        true,
+        true,
+        true
+    ),
+);
+
+#[test]
+fn dynamic_name_removal_retires_observations() {
+    for sheet_scoped in [false, true] {
+        let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+        let scope = if sheet_scoped {
+            NameScope::Sheet(e.sheet_id("Sheet1").unwrap())
+        } else {
+            NameScope::Workbook
+        };
+        e.set_cell_value("Sheet1", 1, 1, lit_num(10.0)).unwrap();
+        e.define_name(
+            "DynamicName",
+            named_formula_definition("=INDIRECT(\"A1\")"),
+            scope,
+        )
+        .unwrap();
+        e.set_cell_formula("Sheet1", 1, 2, parse("=DynamicName").unwrap())
+            .unwrap();
+        e.evaluate_all().unwrap();
+        let vertex = e
+            .graph
+            .resolve_name_entry_in_scope("DynamicName", scope)
+            .unwrap()
+            .vertex;
+        assert!(e.graph.authority_host().observed(vertex).is_some());
+        let revision = e.graph.authority_host().rev_dyn();
+        e.delete_name("DynamicName", scope).unwrap();
+        assert!(
+            e.graph.authority_host().observed(vertex).is_none(),
+            "deleted name kept observations"
+        );
+        assert!(e.graph.authority_host().rev_dyn() > revision);
+        e.define_name(
+            "DynamicName",
+            NamedDefinition::Literal(lit_num(20.0)),
+            scope,
+        )
+        .unwrap();
+        e.set_cell_formula("Sheet1", 1, 1, parse("=DynamicName").unwrap())
+            .unwrap();
+        e.evaluate_all().unwrap();
+        assert_eq!(e.get_cell_value("Sheet1", 1, 1), Some(lit_num(20.0)));
+        assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(20.0)));
+    }
+}
+
+#[test]
+fn volatile_formula_name_recalculates_and_updates_classification() {
+    let mut e = Engine::new(TestWorkbook::new(), canonical_cfg());
+    e.define_name(
+        "RandomName",
+        named_formula_definition("=RAND()"),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.set_cell_formula("Sheet1", 1, 2, parse("=RandomName").unwrap())
+        .unwrap();
+    e.set_workbook_seed(10);
+    e.evaluate_all().unwrap();
+    let first = e.get_cell_value("Sheet1", 1, 2);
+    e.set_workbook_seed(11);
+    e.evaluate_all().unwrap();
+    assert_ne!(e.get_cell_value("Sheet1", 1, 2), first);
+    e.update_name(
+        "RandomName",
+        NamedDefinition::Literal(lit_num(42.0)),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 1, 2), Some(lit_num(42.0)));
+    let vertex = e
+        .graph
+        .resolve_name_entry("RandomName", e.sheet_id("Sheet1").unwrap())
+        .unwrap()
+        .vertex;
+    assert!(!e.graph.is_volatile(vertex));
+    assert!(!e.graph.is_dynamic(vertex));
+    e.update_name(
+        "RandomName",
+        named_formula_definition("=RAND()"),
+        NameScope::Workbook,
+    )
+    .unwrap();
+    e.evaluate_all().unwrap();
+    assert!(e.graph.is_volatile(vertex));
+}
+
 #[test]
 fn named_formula_definition_change_invalidates_dependents() {
     let mut engine = Engine::new(TestWorkbook::new(), canonical_cfg());

@@ -2,6 +2,10 @@ use crate::SheetId;
 use crate::engine::TombstoneRegistry;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::sheet_registry::SheetRegistry;
+
+#[cfg(test)]
+#[path = "malformed_spill_query_tests.rs"]
+mod malformed_spill_query_tests;
 use formualizer_common::{
     CoordBuildHasher, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell,
 };
@@ -670,10 +674,10 @@ pub struct DependencyGraph {
     pub(crate) fixed_array_shapes: FxHashMap<VertexId, (u32, u32)>,
     spill_cell_to_anchor: std::collections::HashMap<CellRef, VertexId, CoordBuildHasher>,
     spill_cells_by_sheet: FxHashMap<SheetId, std::collections::BTreeMap<(u32, u32), VertexId>>,
-    /// Anchors whose committed spill may hold a formula placed after the
-    /// spill was committed (or moved there by a structural edit). A spill
+    /// Anchors whose committed extent may hold a later user write (or a
+    /// formula moved there by a structural edit). A spill
     /// child is a value cell, so only these anchors probe their own cells
-    /// for formulas when they re-plan, commit or clear; every other anchor
+    /// for ownership or formulas when they commit or clear; every other anchor
     /// re-spills over its cells without a per-cell lookup (see
     /// [`Self::spill_may_be_intruded`]). Filled when the authority syncs
     /// the formula map's touched journal, which every formula write reaches
@@ -4800,10 +4804,20 @@ impl DependencyGraph {
         self.spill_anchor_to_cells.contains_key(&vertex)
     }
 
+    /// Generic result replacement withdraws current-value attestation. Last-known
+    /// routing reads remain stable; the evaluated effects path reattests after write.
+    #[inline]
+    fn invalidate_observed_value_for_write(&mut self, vertex: VertexId) {
+        if self.authority_host().has_observed() {
+            self.authority_host_mut().invalidate_observed_value(vertex);
+        }
+    }
+
     /// [`Self::update_vertex_value`] that clones the value only when the
     /// graph keeps it (canonical mode keeps none for grid cells).
     pub(crate) fn update_vertex_value_ref(&mut self, vertex_id: VertexId, value: &LiteralValue) {
         if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
+            self.invalidate_observed_value_for_write(vertex_id);
             if !self.vertex_values.is_empty() {
                 self.vertex_values.remove(&vertex_id);
             }
@@ -4813,6 +4827,7 @@ impl DependencyGraph {
     }
 
     pub(crate) fn update_vertex_value(&mut self, vertex_id: VertexId, value: LiteralValue) {
+        self.invalidate_observed_value_for_write(vertex_id);
         if !self.value_cache_enabled && self.is_grid_backed(vertex_id) {
             // Canonical mode: grid-backed vertices must not store values in the graph.
             // Symbols (e.g. named-range formulas) may still cache theirs.
@@ -4975,6 +4990,45 @@ impl DependencyGraph {
         values: Vec<Vec<LiteralValue>>,
         fault_after_ops: Option<usize>,
     ) -> Result<(), ExcelError> {
+        self.commit_spill_region_impl(anchor, target_cells, values, fault_after_ops, None)
+    }
+
+    /// History snapshots can omit cells relinquished to user edits while
+    /// retaining the old rectangle's dimensions in their dense value matrix.
+    pub(crate) fn restore_spill_snapshot(
+        &mut self,
+        anchor: VertexId,
+        snapshot: &crate::engine::graph::editor::change_log::SpillSnapshot,
+    ) -> Result<(), ExcelError> {
+        let cells = &snapshot.target_cells;
+        let values = &snapshot.values;
+        if cells.is_empty() {
+            return Ok(());
+        }
+        let height = values.len();
+        let width = values.first().map_or(0, Vec::len);
+        if cells.len() == height.saturating_mul(width) {
+            return self.commit_spill_region_atomic_with_fault(
+                anchor,
+                cells.clone(),
+                values.clone(),
+                None,
+            );
+        }
+        // Keep a partial snapshot partial, including snapshots truncated by a
+        // lowered spill budget. It cannot certify an A1# rectangle until recalc.
+        let owned = cells.iter().copied().collect();
+        self.commit_spill_region_impl(anchor, cells.clone(), values.clone(), None, Some(&owned))
+    }
+
+    fn commit_spill_region_impl(
+        &mut self,
+        anchor: VertexId,
+        target_cells: Vec<CellRef>,
+        values: Vec<Vec<LiteralValue>>,
+        fault_after_ops: Option<usize>,
+        owned_cells: Option<&std::collections::HashSet<CellRef, CoordBuildHasher>>,
+    ) -> Result<(), ExcelError> {
         self.materialize_vertex(anchor);
         let budgets = self.self_admission_budgets();
         if crate::engine::resource_ledger::graph_admission_enabled(&budgets) {
@@ -5016,10 +5070,9 @@ impl DependencyGraph {
         }
         let mut ops: Vec<Op> = Vec::new();
 
-        // Clears for cells no longer used; a formula entered into the spill
-        // stays.
+        // Clears for cells no longer used; later user writes stay.
         let probe_owned = self.spill_may_be_intruded(anchor);
-        let entered = |cell: &CellRef| probe_owned && self.is_foreign_formula_cell(cell, anchor);
+        let entered = |cell: &CellRef| probe_owned && self.is_foreign_spill_cell(cell, anchor);
         for cell in prev_cells.iter() {
             if !new_set.contains(cell) && !entered(cell) {
                 let sheet = self.sheet_name(cell.sheet_id).to_string();
@@ -5040,6 +5093,13 @@ impl DependencyGraph {
             let sheet = self.sheet_name(first.sheet_id).to_string();
             for (r_off, row_vals) in values.iter().enumerate() {
                 for (c_off, v) in row_vals.iter().enumerate() {
+                    let cell = CellRef::new(
+                        first.sheet_id,
+                        Coord::new(row0 + r_off as u32, col0 + c_off as u32, true, true),
+                    );
+                    if owned_cells.is_some_and(|owned| !owned.contains(&cell)) {
+                        continue;
+                    }
                     ops.push(Op {
                         sheet: sheet.clone(),
                         row: row0 + r_off as u32,
@@ -5117,6 +5177,13 @@ impl DependencyGraph {
         }
         // Mark ownership for new rectangle using the declared target cells only
         for cell in &target_cells {
+            if owned_cells.is_some_and(|owned| !owned.contains(cell)) {
+                self.spill_cell_to_anchor.remove(cell);
+                if let Some(sheet) = self.spill_cells_by_sheet.get_mut(&cell.sheet_id) {
+                    sheet.remove(&(cell.coord.row(), cell.coord.col()));
+                }
+                continue;
+            }
             self.spill_cell_to_anchor.insert(*cell, anchor);
             self.spill_cells_by_sheet
                 .entry(cell.sheet_id)
@@ -5134,8 +5201,39 @@ impl DependencyGraph {
         {
             self.spill_intruded_anchors.remove(&anchor);
         }
+        if owned_cells.is_some() {
+            self.spill_intruded_anchors.insert(anchor);
+        }
         self.spill_anchor_to_cells.insert(anchor, target_cells);
         Ok(())
+    }
+
+    /// Only extents intersecting the shifted tail can have stale ownership.
+    pub(crate) fn spill_anchors_before_shift(
+        &self,
+        sheet: SheetId,
+        start: u32,
+        rows: bool,
+    ) -> Vec<VertexId> {
+        let mut anchors: Vec<_> = self
+            .spill_anchor_to_cells
+            .iter()
+            .filter_map(|(&anchor, cells)| {
+                cells
+                    .iter()
+                    .any(|cell| {
+                        cell.sheet_id == sheet
+                            && if rows {
+                                cell.coord.row() >= start
+                            } else {
+                                cell.coord.col() >= start
+                            }
+                    })
+                    .then_some(anchor)
+            })
+            .collect();
+        anchors.sort_unstable_by_key(|id| id.0);
+        anchors
     }
 
     pub(crate) fn spill_cells_for_anchor(&self, anchor: VertexId) -> Option<&[CellRef]> {
@@ -5171,12 +5269,39 @@ impl DependencyGraph {
         Some((first, last))
     }
 
+    pub(crate) fn spill_registry_is_empty(&self) -> bool {
+        self.spill_anchor_to_cells.is_empty()
+    }
+
     pub(crate) fn spill_registry_has_anchor(&self, anchor: VertexId) -> bool {
         self.spill_anchor_to_cells.contains_key(&anchor)
     }
 
     pub(crate) fn spill_registry_anchor_for_cell(&self, cell: CellRef) -> Option<VertexId> {
         self.spill_cell_to_anchor.get(&cell).copied()
+    }
+
+    /// Pre-admit hash-table capacity before iterating committed anchor entries.
+    /// The prepaid bound covers empty/tombstone scanning; callbacks admit their
+    /// own identity/geometry processing. No spill cells are enumerated.
+    pub(crate) fn visit_spill_anchors_bounded<
+        M: crate::engine::authority::level_index::QueryWorkBudget,
+    >(
+        &self,
+        meter: &mut M,
+        visit: &mut impl FnMut(VertexId, &mut M) -> Result<(), M::Error>,
+    ) -> Result<(), M::Error> {
+        // Capacity is at most the allocated bucket count, with load <= 7/8;
+        // twice the usable capacity plus one conservatively admits that scan.
+        let capacity = self.spill_anchor_to_cells.capacity() as u64;
+        meter.charge_work(capacity)?;
+        meter.charge_work(capacity)?;
+        meter.charge_work(1)?;
+        for &anchor in self.spill_anchor_to_cells.keys() {
+            meter.charge_work(1)?;
+            visit(anchor, meter)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn spill_registry_counts(&self) -> (usize, usize) {
@@ -5288,9 +5413,8 @@ impl DependencyGraph {
             .map(|()| yielding)
     }
 
-    /// The anchor's registered spill cells that clearing the spill empties:
-    /// every cell except a formula entered into the spill after it was
-    /// committed, which keeps its own value.
+    /// Cells still owned by the projection. Later literal writes relinquish
+    /// ownership; formulas entered into the spill retain their own values.
     pub(crate) fn spill_cells_to_clear(&self, anchor: VertexId) -> Vec<CellRef> {
         let Some(cells) = self.spill_cells_for_anchor(anchor) else {
             return Vec::new();
@@ -5301,7 +5425,7 @@ impl DependencyGraph {
         cells
             .iter()
             .copied()
-            .filter(|cell| !self.is_foreign_formula_cell(cell, anchor))
+            .filter(|cell| !self.is_foreign_spill_cell(cell, anchor))
             .collect()
     }
 
@@ -5357,6 +5481,29 @@ impl DependencyGraph {
         self.spill_intruded_anchors.len()
     }
 
+    /// A user value write relinquishes projection ownership; the old extent
+    /// remains registered until the anchor re-plans. Formula intrusions keep
+    /// their existing protection by formula identity.
+    pub(crate) fn note_spill_child_edit(&mut self, cell: CellRef) -> Option<VertexId> {
+        let owner = self.spill_registry_anchor_for_cell(cell)?;
+        if self.get_cell_ref(owner) == Some(cell) {
+            return None;
+        }
+        self.spill_intruded_anchors.insert(owner);
+        if !self.is_foreign_formula_cell(&cell, owner) {
+            self.spill_cell_to_anchor.remove(&cell);
+            if let Some(sheet) = self.spill_cells_by_sheet.get_mut(&cell.sheet_id) {
+                sheet.remove(&(cell.coord.row(), cell.coord.col()));
+            }
+        }
+        Some(owner)
+    }
+
+    fn is_foreign_spill_cell(&self, cell: &CellRef, anchor: VertexId) -> bool {
+        self.spill_registry_anchor_for_cell(*cell) != Some(anchor)
+            || self.is_foreign_formula_cell(cell, anchor)
+    }
+
     /// Whether `cell` holds a formula vertex other than `anchor`.
     pub(crate) fn is_foreign_formula_cell(&self, cell: &CellRef, anchor: VertexId) -> bool {
         self.cell_vertex(cell).is_some_and(|vid| {
@@ -5383,10 +5530,12 @@ impl DependencyGraph {
     /// want to mirror/record deltas.
     pub fn clear_spill_region_bulk(&mut self, anchor: VertexId) -> Vec<CellRef> {
         let anchor_cell = self.get_cell_ref(anchor);
+        let cells_to_clear = self
+            .spill_may_be_intruded(anchor)
+            .then(|| self.spill_cells_to_clear(anchor));
         let Some(cells) = self.spill_anchor_to_cells.remove(&anchor) else {
             return Vec::new();
         };
-        let probe_owned = self.spill_may_be_intruded(anchor);
         if !self.spill_intruded_anchors.is_empty() {
             self.spill_intruded_anchors.remove(&anchor);
         }
@@ -5409,11 +5558,9 @@ impl DependencyGraph {
         // Clear all spill children (excluding the anchor cell). A child is a
         // value cell: no vertex (decision 27); one it still has leaves.
         let mut changed: Vec<crate::engine::authority::geom::Cell> = Vec::new();
-        for cell in cells.iter().copied() {
+        for cell in cells_to_clear.as_deref().unwrap_or(&cells).iter().copied() {
             let is_anchor = anchor_cell.map(|a| a == cell).unwrap_or(false);
-            // A formula entered into the spill after it was committed is the
-            // user's cell, not a child: it stays.
-            if is_anchor || (probe_owned && self.is_foreign_formula_cell(&cell, anchor)) {
+            if is_anchor {
                 continue;
             }
             self.vacate_cell(&cell);
@@ -5529,6 +5676,11 @@ impl DependencyGraph {
             }
         }
         out
+    }
+
+    /// Production liveness check, including deletion, for immutable query adapters.
+    pub(crate) fn vertex_exists_active(&self, vertex_id: VertexId) -> bool {
+        self.store.vertex_exists_active(vertex_id)
     }
 
     /// Whether `vertex_id` is an existing, non-deleted vertex that still
@@ -5871,6 +6023,7 @@ impl DependencyGraph {
     #[doc(hidden)]
     pub fn mark_as_ref_error(&mut self, id: VertexId) {
         self.materialize_vertex(id);
+        self.invalidate_observed_value_for_write(id);
         if !self.value_cache_enabled && self.is_grid_backed(id) {
             self.ref_error_vertices.insert(id);
             // Canonical-only: graph does not cache grid-backed values.

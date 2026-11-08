@@ -1,4 +1,8 @@
 import * as wasm from '../pkg/formualizer_wasm.js';
+import { recalc, evaluateWithYield } from './recalc.js';
+import type { RecalcJob, RecalcJobOptions, RecalcOptions, EvaluateWithYieldOptions, RecalcOutcome } from './recalc.js';
+export { RecalcJob } from './recalc.js';
+export type * from './recalc.js';
 
 let wasmInitialized = false;
 let wasmInitPromise: Promise<void> | null = null;
@@ -644,7 +648,12 @@ export interface CycleTelemetry {
   elapsedMs: number;
 }
 
-export interface WorkbookApi extends wasm.Workbook {
+export interface WorkbookApi extends Omit<wasm.Workbook, 'beginRecalc' | 'pendingCellsInRect' | 'hasPendingInRect' | '_beginRecalcDriver'> {
+  beginRecalc(options?: RecalcJobOptions): RecalcJob;
+  hasPendingInRect(area: FiniteRangeAddress): boolean;
+  pendingCellsInRect(area: FiniteRangeAddress): CellAddress[];
+  recalc(options?: RecalcOptions): RecalcOutcome;
+  evaluateWithYield(options?: EvaluateWithYieldOptions): Promise<RecalcOutcome>;
   registerFunction(
     name: string,
     callback: (...args: CellValue[]) => CellValue,
@@ -688,8 +697,153 @@ export interface XlsxRecalculateSummary {
   unknown_functions: { name: string; cells: number }[];
 }
 
+/** Portable request decoded by the shared workbook policy, with no raw EvalConfig. */
+export interface SourceCalculationPolicy {
+  iteration?: { mode: 'workbook' | 'disabled' } | {
+    mode: 'iterate'; maxIterations?: number; maxChange?: number;
+  };
+  iterationInitialState?: 'require_verified' | 'cold_start';
+  cycleDetection?: 'runtime' | 'static';
+  /** Decimal u64 string, or a non-negative JS-safe integer. */
+  workbookSeed?: string | number;
+  fixedNowUtc?: string;
+  timezone?: 'utc' | 'local' | { offsetSeconds: number };
+  maxElapsedMs?: number;
+  maxWorkUnits?: number;
+}
+
+export interface ResolvedSourceCalculation {
+  cycleDetection: 'runtime' | 'static';
+  iterationEnabled: boolean;
+  maxIterations: number | null;
+  maxChange: number | null;
+  iterationInitialState: 'require_verified' | 'cold_start';
+  iterationOrigin: 'caller' | 'workbook' | 'excel_default';
+  maxIterationsOrigin: 'caller' | 'workbook' | 'excel_default' | null;
+  maxChangeOrigin: 'caller' | 'workbook' | 'excel_default' | null;
+  dateSystem: '1900' | '1904';
+  workbookSeed: string;
+  timezone: 'utc' | 'local' | { offsetSeconds: number };
+  fixedNowUtc: string | null;
+  maxElapsedMs: string | null;
+  maxWorkUnits: string | null;
+  warnings: { field: string; message: string }[];
+}
+
+/** Partial portable limits: missing fields preserve the selected preset; zero is a bound.
+ * Byte/count values are integer u32, maxColumns <= 16384, maxAffectedWork is JS-safe.
+ * Strings, explicit null fields, nonfinite and fractional numbers are invalid.
+ */
+export interface SourceRecalculateLimits {
+  maxInputBytes?: number;
+  maxEntries?: number;
+  maxExpandedBytes?: number;
+  maxWorksheetBytes?: number;
+  maxFormulaCells?: number;
+  maxOutputBytes?: number;
+  maxXmlDepth?: number;
+  maxCells?: number;
+  maxColumns?: number;
+  maxOperationRoots?: number;
+  maxOperationTextBytes?: number;
+  maxAffectedWork?: number;
+  maxAffectedRegions?: number;
+  maxAffectedScratchBytes?: number;
+}
+
+export type SourcePhysicalCounter = number | string | null;
+export type SourceModeVerification = 'unavailable' | 'unverified';
+export type SourceModeOperation =
+  | { kind: 'unimplemented_function_mode'; name: string; mode: string }
+  | { kind: 'unverified_function_mode'; name: string; mode: string }
+  | { kind: 'unverified_provider'; name: string };
+export type SourceUnavailableOperation = SourceModeOperation
+  | { kind: 'unknown_function'; name: string }
+  | { kind: 'unimplemented_function'; name: string }
+  | { kind: 'source_feature'; name: string }
+  | { kind: 'postfix_invocation' }
+  | { kind: 'internal_result'; token: string };
+export interface SourceFunctionIncidence {
+  cellReasonCount: number;
+  namedReasonCount: number;
+  unlocatedReasonCount: number;
+}
+export interface SourceFunctionModeIncidence {
+  name: string;
+  mode: string;
+  verification: SourceModeVerification;
+  incidence: SourceFunctionIncidence;
+}
+export interface SourceDependencyEvidence {
+  relation: 'static_authority_and_committed_grid_rectangles';
+  sourceDomain: 'admitted_workbook_and_fixed_cached_sources';
+  semanticReadsUnattested: boolean;
+  conservativeUnknownDynamic: boolean;
+  unknownReasons: Record<string, number>;
+  unknownFacts: number;
+  witnessedRegions: number;
+  uncertainRegions: number;
+  /** queryWork + publicationMembershipWorkBound; not total CPU work. */
+  work: number;
+  queryWork: number;
+  publicationMembershipWorkBound: number;
+  requestedCapacityPeakBytes: number;
+}
+
+export interface SourceOperationDiagnostics {
+  unavailableFunctions: Record<string, SourceFunctionIncidence>;
+  logicalCellReasonCount: number;
+  logicalRootCellCount: number;
+  logicalNamedReasonCount: number;
+  sourceRegions: number;
+  workbookFeatures: string[];
+  unavailableResultCells: number;
+  functionModes: SourceFunctionModeIncidence[];
+  physicalUnavailableObservations: SourcePhysicalCounter;
+  physicalFunctionDispatches: SourcePhysicalCounter;
+  dependencyEvidence: SourceDependencyEvidence | null;
+  samples: { operation: SourceUnavailableOperation; location: string | null }[];
+  samplesTruncated: number;
+}
+
+/** Native errors retain these fields when calculation cannot publish caches. */
+export interface CalculationDeferred extends Error {
+  kind: 'CalculationDeferred';
+  reason: 'IterativeInitialStateUnverified' | 'KnownCoverageIncomplete' | 'WorkbookPrecisionUnverified' |
+    'DependencyCoverageUnavailable' | 'UnlocatedOperation' | 'AffectedArrayCoverageUnverified';
+  context: string;
+}
+
+export type SourceResourceReason = 'admission' | 'retained_memory' | 'scratch_memory'
+  | 'work_units' | 'deadline' | 'graph_vertices' | 'graph_edges'
+  | 'materialization_cells' | 'operation_evidence_roots' | 'operation_evidence_text_bytes'
+  | 'dependency_closure_output_items' | 'arithmetic_overflow';
+
+/** Fatal engine failure; cancellation and resource exhaustion never return result bytes. */
+export interface SourceEngineError extends Error {
+  kind: 'Engine';
+  workbook_kind: 'Engine';
+  excel_kind: string;
+  excel_message?: string;
+  preparation_stale_reason?: string;
+  plan_stale_reason?: string;
+}
+export interface SourceResourceError extends SourceEngineError {
+  resource_reason: SourceResourceReason;
+  /** Exact decimal u64 strings. */
+  limit: string;
+  observed: string;
+  request_id: string | null;
+}
+
 /** Output from cache-only XLSX recalculation. */
 export interface XlsxRecalculateResult {
+  calculation: ResolvedSourceCalculation | null;
+  coverage: 'complete' | 'partial';
+  coverage_scope: 'none' | 'conservative';
+  caches_invalidated: number;
+  calculation_flags_changed: boolean;
+  operation_diagnostics: SourceOperationDiagnostics;
   /** Recalculated XLSX package bytes. */
   bytes: Uint8Array;
   summary: XlsxRecalculateSummary;
@@ -726,6 +880,14 @@ export interface XlsxRecalculateResult {
  * `evaluateOnce`, and the external link policy.
  */
 export interface XlsxRecalculateOptions {
+  /** Strict remains the library default; workbook opts into source-aware sparse admission. */
+  profile?: 'strict' | 'workbook';
+  calculation?: SourceCalculationPolicy | null;
+  limits?: SourceRecalculateLimits | null;
+  /** False by default. Null counters mean unmeasured; enabled zero remains 0. */
+  physicalTelemetry?: boolean;
+  /** Known coverage gaps fail with CalculationDeferred; legitimate Excel errors are allowed. */
+  requireComplete?: boolean;
   /** RAND/RANDBETWEEN seed. The default seed is already stable run to run. */
   rngSeed?: number | bigint;
   /** Fixed instant for TODAY/NOW. Without it they use the host's local time. */
@@ -777,7 +939,7 @@ export async function recalculateXlsxBytes(
 
 export type WorkbookConstructor = {
   new (options?: WorkbookLoadOptions): WorkbookApi;
-  fromJson(json: string): WorkbookApi;
+  fromJson(json: string, options?: WorkbookLoadOptions): WorkbookApi;
   fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi;
   prototype: WorkbookApi;
 };
@@ -797,15 +959,22 @@ export type SheetPortSessionConstructor = {
 
 const rawWorkbookCtor = wasm.Workbook as unknown as {
   new (options?: WorkbookLoadOptions): WorkbookApi;
-  fromJson(json: string): WorkbookApi;
+  fromJson(json: string, options?: WorkbookLoadOptions): WorkbookApi;
   fromXlsxBytes(bytes: Uint8Array): WorkbookApi;
   fromXlsxBytesWithOptions(bytes: Uint8Array, options?: WorkbookLoadOptions): WorkbookApi;
   prototype: WorkbookApi;
 };
+const rawWorkbookFromJson = rawWorkbookCtor.fromJson.bind(rawWorkbookCtor);
+const rawWorkbookFromJsonWithOptions = wasm.Workbook.fromJsonWithOptions.bind(wasm.Workbook);
 const rawWorkbookFromXlsxBytes = rawWorkbookCtor.fromXlsxBytes.bind(rawWorkbookCtor);
 const rawWorkbookFromXlsxBytesWithOptions = rawWorkbookCtor.fromXlsxBytesWithOptions.bind(rawWorkbookCtor);
 
+Object.assign(rawWorkbookCtor.prototype, { recalc, evaluateWithYield });
+
 export const Workbook = Object.assign(rawWorkbookCtor, {
+  fromJson(json: string, options?: WorkbookLoadOptions): WorkbookApi {
+    return options === undefined ? rawWorkbookFromJson(json) : rawWorkbookFromJsonWithOptions(json, options) as unknown as WorkbookApi;
+  },
   fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi {
     const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     return options === undefined

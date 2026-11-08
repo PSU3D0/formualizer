@@ -18,7 +18,10 @@ pub struct ArrowBulkIngestBuilder<'e, R: EvaluationContext> {
 }
 
 impl<'e, R: EvaluationContext> ArrowBulkIngestBuilder<'e, R> {
+    /// # Panics
+    /// See [Engine::is_poisoned] for permanent poison refusal.
     pub fn new(engine: &'e mut Engine<R>) -> Self {
+        engine.assert_not_poisoned();
         Self {
             engine,
             builders: FxHashMap::default(),
@@ -77,7 +80,10 @@ pub struct ArrowBulkUpdateBuilder<'e, R: EvaluationContext> {
 }
 
 impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
+    /// # Panics
+    /// See [Engine::is_poisoned] for permanent poison refusal.
     pub fn new(engine: &'e mut Engine<R>) -> Self {
+        engine.assert_not_poisoned();
         Self {
             engine,
             updates: FxHashMap::default(),

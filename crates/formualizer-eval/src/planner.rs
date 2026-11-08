@@ -125,7 +125,11 @@ impl<'a> Planner<'a> {
                 ASTNodeType::Function { name, .. } => {
                     if let Some(get) = &self.get_fn {
                         if let Some(f) = get("", name) {
-                            let caps = f.caps();
+                            let caps = crate::external_callbacks::metadata(
+                                f.as_ref(),
+                                crate::function::FnCaps::empty,
+                                || f.caps(),
+                            );
                             if caps.contains(FnCaps::VOLATILE) {
                                 Semantics::Volatile
                             } else if caps.contains(FnCaps::SHORT_CIRCUIT) {

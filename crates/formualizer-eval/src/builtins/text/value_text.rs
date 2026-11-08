@@ -228,6 +228,36 @@ impl Function for NumberValueFn {
     }
 }
 
+/// Final TEXT support outcome, independent of its preserved computed value.
+/// Parser rejection is distinct from an unresolved coercion or legacy renderer.
+enum TextOutcome {
+    Covered(LiteralValue),
+    Invalid,
+    Unverified {
+        value: LiteralValue,
+        mode: &'static str,
+    },
+}
+
+impl TextOutcome {
+    fn finish<'ctx>(self, ctx: &dyn FunctionContext<'ctx>) -> crate::traits::CalcValue<'ctx> {
+        let value = match self {
+            Self::Covered(value) => value,
+            Self::Invalid => LiteralValue::Error(ExcelError::new_value()),
+            Self::Unverified { value, mode } => {
+                ctx.report_unavailable_operation(
+                    crate::operation_diagnostics::UnavailableOperation::UnverifiedFunctionMode {
+                        name: "TEXT".into(),
+                        mode,
+                    },
+                );
+                value
+            }
+        };
+        crate::traits::CalcValue::Scalar(value)
+    }
+}
+
 // TEXT(value, format_text): number formats in `number_format`, limited dates and times
 #[derive(Debug)]
 pub struct TextFn;
@@ -354,11 +384,27 @@ impl Function for TextFn {
                     // so we conservatively keep returning #VALUE! for them rather
                     // than passing them through unformatted.
                     if t.chars().any(|c| c.is_ascii_digit()) {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                            ExcelError::new_value(),
-                        )));
+                        // Keep this legacy value decision. A digit is not proof
+                        // of valid unsupported input: both coercion parsers
+                        // declined, so this final coercion remains unverified.
+                        return Ok(TextOutcome::Unverified {
+                            value: LiteralValue::Error(ExcelError::new_value()),
+                            mode: "input_coercion",
+                        }
+                        .finish(ctx));
                     }
-                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(t)));
+                    // Plain text with an established numeric format passes
+                    // through. Other format paths (including text sections)
+                    // have no established text rendering contract here.
+                    let value = LiteralValue::Text(t);
+                    let outcome = match super::number_format::format_number(0.0, &fmt) {
+                        Ok(_) => TextOutcome::Covered(value),
+                        Err(_) => TextOutcome::Unverified {
+                            value,
+                            mode: "final_format_heuristic",
+                        },
+                    };
+                    return Ok(outcome.finish(ctx));
                 }
             },
             LiteralValue::Boolean(b) => {
@@ -374,60 +420,82 @@ impl Function for TextFn {
             }
             _ => 0.0,
         };
-        match super::number_format::format_number(num, &fmt) {
-            Ok(text) => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
-            }
-            Err(super::number_format::Fallback::Invalid) => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value(),
-                )));
-            }
-            Err(super::number_format::Fallback::Unsupported) => {}
+        Ok(format_text_number(ctx.date_system(), num, &fmt).finish(ctx))
+    }
+}
+
+fn format_text_number(system: crate::engine::DateSystem, num: f64, fmt: &str) -> TextOutcome {
+    match super::number_format::format_number(num, fmt) {
+        Ok(text) => {
+            return TextOutcome::Covered(LiteralValue::Text(text));
         }
-        match super::date_format::format_datetime(ctx.date_system(), num, &fmt) {
-            Ok(text) => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(text)));
-            }
-            Err(super::number_format::Fallback::Invalid) => {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new_value(),
-                )));
-            }
-            // The less common number and date codes keep the previous
-            // rendering below.
-            Err(super::number_format::Fallback::Unsupported) => {}
+        Err(super::number_format::Fallback::Invalid) => {
+            return TextOutcome::Invalid;
         }
-        let out = if fmt.contains('%') {
-            format_percent(num)
-        } else if fmt.contains('#') && fmt.contains(',') {
-            // Handle formats like #,##0 or #,##0.00
-            format_with_thousands(num, &fmt)
-        } else if fmt.contains("0.00") {
+        Err(super::number_format::Fallback::Unsupported) => {}
+    }
+    match super::date_format::format_datetime_outcome(system, num, fmt) {
+        Ok(super::date_format::DateFormatOutcome::Covered(text)) => {
+            return TextOutcome::Covered(LiteralValue::Text(text));
+        }
+        Ok(super::date_format::DateFormatOutcome::UnverifiedConditionalInvalid) => {
+            return TextOutcome::Unverified {
+                value: LiteralValue::Error(ExcelError::new_value()),
+                mode: "conditional_routing",
+            };
+        }
+        Ok(super::date_format::DateFormatOutcome::UnverifiedConditionalRouting(text)) => {
+            return TextOutcome::Unverified {
+                value: LiteralValue::Text(text),
+                mode: "conditional_routing",
+            };
+        }
+        Ok(super::date_format::DateFormatOutcome::UnverifiedLocale(text)) => {
+            return TextOutcome::Unverified {
+                value: LiteralValue::Text(text),
+                mode: "locale_format",
+            };
+        }
+        Err(super::number_format::Fallback::Invalid) => {
+            return TextOutcome::Invalid;
+        }
+        // The less common number and date codes keep the previous
+        // rendering below.
+        Err(super::number_format::Fallback::Unsupported) => {}
+    }
+    let out = if fmt.contains('%') {
+        format_percent(num)
+    } else if fmt.contains('#') && fmt.contains(',') {
+        // Handle formats like #,##0 or #,##0.00
+        format_with_thousands(num, fmt)
+    } else if fmt.contains("0.00") {
+        format!("{num:.2}")
+    } else if fmt.contains("0") {
+        if fmt.contains(".00") {
             format!("{num:.2}")
-        } else if fmt.contains("0") {
-            if fmt.contains(".00") {
-                format!("{num:.2}")
-            } else {
-                format_number_basic(num)
+        } else {
+            format_number_basic(num)
+        }
+    } else {
+        // Date-token parsing is intentionally limited here; conversion still
+        // follows the workbook's shared Excel serial semantics.
+        if fmt.contains("yyyy") || fmt.contains("dd") || fmt.contains("mm") {
+            match format_serial_date(system, num, fmt) {
+                Ok(text) => text,
+                Err(_) => {
+                    return TextOutcome::Unverified {
+                        value: LiteralValue::Error(ExcelError::new_value()),
+                        mode: "final_format_heuristic",
+                    };
+                }
             }
         } else {
-            // Date-token parsing is intentionally limited here; conversion still
-            // follows the workbook's shared Excel serial semantics.
-            if fmt.contains("yyyy") || fmt.contains("dd") || fmt.contains("mm") {
-                match format_serial_date(ctx.date_system(), num, &fmt) {
-                    Ok(text) => text,
-                    Err(_) => {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                            ExcelError::new_value(),
-                        )));
-                    }
-                }
-            } else {
-                num.to_string()
-            }
-        };
-        Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(out)))
+            num.to_string()
+        }
+    };
+    TextOutcome::Unverified {
+        value: LiteralValue::Text(out),
+        mode: "final_format_heuristic",
     }
 }
 

@@ -49,6 +49,7 @@ where
     where
         I: IntoIterator<Item = &'a str>,
     {
+        self.ensure_not_poisoned()?;
         let names: Vec<&str> = names.into_iter().collect();
 
         // Reject duplicates before mutating anything so a malformed file cannot

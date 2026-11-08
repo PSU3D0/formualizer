@@ -358,3 +358,68 @@ fn evaluation_snapshot_refreshes_on_register_and_unregister() {
     let missing = wb.evaluate_cell("Sheet1", 1, 1);
     assert!(matches!(missing, Ok(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Name));
 }
+
+#[test]
+fn callback_panic_is_typed_and_incomplete() {
+    use formualizer_common::ExcelErrorExtra;
+    use formualizer_eval::engine::{EvaluationStop, StepPhase};
+    for job in [false, true] {
+        let mut wb = workbook();
+        wb.engine_mut()
+            .configure_operation_diagnostics(Default::default());
+        wb.register_custom_function(
+            "PANIC_CALLBACK",
+            CustomFnOptions::default(),
+            Arc::new(|_: &[LiteralValue]| -> Result<LiteralValue, ExcelError> {
+                panic!("callback payload")
+            }),
+        )
+        .unwrap();
+        wb.set_formula("Sheet1", 1, 1, "=PANIC_CALLBACK()").unwrap();
+        wb.set_formula("Sheet1", 2, 1, "=A1+1").unwrap();
+        if job {
+            wb.begin_recalc(Default::default()).unwrap();
+            assert_eq!(
+                wb.step_recalc(EvaluationStop::none()).unwrap().phase,
+                StepPhase::Finished
+            );
+        } else {
+            wb.evaluate_all().unwrap();
+        }
+        let Some(LiteralValue::Error(error)) = wb.get_value("Sheet1", 1, 1) else {
+            panic!("missing error")
+        };
+        assert_eq!(error.kind, ExcelErrorKind::Value);
+        assert_eq!(
+            error.extra(),
+            &ExcelErrorExtra::FunctionPanicked {
+                function: "PANIC_CALLBACK".into(),
+                message: Some("callback payload".into()),
+            }
+        );
+        assert_eq!(
+            wb.get_value("Sheet1", 2, 1),
+            Some(LiteralValue::Error(error))
+        );
+        assert!(
+            wb.engine()
+                .operation_diagnostics()
+                .unwrap()
+                .unwrap()
+                .logical_cell_reason_count
+                > 0
+        );
+        assert!(!wb.is_poisoned());
+        wb.begin_recalc(Default::default()).unwrap();
+        assert!(wb.evaluate_all().is_err());
+        wb.cancel_recalc();
+        wb.set_formula("Sheet1", 1, 1, "=7").unwrap();
+        wb.evaluate_all().unwrap();
+        assert_eq!(wb.get_value("Sheet1", 2, 1), Some(LiteralValue::Number(8.)));
+        wb.begin_recalc(Default::default()).unwrap();
+        assert_eq!(
+            wb.step_recalc(EvaluationStop::none()).unwrap().phase,
+            StepPhase::Finished
+        );
+    }
+}
