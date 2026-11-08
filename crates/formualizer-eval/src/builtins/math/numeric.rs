@@ -1475,12 +1475,12 @@ impl Function for PowerFn {
             }
             other => coerce_num(&other)?,
         };
-        if base < 0.0 && (expv.fract().abs() > 1e-12) {
-            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                ExcelError::new_num(),
-            )));
-        }
-        let result = base.powf(expv);
+        // A negative base takes a real odd root (`POWER(-8, 1/3)` is -2);
+        // any other fractional exponent of it is #NUM!.
+        let result = match crate::interpreter::excel_pow(base, expv) {
+            Ok(result) => result,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
         // Only guard overflow from finite builtin inputs. Programmatic
         // non-finite values have a separate host policy; do not redefine it.
         if !result.is_finite() && base.is_finite() && expv.is_finite() {

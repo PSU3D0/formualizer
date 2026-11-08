@@ -55,6 +55,7 @@ mod fixed_arrays;
 mod lambda_call_arena;
 mod legacy_semantics_pins;
 mod named_ranges;
+mod negative_base_odd_root;
 mod range_expansion_size;
 mod range_operations;
 mod row_operations;
