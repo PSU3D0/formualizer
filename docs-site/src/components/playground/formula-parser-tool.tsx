@@ -76,12 +76,29 @@ function tokenRole(token: Token): string {
   return 'token';
 }
 
-function extractErrorPosition(message: string | null): number | null {
+/**
+ * The error's position as an index into `formula`. Errors report a zero-based
+ * UTF-8 byte offset, and JavaScript strings index UTF-16 code units, so the two
+ * differ after any non-ASCII character.
+ */
+function extractErrorPosition(formula: string, message: string | null): number | null {
   if (!message) return null;
   const m = message.match(/position\s+(?:Some\()?([0-9]+)/i);
   if (!m) return null;
-  const parsed = Number(m[1]);
-  return Number.isFinite(parsed) ? parsed : null;
+  const byteOffset = Number(m[1]);
+  return Number.isFinite(byteOffset) ? byteOffsetToIndex(formula, byteOffset) : null;
+}
+
+function byteOffsetToIndex(text: string, byteOffset: number): number {
+  let bytes = 0;
+  let index = 0;
+  for (const ch of text) {
+    if (bytes >= byteOffset) break;
+    const codePoint = ch.codePointAt(0) ?? 0;
+    bytes += codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+    index += ch.length;
+  }
+  return index;
 }
 
 function buildErrorPointer(formula: string, pos: number | null): string {
@@ -580,7 +597,7 @@ export function FormulaParserTool() {
       }
 
       const activeError = nextParseError ?? nextTokenError;
-      const pos = extractErrorPosition(activeError);
+      const pos = extractErrorPosition(normalized, activeError);
 
       let verifiedFixes: FixSuggestion[] = [];
       if (activeError) {
@@ -608,7 +625,7 @@ export function FormulaParserTool() {
       setTokenError(null);
       setParseError(toErrorMessage(error));
       setParseMs(performance.now() - started);
-      setErrorPos(extractErrorPosition(toErrorMessage(error)));
+      setErrorPos(extractErrorPosition(normalized, toErrorMessage(error)));
       setFixes([]);
     } finally {
       setIsParsing(false);
