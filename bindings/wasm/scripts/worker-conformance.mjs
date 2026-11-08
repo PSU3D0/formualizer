@@ -15,14 +15,14 @@ for (const mode of ['channel','thread']) {
  try {
   await client.addSheet('S'); await client.setChangelogEnabled(true);
   await client.editBatch([{kind:'setValue',sheet:'S',row:1,column:1,value:2},{kind:'setFormula',sheet:'S',row:2,column:1,formula:'=A1*2'}],{actionDescription:'setup'});
-  await client.evaluateAll(); assert.equal(await client.getValue('S',2,1),4);
   await client.undo(); assert.equal(await client.getFormula('S',2,1),undefined); await client.redo();
+  await client.evaluateAll(); assert.equal(await client.getValue('S',2,1),4);
   await client.setValues('S',1,2,[[10],[20]]); await client.setFormulas('S',3,1,[['=A2+1']]);
-  assert.deepEqual(await client.sheetNames(),['S']); await client.setTemporalEgress('serial');
+  assert.deepEqual(await client.sheetNames(),['Sheet1','S']); await client.setTemporalEgress('serial');
   await client.addTable({name:'T',sheet:'S',range:[1,2,2,2],headers:['N']}); assert.equal((await client.getTables()).length,1);
   assert.ok(Array.isArray(await client.getNamedRanges())); await client.getEvalPlan([cell]); await client.lastCycleTelemetry();
   assert.ok((await client.tokenize('=1+2')).length); assert.ok(await client.parse('=1+2'));
-  await assert.rejects(client.getValue('missing',1,1)); assert.deepEqual(await client.sheetNames(),['S']);
+  await assert.rejects(client.getValue('missing',1,1)); assert.deepEqual(await client.sheetNames(),['Sheet1','S']);
   await client.evaluateAll(); await client.inspectCell(cell); await client.precedents(cell); await client.dependents(cell); await client.trace([cell]); await client.rangePage(rect);
   const session=await client.createSheetPortSession(manifest);
   await session.writeInputs({input:3}); assert.equal((await session.evaluateOnce()).output,6);
@@ -67,7 +67,51 @@ for (const mode of ['channel','thread']) {
   assert.ok(output.bytes instanceof Uint8Array);assert.ok(output.bytes.length>0);
   await client.loadFromJson(JSON.stringify({version:1,sheets:{S:{cells:[]}}}),{spanEvaluation:true});
   assert.equal(client.state.revision,0);assert.ok((await client.listFunctions()).some(f=>f.name==='DOUBLE'));
-  await client.loadEmpty();assert.deepEqual(await client.sheetNames(),[]);
+  // Task turns, mid-flight cancellation, exclusivity and stream return semantics.
+  await client.setFormula('S',7,1,'=A6+1');
+  const stream=client.recalcStream({budgetMs:0,pauseOnReturn:true});
+  await stream.next();
+  await assert.rejects(client.recalc(),e=>e.code==='ALREADY_PENDING'&&e.explicit===true);
+  await stream.return();assert.equal(client.state.recalcStatus,'paused');
+  await client.recalc();
+  await client.setFormula('S',8,1,'=A7+1');
+  const mid=new AbortController();
+  await assert.rejects(client.recalc({budgetMs:0,signal:mid.signal,onProgress(){mid.abort();return new Promise(()=>{});}}),e=>e.name==='AbortError');
+  assert.equal(client.state.hasActiveJob,false);
+  await client.recalc();
+  await assert.rejects(client.inspectCell({sheet:'S',row:0,column:1}),e=>e.kind==='InspectError'&&e.code===e.inspect_code);
+  // A viewport unrelated to a dirty chain must skip all intermediate steps.
+  await client.addSheet('Other');
+  await client.setFormulas('Other',1,1,Array.from({length:60},(_,i)=>[i?'=A'+i+'+1':'=1']));
+  let unrelated=0;
+  const quiet=await client.subscribeViewport({rect:{...rect,endRow:1,endColumn:1},mode:'deltas',includePendingCells:false,throttleMs:0,onFrame(){unrelated++;}});
+  await client.sheetNames();const beforeQuiet=unrelated;
+  await client.recalc({budgetMs:0});
+  assert.equal(unrelated-beforeQuiet,1,'only terminal frame intersects an unrelated sheet');
+  await quiet.unsubscribe();
+  // Dirty literals in a small portion of a viewport produce patches.
+  const patches=[];
+  const patchSub=await client.subscribeViewport({rect,mode:'values',throttleMs:0,onFrame:f=>patches.push(f)});
+  await patchSub.refresh();await client.setValue('S',20,2,123);await client.sheetNames();
+  assert.ok(patches.some(f=>f.mode==='values'&&f.patches?.some(p=>p.row===20&&p.column===2&&p.value===123)));
+  await patchSub.unsubscribe();
+  // Hold real wire acknowledgements: rapid mutations must stay behind one credit.
+  const endpoint=client.endpoint, post=endpoint.postMessage.bind(endpoint), held=[];
+  endpoint.postMessage=(message,transfer)=>{if(message.type==='viewport:ack')held.push(message);else post(message,transfer);};
+  let credits=0, coalesced;
+  const creditSub=await client.subscribeViewport({rect,mode:'values',throttleMs:0,onFrame(frame){credits++;coalesced=frame;}});
+  await Promise.all(Array.from({length:25},(_,i)=>client.setValue('S',21,2,i)));
+  assert.equal(credits,1,'unacknowledged initial frame must block all mutation frames');
+  endpoint.postMessage=post;for(const ack of held)post(ack);
+  await client.sheetNames();
+  assert.equal(credits,2,'ack flushes one coalesced frame');
+  assert.ok(coalesced.patches.some(p=>p.row===21&&p.value===24));
+  await creditSub.unsubscribe();
+  await client.loadEmpty({maxWorkUnits:0});await client.addSheet('S');await client.setFormula('S',1,1,'=1+2');
+  await assert.rejects(client.recalc(),e=>e.code==='EVALUATION'&&e.cause.resource_reason==='work_units'&&typeof e.cause.limit==='string');
+  assert.equal(client.state.hasActiveJob,false);
+  await client.loadEmpty();
+  assert.deepEqual(await client.sheetNames(),['Sheet1']);
   console.log('worker conformance passed: '+mode);
  } finally { await client.dispose(); }
 }

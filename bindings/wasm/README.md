@@ -475,3 +475,59 @@ wasm-pack test --node
 ## License
 
 Dual-licensed under [MIT](https://github.com/PSU3D0/formualizer/blob/main/LICENSE-MIT) or [Apache-2.0](https://github.com/PSU3D0/formualizer/blob/main/LICENSE-APACHE), at your option. Both license texts ship inside the package.
+
+
+## Workbook workers
+
+Import the worker client without loading WASM on the calling thread:
+
+```js
+import { createWorkbookWorker } from 'formualizer/worker';
+
+const client = await createWorkbookWorker(
+  new Worker(new URL('formualizer/worker-entry', import.meta.url), { type: 'module' }),
+  { autoRecalc: true, autoRecalcBudgetMs: 5 },
+);
+await client.addSheet('Model');
+const viewport = await client.subscribeViewport({
+  rect: { sheet: 'Model', startRow: 1, startColumn: 1, endRow: 40, endColumn: 12 },
+  mode: 'values',
+  onFrame(frame) {
+    // Keep optimistic edits whose clientSeq is greater than frame.ackClientSeq.
+    // frame.grid replaces a viewport; frame.patches updates individual cells.
+    console.log(frame.revision, frame.evaluatedRevision, frame.hasPending);
+  },
+});
+await client.setValue('Model', 1, 1, 20);
+await client.setFormula('Model', 2, 1, '=A1+22');
+await client.recalc({ budgetMs: 5 });
+await viewport.setRect({ ...viewport.rect, startRow: 10, endRow: 49 });
+await viewport.unsubscribe();
+await client.dispose();
+```
+
+Worker endpoints accept DOM Worker/MessagePort/worker-global APIs and Node worker_threads Worker/MessagePort/parentPort APIs. The packaged `worker-entry` targets browser module workers; in Node, use a small host entry:
+
+```js
+// workbook-host.mjs
+import { parentPort } from 'node:worker_threads';
+import * as runtime from 'formualizer';
+import { attachWorkbookWorker } from 'formualizer/worker';
+await attachWorkbookWorker(parentPort, { runtime });
+```
+
+Pass `new Worker(new URL('./workbook-host.mjs', import.meta.url))` to `createWorkbookWorker`. A custom browser host similarly calls `attachWorkbookWorker(self, { runtime })`. `createInProcessWorkbookWorker({ runtime, autoRecalc: true })` uses a MessageChannel for testing or a single-thread fallback. If runtime is omitted on a host, it dynamically imports and initializes `formualizer`. Your worker bundler/runtime must support the package's bundler-target WASM import; the client-only `formualizer/worker` entry has no static WASM dependency.
+
+Each mutation resolves with a `WorkerStateHeader`: `revision`, `evaluatedRevision`, `ackClientSeq`, `recalcStatus`, and `hasActiveJob`. Loads reset revision to zero while acknowledging the monotonic client sequence. `client.state`, `client.lastSentClientSeq`, `client.hasInFlightMutations`, and `onStatusChange` support optimistic views. Ordinary reads return their usual values; `getValueWithState` and `readRangeWithState` return `{ data, ...header }`. Cached reads never evaluate or create a missing sheet.
+
+Viewport modes are `values` (full grids or sparse patches), `snapshots` (inspection cells), `deltas` (locations/pending only), and `columnar` (transferable tags, numbers, string table, pending bitset). All coordinates are 1-based inclusive. Subscriptions prioritize their rectangles unless `prioritize: false`; `setRect` retargets them on active and future jobs. Intermediate updates skip unchanged viewports, coalesce dirty rectangles behind a one-frame credit, and honor `throttleMs` (default 16). Initial, manual, rect-change, and terminal refreshes flush immediately. Call `refresh()` for a full reread and `unsubscribe()` or `[Symbol.dispose]()` when finished. Columnar tags: 0 empty, 1 number, 2 boolean, 3 string, 4 error, 5 temporal/other JSON; `numbers` holds either the numeric value or the string-table index.
+
+The async RPC surface includes sheet/table/name metadata, scalar/block mutations, `editBatch`, action boundaries, undo/redo, temporal egress, inspection, dependency tracing, range pages, eval plans, telemetry, one-shot evaluation, parser/tokenizer helpers, and SheetPort sessions. `editBatch` accepts `{ op: 'setValue', sheet, row, col, value }`, formula/block equivalents, or `addSheet`; `{ actionDescription }` groups edits into a native undo action when changelog is enabled. An edit batch is ordered, not rollback-atomic on engine failure. `createSheetPortSession(manifestOrYaml)` returns an async session with manifest/port description, input/output reads, input writes, evaluation and disposal; `evaluateSheetPort` is the one-shot equivalent. Reload disposes old sessions and cached sheet handles.
+
+`autoRecalc` folds edits into one background job and yields a real task turn between steps. One-shot `evaluateAll`, `evaluateCell(s)`, and SheetPort evaluation cancel an implicit auto job first, preserve installed values, then reschedule background work. An explicit paused/driven job retains the engine's `RECALC_JOB_ACTIVE` refusal. `beginRecalc` starts/adopts a paused explicit job; `stepRecalc`, `pauseRecalc`, `prioritize`, and `cancelRecalc` control it. `recalc` resumes paused work and returns Finished/Paused/Cancelled; returning false from `onStep` pauses. `recalcStream` yields detached step reports; breaking defaults to pausing, or cancels with `pauseOnReturn: false`. Both drivers support AbortSignal, including cancellation while awaiting `onProgress`; abort rejects with AbortError. Budgets are soft: cancellation cannot preempt a running indivisible WASM unit.
+
+Register custom functions inside the host with `attachWorkbookWorker(endpoint, { functions })`, load a worker-side ESM module using `registerFunctionModule(url, { exportName: 'functions' })`, or explicitly opt into `allowFunctionFromSource: true` for `registerFunctionFromSource(name, source, options)`. Modules export a name-to-callback map (or callback/options entries); the registry persists across reloads unless the host sets `clearFunctionsOnLoad`. Source registration executes code and is disabled by default. `listFunctions` and `unregisterFunction` manage the same registry.
+
+`loadFromJson(json, options)` forwards workbook options just like the XLSX loader. `loadFromXlsxBytes(bytes, options, { transfer: true })` and `recalculateXlsxBytes(bytes, limit, options, { transfer: true })` transfer whole ArrayBuffers; typed subviews and Node Buffers are copied first so unrelated slab bytes are never detached. Cache-only XLSX output buffers transfer by default (disable with `transfer: false`). Error replies preserve domain fields, exact resource strings and recursive causes.
+
+Run `npm run test:worker-conformance` and `npm run example:worker`. The examples are `examples/worker-reactive-grid.mjs` and `examples/worker-rpc-service.mjs`; the browser fixture also verifies a real Worker. Dispose clients to free jobs, sessions, sheets and the workbook; workers terminate by default, configurable with `terminateOnDispose: false`.

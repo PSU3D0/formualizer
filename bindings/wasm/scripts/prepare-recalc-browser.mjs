@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const stage = path.join(root, 'pkg-node/recalc-browser');
 await fs.access(path.join(stage, 'raw/formualizer_wasm.js'));
 await fs.mkdir(path.join(stage, 'examples'), { recursive: true });
-for (const file of ['index.js', 'recalc.js', 'manifest.js']) {
+for (const file of ['index.js', 'recalc.js', 'manifest.js', 'worker.js', 'worker-entry.js']) {
   const built = await fs.readFile(path.join(root, 'dist', file), 'utf8');
   await fs.writeFile(path.join(stage, file), built.replaceAll('../pkg/formualizer_wasm.js', './raw-entry.js'));
 }

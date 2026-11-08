@@ -13,7 +13,15 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./pkg/*": "./pkg/*"
+    "./pkg/*": "./pkg/*",
+    "./worker": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js"
+    },
+    "./worker-entry": {
+      "types": "./dist/worker-entry.d.ts",
+      "import": "./dist/worker-entry.js"
+    }
   },
   "files": [
     "dist",
@@ -34,7 +42,9 @@
     "example:recalc-browser:prepare": "node scripts/prepare-recalc-browser.mjs",
     "test:sheetport-conformance": "node scripts/sheetport-conformance.mjs",
     "test:inspect-conformance": "node scripts/inspect-ts-conformance.mjs",
-    "clean": "rm -rf dist pkg pkg-node"
+    "clean": "rm -rf dist pkg pkg-node",
+    "test:worker-conformance": "node scripts/worker-conformance.mjs && node scripts/worker-types-conformance.mjs",
+    "example:worker": "node examples/worker-reactive-grid.mjs && node examples/worker-rpc-service.mjs"
   },
   "keywords": [
     "excel",

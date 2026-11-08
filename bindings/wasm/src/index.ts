@@ -939,7 +939,7 @@ export async function recalculateXlsxBytes(
 
 export type WorkbookConstructor = {
   new (options?: WorkbookLoadOptions): WorkbookApi;
-  fromJson(json: string): WorkbookApi;
+  fromJson(json: string, options?: WorkbookLoadOptions): WorkbookApi;
   fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi;
   prototype: WorkbookApi;
 };
@@ -959,17 +959,22 @@ export type SheetPortSessionConstructor = {
 
 const rawWorkbookCtor = wasm.Workbook as unknown as {
   new (options?: WorkbookLoadOptions): WorkbookApi;
-  fromJson(json: string): WorkbookApi;
+  fromJson(json: string, options?: WorkbookLoadOptions): WorkbookApi;
   fromXlsxBytes(bytes: Uint8Array): WorkbookApi;
   fromXlsxBytesWithOptions(bytes: Uint8Array, options?: WorkbookLoadOptions): WorkbookApi;
   prototype: WorkbookApi;
 };
+const rawWorkbookFromJson = rawWorkbookCtor.fromJson.bind(rawWorkbookCtor);
+const rawWorkbookFromJsonWithOptions = wasm.Workbook.fromJsonWithOptions.bind(wasm.Workbook);
 const rawWorkbookFromXlsxBytes = rawWorkbookCtor.fromXlsxBytes.bind(rawWorkbookCtor);
 const rawWorkbookFromXlsxBytesWithOptions = rawWorkbookCtor.fromXlsxBytesWithOptions.bind(rawWorkbookCtor);
 
 Object.assign(rawWorkbookCtor.prototype, { recalc, evaluateWithYield });
 
 export const Workbook = Object.assign(rawWorkbookCtor, {
+  fromJson(json: string, options?: WorkbookLoadOptions): WorkbookApi {
+    return options === undefined ? rawWorkbookFromJson(json) : rawWorkbookFromJsonWithOptions(json, options) as unknown as WorkbookApi;
+  },
   fromXlsxBytes(bytes: XlsxBytesSource, options?: WorkbookLoadOptions): WorkbookApi {
     const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
     return options === undefined

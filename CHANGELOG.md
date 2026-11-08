@@ -20,6 +20,8 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Added
 
+- Added `formualizer/worker` and a browser worker entry with typed asynchronous workbook RPC, automatic and explicit interruptible recalculation, causal revisions, viewport subscriptions with transferable columnar frames, SheetPort sessions and worker-side custom functions. Included Node worker_threads examples and real-browser worker smoke coverage.
+- Forwarded workbook load options through the JavaScript `Workbook.fromJson` facade, matching XLSX loading.
 - Added typed JavaScript/WASM recalculation jobs, viewport priority and pending queries, a pausable synchronous driver, and asynchronous task yielding with AbortSignal cancellation. Included runnable local examples for viewport edits, heartbeat/abort/supersede and pause/repair/resume.
 - Added Python recalculation jobs with immutable step reports, viewport priority and pending queries, a pausable `recalc` driver, and `evaluate_async` with cooperative task cancellation. Native steps release the GIL; Pyodide yields between in-thread steps. Active-job refusals and poisoned engines have typed exceptions, and function-panic payloads retain attribution on Python errors.
 - Added engine-owned recalculation jobs with held schedules, formula progress, changed regions, viewport priority and pending queries. Explicit jobs refuse foreign evaluation requests and apply work/deadline limits across steps; cancellation preserves installed units without advancing the random epoch.

@@ -17,4 +17,4 @@ client.stepRecalc('5');
 client.deleteSheet('S');
 // @ts-expect-error No unknown modes
 client.subscribeViewport({rect:{sheet:'S',startRow:1,startColumn:1,endRow:2,endColumn:2},mode:'bad',onFrame(){}});
-`);execFileSync(new URL('../node_modules/.bin/tsc',import.meta.url),['--strict','--noEmit','--skipLibCheck','--target','ES2022','--module','ES2022','--moduleResolution','bundler',file.pathname],{stdio:'inherit'});console.log('worker declaration conformance passed');
+`);execFileSync(new URL('../node_modules/.bin/tsc',import.meta.url).pathname,['--strict','--noEmit','--skipLibCheck','--target','ES2022','--module','ES2022','--moduleResolution','bundler',file.pathname],{stdio:'inherit'});console.log('worker declaration conformance passed');
