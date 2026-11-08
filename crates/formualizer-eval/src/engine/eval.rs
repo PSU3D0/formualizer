@@ -993,6 +993,51 @@ struct TraceEvaluationCounters {
     cycles: usize,
 }
 
+/// Where a time-boxed evaluation stands. See [`Engine::evaluate_slice`].
+pub struct EvaluationSlice {
+    pass: Option<EvaluationSlicePass>,
+    replans: usize,
+    /// How many formulas the next piece of a layer holds.
+    step: usize,
+}
+
+impl Default for EvaluationSlice {
+    fn default() -> Self {
+        Self {
+            pass: None,
+            replans: 0,
+            step: Self::FIRST_STEP,
+        }
+    }
+}
+
+impl EvaluationSlice {
+    const FIRST_STEP: usize = 16;
+
+    /// Forgets the pass in progress, as any edit must. Committed work stays committed,
+    /// and what remains dirty is scheduled again by the next call.
+    pub fn reset(&mut self) {
+        self.pass = None;
+        self.replans = 0;
+    }
+}
+
+struct EvaluationSlicePass {
+    schedule: EvaluationSchedule,
+    to_evaluate: Vec<VertexId>,
+    old_vdeps: FxHashMap<VertexId, Vec<VertexId>>,
+    unit: usize,
+    done_in_unit: usize,
+}
+
+/// What [`Engine::evaluate_slice`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EvaluationSliceResult {
+    /// No dirty formula is left.
+    pub finished: bool,
+    pub computed_vertices: usize,
+}
+
 pub struct Engine<R> {
     criteria_mask_cache: criteria_mask_cache::CriteriaMaskCache,
     pub(crate) graph: DependencyGraph,
@@ -17036,6 +17081,170 @@ where
     /// Helper: convert 1-based column index to Excel-style letters (1 -> A, 27 -> AA)
     fn col_to_letters(col: u32) -> String {
         col_letters_from_1based(col).expect("column index must be >= 1")
+    }
+
+    /// Evaluates dirty formulas for about `budget`, then returns. Finished work stays
+    /// committed, so a caller on a single thread (browser WASM) can yield between calls
+    /// and carry on. Keep `slice` between calls and call [`EvaluationSlice::reset`] after
+    /// any edit. A cancelled [`Self::evaluate_all_cancellable`] can't do this: it marks
+    /// everything it evaluated dirty again.
+    ///
+    /// One formula, one cycle and the schedule build can't be divided, so a call can run
+    /// over its budget by as much as the slowest of those.
+    pub fn evaluate_slice(
+        &mut self,
+        slice: &mut EvaluationSlice,
+        budget: std::time::Duration,
+    ) -> Result<EvaluationSliceResult, ExcelError> {
+        self.observe_evaluation_resource_request(EvaluationRequestKind::Full, |engine| {
+            engine.evaluate_slice_unobserved(slice, budget)
+        })
+    }
+
+    fn evaluate_slice_unobserved(
+        &mut self,
+        slice: &mut EvaluationSlice,
+        budget: std::time::Duration,
+    ) -> Result<EvaluationSliceResult, ExcelError> {
+        self.observe_function_semantic_epoch()?;
+        let _source_cache = self.source_cache_session();
+        self.validate_deterministic_mode()?;
+        let stop_at = crate::instant::FzInstant::now() + budget;
+        let out_of_time = || crate::instant::FzInstant::now() >= stop_at;
+        if self.config.defer_graph_building && self.has_staged_formulas() {
+            self.build_graph_all()?;
+        }
+        self.require_unified_authority()?;
+        let mut computed_vertices = 0;
+        let mut progressed = false;
+        const MAX_REPLAN: usize = 5;
+        loop {
+            if slice.pass.is_none() {
+                self.begin_evaluation_request();
+                self.reset_virtual_dep_telemetry_if_disabled();
+                let to_evaluate = self.graph.get_evaluation_vertices();
+                if to_evaluate.is_empty() {
+                    self.redirty_for_next_recalc();
+                    self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+                    slice.replans = 0;
+                    return Ok(EvaluationSliceResult {
+                        finished: true,
+                        computed_vertices,
+                    });
+                }
+                let (schedule, old_vdeps, _meta) = self.create_evaluation_schedule(&to_evaluate)?;
+                self.begin_pass(&schedule);
+                slice.step = EvaluationSlice::FIRST_STEP;
+                slice.pass = Some(EvaluationSlicePass {
+                    schedule,
+                    to_evaluate,
+                    old_vdeps,
+                    unit: 0,
+                    done_in_unit: 0,
+                });
+            }
+            let pass = slice.pass.as_mut().expect("pass was just set");
+            while pass.unit < pass.schedule.units.len() {
+                // Every call finishes at least one unit, so a pass always moves on.
+                if progressed && out_of_time() {
+                    return Ok(EvaluationSliceResult {
+                        finished: false,
+                        computed_vertices,
+                    });
+                }
+                match pass.schedule.units[pass.unit] {
+                    ScheduleUnit::Cycle(i) => {
+                        self.handle_cycle_unit(pass.schedule.unit_cycle(i), None, None, None)?;
+                        progressed = true;
+                    }
+                    ScheduleUnit::Layer(i) => {
+                        let layer = pass.schedule.unit_layer(i);
+                        let len = layer.vertices.len();
+                        // A family runs as one unit, so a long run is cut into pieces whose
+                        // size follows how long the last piece took.
+                        let mut done = pass.done_in_unit;
+                        while done < len {
+                            let end = (done + slice.step).min(len);
+                            let piece = layer.sub_layer(done, end);
+                            self.resource_checkpoint(piece.vertices.len() as u64)?;
+                            let buffered = buffer_layer_writes(&piece);
+                            let started = crate::instant::FzInstant::now();
+                            let finished = self.evaluate_layer_units_until(
+                                &piece,
+                                None,
+                                None,
+                                None,
+                                buffered,
+                                Some(stop_at),
+                            )?;
+                            let took = started.elapsed();
+                            computed_vertices += finished;
+                            progressed = true;
+                            done += finished;
+                            if took < budget / 4 {
+                                slice.step = (slice.step * 2).min(1 << 20);
+                            } else if took > budget {
+                                slice.step = (slice.step / 2).max(1);
+                            }
+                            if done < len && out_of_time() {
+                                pass.done_in_unit = done;
+                                return Ok(EvaluationSliceResult {
+                                    finished: false,
+                                    computed_vertices,
+                                });
+                            }
+                        }
+                        pass.done_in_unit = 0;
+                    }
+                }
+                if self.stop_after_unit(&pass.schedule, pass.unit) {
+                    break;
+                }
+                pass.unit += 1;
+            }
+            let pass = slice.pass.take().expect("pass is active");
+            let changed = self.changed_virtual_dep_vertices(&pass.to_evaluate, &pass.old_vdeps);
+            self.resource_checkpoint(0)?;
+            if !self.finish_pass_dirty(&pass.to_evaluate, &changed) {
+                self.redirty_for_next_recalc();
+                self.recalc_epoch = self.recalc_epoch.wrapping_add(1);
+                slice.replans = 0;
+                return Ok(EvaluationSliceResult {
+                    finished: true,
+                    computed_vertices,
+                });
+            }
+            if slice.replans >= MAX_REPLAN {
+                slice.replans = 0;
+                return Err(
+                    self.replan_exhausted_error(MAX_REPLAN, "dynamic dependency evaluation")
+                );
+            }
+            slice.replans += 1;
+            if out_of_time() {
+                return Ok(EvaluationSliceResult {
+                    finished: false,
+                    computed_vertices,
+                });
+            }
+        }
+    }
+
+    /// Builds the graph for staged formulas and treats the values already stored for them
+    /// as current, so that opening a saved workbook needs no calculation and a later edit
+    /// recalculates only what depends on it. Volatile formulas stay due.
+    pub fn adopt_stored_values(&mut self) -> Result<usize, ExcelError> {
+        if self.has_staged_formulas() {
+            self.build_graph_all()?;
+        }
+        let vertices = self.graph.get_evaluation_vertices();
+        self.graph.clear_dirty_flags(&vertices);
+        Ok(vertices.len())
+    }
+
+    /// Marks every formula dirty, as a full recalculation (Ctrl+Alt+F9) needs.
+    pub fn mark_all_formulas_dirty(&mut self) {
+        self.mark_all_formula_vertices_dirty();
     }
 
     /// Evaluate all dirty/volatile vertices with cancellation support
