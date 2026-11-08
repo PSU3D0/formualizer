@@ -469,7 +469,7 @@ impl<'a> Interpreter<'a> {
     fn unknown_function(&self, name: &str) {
         self.unavailable(
             crate::operation_diagnostics::UnavailableOperation::UnknownFunction {
-                name: name.to_ascii_uppercase(),
+                name: name.to_owned(),
             },
         );
     }

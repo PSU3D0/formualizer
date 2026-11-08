@@ -281,7 +281,7 @@ def test_error_reasons_and_unknown_functions_are_reported():
         )
     assert summary["unknown_functions"] == [
         {"name": "SPDVOL", "cells": 4},
-        {"name": "_XLL.EURO", "cells": 1},
+        {"name": "_xll.EURO", "cells": 1},
     ]
     diagnostics = result["operation_diagnostics"]
     assert diagnostics["logicalCellReasonCount"] == 5
@@ -292,7 +292,7 @@ def test_error_reasons_and_unknown_functions_are_reported():
             "namedReasonCount": 0,
             "unlocatedReasonCount": 0,
         },
-        "_XLL.EURO": {
+        "_xll.EURO": {
             "cellReasonCount": 1,
             "namedReasonCount": 0,
             "unlocatedReasonCount": 0,
@@ -304,7 +304,7 @@ def test_error_reasons_and_unknown_functions_are_reported():
     } == {
         ("Sheet!A1", "unknown_function", "SPDVOL"),
         ("Sheet!A2", "unknown_function", "SPDVOL"),
-        ("Sheet!A3", "unknown_function", "_XLL.EURO"),
+        ("Sheet!A3", "unknown_function", "_xll.EURO"),
         ("Sheet!A6", "unknown_function", "SPDVOL"),
         ("Sheet!A8", "unknown_function", "SPDVOL"),
     }

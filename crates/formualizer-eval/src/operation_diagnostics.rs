@@ -106,10 +106,43 @@ impl Default for OperationDiagnosticOptions {
         }
     }
 }
+// Intern unknown functions case-insensitively while retaining the first spelling
+// for every user-facing consumer. Other operation identities remain exact.
+#[derive(Clone)]
+struct OperationIdentity(Arc<UnavailableOperation>);
+impl PartialEq for OperationIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.0.as_ref(), other.0.as_ref()) {
+            (
+                UnavailableOperation::UnknownFunction { name: left },
+                UnavailableOperation::UnknownFunction { name: right },
+            ) => left.eq_ignore_ascii_case(right),
+            (left, right) => left == right,
+        }
+    }
+}
+impl Eq for OperationIdentity {}
+impl std::hash::Hash for OperationIdentity {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self.0.as_ref() {
+            UnavailableOperation::UnknownFunction { name } => {
+                0u8.hash(state);
+                name.len().hash(state);
+                for byte in name.bytes() {
+                    byte.to_ascii_uppercase().hash(state);
+                }
+            }
+            operation => {
+                1u8.hash(state);
+                operation.hash(state);
+            }
+        }
+    }
+}
 #[derive(Default)]
 struct State {
     roots: HashSet<OperationRoot>,
-    operations: HashSet<Arc<UnavailableOperation>>,
+    operations: HashSet<OperationIdentity>,
     operation_text_bytes: usize,
     physical: u64,
     exhaustion: Option<ResourceExhaustionDetail>,
@@ -242,7 +275,12 @@ impl OperationDiagnosticCollector {
                 CellRef::new_absolute(cell.sheet_id, cell.coord.row(), cell.coord.col())
             })
         };
-        let existing = state.operations.get(&operation).cloned();
+        let identity = OperationIdentity(Arc::new(operation));
+        let operation = identity.0.as_ref();
+        let existing = state
+            .operations
+            .get(&identity)
+            .map(|key| Arc::clone(&key.0));
         if let Some(operation) = &existing {
             let root = OperationRoot {
                 cell,
@@ -296,8 +334,8 @@ impl OperationDiagnosticCollector {
             return;
         }
         let operation = existing.unwrap_or_else(|| {
-            let operation = Arc::new(operation);
-            state.operations.insert(Arc::clone(&operation));
+            let operation = Arc::clone(&identity.0);
+            state.operations.insert(identity);
             state.operation_text_bytes = next_text;
             operation
         });
@@ -522,11 +560,14 @@ mod tests {
         let collector = OperationDiagnosticCollector::with_options(OperationDiagnosticOptions {
             sample_limit: 1,
             max_roots: Some(2),
+            max_operation_text_bytes: Some(8),
             ..Default::default()
         });
-        collector.record(Some(cell(0)), gap("GAP"));
-        collector.record(Some(cell(1)), gap("GAP"));
+        collector.record(Some(cell(0)), gap("_xll.Gap"));
+        collector.record(Some(cell(0)), gap("_XLL.GAP"));
+        collector.record(Some(cell(1)), gap("_XLL.gap"));
         let report = collector.snapshot().unwrap();
+        assert_eq!(report.roots[0].operation.as_ref(), &gap("_xll.Gap"));
         assert_eq!(report.roots.len(), 2);
         assert_eq!(report.logical_root_cell_count, 2);
         assert_eq!(report.samples.len(), 1);

@@ -815,7 +815,7 @@ fn test_recalculate_xlsx_bytes_reports_error_reasons_and_unknown_functions() {
     assert_eq!(
         unknown,
         serde_json::json!([
-            {"name": "SPDVOL", "cells": 2}, {"name": "_XLL.EURO", "cells": 1}
+            {"name": "SPDVOL", "cells": 2}, {"name": "_xll.EURO", "cells": 1}
         ])
     );
     let diagnostics: serde_json::Value =
@@ -826,7 +826,7 @@ fn test_recalculate_xlsx_bytes_reports_error_reasons_and_unknown_functions() {
         diagnostics["unavailableFunctions"],
         serde_json::json!({
             "SPDVOL": {"cellReasonCount": 2, "namedReasonCount": 0, "unlocatedReasonCount": 0},
-            "_XLL.EURO": {"cellReasonCount": 1, "namedReasonCount": 0, "unlocatedReasonCount": 0}
+            "_xll.EURO": {"cellReasonCount": 1, "namedReasonCount": 0, "unlocatedReasonCount": 0}
         })
     );
     let roots: std::collections::BTreeSet<_> = diagnostics["samples"]
@@ -844,7 +844,7 @@ fn test_recalculate_xlsx_bytes_reports_error_reasons_and_unknown_functions() {
     assert_eq!(
         roots,
         [
-            ("Sheet1!C1", "_XLL.EURO"),
+            ("Sheet1!C1", "_xll.EURO"),
             ("Sheet1!E1", "SPDVOL"),
             ("Sheet1!G1", "SPDVOL")
         ]

@@ -114,10 +114,8 @@ fn executed_operations_stay_separate_from_final_name_error_causes() {
                 assert!(message.eq_ignore_ascii_case(reason), "{formula}: {message}");
             }
         }
-        let expected: BTreeMap<String, usize> = unknown
-            .into_iter()
-            .map(|n| (n.to_ascii_uppercase(), 1))
-            .collect();
+        let expected: BTreeMap<String, usize> =
+            unknown.into_iter().map(|n| (n.to_owned(), 1)).collect();
         assert_eq!(out.summary.unknown_functions, expected, "{formula}");
         assert_eq!(
             out.operation_diagnostics.logical_cell_reason_count,
@@ -136,6 +134,28 @@ fn executed_operations_stay_separate_from_final_name_error_causes() {
             "{formula}"
         );
     }
+}
+
+#[test]
+fn mixed_case_unknown_functions_share_one_summary_entry() {
+    let input = package(
+        &row(concat!(
+            "<c r=\"A1\"><f>_xll.EURO(1)+_XLL.EURO(2)</f><v>1</v></c>",
+            "<c r=\"B1\"><f>_XLL.euro(3)</f><v>1</v></c>",
+        )),
+        "",
+    );
+    let out = recalc(&input);
+    assert_eq!(out.summary.unknown_functions.len(), 1);
+    let (name, count) = out.summary.unknown_functions.first_key_value().unwrap();
+    assert!(["_xll.EURO", "_XLL.EURO", "_XLL.euro"].contains(&name.as_str()));
+    assert_eq!(*count, 2);
+    assert_eq!(out.operation_diagnostics.logical_cell_reason_count, 2);
+    assert_eq!(out.operation_diagnostics.unavailable_functions.len(), 1);
+    assert_eq!(
+        out.operation_diagnostics.unavailable_functions[name].cell_reason_count,
+        2
+    );
 }
 
 #[test]
@@ -191,7 +211,7 @@ fn shared_formula_members_get_reasons_and_counts_are_complete_beyond_the_limit()
     assert_eq!(out.summary.errors, 6);
     assert_eq!(
         out.summary.unknown_functions,
-        BTreeMap::from([("SPDVOL".to_owned(), 5), ("_XLL.EURO".to_owned(), 1)])
+        BTreeMap::from([("SPDVOL".to_owned(), 5), ("_xll.EURO".to_owned(), 1)])
     );
     assert_eq!(out.operation_diagnostics.logical_cell_reason_count, 6);
     assert_eq!(out.operation_diagnostics.samples.len(), 2);
