@@ -506,6 +506,138 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
     }
 }
 
+/// How many cells of one range each equality criterion matches, from one pass
+/// over the range, so that an array of criteria does not walk it per element.
+/// `count` gives what the `COUNTIF` walk gives: a number criterion meets numbers
+/// (exactly, as the walk's numeric lane does), dates and numeric text; a text
+/// criterion meets text, plain numbers and (when empty) blanks. The tolerance of
+/// `values_equal_invariant` applies wherever the walk uses `criteria_match`.
+/// Text is keyed by `text_equality_key`, so it is equal where the walk's is.
+#[derive(Default)]
+pub(crate) struct EqualityCounts {
+    /// Number cells. These three lanes are sorted by `sorted`.
+    numbers: Vec<f64>,
+    /// Date, time and duration cells, as serials.
+    serials: Vec<f64>,
+    /// Text cells that read as numbers.
+    numeric_text: Vec<f64>,
+    /// Text cells, by `text_equality_key`.
+    text: rustc_hash::FxHashMap<String, u64>,
+    trues: u64,
+    falses: u64,
+    blanks: u64,
+}
+
+impl EqualityCounts {
+    /// Whether `count` can answer this predicate; any other takes the walk.
+    pub(crate) fn answers(pred: &crate::args::CriteriaPredicate) -> bool {
+        matches!(
+            pred,
+            crate::args::CriteriaPredicate::Eq(
+                LiteralValue::Number(_) | LiteralValue::Boolean(_) | LiteralValue::Text(_)
+            )
+        )
+    }
+
+    pub(crate) fn add(&mut self, cell: &LiteralValue) {
+        match cell {
+            LiteralValue::Number(n) => self.numbers.push(*n),
+            LiteralValue::Int(i) => self.numbers.push(*i as f64),
+            LiteralValue::Boolean(true) => self.trues += 1,
+            LiteralValue::Boolean(false) => self.falses += 1,
+            LiteralValue::Empty => self.blanks += 1,
+            LiteralValue::Text(t) => {
+                *self.text.entry(text_equality_key(t)).or_default() += 1;
+                if let Ok(n) = value_to_number(cell) {
+                    self.numeric_text.push(n);
+                }
+            }
+            other => {
+                if let Some(serial) = criteria_number(other) {
+                    self.serials.push(serial);
+                }
+            }
+        }
+    }
+
+    /// Count cells that are not stored, all of them blank.
+    pub(crate) fn add_blanks(&mut self, cells: u64) {
+        self.blanks += cells;
+    }
+
+    /// Ready for `count`.
+    pub(crate) fn sorted(mut self) -> Self {
+        self.numbers.sort_unstable_by(f64::total_cmp);
+        self.serials.sort_unstable_by(f64::total_cmp);
+        self.numeric_text.sort_unstable_by(f64::total_cmp);
+        self
+    }
+
+    /// The cells equal to `pred`; `None` when `answers` is false.
+    pub(crate) fn count(&self, pred: &crate::args::CriteriaPredicate) -> Option<u64> {
+        // The tolerance of `values_equal_invariant`, on a sorted lane.
+        fn within(sorted: &[f64], n: f64) -> u64 {
+            let start = sorted.partition_point(|x| x - n <= -1e-12);
+            let end = sorted.partition_point(|x| x - n < 1e-12);
+            (end - start) as u64
+        }
+        // The numeric lane's comparison: Arrow's total order on a sorted lane.
+        fn exactly(sorted: &[f64], n: f64) -> u64 {
+            let start = sorted.partition_point(|x| x.total_cmp(&n).is_lt());
+            let end = sorted.partition_point(|x| x.total_cmp(&n).is_le());
+            (end - start) as u64
+        }
+        let crate::args::CriteriaPredicate::Eq(target) = pred else {
+            return None;
+        };
+        match target {
+            LiteralValue::Number(n) => Some(
+                exactly(&self.numbers, *n)
+                    + within(&self.serials, *n)
+                    + within(&self.numeric_text, *n),
+            ),
+            LiteralValue::Boolean(true) => Some(self.trues),
+            LiteralValue::Boolean(false) => Some(self.falses),
+            LiteralValue::Text(t) => {
+                let same_text = self.text.get(&text_equality_key(t)).copied().unwrap_or(0);
+                let blanks = if t.is_empty() { self.blanks } else { 0 };
+                let numbers = value_to_number(target).map_or(0, |n| within(&self.numbers, n));
+                Some(same_text + blanks + numbers)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Two texts are equal for the walk's text criterion (`compute_criteria_mask`)
+/// exactly when their keys are. The walk lowercases both sides and compares them
+/// with Arrow `ilike`; for non-ASCII text that is a regex, which matches
+/// character by character under Unicode simple case folding, so `ος` equals `οσ`
+/// and `k` equals the Kelvin sign. The key lowercases the same way, then puts
+/// each character as the least member of its folding class.
+pub(crate) fn text_equality_key(text: &str) -> String {
+    use regex_syntax::hir::{ClassUnicode, ClassUnicodeRange};
+    let lowered = text.to_lowercase();
+    // An ASCII letter's class starts at its capital: `S` before `s` and `ſ`.
+    if lowered.is_ascii() {
+        return lowered.to_ascii_uppercase();
+    }
+    lowered
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii() {
+                return ch.to_ascii_uppercase();
+            }
+            let mut class = ClassUnicode::new([ClassUnicodeRange::new(ch, ch)]);
+            // The regex folds a literal with this same call.
+            match class.try_case_fold_simple() {
+                Ok(()) => class.ranges().first().map_or(ch, |range| range.start()),
+                Err(_) => ch,
+            }
+        })
+        .collect()
+}
+
 /// Wildcard criteria match text cells only: Excel never matches a number,
 /// boolean, error or blank cell against `*`, `?` or `~` patterns.
 fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> bool {
