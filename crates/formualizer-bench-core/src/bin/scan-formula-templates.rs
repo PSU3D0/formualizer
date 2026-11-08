@@ -408,7 +408,7 @@ fn scan_ooxml_formulas(path: &Path) -> Result<Vec<RawFormula>> {
     let mut out = Vec::new();
     let mut entries = Vec::new();
     for i in 0..zip.len() {
-        let name = zip.by_index(i)?.name().to_string();
+        let name = zip.by_index(i)?.name()?.into_owned();
         if name.starts_with("xl/worksheets/") && name.ends_with(".xml") {
             entries.push(name);
         }

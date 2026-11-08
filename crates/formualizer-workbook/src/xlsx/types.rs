@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Portions adapted from Calamine 0.36.0, copyright 2016-2026 Johann Tuffe.
 // See loader/LICENSE.calamine. XLSX-only value errors and shared-formula expansion.
-use quick_xml_cells as quick_xml;
 use std::str::FromStr;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CellErrorType {

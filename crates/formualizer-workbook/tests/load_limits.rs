@@ -75,7 +75,7 @@ fn out_of_order_sparse_xlsx_bytes() -> Vec<u8> {
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).expect("zip entry");
-        let name = file.name().to_string();
+        let name = file.name().expect("fixture ZIP entry name").into_owned();
         out.start_file(name.as_str(), options)
             .expect("start zip entry");
         if name == "xl/worksheets/sheet1.xml" {

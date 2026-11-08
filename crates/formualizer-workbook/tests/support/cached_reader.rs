@@ -71,7 +71,7 @@ impl Xlsx {
         let mut parts = BTreeMap::new();
         for i in 0..zip.len() {
             let mut file = zip.by_index(i).map_err(|e| e.to_string())?;
-            let name = file.name().to_owned();
+            let name = file.name().expect("fixture ZIP entry name").into_owned();
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;
             if name.ends_with(".xml") || name.ends_with(".rels") {
@@ -153,7 +153,7 @@ impl Xlsx {
                     }
                 }
                 Event::Text(t) => {
-                    let text = t.xml_content().map_err(|e| e.to_string())?;
+                    let text = t.xml11_content().map_err(|e| e.to_string())?;
                     if field == b"f" {
                         formula.push_str(&text)
                     } else if field == b"v" || field == b"t" {
@@ -210,7 +210,7 @@ impl Xlsx {
                     _ => {}
                 },
                 Event::Text(e) if inside_text => {
-                    text.push_str(&e.xml_content().map_err(|e| e.to_string())?)
+                    text.push_str(&e.xml11_content().map_err(|e| e.to_string())?)
                 }
                 Event::CData(e) if inside_text => {
                     text.push_str(&e.decode().map_err(|e| e.to_string())?)

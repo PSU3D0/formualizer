@@ -2,6 +2,7 @@
 //! The document is the sole authority. Only emitted colour definitions and
 //! their style references are corrected; no export map survives this call.
 use super::import::{Parts, invalid};
+use crate::xml_compat::AttributeExt as _;
 use quick_xml::{
     Reader, Writer,
     events::{BytesEnd, BytesStart, Event},
@@ -72,7 +73,7 @@ fn attribute(start: &BytesStart<'_>, key: &str) -> io::Result<Option<String>> {
         let a = a.map_err(io::Error::other)?;
         if a.key.as_ref() == key.as_bytes() {
             return a
-                .decode_and_unescape_value(Reader::from_str("").decoder())
+                .decoded_without_normalization(Reader::from_str("").decoder())
                 .map(|v| Some(v.into_owned()))
                 .map_err(io::Error::other);
         }
@@ -609,13 +610,12 @@ fn repair_projection(book: &Workbook, original: &[u8]) -> io::Result<Vec<u8>> {
     let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..archive.len() {
         let entry = archive.by_index(i).map_err(io::Error::other)?;
-        if let Some(bytes) = replacements.get(entry.name()) {
+        let name = entry.name().map_err(io::Error::other)?.into_owned();
+        if let Some(bytes) = replacements.get(&name) {
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(entry.compression())
                 .last_modified_time(entry.last_modified().unwrap_or_default());
-            output
-                .start_file(entry.name(), options)
-                .map_err(io::Error::other)?;
+            output.start_file(name, options).map_err(io::Error::other)?;
             output.write_all(bytes)?;
         } else {
             output.raw_copy_file(entry).map_err(io::Error::other)?;

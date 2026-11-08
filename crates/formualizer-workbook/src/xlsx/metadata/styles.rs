@@ -92,7 +92,7 @@ impl Styles {
         bytes: &[u8],
         options: &ReadOptions,
     ) -> Result<Self, IoError> {
-        use quick_xml_cells::events::Event;
+        use quick_xml::events::Event;
         let mut xml = crate::xlsx::loader::cells::CellXml::new(bytes, options);
         let mut custom = HashMap::new();
         let mut values = Vec::new();
@@ -124,7 +124,7 @@ impl Styles {
                                     let raw = String::from_utf8(attr.value.into_owned())
                                         .map_err(|e| IoError::from_backend("xlsx-style", e))?;
                                     code = Some(
-                                        quick_xml_cells::escape::unescape(&raw)
+                                        quick_xml::escape::unescape(&raw)
                                             .map_err(|e| IoError::from_backend("xlsx-style", e))?
                                             .into_owned(),
                                     );

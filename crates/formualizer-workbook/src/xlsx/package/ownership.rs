@@ -69,7 +69,11 @@ fn read(
             .by_index(index)
             .map_err(|error| IoError::from_backend("zip", error))?;
         #[cfg(test)]
-        record_inflate(file.name());
+        record_inflate(
+            file.name()
+                .map_err(|error| IoError::from_backend("zip", error))?
+                .as_ref(),
+        );
         if let Some(limit) = retain {
             part.bytes.reserve(
                 usize::try_from(file.size())
@@ -104,7 +108,12 @@ fn read(
             }
         }
         if part.actual as u64 != file.size() {
-            return Err(unsupported("ZIP expanded-size mismatch", file.name()));
+            return Err(unsupported(
+                "ZIP expanded-size mismatch",
+                file.name()
+                    .map_err(|error| IoError::from_backend("zip", error))?
+                    .into_owned(),
+            ));
         }
         Ok(())
     })();
@@ -140,7 +149,10 @@ pub(super) fn audit_unique_payloads<'a>(
             .zip
             .by_index_raw(index)
             .map_err(|error| IoError::from_backend("zip", error))?;
-        let name = file.name().to_owned();
+        let name = file
+            .name()
+            .map_err(|error| IoError::from_backend("zip", error))?
+            .into_owned();
         if file.encrypted() {
             return Err(unsupported("encrypted ZIP member", &name));
         }

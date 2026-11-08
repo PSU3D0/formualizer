@@ -21,7 +21,7 @@ fn rewrite_header_row_count(path: &std::path::Path, table_name: &str, header_row
 
     for i in 0..zin.len() {
         let mut f = zin.by_index(i).expect("zip entry");
-        let name = f.name().to_string();
+        let name = f.name().expect("fixture ZIP entry name").into_owned();
 
         let mut data = Vec::new();
         f.read_to_end(&mut data).expect("read entry");

@@ -25,7 +25,7 @@ fn epoch_replay_xlsx(rows: u32, mixed: bool) -> Vec<u8> {
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     for index in 0..input.len() {
         let mut entry = input.by_index(index).unwrap();
-        let name = entry.name().to_string();
+        let name = entry.name().expect("fixture ZIP entry name").into_owned();
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes).unwrap();
         if name == "xl/worksheets/sheet1.xml" {

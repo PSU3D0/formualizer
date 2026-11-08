@@ -13,7 +13,8 @@ const NEW: &str = "xl/metadata.xml";
 /// A stored member, deflated members and an archive comment.
 fn source() -> Vec<u8> {
     let mut z = ZipWriter::new(Cursor::new(Vec::new()));
-    z.set_comment("archive comment kept");
+    z.set_comment("archive comment kept")
+        .expect("fixture archive comment");
     let time = zip::DateTime::from_date_and_time(2020, 1, 2, 3, 4, 6).unwrap();
     let deflated = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
@@ -42,7 +43,7 @@ fn contents(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
             let mut out = Vec::new();
             // read_to_end verifies the CRC-32.
             f.read_to_end(&mut out).unwrap();
-            (f.name().to_owned(), out)
+            (f.name().expect("fixture ZIP entry name").into_owned(), out)
         })
         .collect()
 }
@@ -106,7 +107,13 @@ fn a_new_member_is_appended_and_old_records_and_payloads_are_preserved() {
     let mut z = ZipArchive::new(Cursor::new(&output)).unwrap();
     assert_eq!(z.comment(), COMMENT);
     assert_eq!(z.len(), 5);
-    assert_eq!(z.by_index(4).unwrap().name(), NEW);
+    assert_eq!(
+        z.by_index(4)
+            .unwrap()
+            .name()
+            .expect("fixture ZIP entry name"),
+        NEW
+    );
     assert_eq!(
         z.by_name(NEW).unwrap().compression(),
         CompressionMethod::Deflated
@@ -139,7 +146,7 @@ fn a_new_member_is_appended_and_old_records_and_payloads_are_preserved() {
         if !replaced {
             let f = source.by_index(i).unwrap();
             let size = f.compressed_size() as usize;
-            let data = f.data_start() as usize;
+            let data = f.data_start().unwrap() as usize;
             let shift = lb as isize - la as isize;
             let moved = (data as isize + shift) as usize;
             assert_eq!(

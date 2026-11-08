@@ -316,7 +316,15 @@ fn listed_compatible_parts_preserve_strict_values_and_source_events() {
         let mut archive = zip::ZipArchive::new(IoCursor::new(data)).unwrap();
         for i in 0..archive.len() {
             let mut member = archive.by_index(i).unwrap();
-            if !member.name().ends_with(".xml") && !member.name().ends_with(".rels") {
+            if !member
+                .name()
+                .expect("fixture ZIP entry name")
+                .ends_with(".xml")
+                && !member
+                    .name()
+                    .expect("fixture ZIP entry name")
+                    .ends_with(".rels")
+            {
                 continue;
             }
             let mut bytes = Vec::new();
@@ -324,12 +332,20 @@ fn listed_compatible_parts_preserve_strict_values_and_source_events() {
             parts += 1;
             let compatible = collect(&bytes, ReadPolicy::Compatible);
             if let Ok((Scanned::Done(_), strict)) = collect(&bytes, ReadPolicy::Strict) {
-                let (Scanned::Done(_), compatible) =
-                    compatible.unwrap_or_else(|error| panic!("{path}: {}: {error}", member.name()))
-                else {
+                let (Scanned::Done(_), compatible) = compatible.unwrap_or_else(|error| {
+                    panic!(
+                        "{path}: {}: {error}",
+                        member.name().expect("fixture ZIP entry name")
+                    )
+                }) else {
                     panic!("compatible rescan")
                 };
-                assert_eq!(strict, compatible, "{path}: {}", member.name());
+                assert_eq!(
+                    strict,
+                    compatible,
+                    "{path}: {}",
+                    member.name().expect("fixture ZIP entry name")
+                );
                 accepted += 1;
             }
         }

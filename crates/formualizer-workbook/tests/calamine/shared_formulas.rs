@@ -35,7 +35,7 @@ fn genuinely_shared_xlsx() -> Vec<u8> {
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     for index in 0..input.len() {
         let mut entry = input.by_index(index).unwrap();
-        let name = entry.name().to_string();
+        let name = entry.name().expect("fixture ZIP entry name").into_owned();
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes).unwrap();
         if name == "xl/worksheets/sheet1.xml" {
@@ -301,7 +301,7 @@ fn two_shared_sheets_xlsx() -> Vec<u8> {
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     for index in 0..input.len() {
         let mut entry = input.by_index(index).unwrap();
-        let name = entry.name().to_string();
+        let name = entry.name().expect("fixture ZIP entry name").into_owned();
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes).unwrap();
         if name.starts_with("xl/worksheets/sheet") && name.ends_with(".xml") {
@@ -338,7 +338,7 @@ fn two_fragmented_sheets_xlsx() -> Vec<u8> {
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     for index in 0..input.len() {
         let mut entry = input.by_index(index).unwrap();
-        let name = entry.name().to_string();
+        let name = entry.name().expect("fixture ZIP entry name").into_owned();
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes).unwrap();
         if name.starts_with("xl/worksheets/sheet") && name.ends_with(".xml") {
@@ -392,7 +392,7 @@ fn rewrite_sheet_xml(original: Vec<u8>, rewrite: impl FnOnce(String) -> String) 
     let mut rewrite = Some(rewrite);
     for index in 0..input.len() {
         let mut entry = input.by_index(index).unwrap();
-        let name = entry.name().to_string();
+        let name = entry.name().expect("fixture ZIP entry name").into_owned();
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes).unwrap();
         if name == "xl/worksheets/sheet1.xml" {

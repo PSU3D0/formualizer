@@ -44,9 +44,12 @@ fn rewrite_workbook(bytes: Vec<u8>, rewrite: impl FnOnce(String) -> String) -> V
     let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..input.len() {
         let entry = input.by_index(i).unwrap();
-        if entry.name() == "xl/workbook.xml" {
+        if entry.name().expect("fixture ZIP entry name") == "xl/workbook.xml" {
             output
-                .start_file(entry.name(), zip::write::SimpleFileOptions::default())
+                .start_file(
+                    entry.name().expect("fixture ZIP entry name"),
+                    zip::write::SimpleFileOptions::default(),
+                )
                 .unwrap();
             output.write_all(xml.as_bytes()).unwrap();
         } else {

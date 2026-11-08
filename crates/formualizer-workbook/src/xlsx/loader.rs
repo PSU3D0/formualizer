@@ -879,7 +879,7 @@ enum DeferredReadError {
     Unexpected(&'static str),
     CellType(String),
     Alphanumeric(u8),
-    Xml(quick_xml_cells::Error),
+    Xml(quick_xml::Error),
     XmlEof(&'static str),
     UnexpectedNode(&'static str),
     ParseFloat(std::num::ParseFloatError),

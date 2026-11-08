@@ -40,7 +40,11 @@ pub(crate) fn read_selected<R: Read + Seek>(
             .by_name(name)
             .map_err(|e| IoError::from_backend("zip", e))?;
         #[cfg(test)]
-        super::record_inflate(file.name());
+        super::record_inflate(
+            file.name()
+                .map_err(|error| IoError::from_backend("zip", error))?
+                .as_ref(),
+        );
         let declared = file.size();
         let mut bytes = Vec::new();
         let buffer_limit = options.limits.max_worksheet_bytes.min(

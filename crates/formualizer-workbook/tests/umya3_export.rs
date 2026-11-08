@@ -29,9 +29,11 @@ fn records(xml: &str) -> Vec<(Vec<String>, Attrs)> {
                         let a = a.unwrap();
                         (
                             String::from_utf8(a.key.as_ref().to_vec()).unwrap(),
-                            a.decode_and_unescape_value(reader.decoder())
-                                .unwrap()
-                                .into_owned(),
+                            quick_xml::escape::unescape(
+                                &reader.decoder().decode(&a.value).unwrap(),
+                            )
+                            .unwrap()
+                            .into_owned(),
                         )
                     })
                     .collect();
@@ -94,14 +96,17 @@ fn replace_styles(bytes: &[u8], from: &str, to: &str) -> Vec<u8> {
         let mut entry = archive.by_index(i).unwrap();
         let mut data = Vec::new();
         entry.read_to_end(&mut data).unwrap();
-        if entry.name() == "xl/styles.xml" {
+        if entry.name().expect("fixture ZIP entry name") == "xl/styles.xml" {
             data = String::from_utf8(data)
                 .unwrap()
                 .replace(from, to)
                 .into_bytes();
         }
-        out.start_file(entry.name(), zip::write::SimpleFileOptions::default())
-            .unwrap();
+        out.start_file(
+            entry.name().expect("fixture ZIP entry name"),
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
         out.write_all(&data).unwrap();
     }
     out.finish().unwrap().into_inner()

@@ -2,6 +2,7 @@
 //! parent module, kept verbatim as a test oracle: both must report the same
 //! events, spans and errors for any input.
 use crate::xlsx::recalculate::{IoError, XlsxRecalculateOptions, checkpoint, unsupported};
+use crate::xml_compat::AttributeExt as _;
 use quick_xml::{NsReader, events::Event, name::ResolveResult};
 use std::collections::HashSet;
 use std::ops::Range;
@@ -164,7 +165,7 @@ pub(in crate::xlsx) fn walk(
                         return Err(unsupported("unescaped attribute markup", "XLSX XML"));
                     }
                     let decoded = a
-                        .decode_and_unescape_value(reader.decoder())
+                        .decoded_without_normalization(reader.decoder())
                         .map_err(|e| IoError::from_backend("xlsx-xml", e))?
                         .into_owned();
                     valid_text(&decoded)?;
@@ -223,7 +224,7 @@ pub(in crate::xlsx) fn walk(
                     return Err(unsupported("CDATA terminator in text", "XLSX XML"));
                 }
                 let value = t
-                    .xml_content()
+                    .xml11_content()
                     .map_err(|e| IoError::from_backend("xlsx-xml", e))?;
                 valid_text(&value)?;
                 if path.is_empty() && !value.trim().is_empty() {

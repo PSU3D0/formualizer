@@ -113,7 +113,21 @@ fn read_part<R: Read + Seek>(
 ) -> Result<Vec<u8>, IoError> {
     // An absent semantic cache description remains unavailable. Once a
     // selected payload is read, all safety/I/O failures are terminal.
-    if !archive.file_names().any(|name| name == part) {
+    // Preserve decoded-name membership: ZIP 9's index_for_name first prefers
+    // raw bytes, which is not the same lookup when Unicode path extras exist.
+    let present = (|| -> Result<bool, zip::result::ZipError> {
+        for name in archive.file_names() {
+            if name? == part {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })()
+    .map_err(|error| {
+        budget.fail();
+        IoError::from_backend("zip", error)
+    })?;
+    if !present {
         return Err(malformed(part));
     }
     read_selected(archive, part, options, budget)
@@ -129,14 +143,15 @@ fn read_links(
         budget.fail();
         IoError::from_backend("zip", error)
     })?;
-    if archive.len() > options.limits.max_entries
-        || archive
-            .file_names()
-            .map(|p| p.to_string())
-            .collect::<HashSet<_>>()
-            .len()
-            != archive.len()
-    {
+    let name_count = archive
+        .file_names()
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(|error| {
+            budget.fail();
+            IoError::from_backend("zip", error)
+        })?
+        .len();
+    if archive.len() > options.limits.max_entries || name_count != archive.len() {
         return Err(crate::xlsx::options::resource(
             options,
             "external link package entry limit or duplicate entry",

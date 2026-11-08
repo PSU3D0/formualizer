@@ -1,6 +1,7 @@
 //! Compatibility parsing of defined-name literals and absolute ranges.
 //! Formula text is assembled before trimming, preserving XML entity whitespace.
 use crate::traits::{DefinedName, DefinedNameDefinition, DefinedNameScope};
+use crate::xml_compat::AttributeExt as _;
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_parse::parser::ReferenceType;
 use quick_xml::{
@@ -145,7 +146,7 @@ impl NameParsing {
             .filter_map(Result::ok)
             .find(|attr| attr.key == QName(key))
             .and_then(|attr| {
-                attr.decode_and_unescape_value(reader.decoder())
+                attr.decoded_without_normalization(reader.decoder())
                     .ok()
                     .map(|v| v.into_owned())
             })

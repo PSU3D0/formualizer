@@ -16,7 +16,7 @@ fn inject_external_link_rels(bytes: Vec<u8>, idx: u32, target: &str) -> Vec<u8> 
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).unwrap();
-        let name = entry.name().to_string();
+        let name = entry.name().expect("fixture ZIP entry name").into_owned();
         if entry.is_dir() {
             let _ = writer.add_directory(name, options);
             continue;

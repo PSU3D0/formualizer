@@ -42,7 +42,7 @@ fn normalize_xlsx_styles_for_cross_engine(path: &std::path::Path) -> Result<()> 
         Vec::with_capacity(archive.len());
     for idx in 0..archive.len() {
         let mut entry = archive.by_index(idx)?;
-        let name = entry.name().to_string();
+        let name = entry.name()?.into_owned();
         let method = entry.compression();
         let mut data = Vec::new();
         entry.read_to_end(&mut data)?;

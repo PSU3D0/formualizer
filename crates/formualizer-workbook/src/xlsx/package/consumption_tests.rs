@@ -12,6 +12,30 @@ fn bytes(data: &[u8], method: zip::CompressionMethod) -> Vec<u8> {
     w.finish().unwrap().into_inner()
 }
 #[test]
+fn utf8_entry_names_remain_available_for_repeated_discovery() {
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for name in ["part", "café.xml"] {
+        writer
+            .start_file(
+                name,
+                zip::write::SimpleFileOptions::default()
+                    .compression_method(zip::CompressionMethod::Stored),
+            )
+            .unwrap();
+        writer.write_all(b"data").unwrap();
+    }
+    let source = writer.finish().unwrap().into_inner();
+    let directory = audit_directory(&source, &XlsxRecalculateOptions::default()).unwrap();
+    let archive = open::<true>(&source, &directory).unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            archive.file_names().collect::<Vec<_>>(),
+            ["part", "café.xml"]
+        );
+    }
+}
+
+#[test]
 fn selected_zero_exact_and_plus_one_require_true_eof() {
     for method in [
         zip::CompressionMethod::Stored,
@@ -47,7 +71,8 @@ fn partial_crc_failure_is_charged_and_terminal() {
         .unwrap()
         .by_name("part")
         .unwrap()
-        .data_start() as usize;
+        .data_start()
+        .unwrap() as usize;
     source[offset] ^= 1;
     let mut z = zip::ZipArchive::new(Cursor::new(source)).unwrap();
     let mut budget = ConsumptionBudget::default();
@@ -84,7 +109,8 @@ fn partial_io_failure_is_charged_and_terminal() {
         .unwrap()
         .by_name("part")
         .unwrap()
-        .data_start();
+        .data_start()
+        .unwrap();
     let mut z = zip::ZipArchive::new(Failing {
         inner: Cursor::new(source),
         fail_at: data + 65536,
@@ -136,7 +162,8 @@ fn selected_cancellation_during_output_is_terminal_and_charged() {
         .unwrap()
         .by_name("part")
         .unwrap()
-        .data_start();
+        .data_start()
+        .unwrap();
     let cancel = crate::CancelToken::new();
     let mut z = zip::ZipArchive::new(Cancelling {
         inner: Cursor::new(source),

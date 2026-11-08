@@ -31,7 +31,7 @@ pub fn patch_part(
     let mut dest = zip::ZipWriter::new(output);
     for i in 0..source.len() {
         let file = source.by_index(i).map_err(std::io::Error::other)?;
-        if file.name() == part_name {
+        if file.name().map_err(std::io::Error::other)? == part_name {
             let options = zip::write::SimpleFileOptions::default()
                 .compression_method(zip::CompressionMethod::Deflated);
             dest.start_file(part_name, options)
