@@ -1408,6 +1408,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets(
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
 pub fn formualizer_eval::engine::eval::Engine<R>::cell_has_spill_projection(&self, &str, u32, u32) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_in_empty_table(&self, &str, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
@@ -1481,6 +1482,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::rename_sheet(&mut self, formua
 pub fn formualizer_eval::engine::eval::Engine<R>::rename_staged_formula_sheet(&mut self, &str, &str)
 pub fn formualizer_eval::engine::eval::Engine<R>::reset_ensure_touched(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::reset_evaluation_resource_telemetry(&mut self)
+pub fn formualizer_eval::engine::eval::Engine<R>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view_sheet_ref<'c>(&'c self, &formualizer_common::address::SheetRef<'_>, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolved_name_value(&self, &str, core::option::Option<&str>) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -1610,6 +1613,8 @@ pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::delete_rows(&mut sel
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::insert_columns(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::insert_rows(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::name(&self) -> &str
+pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_formula(&mut self, &str, u32, u32, formualizer_parse::parser::ASTNode) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_row_hidden(&mut self, &str, u32, bool, formualizer_eval::engine::row_visibility::RowVisibilitySource) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -1686,6 +1691,7 @@ pub struct formualizer_eval::engine::eval::ShimSpillManager
 impl core::default::Default for formualizer_eval::engine::eval::ShimSpillManager
 pub fn formualizer_eval::engine::eval::ShimSpillManager::default() -> formualizer_eval::engine::eval::ShimSpillManager
 #[non_exhaustive] pub struct formualizer_eval::engine::eval::TableMetadata
+pub formualizer_eval::engine::eval::TableMetadata::empty_body: bool
 pub formualizer_eval::engine::eval::TableMetadata::end_col: u32
 pub formualizer_eval::engine::eval::TableMetadata::end_row: u32
 pub formualizer_eval::engine::eval::TableMetadata::header_row: bool
@@ -1987,6 +1993,12 @@ pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedForm
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaCellChanged::old: core::option::Option<alloc::string::String>
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaCellChanged::row: u32
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::StagedFormulaCellChanged::sheet: alloc::string::String
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::name: alloc::string::String
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::new_empty_body: bool
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::new_range: formualizer_eval::reference::RangeRef
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::old_empty_body: bool
+pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::TableResized::old_range: formualizer_eval::reference::RangeRef
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::UpdateName
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::UpdateName::name: alloc::string::String
 pub formualizer_eval::engine::graph::editor::change_log::ChangeEvent::UpdateName::new_definition: formualizer_eval::engine::named_range::NamedDefinition
@@ -2256,6 +2268,8 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex(&mut self, formualizer_eval::engine::vertex::VertexId) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex_at(&mut self, formualizer_eval::reference::CellRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula_with_old_state(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode, core::option::Option<formualizer_common::value::LiteralValue>, core::option::Option<formualizer_parse::parser::ASTNode>) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_value(&mut self, formualizer_eval::reference::CellRef, formualizer_common::value::LiteralValue) -> formualizer_eval::engine::vertex::VertexId
@@ -2409,6 +2423,8 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex(&mut self, formualizer_eval::engine::vertex::VertexId) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex_at(&mut self, formualizer_eval::reference::CellRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula_with_old_state(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode, core::option::Option<formualizer_common::value::LiteralValue>, core::option::Option<formualizer_parse::parser::ASTNode>) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_value(&mut self, formualizer_eval::reference::CellRef, formualizer_common::value::LiteralValue) -> formualizer_eval::engine::vertex::VertexId
@@ -2537,6 +2553,12 @@ pub formualizer_eval::engine::graph::ChangeEvent::StagedFormulaCellChanged::new:
 pub formualizer_eval::engine::graph::ChangeEvent::StagedFormulaCellChanged::old: core::option::Option<alloc::string::String>
 pub formualizer_eval::engine::graph::ChangeEvent::StagedFormulaCellChanged::row: u32
 pub formualizer_eval::engine::graph::ChangeEvent::StagedFormulaCellChanged::sheet: alloc::string::String
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::name: alloc::string::String
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::new_empty_body: bool
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::new_range: formualizer_eval::reference::RangeRef
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::old_empty_body: bool
+pub formualizer_eval::engine::graph::ChangeEvent::TableResized::old_range: formualizer_eval::reference::RangeRef
 pub formualizer_eval::engine::graph::ChangeEvent::UpdateName
 pub formualizer_eval::engine::graph::ChangeEvent::UpdateName::name: alloc::string::String
 pub formualizer_eval::engine::graph::ChangeEvent::UpdateName::new_definition: formualizer_eval::engine::named_range::NamedDefinition
@@ -2741,6 +2763,8 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::set_source_table_versio
 impl formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::define_table(&mut self, &str, formualizer_eval::reference::RangeRef, bool, alloc::vec::Vec<alloc::string::String>, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::delete_table(&mut self, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<formualizer_eval::reference::RangeRef, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<formualizer_eval::reference::RangeRef, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::table_names(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn formualizer_eval::engine::graph::DependencyGraph::update_table(&mut self, &str, formualizer_eval::reference::RangeRef, bool, alloc::vec::Vec<alloc::string::String>, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 impl formualizer_eval::engine::graph::DependencyGraph
@@ -5093,6 +5117,12 @@ pub formualizer_eval::engine::ChangeEvent::StagedFormulaCellChanged::new: core::
 pub formualizer_eval::engine::ChangeEvent::StagedFormulaCellChanged::old: core::option::Option<alloc::string::String>
 pub formualizer_eval::engine::ChangeEvent::StagedFormulaCellChanged::row: u32
 pub formualizer_eval::engine::ChangeEvent::StagedFormulaCellChanged::sheet: alloc::string::String
+pub formualizer_eval::engine::ChangeEvent::TableResized
+pub formualizer_eval::engine::ChangeEvent::TableResized::name: alloc::string::String
+pub formualizer_eval::engine::ChangeEvent::TableResized::new_empty_body: bool
+pub formualizer_eval::engine::ChangeEvent::TableResized::new_range: formualizer_eval::reference::RangeRef
+pub formualizer_eval::engine::ChangeEvent::TableResized::old_empty_body: bool
+pub formualizer_eval::engine::ChangeEvent::TableResized::old_range: formualizer_eval::reference::RangeRef
 pub formualizer_eval::engine::ChangeEvent::UpdateName
 pub formualizer_eval::engine::ChangeEvent::UpdateName::name: alloc::string::String
 pub formualizer_eval::engine::ChangeEvent::UpdateName::new_definition: formualizer_eval::engine::named_range::NamedDefinition
@@ -6278,6 +6308,8 @@ pub fn formualizer_eval::engine::graph::DependencyGraph::set_source_table_versio
 impl formualizer_eval::engine::graph::DependencyGraph
 pub fn formualizer_eval::engine::graph::DependencyGraph::define_table(&mut self, &str, formualizer_eval::reference::RangeRef, bool, alloc::vec::Vec<alloc::string::String>, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::delete_table(&mut self, &str) -> core::result::Result<(), formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<formualizer_eval::reference::RangeRef, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::graph::DependencyGraph::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<formualizer_eval::reference::RangeRef, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::graph::DependencyGraph::table_names(&self) -> alloc::vec::Vec<alloc::string::String>
 pub fn formualizer_eval::engine::graph::DependencyGraph::update_table(&mut self, &str, formualizer_eval::reference::RangeRef, bool, alloc::vec::Vec<alloc::string::String>, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 impl formualizer_eval::engine::graph::DependencyGraph
@@ -6332,6 +6364,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets(
 pub fn formualizer_eval::engine::eval::Engine<R>::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::EvaluationTarget], formualizer_eval::engine::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::bulk_set_formulas<I>(&mut self, &str, I) -> core::result::Result<usize, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = (u32, u32, formualizer_parse::parser::ASTNode)>
 pub fn formualizer_eval::engine::eval::Engine<R>::cell_has_spill_projection(&self, &str, u32, u32) -> bool
+pub fn formualizer_eval::engine::eval::Engine<R>::cell_in_empty_table(&self, &str, u32, u32) -> bool
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_formula_parse_diagnostics(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formula_text(&mut self, &str, u32, u32) -> core::option::Option<alloc::string::String>
 pub fn formualizer_eval::engine::eval::Engine<R>::clear_staged_formulas_for_sheet(&mut self, &str)
@@ -6405,6 +6438,8 @@ pub fn formualizer_eval::engine::eval::Engine<R>::rename_sheet(&mut self, formua
 pub fn formualizer_eval::engine::eval::Engine<R>::rename_staged_formula_sheet(&mut self, &str, &str)
 pub fn formualizer_eval::engine::eval::Engine<R>::reset_ensure_touched(&mut self)
 pub fn formualizer_eval::engine::eval::Engine<R>::reset_evaluation_resource_telemetry(&mut self)
+pub fn formualizer_eval::engine::eval::Engine<R>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_common::error::ExcelError>
+pub fn formualizer_eval::engine::eval::Engine<R>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_name_entry(&self, &str, formualizer_eval::reference::SheetId) -> core::option::Option<&formualizer_eval::engine::named_range::NamedRange>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view_sheet_ref<'c>(&'c self, &formualizer_common::address::SheetRef<'_>, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'c>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::resolved_name_value(&self, &str, core::option::Option<&str>) -> core::option::Option<formualizer_common::value::LiteralValue>
@@ -6534,6 +6569,8 @@ pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::delete_rows(&mut sel
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::insert_columns(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::insert_rows(&mut self, &str, u32, u32) -> core::result::Result<formualizer_eval::engine::graph::editor::vertex_editor::ShiftSummary, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::name(&self) -> &str
+pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::resize_table_body(&mut self, &str, u32, bool) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_formula(&mut self, &str, u32, u32, formualizer_parse::parser::ASTNode) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_cell_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::eval::EngineAction<'a, R>::set_row_hidden(&mut self, &str, u32, bool, formualizer_eval::engine::row_visibility::RowVisibilitySource) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
@@ -7392,6 +7429,7 @@ impl core::hash::Hash for formualizer_eval::engine::graph::StripeKey
 pub fn formualizer_eval::engine::graph::StripeKey::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::graph::StripeKey
 #[non_exhaustive] pub struct formualizer_eval::engine::TableMetadata
+pub formualizer_eval::engine::TableMetadata::empty_body: bool
 pub formualizer_eval::engine::TableMetadata::end_col: u32
 pub formualizer_eval::engine::TableMetadata::end_row: u32
 pub formualizer_eval::engine::TableMetadata::header_row: bool
@@ -7492,6 +7530,8 @@ pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>:
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_edge(&mut self, formualizer_eval::engine::vertex::VertexId, formualizer_eval::engine::vertex::VertexId) -> bool
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex(&mut self, formualizer_eval::engine::vertex::VertexId) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::remove_vertex_at(&mut self, formualizer_eval::reference::CellRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table(&mut self, &str, formualizer_eval::reference::RangeRef) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::resize_table_body(&mut self, &str, formualizer_eval::reference::RangeRef, bool) -> core::result::Result<(), formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_formula_with_old_state(&mut self, formualizer_eval::reference::CellRef, formualizer_parse::parser::ASTNode, core::option::Option<formualizer_common::value::LiteralValue>, core::option::Option<formualizer_parse::parser::ASTNode>) -> formualizer_eval::engine::vertex::VertexId
 pub fn formualizer_eval::engine::graph::editor::vertex_editor::VertexEditor<'g>::set_cell_value(&mut self, formualizer_eval::reference::CellRef, formualizer_common::value::LiteralValue) -> formualizer_eval::engine::vertex::VertexId
