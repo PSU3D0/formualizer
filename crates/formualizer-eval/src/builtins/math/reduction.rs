@@ -126,7 +126,7 @@ impl Function for MinFn {
                     for res in view.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
-                            if let Some(n) = arrow::compute::kernels::aggregate::min(col.as_ref())
+                            if let Some(n) = arrow_arith::aggregate::min(col.as_ref())
                                 && mv.is_none_or(|current| n < current)
                             {
                                 mv = Some(n);
@@ -281,7 +281,7 @@ impl Function for MaxFn {
                     for res in view.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
-                            if let Some(n) = arrow::compute::kernels::aggregate::max(col.as_ref())
+                            if let Some(n) = arrow_arith::aggregate::max(col.as_ref())
                                 && mv.is_none_or(|current| n > current)
                             {
                                 mv = Some(n);

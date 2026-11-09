@@ -20,6 +20,9 @@ use zip::ZipArchive;
 /// transfer to their plans; opaque members never enter this map.
 pub(crate) struct Archive<'a> {
     zip: ZipArchive<Cursor<&'a [u8]>>,
+    // ZIP 9 decodes names fallibly/lazily. Preserve stable repeated discovery
+    // iteration and surface decoding errors once at the package boundary.
+    names: Vec<String>,
     parts: BTreeMap<String, VerifiedPart>,
     provisional: Option<ReadOptions>,
     ordinary: Option<(ReadOptions, ConsumptionBudget)>,
@@ -270,9 +273,9 @@ fn descriptor(bytes: &[u8], data_end: usize, central: &[u8], name: &str) -> Resu
         (false, false) => Err(unsupported("ZIP data descriptor mismatch", name)),
     }
 }
-// ZIP7 indexes members by name and can hide duplicate central-directory names.
+// The zip crate indexes members by name and can hide duplicate central-directory names.
 // This is a bounded metadata audit, NOT a ZIP writer/decoder. It runs before
-// ZIP7 parses the directory. The central directory is authoritative; local
+// the zip crate parses the directory. The central directory is authoritative; local
 // headers and data descriptors must agree with it, and members must tile the
 // bytes before the directory. ZIP64, encryption, entry comments, split
 // archives and extra fields outside a metadata-only allow-list are refused.
@@ -435,7 +438,7 @@ fn audit_directory_with<const STRICT: bool>(
         members,
     })
 }
-/// Parse the audited directory with ZIP7 and confirm it agrees with the audit.
+/// Parse the audited directory with the zip crate and confirm it agrees with the audit.
 fn open<'a, const STRICT: bool>(
     bytes: &'a [u8],
     directory: &Directory,
@@ -451,14 +454,24 @@ fn open<'a, const STRICT: bool>(
             "XLSX package",
         ));
     }
+    let names = archive
+        .file_names()
+        .map(|name| name.map(std::borrow::Cow::into_owned))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| IoError::from_backend("zip", error))?;
     Ok(Archive {
         zip: archive,
+        names,
         parts: BTreeMap::new(),
         provisional: None,
         ordinary: None,
     })
 }
 impl Archive<'_> {
+    pub(crate) fn file_names(&self) -> impl Iterator<Item = &str> {
+        self.names.iter().map(String::as_str)
+    }
+
     pub(crate) fn take_consumption_budget(&mut self) -> ConsumptionBudget {
         self.ordinary.take().expect("ordinary archive budget").1
     }
@@ -555,7 +568,11 @@ pub(crate) fn read_part(
         .by_name(name)
         .map_err(|e| IoError::from_backend("zip", e))?;
     #[cfg(test)]
-    record_inflate(file.name());
+    record_inflate(
+        file.name()
+            .map_err(|error| IoError::from_backend("zip", error))?
+            .as_ref(),
+    );
     // Package admission audited this member size; still bound both the
     // reservation and the actual read, including the over-limit probe byte.
     let capacity = usize::try_from(file.size())

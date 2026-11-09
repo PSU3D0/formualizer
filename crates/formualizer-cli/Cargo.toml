@@ -51,4 +51,4 @@ required-features = ["signals"]
 
 [dev-dependencies]
 tempfile.workspace = true
-zip = { version = "7.2", default-features = false, features = ["deflate"] }
+zip = { version = "9.4", default-features = false, features = ["deflate-flate2-zlib-rs"] }

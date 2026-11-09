@@ -129,7 +129,8 @@ pub fn new_vertical() -> Parts {
 /// comment, with a fixed timestamp.
 pub fn pack(parts: &Parts) -> Vec<u8> {
     let mut z = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    z.set_comment(ARCHIVE_COMMENT);
+    z.set_comment(ARCHIVE_COMMENT)
+        .expect("fixture archive comment");
     let deflated = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
         .last_modified_time(zip::DateTime::from_date_and_time(2020, 1, 2, 3, 4, 6).unwrap());
@@ -159,7 +160,7 @@ pub fn unpack(bytes: &[u8]) -> Parts {
         let mut f = z.by_index(i).unwrap();
         let mut s = String::new();
         f.read_to_string(&mut s).unwrap();
-        out.insert(f.name().to_owned(), s);
+        out.insert(f.name().expect("fixture ZIP entry name").into_owned(), s);
     }
     out
 }
@@ -331,7 +332,7 @@ fn ns_elements(xml: &str) -> Vec<NsElement> {
                             namespace(ans),
                             String::from_utf8(alocal.as_ref().to_vec()).unwrap(),
                         ),
-                        a.decode_and_unescape_value(reader.decoder())
+                        quick_xml::escape::unescape(&reader.decoder().decode(&a.value).unwrap())
                             .unwrap()
                             .into_owned(),
                     );

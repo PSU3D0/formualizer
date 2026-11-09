@@ -40,7 +40,7 @@ fn members(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
             let mut f = z.by_index(i).unwrap();
             let mut out = Vec::new();
             f.read_to_end(&mut out).unwrap();
-            (f.name().to_owned(), out)
+            (f.name().expect("fixture ZIP entry name").into_owned(), out)
         })
         .collect()
 }

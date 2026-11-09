@@ -15,7 +15,7 @@ fn truncated_content_types() -> Vec<u8> {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for i in 0..source.len() {
         let mut file = source.by_index(i).unwrap();
-        let name = file.name().to_string();
+        let name = file.name().expect("fixture ZIP entry name").into_owned();
         let mut body = Vec::new();
         file.read_to_end(&mut body).unwrap();
         if name == "[Content_Types].xml" {

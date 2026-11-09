@@ -23,12 +23,10 @@ parking_lot = "0.12"
 chrono = { workspace = true }
 once_cell = { workspace = true }
 rustc-hash = { workspace = true }
-zip = { version = "7.2", default-features = false, features = ["deflate"], optional = true }
+zip = { version = "9.4", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 atoi_simd = "0.18"
 fast-float2 = "0.2"
-quick-xml = { version = "0.39", features = ["encoding"], optional = true }
-# Pinned XLSX cell reader uses the same XML API as its upstream implementation.
-quick-xml-cells = { package = "quick-xml", version = "0.41", features = ["encoding"], optional = true }
+quick-xml = { version = "0.41", features = ["encoding"], optional = true }
 
 [features]
 # system-clock: forwards eval's ambient-time feature (Local::now/Utc::now).
@@ -43,7 +41,7 @@ csv = ["dep:csv"]
 # Legacy feature alias: XLSX reads use the native Compatible reader.
 calamine = ["xlsx-recalc"]
 # Native Compatible loading and source-preserving XLSX formula-cache recalculation.
-xlsx-recalc = ["dep:zip", "dep:quick-xml", "dep:quick-xml-cells", "dep:memmap2"]
+xlsx-recalc = ["dep:zip", "dep:quick-xml", "dep:memmap2"]
 umya = ["dep:umya-spreadsheet", "dep:zip", "dep:quick-xml"]
 umya3 = ["dep:umya-spreadsheet3", "dep:zip", "dep:quick-xml", "dep:getrandom04"]
 # No-op compatibility alias, retained only so existing `features = ["mmap"]`

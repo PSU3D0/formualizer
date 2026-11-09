@@ -1,4 +1,4 @@
-//! Surgical ZIP32 package edits. ZIP7 supplies compression and CRC generation;
+//! Surgical ZIP32 package edits. The zip crate supplies compression and CRC generation;
 //! original local/central metadata is retained, not normalized by raw_copy_file.
 //! Admission has rejected ZIP64, encryption and extra fields outside its
 //! metadata-only allow-list.
@@ -35,7 +35,7 @@ impl Edits {
 }
 
 /// CRC-32, compressed size and the compressed payload of `data`, produced
-/// by ZIP7 with `options`.
+/// by the zip crate with `options`.
 fn encode(
     data: &[u8],
     options: SimpleFileOptions,
@@ -63,7 +63,9 @@ fn encode(
     let payload = temporary
         .by_index(0)
         .map_err(|e| IoError::from_backend("zip", e))?;
-    let body = payload.data_start() as usize;
+    let body = payload
+        .data_start()
+        .ok_or_else(|| unsupported("missing ZIP payload offset", name))? as usize;
     let compressed = encoded
         .get(body..body + payload.compressed_size() as usize)
         .ok_or_else(|| unsupported("ZIP payload range", name))?
@@ -108,7 +110,7 @@ pub(in crate::xlsx) fn rewrite(
         let source = archive
             .by_name(name)
             .map_err(|e| IoError::from_backend("zip", e))?;
-        if source.data_start() as usize != member.data
+        if source.data_start() != Some(member.data as u64)
             || source.compressed_size() as usize != member.data_end - member.data
         {
             return Err(unsupported("inconsistent ZIP member range", name));

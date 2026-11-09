@@ -2,6 +2,7 @@
 //!
 //! Only original border colour metadata is read here. Umya remains the document
 //! parser and authority. No XML, patch map or alternate document survives import.
+use crate::xml_compat::AttributeExt as _;
 use quick_xml::{Reader, events::Event};
 use std::collections::BTreeMap;
 use std::io::{self, BufReader, Cursor, Read};
@@ -344,10 +345,11 @@ impl<'a> Parts<'a> {
             if entry.size() > PART_LIMIT || total > TOTAL_LIMIT {
                 return Err(invalid("XLSX expanded size limit exceeded"));
             }
-            if resolve("", entry.name())? != entry.name().trim_end_matches('/') {
+            let name = entry.name().map_err(io::Error::other)?.into_owned();
+            if resolve("", &name)? != name.trim_end_matches('/') {
                 return Err(invalid("non-canonical XLSX part name"));
             }
-            if !names.insert(entry.name().to_owned()) {
+            if !names.insert(name) {
                 return Err(invalid("duplicate XLSX part"));
             }
         }
@@ -424,7 +426,7 @@ impl<'a> Parts<'a> {
                             .map_err(io::Error::other)?
                             .to_owned();
                         let value = attr
-                            .decode_and_unescape_value(reader.decoder())
+                            .decoded_without_normalization(reader.decoder())
                             .map_err(io::Error::other)?
                             .into_owned();
                         if attrs.insert(key, value).is_some() {

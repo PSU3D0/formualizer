@@ -772,7 +772,7 @@ fn xml_parts(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
         let Ok(mut file) = archive.by_index(i) else {
             continue;
         };
-        let name = file.name().to_owned();
+        let name = file.name().expect("fixture ZIP entry name").into_owned();
         if !(name.ends_with(".xml") || name.ends_with(".rels")) {
             continue;
         }

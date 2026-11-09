@@ -25,7 +25,8 @@ fn parts(rows: &str) -> BTreeMap<String, String> {
 }
 fn pack(parts: &BTreeMap<String, String>) -> Vec<u8> {
     let mut z = ZipWriter::new(Cursor::new(Vec::new()));
-    z.set_comment("archive-comment");
+    z.set_comment("archive-comment")
+        .expect("fixture archive comment");
     let options = zip::write::SimpleFileOptions::default()
         .unix_permissions(0o640)
         .last_modified_time(zip::DateTime::from_date_and_time(2020, 1, 2, 3, 4, 6).unwrap());
@@ -1062,7 +1063,10 @@ fn inert_sheets_keep_scope_order_and_original_parts() {
         }
         let zip = ZipArchive::new(Cursor::new(&out.bytes)).unwrap();
         assert_eq!(zip.len(), p.len());
-        assert!(!zip.file_names().any(|n| n.contains("__inert_sheet")));
+        assert!(
+            !zip.file_names()
+                .any(|n| n.expect("fixture ZIP entry name").contains("__inert_sheet"))
+        );
         for (name, original) in &p {
             if !name.starts_with("xl/worksheets/") {
                 assert_eq!(member(&out.bytes, name), *original);
@@ -1390,15 +1394,19 @@ fn stale_cache_and_untouched_members_and_metadata() {
     for i in 0..before.len() {
         let a = before.by_index(i).unwrap();
         let b = after.by_index(i).unwrap();
-        assert_eq!(a.name(), b.name());
+        assert_eq!(
+            a.name().expect("fixture ZIP entry name"),
+            b.name().expect("fixture ZIP entry name")
+        );
         assert_eq!(a.last_modified(), b.last_modified());
         assert_eq!(a.unix_mode(), b.unix_mode());
         assert_eq!(a.compression(), b.compression());
-        if a.name() != SHEET {
+        if a.name().expect("fixture ZIP entry name") != SHEET {
             assert_eq!(
-                &input[a.data_start() as usize..(a.data_start() + a.compressed_size()) as usize],
-                &out.bytes
-                    [b.data_start() as usize..(b.data_start() + b.compressed_size()) as usize]
+                &input[a.data_start().unwrap() as usize
+                    ..(a.data_start().unwrap() + a.compressed_size()) as usize],
+                &out.bytes[b.data_start().unwrap() as usize
+                    ..(b.data_start().unwrap() + b.compressed_size()) as usize]
             );
         }
     }
@@ -1841,8 +1849,10 @@ fn multiple_changed_members_relocate_growing_and_shrinking_payloads() {
     let a = before.by_name("zz/opaque.bin").unwrap();
     let b = after.by_name("zz/opaque.bin").unwrap();
     assert_eq!(
-        &input[a.data_start() as usize..(a.data_start() + a.compressed_size()) as usize],
-        &out.bytes[b.data_start() as usize..(b.data_start() + b.compressed_size()) as usize]
+        &input[a.data_start().unwrap() as usize
+            ..(a.data_start().unwrap() + a.compressed_size()) as usize],
+        &out.bytes[b.data_start().unwrap() as usize
+            ..(b.data_start().unwrap() + b.compressed_size()) as usize]
     );
     assert_eq!(data(&out.bytes, 0), Data::Float(2.0));
     assert_eq!(

@@ -95,7 +95,7 @@ fn contents(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
             let mut out = Vec::new();
             // Verifies the CRC-32 against the central record.
             f.read_to_end(&mut out).unwrap();
-            (f.name().to_owned(), out)
+            (f.name().expect("fixture ZIP entry name").into_owned(), out)
         })
         .collect()
 }

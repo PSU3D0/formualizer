@@ -24,7 +24,7 @@ fn rewrite_sheet_formula(path: &std::path::Path, sheet_xml: &str, from: &str, to
 
     for i in 0..zin.len() {
         let mut f = zin.by_index(i).expect("zip entry");
-        let name = f.name().to_string();
+        let name = f.name().expect("fixture ZIP entry name").into_owned();
 
         if f.is_dir() {
             let _ = zout.add_directory(name, options);

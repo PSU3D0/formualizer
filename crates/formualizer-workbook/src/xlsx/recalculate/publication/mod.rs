@@ -86,7 +86,7 @@ pub(super) fn publish_caches(
         .filter(|d| d.policy == FormulaParsePolicy::CoerceToError)
         .map(|d| (d.sheet.clone(), d.row, d.col))
         .collect();
-    // Declared central-directory sizes: ZIP7's decompressed_size() is None
+    // Declared central-directory sizes: the zip crate's decompressed_size() is None
     // for members with data descriptors, which admission accepts.
     let mut expanded = package::expanded_size(&mut archive)?;
     let Publication {

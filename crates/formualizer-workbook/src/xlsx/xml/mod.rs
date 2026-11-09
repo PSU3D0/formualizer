@@ -6,6 +6,7 @@
 //! interned per walk. The validation policy is the one the owned-string
 //! walker (kept as a test oracle in `reference`) enforced, error for error.
 #![cfg_attr(not(feature = "xlsx-recalc"), allow(dead_code))]
+use crate::xml_compat::AttributeExt as _;
 #[cfg(any(test, feature = "xlsx-recalc"))]
 pub(crate) mod worksheet;
 
@@ -606,7 +607,7 @@ pub(crate) fn attribute<'a>(
     // Without a reference the decoded value is the raw slice of the already
     // validated input; otherwise decode and validate the replacement text.
     let decoded = if reference {
-        let decoded = a.decode_and_unescape_value(decoder).map_err(backend)?;
+        let decoded = a.decoded_without_normalization(decoder).map_err(backend)?;
         if let Cow::Owned(decoded) = &decoded {
             valid_text(decoded)?;
         }
@@ -877,7 +878,7 @@ fn walk_inner<'a, const CDATA: u8>(
                         if cdata_end(&t) {
                             return Err(unsupported("CDATA terminator in text", "XLSX XML"));
                         }
-                        let value = t.xml_content().map_err(backend)?;
+                        let value = t.xml11_content().map_err(backend)?;
                         // A borrowed value is a slice of the already validated input.
                         if let Cow::Owned(value) = &value {
                             valid_text(value)?;

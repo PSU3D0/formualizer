@@ -95,7 +95,7 @@ fn bulk_spill_clear_dirties_dependents_without_delta_scan_fallback() {
                 for res in av.numbers_slices() {
                     let (_, _, num_cols) = res.unwrap();
                     for col in num_cols {
-                        tot += arrow::compute::kernels::aggregate::sum(col.as_ref()).unwrap_or(0.0);
+                        tot += arrow_arith::aggregate::sum(col.as_ref()).unwrap_or(0.0);
                     }
                 }
                 assert!((tot - 12_502_500.0).abs() < 1e-6, "arrow sum saw {tot}");

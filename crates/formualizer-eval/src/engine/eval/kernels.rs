@@ -265,9 +265,9 @@ impl ArgLanes<'_> {
                 };
                 let slice = numbers.slice(lo - seg.row, hi - lo + 1);
                 let n = if max {
-                    arrow::compute::kernels::aggregate::max(&slice)
+                    arrow_arith::aggregate::max(&slice)
                 } else {
-                    arrow::compute::kernels::aggregate::min(&slice)
+                    arrow_arith::aggregate::min(&slice)
                 };
                 if let Some(n) = n
                     && acc.is_none_or(|current| if max { n > current } else { n < current })

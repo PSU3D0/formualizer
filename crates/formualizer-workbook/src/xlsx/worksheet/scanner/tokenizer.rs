@@ -253,7 +253,7 @@ impl<'a> XmlState<'a> {
                 if cdata_end(&t) {
                     return Err(unsupported("CDATA terminator in text", "XLSX XML"));
                 }
-                let value = t.xml_content().map_err(backend)?;
+                let value = t.xml11_content().map_err(backend)?;
                 if let Cow::Owned(value) = &value {
                     valid_text(value)?;
                 }

@@ -2703,7 +2703,7 @@ fn fill_numeric_equality_nulls(
                 // Nulls are already "no match".
                 return Some(mask.clone());
             }
-            let nulls = arrow::compute::is_null(mask).ok()?;
+            let nulls = arrow_arith::boolean::is_null(mask).ok()?;
             crate::compute_prelude::boolean::or_kleene(mask, &nulls).ok()
         }
         Some(text) => {
@@ -2733,11 +2733,11 @@ fn compute_criteria_mask(
     col_in_view: usize,
     pred: &crate::args::CriteriaPredicate,
 ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
-    use crate::compute_prelude::{boolean, cmp, concat_arrays};
-    use arrow::compute::kernels::comparison::{ilike, nilike};
+    use crate::compute_prelude::{boolean, cmp, concat_engine_arrays as concat_arrays};
     use arrow_array::{
         Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder,
     };
+    use arrow_string::like::{ilike, nilike};
 
     // Helper: apply a numeric predicate to a single Float64Array chunk
     fn apply_numeric_pred(

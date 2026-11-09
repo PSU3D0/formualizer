@@ -74,10 +74,13 @@ fn rewrite(source: &[u8], mut transform: impl FnMut(&str, String) -> String) -> 
         let mut data = String::new();
         entry.read_to_string(&mut data).unwrap();
         output
-            .start_file(entry.name(), zip::write::SimpleFileOptions::default())
+            .start_file(
+                entry.name().expect("fixture ZIP entry name"),
+                zip::write::SimpleFileOptions::default(),
+            )
             .unwrap();
         output
-            .write_all(transform(entry.name(), data).as_bytes())
+            .write_all(transform(&entry.name().expect("fixture ZIP entry name"), data).as_bytes())
             .unwrap();
     }
     output.finish().unwrap().into_inner()

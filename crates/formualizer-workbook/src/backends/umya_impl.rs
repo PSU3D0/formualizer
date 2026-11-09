@@ -207,7 +207,7 @@ impl UmyaAdapter {
             let mut entry = archive
                 .by_index(i)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            let name = entry.name().to_string();
+            let name = entry.name().map_err(std::io::Error::other)?.into_owned();
             if !name.starts_with("xl/tables/") || !name.ends_with(".xml") {
                 continue;
             }

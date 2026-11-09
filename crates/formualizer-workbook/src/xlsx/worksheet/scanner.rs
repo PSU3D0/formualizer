@@ -263,7 +263,7 @@ fn scan_inner<const COUNT_PATHS: bool, const STRICT: bool>(
                 if lexical.path.is_empty() {
                     return Err(unsupported("CDATA outside XML root", "XLSX XML"));
                 }
-                let value = data.xml_content().map_err(backend)?;
+                let value = data.xml11_content().map_err(backend)?;
                 accept_text!(value, start + 9, end - 3);
                 continue;
             }

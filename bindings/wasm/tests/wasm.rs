@@ -2020,7 +2020,10 @@ fn test_source_table_hydrates_before_formula_ingestion() {
         let mut file = archive.by_index(i).unwrap();
         let mut body = String::new();
         file.read_to_string(&mut body).unwrap();
-        parts.insert(file.name().to_owned(), body);
+        parts.insert(
+            file.name().expect("fixture ZIP entry name").into_owned(),
+            body,
+        );
     }
     let sheet = parts.get_mut("xl/worksheets/sheet1.xml").unwrap();
     *sheet = sheet.replace("_xlfn.SEQUENCE($B$1)", "SUM(Table1[Qty])")
@@ -2074,7 +2077,7 @@ fn volatile_fixture_xlsx_bytes() -> Vec<u8> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).unwrap();
-        let name = file.name().to_owned();
+        let name = file.name().expect("fixture ZIP entry name").into_owned();
         let mut contents = String::new();
         file.read_to_string(&mut contents).unwrap();
         if name == "xl/worksheets/sheet1.xml" {
@@ -2225,7 +2228,7 @@ fn external_link_fixture_with(c1: &str) -> Vec<u8> {
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     for i in 0..source.len() {
         let mut entry = source.by_index(i).unwrap();
-        let name = entry.name().to_string();
+        let name = entry.name().expect("fixture ZIP entry name").into_owned();
         let mut xml = String::new();
         entry.read_to_string(&mut xml).unwrap();
         let xml = match name.as_str() {

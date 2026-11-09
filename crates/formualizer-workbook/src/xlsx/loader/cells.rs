@@ -11,7 +11,6 @@ use quick_xml::{
     Reader,
     events::{BytesStart, Event},
 };
-use quick_xml_cells as quick_xml;
 use std::borrow::Cow;
 use worksheet::events::Value;
 
