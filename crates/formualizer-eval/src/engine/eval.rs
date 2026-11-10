@@ -2728,6 +2728,26 @@ fn fill_numeric_equality_nulls(
     }
 }
 
+/// A criterion's text as an Arrow LIKE pattern. Arrow LIKE uses backslash
+/// escapes, and `%`, `_` and `\` are literal in Excel, so they are escaped;
+/// with `wildcards`, Excel's `*` and `?` become `%` and `_`. Every criteria
+/// kernel that compares text with `ilike`/`nilike` builds its pattern here.
+fn like_pattern(text: &str, wildcards: bool) -> String {
+    let mut pattern = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '%' | '_' | '\\' => {
+                pattern.push('\\');
+                pattern.push(ch);
+            }
+            '*' if wildcards => pattern.push('%'),
+            '?' if wildcards => pattern.push('_'),
+            _ => pattern.push(ch),
+        }
+    }
+    pattern
+}
+
 fn compute_criteria_mask(
     view: &RangeView<'_>,
     col_in_view: usize,
@@ -2910,22 +2930,6 @@ fn compute_criteria_mask(
         };
     }
 
-    // Arrow LIKE uses backslash escapes; SQL punctuation is literal in Excel.
-    let like_pattern = |text: &str, wildcards: bool| {
-        let mut pattern = String::with_capacity(text.len());
-        for ch in text.chars() {
-            match ch {
-                '%' | '_' | '\\' => {
-                    pattern.push('\\');
-                    pattern.push(ch);
-                }
-                '*' if wildcards => pattern.push('%'),
-                '?' if wildcards => pattern.push('_'),
-                _ => pattern.push(ch),
-            }
-        }
-        pattern
-    };
     let (text_kind, text_pat, empty_special) = match pred {
         crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(t)) => {
             (0u8, like_pattern(&t.to_lowercase(), false), t.is_empty())

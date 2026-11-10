@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `_` and `%` in a text criterion are literal in family execution, as they already were elsewhere. A filled-down `=COUNTIF($A$1:$A$40,C1)` with `a_c` or `50%` in column C counted `abc` or `50x` too, because the family kernel passed the criterion to Arrow `ilike` unescaped.
+
 ## [0.14.0] - 2026-11-08
 
 Recalculation no longer has to finish before your program can do anything else. A 0.14 recalculation is a job you can run in slices of a few milliseconds, pause, resume, cancel, or point at the cells someone is looking at. Values already computed are kept. The same model works in Rust, in Python (including asyncio) and in JavaScript, and a new `formualizer/worker` entry runs a whole workbook off the main thread.
