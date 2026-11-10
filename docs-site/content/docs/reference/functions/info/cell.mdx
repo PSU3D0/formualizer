@@ -13,11 +13,25 @@ Supported `info_type` values (case-insensitive):
  - `"col"`      — the 1-based column of the upper-left cell
  - `"row"`      — the 1-based row of the upper-left cell
  - `"type"`     — `"b"` for a blank cell, `"l"` for text, `"v"` for any value
+ - `"filename"` — the directory, `[file name]` and sheet name of the reference
+   (the formula's own sheet without one), e.g. `C:\dir\[Book1.xlsx]Sheet1`,
+   from the path the host gave `Engine::set_workbook_path`. An empty path
+   means a workbook never saved, which gives empty text. With no path the
+   workbook's identity is unknown, which gives `#VALUE!`: opening a file does
+   not publish where it is stored.
 
- Other `info_type` values (`format`, `filename`, `parentheses`, `prefix`,
- `protect`, `width`) and calls without a reference return `#VALUE!`, as do
- 3-D references and a non-reference argument for `address`, `col` or `row`.
+ Other `info_type` values (`format`, `parentheses`, `prefix`, `protect`,
+ `width`) and calls without a reference (except `filename`) return
+ `#VALUE!`, as do 3-D references and a non-reference argument for
+ `address`, `col`, `row` or `filename`.
  An argument that evaluates to an error propagates that error unchanged.
+
+ Known divergence: without a reference Excel's `filename` names the sheet of
+ the cell selected at calculation time. There is no selection state here, so
+ it names the formula's own sheet.
+ Operation diagnostics report both gaps: a call without a reference as the
+ `implicit_active_cell_reference` mode, even with a path, and any call as the
+ `filename` mode while the workbook's identity is unknown.
 
  Known divergence: `CELL("contents", &lt;blank cell&gt;)` produces `Empty` in-graph
  where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
@@ -59,7 +73,7 @@ Supported `info_type` values (case-insensitive):
 ## FAQ
 
 ### Which info types does CELL support?
-contents, address, col, row and type. Unsupported info types return #VALUE!.
+contents, address, col, row, type and filename. Unsupported info types return #VALUE!.
 
 ## Runtime metadata
 

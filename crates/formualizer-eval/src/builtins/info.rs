@@ -1769,11 +1769,25 @@ pub struct CellFn;
 /// - `"col"`      — the 1-based column of the upper-left cell
 /// - `"row"`      — the 1-based row of the upper-left cell
 /// - `"type"`     — `"b"` for a blank cell, `"l"` for text, `"v"` for any value
+/// - `"filename"` — the directory, `[file name]` and sheet name of the reference
+///   (the formula's own sheet without one), e.g. `C:\dir\[Book1.xlsx]Sheet1`,
+///   from the path the host gave `Engine::set_workbook_path`. An empty path
+///   means a workbook never saved, which gives empty text. With no path the
+///   workbook's identity is unknown, which gives `#VALUE!`: opening a file does
+///   not publish where it is stored.
 ///
-/// Other `info_type` values (`format`, `filename`, `parentheses`, `prefix`,
-/// `protect`, `width`) and calls without a reference return `#VALUE!`, as do
-/// 3-D references and a non-reference argument for `address`, `col` or `row`.
+/// Other `info_type` values (`format`, `parentheses`, `prefix`, `protect`,
+/// `width`) and calls without a reference (except `filename`) return
+/// `#VALUE!`, as do 3-D references and a non-reference argument for
+/// `address`, `col`, `row` or `filename`.
 /// An argument that evaluates to an error propagates that error unchanged.
+///
+/// Known divergence: without a reference Excel's `filename` names the sheet of
+/// the cell selected at calculation time. There is no selection state here, so
+/// it names the formula's own sheet.
+/// Operation diagnostics report both gaps: a call without a reference as the
+/// `implicit_active_cell_reference` mode, even with a path, and any call as the
+/// `filename` mode while the workbook's identity is unknown.
 ///
 /// Known divergence: `CELL("contents", <blank cell>)` produces `Empty` in-graph
 /// where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
@@ -1800,7 +1814,7 @@ pub struct CellFn;
 ///   - ISREF
 /// faq:
 ///   - q: "Which info types does CELL support?"
-///     a: "contents, address, col, row and type. Unsupported info types return #VALUE!."
+///     a: "contents, address, col, row, type and filename. Unsupported info types return #VALUE!."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CELL
@@ -1870,6 +1884,22 @@ impl Function for CellFn {
                     },
                 );
             }
+            // `filename` names the formula's own sheet (Excel: the selected
+            // cell's sheet, a state that does not exist here); the other info
+            // types give #VALUE!, which keeps the result well-defined.
+            if info_type == "filename" {
+                // An unknown workbook identity is its own gap, as with a
+                // reference: the #VALUE! is not Excel's answer.
+                if ctx.workbook_path().is_none() {
+                    ctx.report_unavailable_operation(
+                        crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode {
+                            name: self.name().into(),
+                            mode: "filename",
+                        },
+                    );
+                }
+                return Ok(scalar(cell_filename(ctx, ctx.current_sheet())));
+            }
             return Ok(scalar(LiteralValue::Error(ExcelError::new_value())));
         }
 
@@ -1915,7 +1945,10 @@ impl Function for CellFn {
         let col = cell.coord.col() + 1;
         let unsupported_mode = match info_type.as_str() {
             "color" => Some("color"),
-            "filename" => Some("filename"),
+            // A host-supplied identity (`Engine::set_workbook_path`), even an
+            // explicitly unsaved one, answers `filename`; without it the
+            // #VALUE! below is a gap, not Excel's answer.
+            "filename" => ctx.workbook_path().is_none().then_some("filename"),
             "format" => Some("format"),
             "parentheses" => Some("parentheses"),
             "prefix" => Some("prefix"),
@@ -1948,7 +1981,28 @@ impl Function for CellFn {
             }
             "col" => Ok(scalar(LiteralValue::Int(col as i64))),
             "row" => Ok(scalar(LiteralValue::Int(row as i64))),
+            "filename" => {
+                let sheet = ctx
+                    .sheet_name_by_id(cell.sheet_id)
+                    .or_else(|| reference_sheet(&reference))
+                    .unwrap_or_else(|| ctx.current_sheet());
+                Ok(scalar(cell_filename(ctx, sheet)))
+            }
             _ => Ok(scalar(LiteralValue::Error(ExcelError::new_value()))),
+        }
+    }
+}
+
+/// `CELL("filename")`: `dir\[file]sheet` from the host's workbook path (split at
+/// its last `\` or `/`), empty text for an empty path (never saved), or `#VALUE!`
+/// when the workbook's identity is unknown.
+fn cell_filename(ctx: &dyn FunctionContext<'_>, sheet: &str) -> LiteralValue {
+    match ctx.workbook_path() {
+        None => LiteralValue::Error(ExcelError::new_value()),
+        Some("") => LiteralValue::Text(String::new()),
+        Some(path) => {
+            let split = path.rfind(['\\', '/']).map_or(0, |i| i + 1);
+            LiteralValue::Text(format!("{}[{}]{sheet}", &path[..split], &path[split..]))
         }
     }
 }

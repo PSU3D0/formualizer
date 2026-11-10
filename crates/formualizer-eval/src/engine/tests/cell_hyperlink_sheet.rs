@@ -1,6 +1,6 @@
 //! CELL / HYPERLINK builtins.
 //!
-//! CELL answers `contents`, `address`, `col`, `row` and `type` for a reference;
+//! CELL answers `contents`, `address`, `col`, `row`, `type` and `filename`;
 //! HYPERLINK returns its friendly name or link location as text.
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
@@ -171,7 +171,6 @@ fn cell_contents_on_blank_is_empty_in_graph() {
 #[test]
 fn cell_unsupported_info_type_is_value_error() {
     assert_error(r#"=CELL("format",A1)"#, ExcelErrorKind::Value);
-    assert_error(r#"=CELL("filename",A1)"#, ExcelErrorKind::Value);
     assert_error(r#"=CELL("protect",A1)"#, ExcelErrorKind::Value);
     assert_error(r#"=CELL("width",A1)"#, ExcelErrorKind::Value);
 }
@@ -352,4 +351,245 @@ fn hyperlink_rejects_multi_cell_arguments() {
         ExcelErrorKind::Value,
     );
     assert_text("=HYPERLINK({1})", "1");
+}
+
+/// Evaluate `formulas` on Sheet1 of an engine with sheets `Sheet1` and `G`.
+fn eval_with_path(path: Option<&str>, formulas: &[&str]) -> Vec<LiteralValue> {
+    let mut engine = new_engine();
+    engine.graph.add_sheet("G").unwrap();
+    engine.set_workbook_path(path.map(str::to_owned));
+    for (i, formula) in formulas.iter().enumerate() {
+        engine
+            .set_cell_formula("Sheet1", i as u32 + 1, 20, parse(formula).unwrap())
+            .unwrap();
+    }
+    engine.evaluate_all().unwrap();
+    (1..=formulas.len() as u32)
+        .map(|row| engine.get_cell_value("Sheet1", row, 20).unwrap())
+        .collect()
+}
+
+#[test]
+fn cell_filename_names_the_saved_file_and_sheet() {
+    // Excel 16: `dir\[file]sheet` for the reference's sheet, the formula's
+    // own sheet without a reference, and the sheet's own spelling.
+    let text = |s: &str| LiteralValue::Text(s.into());
+    assert_eq!(
+        eval_with_path(
+            Some(r"C:\Data\Books\Model.xlsx"),
+            &[
+                r#"=CELL("filename",A1)"#,
+                r#"=CELL("filename")"#,
+                r#"=CELL("filename",g!B2:C3)"#,
+                r#"=CELL("FILENAME",Sheet1!A1)"#,
+            ],
+        ),
+        [
+            text(r"C:\Data\Books\[Model.xlsx]Sheet1"),
+            text(r"C:\Data\Books\[Model.xlsx]Sheet1"),
+            text(r"C:\Data\Books\[Model.xlsx]G"),
+            text(r"C:\Data\Books\[Model.xlsx]Sheet1"),
+        ]
+    );
+    assert_eq!(
+        eval_with_path(Some("/srv/books/m.xlsx"), &[r#"=CELL("filename")"#]),
+        [text("/srv/books/[m.xlsx]Sheet1")]
+    );
+}
+
+#[test]
+fn cell_filename_needs_a_path_from_the_host() {
+    let errors = eval_with_path(None, &[r#"=CELL("filename",A1)"#, r#"=CELL("filename")"#]);
+    for error in &errors {
+        assert!(
+            matches!(error, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value),
+            "{errors:?}"
+        );
+    }
+    // An empty path is a workbook never saved.
+    assert_eq!(
+        eval_with_path(
+            Some(""),
+            &[r#"=CELL("filename",A1)"#, r#"=CELL("filename")"#]
+        ),
+        [
+            LiteralValue::Text(String::new()),
+            LiteralValue::Text(String::new())
+        ]
+    );
+    // A non-reference argument is still #VALUE!, an error argument propagates.
+    let errors = eval_with_path(
+        Some(r"C:\b.xlsx"),
+        &[r#"=CELL("filename",42)"#, r#"=CELL("filename",1/0)"#],
+    );
+    assert!(
+        matches!(&errors[0], LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value),
+        "{errors:?}"
+    );
+    assert!(
+        matches!(&errors[1], LiteralValue::Error(e) if e.kind == ExcelErrorKind::Div),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn cell_filename_follows_a_renamed_sheet_and_a_new_path() {
+    for family_execution in [true, false] {
+        let config = EvalConfig {
+            family_execution,
+            ..EvalConfig::default()
+        };
+        let mut engine = Engine::new(TestWorkbook::new(), config);
+        engine.graph.add_sheet("G").unwrap();
+        engine.set_workbook_path(Some(r"C:\a\One.xlsx".into()));
+        engine
+            .define_name(
+                "Tag",
+                crate::engine::named_range::NamedDefinition::Formula {
+                    ast: parse(r#"=CELL("filename")"#).unwrap(),
+                    dependencies: Vec::new(),
+                    range_deps: Vec::new(),
+                },
+                crate::engine::named_range::NameScope::Workbook,
+            )
+            .unwrap();
+        let formulas = [
+            ("Sheet1", 1, r#"=CELL("filename",G!A1)"#),
+            ("Sheet1", 2, r#"=CELL("filename",G!A2)"#),
+            ("Sheet1", 3, r#"=CELL("filename",G!A3)"#),
+            ("Sheet1", 4, r#"="in "&T1"#),
+            ("Sheet1", 5, "=Tag"),
+            ("G", 1, r#"=CELL("filename")"#),
+            ("Sheet1", 6, "=G!T1"),
+        ];
+        for (sheet, row, formula) in formulas {
+            engine
+                .set_cell_formula(sheet, row, 20, parse(formula).unwrap())
+                .unwrap();
+        }
+        // `g` is what a read of sheet G gives, `name` what `=Tag` gives: the
+        // name reads the formula's own sheet, Sheet1.
+        let check = |engine: &mut Engine<TestWorkbook>, g: &str, name: &str| {
+            engine.evaluate_all().unwrap();
+            let text = |s: &str| Some(LiteralValue::Text(s.to_owned()));
+            for row in [1, 2, 3, 6] {
+                assert_eq!(
+                    engine.get_cell_value("Sheet1", row, 20),
+                    text(g),
+                    "row {row}, family execution {family_execution}"
+                );
+            }
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 4, 20),
+                text(&format!("in {g}")),
+                "a dependent, family execution {family_execution}"
+            );
+            assert_eq!(
+                engine.get_cell_value("Sheet1", 5, 20),
+                text(name),
+                "a defined name, family execution {family_execution}"
+            );
+        };
+        let sheet1 = r"C:\a\[One.xlsx]Sheet1";
+        check(&mut engine, r"C:\a\[One.xlsx]G", sheet1);
+
+        let g = engine.sheet_id("G").unwrap();
+        engine.rename_sheet(g, "Renamed").unwrap();
+        check(&mut engine, r"C:\a\[One.xlsx]Renamed", sheet1);
+
+        engine.set_workbook_path(Some("/b/Two.xlsx".into()));
+        check(&mut engine, "/b/[Two.xlsx]Renamed", "/b/[Two.xlsx]Sheet1");
+    }
+}
+
+/// Evaluate `formula` alone on Sheet1 and return its value with the unavailable
+/// operations it reported.
+fn filename_reports(
+    path: Option<&str>,
+    formula: &str,
+    family_execution: bool,
+) -> (
+    LiteralValue,
+    Vec<crate::operation_diagnostics::UnavailableOperation>,
+) {
+    let config = EvalConfig {
+        family_execution,
+        ..EvalConfig::default()
+    };
+    let mut engine = Engine::new(TestWorkbook::new(), config);
+    engine.enable_operation_diagnostics(8);
+    engine.set_workbook_path(path.map(str::to_owned));
+    engine
+        .set_cell_formula("Sheet1", 1, 20, parse(formula).unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    let report = engine.take_operation_diagnostics().unwrap().unwrap();
+    let value = engine.get_cell_value("Sheet1", 1, 20).unwrap();
+    let operations = report
+        .roots
+        .iter()
+        .map(|root| root.operation.as_ref().clone())
+        .collect();
+    (value, operations)
+}
+
+#[test]
+fn cell_filename_reports_unknown_identity_and_the_implicit_active_cell() {
+    use crate::operation_diagnostics::UnavailableOperation::UnimplementedFunctionMode;
+    let gap = |mode: &'static str| UnimplementedFunctionMode {
+        name: "CELL".into(),
+        mode,
+    };
+    let text = |s: &str| LiteralValue::Text(s.into());
+    let value_error = LiteralValue::Error(formualizer_common::ExcelError::new_value());
+    let path = Some(r"C:\a\b.xlsx");
+    let cases = [
+        // Unknown identity is #VALUE! and still a reported gap.
+        (
+            None,
+            r#"=CELL("filename",A1)"#,
+            value_error.clone(),
+            vec![gap("filename")],
+        ),
+        // A host-supplied identity, or an explicitly unsaved workbook, closes it.
+        (
+            path,
+            r#"=CELL("filename",A1)"#,
+            text(r"C:\a\[b.xlsx]Sheet1"),
+            vec![],
+        ),
+        (Some(""), r#"=CELL("filename",A1)"#, text(""), vec![]),
+        // Without a reference Excel reads the selected cell, which is not
+        // available here, with or without a path; an unknown identity is a
+        // second gap.
+        (
+            None,
+            r#"=CELL("filename")"#,
+            value_error.clone(),
+            vec![gap("filename"), gap("implicit_active_cell_reference")],
+        ),
+        (
+            path,
+            r#"=CELL("filename")"#,
+            text(r"C:\a\[b.xlsx]Sheet1"),
+            vec![gap("implicit_active_cell_reference")],
+        ),
+        (
+            Some(""),
+            r#"=CELL("filename")"#,
+            text(""),
+            vec![gap("implicit_active_cell_reference")],
+        ),
+        // A non-reference argument is an ordinary #VALUE!, not a gap.
+        (None, r#"=CELL("filename",42)"#, value_error.clone(), vec![]),
+    ];
+    for family_execution in [true, false] {
+        for (path, formula, value, operations) in &cases {
+            assert_eq!(
+                filename_reports(*path, formula, family_execution),
+                (value.clone(), operations.clone()),
+                "{formula} with path {path:?}, family execution {family_execution}"
+            );
+        }
+    }
 }
