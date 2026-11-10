@@ -417,8 +417,9 @@ pub fn collapse_if_scalar(
 // ─────────────────────────────── Criteria helpers (shared by *IF* aggregators) ───────────────────────────────
 
 /// Match a value against a parsed `CriteriaPredicate` (see `crate::args::CriteriaPredicate`).
-/// Implements Excel's criteria semantics: equality is case-insensitive for text and
-/// lenient for numeric text (`5` matches the text `"5"`), but a number never matches
+/// Implements Excel's criteria semantics: equality is case-insensitive for text
+/// (as the criteria mask compares it, see `text_equality_key`) and lenient for
+/// numeric text (`5` matches the text `"5"`), but a number never matches
 /// a blank cell or a boolean; numeric comparisons only match numbers; wildcard and
 /// text comparisons only match text.
 pub fn criteria_match(pred: &crate::args::CriteriaPredicate, v: &LiteralValue) -> bool {
@@ -477,7 +478,7 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
         (LiteralValue::Number(x), LiteralValue::Number(y)) => (x - y).abs() < 1e-12,
         (LiteralValue::Int(x), LiteralValue::Int(y)) => x == y,
         (LiteralValue::Boolean(x), LiteralValue::Boolean(y)) => x == y,
-        (LiteralValue::Text(x), LiteralValue::Text(y)) => x.to_lowercase() == y.to_lowercase(),
+        (LiteralValue::Text(x), LiteralValue::Text(y)) => text_equal(x, y),
         // Treat blank and empty text as equal (Excel semantics)
         (LiteralValue::Text(x), LiteralValue::Empty) if x.is_empty() => true,
         (LiteralValue::Empty, LiteralValue::Text(y)) if y.is_empty() => true,
@@ -512,7 +513,7 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
 /// (exactly, as the walk's numeric lane does), dates and numeric text; a text
 /// criterion meets text, plain numbers and (when empty) blanks. The tolerance of
 /// `values_equal_invariant` applies wherever the walk uses `criteria_match`.
-/// Text is keyed by `text_equality_key`, so it is equal where the walk's is.
+/// Text is keyed by `text_equality_key`, the walk's text equality.
 #[derive(Default)]
 pub(crate) struct EqualityCounts {
     /// Number cells. These three lanes are sorted by `sorted`.
@@ -609,46 +610,72 @@ impl EqualityCounts {
     }
 }
 
-/// Two texts are equal for the walk's text criterion (`compute_criteria_mask`)
-/// exactly when their keys are. The walk lowercases both sides and compares them
-/// with Arrow `ilike`; for non-ASCII text that is a regex, which matches
+/// Two texts are equal for a text criterion exactly when their keys are. The
+/// criteria mask (`compute_criteria_mask`) lowercases both sides and compares
+/// them with Arrow `ilike`; for non-ASCII text that is a regex, which matches
 /// character by character under Unicode simple case folding, so `ος` equals `οσ`
 /// and `k` equals the Kelvin sign. The key lowercases the same way, then puts
-/// each character as the least member of its folding class.
+/// each character as the least member of its folding class, so `criteria_match`
+/// and `EqualityCounts` compare as the mask does.
 pub(crate) fn text_equality_key(text: &str) -> String {
-    use regex_syntax::hir::{ClassUnicode, ClassUnicodeRange};
     let lowered = text.to_lowercase();
     // An ASCII letter's class starts at its capital: `S` before `s` and `ſ`.
     if lowered.is_ascii() {
         return lowered.to_ascii_uppercase();
     }
-    lowered
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii() {
-                return ch.to_ascii_uppercase();
-            }
-            let mut class = ClassUnicode::new([ClassUnicodeRange::new(ch, ch)]);
-            // The regex folds a literal with this same call.
-            match class.try_case_fold_simple() {
-                Ok(()) => class.ranges().first().map_or(ch, |range| range.start()),
-                Err(_) => ch,
-            }
-        })
-        .collect()
+    lowered.chars().map(fold_char).collect()
+}
+
+/// A lowered character's key: the least member of its simple folding class.
+fn fold_char(ch: char) -> char {
+    use regex_syntax::hir::{ClassUnicode, ClassUnicodeRange};
+    if ch.is_ascii() {
+        return ch.to_ascii_uppercase();
+    }
+    let mut class = ClassUnicode::new([ClassUnicodeRange::new(ch, ch)]);
+    // The regex folds a literal with this same call.
+    match class.try_case_fold_simple() {
+        Ok(()) => class.ranges().first().map_or(ch, |range| range.start()),
+        Err(_) => ch,
+    }
+}
+
+/// Text equality for criteria: equal keys, as the mask compares. Two ASCII
+/// texts compare as Arrow's ASCII `ilike` does; any other pair compares its
+/// lowered characters, folding only those that differ, so `k` still equals
+/// the Kelvin sign and `s` the long s. Keys map character to character, so
+/// this is `text_equality_key(a) == text_equality_key(b)` without building them.
+fn text_equal(a: &str, b: &str) -> bool {
+    if a.is_ascii() && b.is_ascii() {
+        return a.eq_ignore_ascii_case(b);
+    }
+    let (a, b) = (a.to_lowercase(), b.to_lowercase());
+    let (mut a, mut b) = (a.chars(), b.chars());
+    loop {
+        match (a.next(), b.next()) {
+            (None, None) => return true,
+            (Some(x), Some(y)) if x == y || fold_char(x) == fold_char(y) => {}
+            _ => return false,
+        }
+    }
 }
 
 /// Wildcard criteria match text cells only: Excel never matches a number,
 /// boolean, error or blank cell against `*`, `?` or `~` patterns.
+/// Case is ignored as the mask's `ilike` ignores it (see `text_equal`), and
+/// `?` is one character, as the mask's `_` is.
 fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> bool {
     let s = match v {
         LiteralValue::Text(t) => t.as_str(),
         _ => return false,
     };
-    let (pat, text) = if case_insensitive {
-        (pattern.to_lowercase(), s.to_lowercase())
-    } else {
+    let (pat, text) = if !case_insensitive {
         (pattern.to_string(), s.to_string())
+    } else if pattern.is_ascii() && s.is_ascii() {
+        (pattern.to_ascii_lowercase(), s.to_ascii_lowercase())
+    } else {
+        // Keys map character to character, and `*`, `?` and `~` to themselves.
+        (text_equality_key(pattern), text_equality_key(s))
     };
 
     // Fast-path for anchored patterns without '?' or escape sequences
@@ -671,17 +698,21 @@ fn text_like_match(pattern: &str, case_insensitive: bool, v: &LiteralValue) -> b
         }
     }
 
-    // Fall back to general wildcard matching for complex patterns
-    wildcard_match(&pat, &text)
-}
-
-fn wildcard_match(pat: &str, text: &str) -> bool {
-    wildcard_match_units(pat.as_bytes(), text.as_bytes(), false)
+    // Fall back to general wildcard matching for complex patterns. ASCII bytes
+    // are characters; anything else is matched by character.
+    if pat.is_ascii() && text.is_ascii() {
+        wildcard_match_units(pat.as_bytes(), text.as_bytes(), false)
+    } else {
+        let pat: Vec<char> = pat.chars().collect();
+        let text: Vec<char> = text.chars().collect();
+        wildcard_match_units(&pat, &text, false)
+    }
 }
 
 /// Match spreadsheet wildcards without recursive branching or token allocation.
 /// `~` escapes only `*`, `?`, and `~`; other/trailing tildes remain literal.
-/// Criteria retain byte matching; SEARCH supplies characters and accepts a prefix.
+/// Criteria match bytes of ASCII text and characters otherwise; SEARCH supplies
+/// characters and accepts a prefix.
 /// Only the latest star needs a retry position: it can absorb any intervening text.
 /// Space is O(1), with at most O(pattern length * text length) matching work.
 pub(crate) fn wildcard_match_units<T: Copy + Eq + From<u8>>(
