@@ -161,6 +161,7 @@ mod criteria_mask_oob_column;
 mod criteria_mask_text_chunked;
 mod criteria_ne_blank_extra;
 mod criteria_overlay_parity;
+mod criteria_text_fold;
 mod criteria_wildcard_ingest;
 mod custom_function_registry_compat;
 mod diagnostics_corrections;
