@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Excel compatibility
+
+- `CELL("filename")` returns the directory, `[file name]` and sheet of its reference, such as `C:\dir\[Book1.xlsx]Sheet1`, from the path a host passes to `Workbook::set_workbook_path` or `Engine::set_workbook_path`, and updates when the sheet is renamed or the path changes. Loading a file does not supply its path. With no path the workbook's identity is unknown, which gives `#VALUE!` and is reported as an unavailable operation; an empty path is a workbook never saved, which gives empty text. (#555, @mcdonaldsam)
+
 ## [0.14.0] - 2026-11-08
 
 Recalculation no longer has to finish before your program can do anything else. A 0.14 recalculation is a job you can run in slices of a few milliseconds, pause, resume, cancel, or point at the cells someone is looking at. Values already computed are kept. The same model works in Rust, in Python (including asyncio) and in JavaScript, and a new `formualizer/worker` entry runs a whole workbook off the main thread.
@@ -97,7 +101,6 @@ See [Interruptible Recalculation](https://www.formualizer.dev/docs/guides/interr
 - Rich-value metadata that only describes a formula's cached value no longer blocks loading or recalculation. (#552, @mcdonaldsam)
 - Ordinary loading ignores the saved children of a dynamic array, so a recalculated spill is not blocked by its own old values. (#553, @mcdonaldsam)
 - Formulas that read a linked workbook's defined names, such as `=SUM([1]!Sales)`, use the values cached for that link, in recalculation and in ordinary loading. A local name with the same spelling stays separate. (#554, @mcdonaldsam)
-- `CELL("filename")` returns the directory, `[file name]` and sheet of its reference, such as `C:\dir\[Book1.xlsx]Sheet1`, from the path a host passes to `Workbook::set_workbook_path` or `Engine::set_workbook_path`, and updates when the sheet is renamed or the path changes. Loading a file does not supply its path. With no path the workbook's identity is unknown, which gives `#VALUE!` and is reported as an unavailable operation; an empty path is a workbook never saved, which gives empty text. (#555, @mcdonaldsam)
 - `HSTACK` and `VSTACK` pad uneven inputs with `#N/A`. `UNIQUE` keeps column orientation. `SORTBY` validates its criteria and sorts along either axis. Approximate descending `XLOOKUP` searches the right way. `CEILING` rounds two negatives away from zero and keeps exact decimal multiples.
 - `TYPE` classifies errors as Excel does, and `ISFORMULA` follows references.
 
