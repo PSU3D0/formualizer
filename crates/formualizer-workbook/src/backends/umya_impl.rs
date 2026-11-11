@@ -41,6 +41,7 @@ pub struct UmyaAdapter {
     lazy: bool,
     original_path: Option<std::path::PathBuf>,
     load_stats: AdapterLoadStats,
+    imported_xlsx: bool,
 
     // Best-effort: parse `headerRowCount` from xl/tables/*.xml.
     // Key: table name (as stored in XLSX); Value: header_row bool.
@@ -63,6 +64,7 @@ impl UmyaAdapter {
             lazy: false,
             original_path: None,
             load_stats: AdapterLoadStats::default(),
+            imported_xlsx: false,
             table_header_rows: HashMap::new(),
             table_header_rows_available: false,
             calc_settings: None,
@@ -621,6 +623,7 @@ impl SpreadsheetReader for UmyaAdapter {
             lazy: false,
             original_path: None,
             load_stats: AdapterLoadStats::default(),
+            imported_xlsx: true,
             table_header_rows,
             table_header_rows_available,
             calc_settings,
@@ -1170,6 +1173,8 @@ where
         let mut total_value_cells_observed = 0usize;
         let mut total_value_slots = 0usize;
         let mut eager_formula_batches: Vec<FormulaBatch> = Vec::new();
+        let mut array_declarations = Vec::new();
+        let mut lowerer = crate::legacy_formula::Lowerer::default();
 
         for n in &names {
             let t_sheet = Instant::now();
@@ -1178,10 +1183,53 @@ where
             }
 
             let t_read_sheet = Instant::now();
-            let sheet_data = self
+            let mut sheet_data = self
                 .read_sheet(n)
                 .map_err(|e| IoError::from_backend("umya", e))?;
             let read_sheet_ms = t_read_sheet.elapsed().as_secs_f64() * 1000.0;
+            // Keep source-facing reads unchanged; only engine evaluation text
+            // is lowered, and only for documents opened from XLSX.
+            if self.imported_xlsx {
+                let wb = self.workbook.read();
+                let ws = wb.lookup_sheet(n).expect("loaded worksheet");
+                let mut arrays = Vec::new();
+                let mut nonlegacy_cells = HashSet::new();
+                for cell in ws.adapter_cells() {
+                    let coord = cell.get_coordinate();
+                    let row = coord.get_row_num().to_owned();
+                    let col = coord.get_col_num().to_owned();
+                    // Umya 2 returns a reference; Umya 3 returns a value.
+                    let metadata_index = cell.get_cell_meta_index().to_owned();
+                    let has_metadata = metadata_index != 0;
+                    if has_metadata {
+                        nonlegacy_cells.insert((row, col));
+                    }
+                    if let Some(formula) = cell.get_cell_value().get_formula_obj()
+                        && formula.get_formula_type() == &umya_spreadsheet::CellFormulaValues::Array
+                    {
+                        nonlegacy_cells.insert((row, col));
+                        if let Some(array) = crate::legacy_formula::arrays::ArrayFormula::from_range(
+                            row,
+                            col,
+                            formula.get_reference(),
+                            has_metadata,
+                        ) {
+                            arrays.push(array);
+                        }
+                    }
+                }
+                sheet_data
+                    .cells
+                    .retain(|&(row, col), _| !arrays.iter().any(|a| a.owns_child(row, col)));
+                for (&coord, cell) in &mut sheet_data.cells {
+                    if !nonlegacy_cells.contains(&coord)
+                        && let Some(formula) = &mut cell.formula
+                    {
+                        *formula = lowerer.evaluation_text(formula).into_owned();
+                    }
+                }
+                array_declarations.extend(arrays.into_iter().map(|array| (n.clone(), array)));
+            }
 
             let dims = sheet_data.dimensions.unwrap_or_else(|| {
                 sheet_data
@@ -1498,6 +1546,19 @@ where
                     "[fz][load] umya: bulk formula ingest finished in {:.1} ms",
                     t_bulk.elapsed().as_secs_f64() * 1000.0,
                 );
+            }
+        }
+
+        if !array_declarations.is_empty() {
+            engine.set_first_load_assume_new(false);
+            if array_declarations.iter().any(|(_, array)| !array.dynamic) {
+                engine.config.family_execution = false;
+            }
+            if engine.has_staged_formulas() {
+                engine.build_graph_all().map_err(IoError::Engine)?;
+            }
+            for (sheet, array) in array_declarations {
+                array.declare(engine, &sheet).map_err(IoError::Engine)?;
             }
         }
 

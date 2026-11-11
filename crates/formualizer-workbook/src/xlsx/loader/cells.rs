@@ -347,11 +347,48 @@ pub(super) fn scan(
                 loop {
                     match xml.read_event()? {
                         Event::Start(e) if e.local_name().as_ref() == b"f" => {
-                            let text = text(xml, e.name(), false)?;
+                            let mut text = text(xml, e.name(), false)?;
                             let (t, si, range) =
                                 get_attrs!(e, b"t" => t, b"si" => si, b"ref" => range)
                                     .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
 
+                            // Ordinary OOXML formulas retain scalar legacy semantics without
+                            // relying on optional calculation-chain evidence. Arrays keep
+                            // their expression and fixed/dynamic ownership separately.
+                            if t != Some(b"array")
+                                && cm.is_none()
+                                && let Some(lowerer) = &mut sink.lowerer
+                            {
+                                text = lowerer.evaluation_text(&text).into_owned();
+                            }
+                            if t == Some(b"array")
+                                && let Some(range) = range
+                                && let Ok(range_text) = std::str::from_utf8(range)
+                            {
+                                let dynamic = cm
+                                    .and_then(|raw| atoi_simd::parse::<u32, true, false>(raw).ok())
+                                    .and_then(|cm| sink.dynamic.and_then(|m| m.resolve(cm).ok()));
+                                // Unknown metadata is not evidence for a static CSE array.
+                                if (cm.is_none() || dynamic.is_some())
+                                    && let Some(array) =
+                                        crate::legacy_formula::arrays::ArrayFormula::from_range(
+                                            pos.0 + 1,
+                                            pos.1 + 1,
+                                            range_text,
+                                            dynamic.is_some(),
+                                        )
+                                {
+                                    if !array.dynamic {
+                                        sink.generated.observe(worksheet::SourceRect {
+                                            first_row: array.row,
+                                            first_col: array.col,
+                                            last_row: array.last_row,
+                                            last_col: array.last_col,
+                                        });
+                                    }
+                                    sink.arrays.push(array);
+                                }
+                            }
                             let sequence = sink.record_count as u64;
                             let coord0 = SourceCoord {
                                 row: pos.0,

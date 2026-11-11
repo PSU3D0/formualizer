@@ -38,6 +38,7 @@ mod retained_tests {
                 DateSystem::Excel1900,
                 false,
                 Some(&mut emit),
+                true,
             )
             .unwrap();
         assert!(count > 0);
@@ -71,6 +72,7 @@ mod retained_tests {
                     DateSystem::Excel1900,
                     false,
                     Some(&mut emit),
+                    true,
                 )
                 .unwrap();
             assert!(parsed.stream_error.is_some(), "{body}");
@@ -108,6 +110,7 @@ mod retained_tests {
                     DateSystem::Excel1900,
                     false,
                     Some(&mut emit),
+                    true,
                 )
                 .unwrap();
             assert!(
@@ -573,7 +576,16 @@ impl NativeXlsxAdapter {
         self.budget.check()?;
         let mut formulas = Vec::new();
         for sheet in &self.sheets {
-            let parsed = self.parsed_sheet(sheet)?;
+            // External-link admission records original source formulas, not
+            // the evaluation text later used by engine staging.
+            let parsed = self.scan_sheet_produced(
+                sheet,
+                &Default::default(),
+                DateSystem::Excel1900,
+                false,
+                None,
+                false,
+            )?;
             let formula_timer = timing::Timer::start(self.debug_load);
             let mut replay = FormulaReplayState::default();
             for record in &parsed.records {
@@ -610,15 +622,6 @@ impl NativeXlsxAdapter {
         self.names.admit_external_snapshot(&snapshot);
         self.package_ms += package_timer.elapsed_ms();
         Ok(snapshot)
-    }
-    fn parsed_sheet<'a>(&self, sheet: &'a SheetSource) -> Result<&'a ParsedSheet, IoError> {
-        if sheet.parsed.get().is_none() {
-            let parsed =
-                self.scan_sheet(sheet, &Default::default(), DateSystem::Excel1900, false)?;
-            // Only successful state is retained; failures remain fallible reader results.
-            let _ = sheet.parsed.set(parsed);
-        }
-        Ok(sheet.parsed.get().expect("initialized parsed sheet"))
     }
     fn source_sheet(&self, name: &str) -> Result<&SheetSource, IoError> {
         self.sheets
@@ -751,7 +754,14 @@ impl NativeXlsxAdapter {
         date_system: DateSystem,
         retain_reader_values: bool,
     ) -> Result<ParsedSheet, IoError> {
-        self.scan_sheet_produced(sheet, limits, date_system, retain_reader_values, None)
+        self.scan_sheet_produced(
+            sheet,
+            limits,
+            date_system,
+            retain_reader_values,
+            None,
+            !retain_reader_values,
+        )
     }
     fn scan_sheet_produced<'a>(
         &'a self,
@@ -760,6 +770,7 @@ impl NativeXlsxAdapter {
         date_system: DateSystem,
         retain_reader_values: bool,
         emit: Option<&'a mut dyn FnMut(OwnedSpoolFormulaRecord) -> Result<(), IoError>>,
+        lower_legacy: bool,
     ) -> Result<ParsedSheet, IoError> {
         let scan_timer = timing::Timer::start(self.debug_load);
         let mut xml = cells::CellXml::new(&sheet.data, &self.options);
@@ -792,6 +803,8 @@ impl NativeXlsxAdapter {
             strings: &self.strings,
             styles: &self.styles,
             dynamic: self.dynamic.as_ref(),
+            lowerer: lower_legacy.then(crate::legacy_formula::Lowerer::default),
+            arrays: Vec::new(),
             generated: Default::default(),
             values,
             reader_values,
@@ -822,6 +835,7 @@ impl NativeXlsxAdapter {
         Ok(ParsedSheet {
             values,
             records: sink.records,
+            arrays: sink.arrays,
             reader_values,
             scan_ms,
             sinks_ms,
@@ -967,6 +981,7 @@ impl DeferredReadError {
 }
 
 struct ParsedSheet {
+    arrays: Vec<crate::legacy_formula::arrays::ArrayFormula>,
     scan_ms: f64,
     sinks_ms: f64,
     values: super::ingest::values::IngestedValues,
@@ -977,6 +992,8 @@ struct ParsedSheet {
     stream_error: Option<DeferredReadError>,
 }
 struct LoadSink<'a> {
+    lowerer: Option<crate::legacy_formula::Lowerer>,
+    arrays: Vec<crate::legacy_formula::arrays::ArrayFormula>,
     strings: &'a SharedStringTable,
     styles: &'a Styles,
     dynamic: Option<&'a DynamicMetadata>,
@@ -1225,6 +1242,7 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
         };
         let result = (|| {
             let mut batches = FormulaBatches::default();
+            let mut arrays = Vec::new();
             let mut usage = WorkbookSpoolUsage::default();
             let mut values_observed = 0;
             let mut values_handed = 0;
@@ -1264,6 +1282,7 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                                 DateSystem::Excel1900,
                                 false,
                                 Some(emit),
+                                true,
                             )?
                         };
                         if let Some(error) = &parsed.stream_error {
@@ -1280,6 +1299,13 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                     &refused,
                 )?;
                 let parsed = parsed_result.expect("producer completed");
+                arrays.extend(
+                    parsed
+                        .arrays
+                        .iter()
+                        .cloned()
+                        .map(|array| (sheet.name.clone(), array)),
+                );
                 let combined_ms = formula_timer.elapsed_ms();
                 phases.formulas_ms += (combined_ms - parsed.scan_ms - parsed.sinks_ms).max(0.0);
                 // External-cache preparation may already have populated these
@@ -1348,6 +1374,21 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                 batches.install_direct(engine).map_err(IoError::from)?;
             }
             self.names.register(engine).map_err(IoError::from)?;
+            if !arrays.is_empty() {
+                // Publish packed load-time coordinate mappings before the
+                // declaration API resolves anchor vertices.
+                engine.set_first_load_assume_new(false);
+                if arrays.iter().any(|(_, array)| !array.dynamic) {
+                    // Fixed CSE results must bypass scalar family memoization.
+                    engine.config.family_execution = false;
+                }
+                if engine.has_staged_formulas() {
+                    engine.build_graph_all().map_err(IoError::from)?;
+                }
+                for (sheet, array) in arrays {
+                    array.declare(engine, &sheet).map_err(IoError::from)?;
+                }
+            }
             self.name_diagnostics = self.names.import_diagnostics()?;
             for diagnostic in &self.name_diagnostics {
                 use formualizer_eval::engine::named_range::{NameScope, NamedDefinition};
