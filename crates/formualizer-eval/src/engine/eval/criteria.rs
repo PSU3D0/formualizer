@@ -839,7 +839,8 @@ fn text_verdicts(
 ) -> Option<(Vec<bool>, bool, bool)> {
     use arrow_string::like::{ilike, nilike};
     let values = StringArray::from(classes.values.clone());
-    let pattern = StringArray::new_scalar(text.to_lowercase());
+    // Escaped as the mask escapes it, so `_` and `%` stay literal.
+    let pattern = StringArray::new_scalar(like_pattern(&text.to_lowercase(), false));
     let mask = if ne {
         nilike(&values, &pattern)
     } else {
@@ -854,4 +855,62 @@ fn mask_bools(mask: &BooleanArray) -> Vec<bool> {
     (0..mask.len())
         .map(|i| mask.is_valid(i) && mask.value(i))
         .collect()
+}
+
+#[cfg(test)]
+mod literal_text_tests {
+    use crate::engine::{Engine, EvalConfig, FormulaPlaneMode};
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_common::LiteralValue;
+    use formualizer_parse::parser::parse;
+
+    /// `_` and `%` in an `=` text criterion are literal, as in Excel: the
+    /// kernel's `ilike` pattern is escaped as the mask's is, so `"a_c"` does
+    /// not meet `abc` and `"50%"` does not meet `50x`.
+    #[test]
+    fn family_text_equality_keeps_like_punctuation_literal() {
+        let texts = ["abc", "a_c", "50%", "50x", "x", "y"];
+        let rows = 40u32;
+        for mode in [
+            FormulaPlaneMode::Off,
+            FormulaPlaneMode::AuthoritativeExperimental,
+        ] {
+            for family in [false, true] {
+                let mut engine = Engine::new(
+                    TestWorkbook::new(),
+                    EvalConfig {
+                        family_execution: family,
+                        ..EvalConfig::default()
+                    }
+                    .with_formula_plane_mode(mode),
+                );
+                for row in 1..=rows {
+                    let text = texts[(row as usize - 1) % texts.len()];
+                    let criterion = if row % 2 == 1 { "a_c" } else { "50%" };
+                    engine
+                        .set_cell_value("Sheet1", row, 1, LiteralValue::Text(text.into()))
+                        .unwrap();
+                    engine
+                        .set_cell_value("Sheet1", row, 3, LiteralValue::Text(criterion.into()))
+                        .unwrap();
+                    let formula = format!("=COUNTIF($A$1:$A${rows},C{row})");
+                    engine
+                        .set_cell_formula("Sheet1", row, 4, parse(&formula).unwrap())
+                        .unwrap();
+                }
+                engine.evaluate_all().unwrap();
+                // Each criterion's own text is in 7 of the 40 rows.
+                for row in 1..=rows {
+                    assert_eq!(
+                        engine.get_cell_value("Sheet1", row, 4),
+                        Some(LiteralValue::Number(7.0)),
+                        "mode={mode:?} family={family} row={row}"
+                    );
+                }
+                if family {
+                    assert!(engine.family_members_for_test() > 0);
+                }
+            }
+        }
+    }
 }
