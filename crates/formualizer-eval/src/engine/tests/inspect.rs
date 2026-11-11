@@ -702,12 +702,10 @@ fn names_and_structured_tables_retain_symbolic_resolution() {
             resolution: NameResolution::Formula { formula, .. },
         } if name == "Twice" && formula == "=2 * 3"
     ));
+    // `Sales[@Amount]` is this row's cell, the same as an unnamed `[@Amount]`.
     assert!(matches!(
         &report.precedents[2].reference,
-        SemanticReference::Table { name, specifier, resolved }
-            if name == "Sales" && specifier.contains("Amount")
-                && resolved.start_row == 2 && resolved.end_row == 2
-                && resolved.start_col == 2 && resolved.end_col == 2
+        SemanticReference::Cell(cell) if cell.row == 2 && cell.column == 2
     ));
 }
 

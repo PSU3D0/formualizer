@@ -48,10 +48,11 @@ impl TableEntrySnapshot {
     }
 
     fn col_index(&self, header: &str) -> Option<usize> {
-        let header_key = header.to_lowercase();
+        // Column names can end in a space, which a parsed reference has lost.
+        let header_key = header.trim().to_lowercase();
         self.headers
             .iter()
-            .position(|h| h.to_lowercase() == header_key)
+            .position(|h| h.trim().to_lowercase() == header_key)
     }
 }
 
@@ -984,25 +985,26 @@ impl<'a> IngestPipeline<'a> {
         let ReferenceType::Table(tref) = reference else {
             return Ok(false);
         };
-        if !tref.name.is_empty() {
-            return Ok(false);
-        }
 
-        let col_name = match &tref.specifier {
+        // This-row references: `[@Col]` parses as an unnamed table reference, and files
+        // store `Table[[#This Row],[Col]]`, named, usually with a column or a column range.
+        let named = !tref.name.is_empty();
+        let mut saw_this_row = false;
+        let mut columns: Option<(&str, &str)> = None;
+        match &tref.specifier {
+            Some(TableSpecifier::SpecialItem(SpecialItem::ThisRow)) => saw_this_row = true,
             Some(TableSpecifier::Combination(parts)) => {
-                let mut saw_this_row = false;
-                let mut col: Option<&str> = None;
                 for part in parts {
                     match part.as_ref() {
                         TableSpecifier::SpecialItem(SpecialItem::ThisRow) => saw_this_row = true,
-                        TableSpecifier::Column(c) => {
-                            if col.is_some() {
-                                return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                                    "This-row structured reference with multiple columns is not supported".to_string(),
-                                ));
-                            }
-                            col = Some(c.as_str());
+                        TableSpecifier::Column(c) if columns.is_none() => {
+                            columns = Some((c.as_str(), c.as_str()));
                         }
+                        TableSpecifier::ColumnRange(first, last) if columns.is_none() => {
+                            columns = Some((first.as_str(), last.as_str()));
+                        }
+                        // Other mixes, such as #Totals with a column, aren't this-row forms.
+                        _ if named => return Ok(false),
                         other => {
                             return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
                                 format!(
@@ -1012,25 +1014,29 @@ impl<'a> IngestPipeline<'a> {
                         }
                     }
                 }
-                if !saw_this_row {
-                    return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                        "Unnamed structured reference requires a this-row selector".to_string(),
-                    ));
-                }
-                col.ok_or_else(|| {
-                    ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                        "This-row structured reference missing column selector".to_string(),
-                    )
-                })?
             }
+            _ if named => return Ok(false),
             _ => {
                 return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
                     "Unnamed structured reference form is not supported".to_string(),
                 ));
             }
-        };
+        }
+        if !saw_this_row {
+            if named {
+                return Ok(false);
+            }
+            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
+                "Unnamed structured reference requires a this-row selector".to_string(),
+            ));
+        }
 
-        let Some(table) = self.tables.find_containing_cell(cell) else {
+        let table = if named {
+            self.tables.resolve(&tref.name)
+        } else {
+            self.tables.find_containing_cell(cell)
+        };
+        let Some(table) = table else {
             return Err(ExcelError::new(ExcelErrorKind::Name)
                 .with_message("This-row structured reference used outside a table".to_string()));
         };
@@ -1042,10 +1048,18 @@ impl<'a> IngestPipeline<'a> {
         let er0 = table.range.end.coord.row();
         let ec0 = table.range.end.coord.col();
 
-        if table.sheet_id() != cell.sheet_id || row0 < sr0 || row0 > er0 || col0 < sc0 || col0 > ec0
-        {
-            return Err(ExcelError::new(ExcelErrorKind::Name)
-                .with_message("This-row structured reference used outside a table".to_string()));
+        // A named reference can sit beside its table, in the same rows.
+        let outside = table.sheet_id() != cell.sheet_id
+            || row0 < sr0
+            || row0 > er0
+            || (!named && (col0 < sc0 || col0 > ec0));
+        if outside {
+            return Err(ExcelError::new(if named {
+                ExcelErrorKind::Value
+            } else {
+                ExcelErrorKind::Name
+            })
+            .with_message("This-row structured reference used outside a table".to_string()));
         }
         if table.header_row && row0 == sr0 {
             return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
@@ -1059,17 +1073,41 @@ impl<'a> IngestPipeline<'a> {
             ));
         }
 
-        let Some(idx) = table.col_index(col_name) else {
-            return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
-                "Unknown table column in this-row reference: {col_name}"
-            )));
+        let index = |name: &str| table.col_index(name).map(|idx| sc0 + idx as u32);
+        let (first_col0, last_col0) = match columns {
+            Some((first, last)) => match (index(first), index(last)) {
+                (Some(first), Some(last)) => (first, last),
+                // A named reference stays a table reference, so that only its own
+                // cell shows the error when it evaluates.
+                _ if named => return Ok(false),
+                _ => {
+                    return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                        "Unknown table column in this-row reference: {first}"
+                    )));
+                }
+            },
+            None => (sc0, ec0),
         };
-        *reference = ReferenceType::Cell {
-            sheet: None,
-            row: row0 + 1,
-            col: sc0 + idx as u32 + 1,
-            row_abs: true,
-            col_abs: true,
+        *reference = if first_col0 == last_col0 {
+            ReferenceType::Cell {
+                sheet: None,
+                row: row0 + 1,
+                col: first_col0 + 1,
+                row_abs: true,
+                col_abs: true,
+            }
+        } else {
+            ReferenceType::Range {
+                sheet: None,
+                start_row: Some(row0 + 1),
+                start_col: Some(first_col0 + 1),
+                end_row: Some(row0 + 1),
+                end_col: Some(last_col0 + 1),
+                start_row_abs: true,
+                start_col_abs: true,
+                end_row_abs: true,
+                end_col_abs: true,
+            }
         };
         Ok(true)
     }

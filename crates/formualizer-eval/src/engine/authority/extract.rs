@@ -29,7 +29,7 @@ use crate::engine::graph::DependencyGraph;
 use crate::engine::named_range::{NameScope, NamedDefinition, NamedRange};
 use crate::engine::refs::{self, LocalBindingStyle, SemanticReference};
 use formualizer_common::ExcelError;
-use formualizer_parse::parser::ASTNode;
+use formualizer_parse::parser::{ASTNode, SpecialItem, TableSpecifier};
 
 pub const LK_NAME: u8 = 1;
 pub const LK_TABLE: u8 = 2;
@@ -328,15 +328,8 @@ fn collect(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError
                 if !ctx.push_symbol_node(entry.vertex, &lk) {
                     ctx.miss(DependencyGraph::unbound_symbol_key("table", &t.name));
                 }
-                ctx.push_fixed(
-                    rr.start.sheet_id,
-                    rr.start.coord.row(),
-                    rr.start.coord.col(),
-                    rr.end.coord.row(),
-                    rr.end.coord.col(),
-                    Tag::X,
-                    lk,
-                );
+                let (top, left, bottom, right) = table_read_region(entry, t.specifier.as_ref());
+                ctx.push_fixed(rr.start.sheet_id, top, left, bottom, right, Tag::X, lk);
             }
             None => match ctx.graph.resolve_source_table_entry(&t.name) {
                 Some(source) => {
@@ -513,4 +506,76 @@ pub fn extract_symbol_binding(
         },
         missing,
     )
+}
+
+/// The cells a structured reference reads, as (top, left, bottom, right), 0-based. A totals
+/// row formula such as `SUBTOTAL(109,T[Col])` reads the data rows, so its own cell must
+/// stay outside the reference's region or it looks like a cycle. Anything not understood
+/// here falls back to the whole table, which is safe for ordering.
+pub(super) fn table_read_region(
+    entry: &crate::engine::graph::TableEntry,
+    specifier: Option<&TableSpecifier>,
+) -> (u32, u32, u32, u32) {
+    let whole = (
+        entry.range.start.coord.row(),
+        entry.range.start.coord.col(),
+        entry.range.end.coord.row(),
+        entry.range.end.coord.col(),
+    );
+    let (top, left, bottom, right) = whole;
+    let data_top = top + u32::from(entry.header_row);
+    let data_bottom = bottom
+        .saturating_sub(u32::from(entry.totals_row))
+        .max(data_top);
+    let column = |name: &str| entry.col_index(name).map(|index| left + index as u32);
+    let rows_of = |item: &TableSpecifier| match item {
+        TableSpecifier::All | TableSpecifier::SpecialItem(SpecialItem::All) => Some((top, bottom)),
+        TableSpecifier::Data | TableSpecifier::SpecialItem(SpecialItem::Data) => {
+            Some((data_top, data_bottom))
+        }
+        TableSpecifier::Headers | TableSpecifier::SpecialItem(SpecialItem::Headers)
+            if entry.header_row =>
+        {
+            Some((top, top))
+        }
+        TableSpecifier::Totals | TableSpecifier::SpecialItem(SpecialItem::Totals)
+            if entry.totals_row =>
+        {
+            Some((bottom, bottom))
+        }
+        _ => None,
+    };
+    let columns_of = |item: &TableSpecifier| match item {
+        TableSpecifier::Column(name) => column(name).map(|col| (col, col)),
+        TableSpecifier::ColumnRange(first, last) => column(first).zip(column(last)),
+        _ => None,
+    };
+    match specifier {
+        None => (data_top, left, data_bottom, right),
+        Some(TableSpecifier::Combination(parts)) => {
+            let mut rows: Option<(u32, u32)> = None;
+            let mut columns: Option<(u32, u32)> = None;
+            for part in parts {
+                if let Some((from, to)) = rows_of(part) {
+                    rows = Some(rows.map_or((from, to), |(a, b)| (a.min(from), b.max(to))));
+                } else if let Some((from, to)) = columns_of(part) {
+                    columns = Some(columns.map_or((from, to), |(a, b)| (a.min(from), b.max(to))));
+                } else {
+                    return whole;
+                }
+            }
+            let (row_from, row_to) = rows.unwrap_or((data_top, data_bottom));
+            let (col_from, col_to) = columns.unwrap_or((left, right));
+            (row_from, col_from, row_to, col_to)
+        }
+        Some(item) => {
+            if let Some((from, to)) = rows_of(item) {
+                (from, left, to, right)
+            } else if let Some((from, to)) = columns_of(item) {
+                (data_top, from, data_bottom, to)
+            } else {
+                whole
+            }
+        }
+    }
 }

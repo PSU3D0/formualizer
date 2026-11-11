@@ -20423,11 +20423,8 @@ where
                     };
 
                     let av = match &tref.specifier {
-                        None => {
-                            return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
-                                "Table reference without specifier is unsupported".to_string(),
-                            ));
-                        }
+                        // A bare table name means its data rows.
+                        None => select(data_sr, sc0, data_er, ec0),
                         Some(formualizer_parse::parser::TableSpecifier::Column(col)) => {
                             let Some(idx) = table.col_index(col) else {
                                 return Err(ExcelError::new(ExcelErrorKind::Ref).with_message(
@@ -20495,8 +20492,77 @@ where
                                     .to_string(),
                             ));
                         }
-                        Some(formualizer_parse::parser::TableSpecifier::Row(_))
-                        | Some(formualizer_parse::parser::TableSpecifier::Combination(_)) => {
+                        // Such as `T[[#Totals],[Col]]` or `T[[#Headers],[#Data],[A]:[C]]`.
+                        Some(formualizer_parse::parser::TableSpecifier::Combination(parts)) => {
+                            use formualizer_parse::parser::{SpecialItem, TableSpecifier};
+                            let mut rows: Option<(usize, usize)> = None;
+                            let mut columns: Option<(usize, usize)> = None;
+                            let widen =
+                                |span: &mut Option<(usize, usize)>, from: usize, to: usize| {
+                                    *span = Some(
+                                        span.map_or((from, to), |(a, b)| (a.min(from), b.max(to))),
+                                    );
+                                };
+                            let column = |name: &str| {
+                                table.col_index(name).map(|idx| sc0 + idx).ok_or_else(|| {
+                                    ExcelError::new(ExcelErrorKind::Ref).with_message(
+                                        "Column refers to unknown table column".to_string(),
+                                    )
+                                })
+                            };
+                            let mut empty = false;
+                            for part in parts {
+                                match part.as_ref() {
+                                    TableSpecifier::All
+                                    | TableSpecifier::SpecialItem(SpecialItem::All) => {
+                                        widen(&mut rows, sr0, er0);
+                                    }
+                                    TableSpecifier::Data
+                                    | TableSpecifier::SpecialItem(SpecialItem::Data) => {
+                                        widen(&mut rows, data_sr, data_er);
+                                    }
+                                    TableSpecifier::Headers
+                                    | TableSpecifier::SpecialItem(SpecialItem::Headers) => {
+                                        if has_headers {
+                                            widen(&mut rows, sr0, sr0);
+                                        } else {
+                                            empty = true;
+                                        }
+                                    }
+                                    TableSpecifier::Totals
+                                    | TableSpecifier::SpecialItem(SpecialItem::Totals) => {
+                                        if has_totals {
+                                            widen(&mut rows, er0, er0);
+                                        } else {
+                                            empty = true;
+                                        }
+                                    }
+                                    TableSpecifier::Column(name) => {
+                                        let col = column(name)?;
+                                        widen(&mut columns, col, col);
+                                    }
+                                    TableSpecifier::ColumnRange(first, last) => {
+                                        let (a, b) = (column(first)?, column(last)?);
+                                        widen(&mut columns, a.min(b), a.max(b));
+                                    }
+                                    _ => {
+                                        return Err(ExcelError::new(ExcelErrorKind::NImpl)
+                                            .with_message(
+                                                "Complex structured references not yet supported"
+                                                    .to_string(),
+                                            ));
+                                    }
+                                }
+                            }
+                            if empty {
+                                asheet.range_view(1, 1, 0, 0)
+                            } else {
+                                let (top, bottom) = rows.unwrap_or((data_sr, data_er));
+                                let (left, right) = columns.unwrap_or((sc0, ec0));
+                                select(top, left, bottom, right)
+                            }
+                        }
+                        Some(formualizer_parse::parser::TableSpecifier::Row(_)) => {
                             return Err(ExcelError::new(ExcelErrorKind::NImpl).with_message(
                                 "Complex structured references not yet supported".to_string(),
                             ));
