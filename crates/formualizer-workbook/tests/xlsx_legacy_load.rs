@@ -44,6 +44,10 @@ fn package(rows: &str, chain: bool) -> Vec<u8> {
 fn load(bytes: Vec<u8>, backend: usize, deferred: bool) -> Workbook {
     let mut config = WorkbookConfig::ephemeral();
     config.eval.defer_graph_building = deferred;
+    load_config(bytes, backend, config)
+}
+
+fn load_config(bytes: Vec<u8>, backend: usize, config: WorkbookConfig) -> Workbook {
     match backend {
         0 => Workbook::from_reader(
             NativeXlsxAdapter::open_bytes(bytes).unwrap(),
@@ -194,6 +198,102 @@ fn scalar_dynamic_anchor_retains_spill_identity() {
             let mut wb = load(package(rows, false), backend, deferred);
             wb.evaluate_all().unwrap();
             assert_eq!(wb.get_value("Probe", 5, 3), Some(number(10.0)));
+        }
+    }
+}
+
+#[test]
+fn malformed_arrays_keep_the_existing_cached_fallback_policy() {
+    use formualizer_eval::engine::FormulaParsePolicy;
+    for backend in backends() {
+        for deferred in [false, true] {
+            for dynamic in [false, true] {
+                let cm = if dynamic { " cm=\"1\"" } else { "" };
+                let array = format!(
+                    "<row r=\"1\"><c r=\"C1\"{cm}><f t=\"array\" ref=\"C1:C2\">SUM(</f><v>999</v></c><c r=\"E1\"><v>42</v></c></row><row r=\"2\"><c r=\"C2\"><v>888</v></c></row>"
+                );
+                let mut config = WorkbookConfig::ephemeral();
+                config.eval.defer_graph_building = deferred;
+                config.eval.formula_parse_policy = FormulaParsePolicy::KeepCachedValue;
+                if backend == 0 {
+                    config =
+                        config.with_ingest_limits(formualizer_eval::engine::WorkbookLoadLimits {
+                            max_sheet_logical_cells: 3,
+                            ..Default::default()
+                        });
+                }
+                let bytes = package(&array, false);
+                // Source reads must still expose the saved cache and formula.
+                let mut source = NativeXlsxAdapter::open_bytes(bytes.clone()).unwrap();
+                assert_eq!(
+                    source.read_sheet("Probe").unwrap().cells[&(1, 3)].value,
+                    Some(number(999.0))
+                );
+                let mut wb = load_config(bytes, backend, config);
+                wb.evaluate_all().unwrap();
+                // No formula vertex means no ownership or cache masking.
+                assert_eq!(wb.get_value("Probe", 1, 3), Some(number(999.0)));
+                assert_eq!(wb.get_value("Probe", 2, 3), Some(number(888.0)));
+                assert_eq!(wb.get_value("Probe", 1, 5), Some(number(42.0)));
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_array_formula_retains_cached_anchor_without_ownership() {
+    for backend in backends().into_iter().filter(|b| *b != 0) {
+        for deferred in [false, true] {
+            let rows = "<row r=\"1\"><c r=\"C1\"><f t=\"array\" ref=\"C1:C2\"/><v>999</v></c><c r=\"E1\"><v>42</v></c></row><row r=\"2\"><c r=\"C2\"><v>888</v></c></row>";
+            let mut wb = load(package(rows, false), backend, deferred);
+            wb.evaluate_all().unwrap();
+            assert_eq!(wb.get_value("Probe", 1, 3), Some(number(999.0)));
+            assert_eq!(wb.get_value("Probe", 2, 3), Some(number(888.0)));
+            assert_eq!(wb.get_value("Probe", 1, 5), Some(number(42.0)));
+        }
+    }
+}
+
+#[test]
+fn out_of_order_saved_array_children_are_regenerated() {
+    for backend in backends() {
+        for deferred in [false, true] {
+            for dynamic in [false, true] {
+                let cm = if dynamic { " cm=\"1\"" } else { "" };
+                let rows = format!(
+                    "<row r=\"2\"><c r=\"A2\"><v>20</v></c><c r=\"C2\"><v>888</v></c></row><row r=\"1\"><c r=\"A1\"><v>10</v></c><c r=\"C1\"{cm}><f t=\"array\" ref=\"C1:C2\">A1:A2</f><v>999</v></c></row>"
+                );
+                let mut wb = load(package(&rows, false), backend, deferred);
+                wb.evaluate_all().unwrap();
+                assert_eq!(wb.get_value("Probe", 1, 3), Some(number(10.0)));
+                assert_eq!(
+                    wb.get_value("Probe", 2, 3),
+                    Some(number(20.0)),
+                    "backend={backend}, deferred={deferred}, dynamic={dynamic}, A2={:?}",
+                    wb.get_value("Probe", 2, 1)
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn over_cap_cse_is_a_local_error_without_allocating_the_extent() {
+    for backend in backends() {
+        for deferred in [false, true] {
+            let rows = "<row r=\"1\"><c r=\"A1\"><v>10</v></c><c r=\"C1\"><f t=\"array\" ref=\"C1:XFD1048576\">A1</f><v>999</v></c><c r=\"B1\"><f>1+2</f></c></row>";
+            let mut config = WorkbookConfig::ephemeral();
+            config.eval.defer_graph_building = deferred;
+            config.eval.spill.max_spill_cells = 2;
+            let mut wb = load_config(package(rows, false), backend, config);
+            wb.evaluate_all().unwrap();
+            assert!(matches!(
+                wb.get_value("Probe", 1, 3),
+                Some(LiteralValue::Error(e)) if e.kind == formualizer_common::ExcelErrorKind::Spill
+            ));
+            assert_eq!(wb.get_value("Probe", 1, 2), Some(number(3.0)));
+            assert_eq!(wb.get_value("Probe", 1_048_576, 16_384), None);
+            assert_eq!(wb.engine().config.spill.max_spill_cells, 2);
         }
     }
 }

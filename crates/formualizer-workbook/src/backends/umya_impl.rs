@@ -1218,9 +1218,6 @@ where
                         }
                     }
                 }
-                sheet_data
-                    .cells
-                    .retain(|&(row, col), _| !arrays.iter().any(|a| a.owns_child(row, col)));
                 for (&coord, cell) in &mut sheet_data.cells {
                     if !nonlegacy_cells.contains(&coord)
                         && let Some(formula) = &mut cell.formula
@@ -1290,7 +1287,11 @@ where
                     engine.config.date_system,
                 );
                 for ((row, col), cd) in &sheet_data.cells {
-                    if cd.formula.is_some() {
+                    if cd.formula.is_some()
+                        && !array_declarations.iter().any(|(sheet, array)| {
+                            sheet == n && array.row == *row && array.col == *col
+                        })
+                    {
                         continue;
                     }
                     let Some(value) = &cd.value else {

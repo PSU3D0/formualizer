@@ -378,14 +378,6 @@ pub(super) fn scan(
                                             dynamic.is_some(),
                                         )
                                 {
-                                    if !array.dynamic {
-                                        sink.generated.observe(worksheet::SourceRect {
-                                            first_row: array.row,
-                                            first_col: array.col,
-                                            last_row: array.last_row,
-                                            last_col: array.last_col,
-                                        });
-                                    }
                                     sink.arrays.push(array);
                                 }
                             }
@@ -421,14 +413,6 @@ pub(super) fn scan(
                                         }
                                     }
                                 } else {
-                                    if t == Some(b"array")
-                                        && let (Some(cm), Some(range)) = (cm, range)
-                                        && let Ok(extent) = dimension(range)
-                                    {
-                                        sink.observe_dynamic_anchor(
-                                            coord0.row, coord0.col, cm, extent,
-                                        );
-                                    }
                                     OwnedSpoolFormulaRecord::Ordinary {
                                         sequence,
                                         coord0,

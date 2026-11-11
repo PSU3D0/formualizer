@@ -59,7 +59,6 @@ mod retained_tests {
                 name: "test".into(),
                 data: format!("<worksheet><sheetData><row>{body}</row></sheetData></worksheet>")
                     .into_bytes(),
-                parsed: OnceLock::new(),
                 reader: OnceLock::new(),
                 reader_parsed: OnceLock::new(),
             };
@@ -94,7 +93,6 @@ mod retained_tests {
                 name: "test".into(),
                 data: format!("<worksheet><sheetData><row>{body}</row></sheetData></worksheet>")
                     .into_bytes(),
-                parsed: OnceLock::new(),
                 reader: OnceLock::new(),
                 reader_parsed: OnceLock::new(),
             };
@@ -205,10 +203,6 @@ mod retained_tests {
             }
             // Once each surface is requested, subsequent reads use its cache.
             for sheet in &mut native.sheets {
-                assert!(
-                    sheet.parsed.get().is_none(),
-                    "engine handoff must consume its value plane"
-                );
                 assert!(sheet.reader_parsed.get().is_some());
                 sheet.data.clear();
             }
@@ -256,7 +250,7 @@ use formualizer_eval::{
     traits::EvaluationContext,
 };
 use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
+    collections::{BTreeMap, HashSet},
     io::{Cursor, Read},
     path::Path,
     sync::{Arc, OnceLock},
@@ -265,7 +259,6 @@ use std::{
 struct SheetSource {
     name: String,
     data: Vec<u8>,
-    parsed: OnceLock<ParsedSheet>,
     reader: OnceLock<SheetData>,
     reader_parsed: OnceLock<ParsedSheet>,
 }
@@ -465,7 +458,6 @@ impl NativeXlsxAdapter {
             for sheet in declared.iter().filter(|sheet| !sheet.inert) {
                 sheets.push(SheetSource {
                     name: sheet.name.clone(),
-                    parsed: OnceLock::new(),
                     reader: OnceLock::new(),
                     reader_parsed: OnceLock::new(),
                     data: package::take_part(
@@ -805,7 +797,6 @@ impl NativeXlsxAdapter {
             dynamic: self.dynamic.as_ref(),
             lowerer: lower_legacy.then(crate::legacy_formula::Lowerer::default),
             arrays: Vec::new(),
-            generated: Default::default(),
             values,
             reader_values,
             records: Vec::new(),
@@ -845,34 +836,7 @@ impl NativeXlsxAdapter {
         })
     }
 }
-fn populated_coordinates(
-    arrow: &formualizer_eval::arrow_store::ArrowSheet,
-) -> BTreeSet<(u32, u32)> {
-    let mut coordinates = BTreeSet::new();
-    for column in &arrow.columns {
-        for (index, chunk) in column.chunks.iter().enumerate().chain(
-            column
-                .sparse_chunks
-                .iter()
-                .map(|(index, chunk)| (*index, chunk)),
-        ) {
-            let start = arrow
-                .chunk_starts
-                .get(index)
-                .copied()
-                .unwrap_or(index * arrow.chunk_rows);
-            for (offset, tag) in chunk.type_tag.values().iter().enumerate() {
-                if *tag != formualizer_eval::arrow_store::TypeTag::Empty as u8 {
-                    coordinates.insert(((start + offset + 1) as u32, column.index + 1));
-                }
-            }
-            for (offset, _) in chunk.overlay.iter() {
-                coordinates.insert(((start + offset + 1) as u32, column.index + 1));
-            }
-        }
-    }
-    coordinates
-}
+use crate::legacy_formula::arrays::populated_coordinates;
 
 fn value_extent(coordinates: impl Iterator<Item = (u32, u32)>) -> (u32, u32) {
     let mut extent: Option<(u32, u32, u32, u32)> = None;
@@ -997,8 +961,6 @@ struct LoadSink<'a> {
     strings: &'a SharedStringTable,
     styles: &'a Styles,
     dynamic: Option<&'a DynamicMetadata>,
-    /// Footprints of proven dynamic-array anchors seen so far in source order.
-    generated: worksheet::scanner::generated::GeneratedChildren,
     values: ValueSink<'a>,
     records: Vec<OwnedSpoolFormulaRecord>,
     record_count: usize,
@@ -1022,7 +984,7 @@ impl LoadSink<'_> {
         if let Some(record) = formula {
             if self.value_error.is_none() {
                 let result = if let Some(reader) = &mut self.reader_values {
-                    reader.push_decoded(row, col, value, format)
+                    reader.push_decoded(row, col, value.clone(), format)
                 } else if let worksheet::events::Value::Shared(index) = value {
                     self.strings.get(index).map(|_| ())
                 } else {
@@ -1031,6 +993,16 @@ impl LoadSink<'_> {
                 self.retain_value_error(result)?;
             }
             self.values.observe_formula(row, col)?;
+            if self.reader_values.is_none()
+                && self
+                    .arrays
+                    .iter()
+                    .any(|array| array.row == row && array.col == col)
+            {
+                // Retain the cache until parsing confirms anchor ownership.
+                let result = self.values.push_formula_cache(row, col, value, format);
+                self.retain_value_error(result)?;
+            }
             self.last_formula_coord = Some((row, col));
             self.record_count += 1;
             if let Some(emit) = &mut self.emit {
@@ -1053,45 +1025,12 @@ impl LoadSink<'_> {
                 } else {
                     Ok(())
                 }
-            } else if self.generated.contains(row, col) {
-                // A saved spill child is the anchor's previous output, not user
-                // input; installing it would block the recalculated spill.
-                if let worksheet::events::Value::Shared(index) = value {
-                    self.strings.get(index).map(|_| ())
-                } else {
-                    Ok(())
-                }
             } else {
                 self.values.push_decoded(row, col, value, format)
             };
             self.retain_value_error(result)?;
         }
         Ok(())
-    }
-    /// Record a dynamic-array anchor (`<f t="array" ref>` on a cell whose
-    /// `cm` resolves to a validated XLDAPR binding). Only the top-left cell
-    /// of its declared extent can own the remaining cells as spill children.
-    fn observe_dynamic_anchor(&mut self, row0: u32, col0: u32, cm: &[u8], extent: SourceRect) {
-        let Some(metadata) = self.dynamic else {
-            return;
-        };
-        let bound = atoi_simd::parse::<u32, true, false>(cm)
-            .ok()
-            .is_some_and(|cm| metadata.resolve(cm).is_ok_and(|b| !b.collapsed));
-        if bound
-            && extent.start
-                == (SourceCoord {
-                    row: row0,
-                    col: col0,
-                })
-        {
-            self.generated.observe(worksheet::SourceRect {
-                first_row: extent.start.row + 1,
-                first_col: extent.start.col + 1,
-                last_row: extent.end.row + 1,
-                last_col: extent.end.col + 1,
-            });
-        }
     }
 
     fn retain_value_error(&mut self, result: Result<(), IoError>) -> Result<(), IoError> {
@@ -1250,7 +1189,6 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
             let mut formulas_handed = 0;
             let mut shared = 0;
             for index in 0..self.sheets.len() {
-                let cached = self.sheets[index].parsed.take();
                 let sheet = &self.sheets[index];
                 let refused: HashSet<_> = self
                     .external
@@ -1267,24 +1205,14 @@ impl<R: EvaluationContext> EngineLoadStream<R> for NativeXlsxAdapter {
                     &sheet.name,
                     index as u32,
                     |emit| {
-                        let mut parsed = if let Some(mut parsed) = cached {
-                            if let Some(error) = &parsed.stream_error {
-                                return Err(error.to_error());
-                            }
-                            for record in std::mem::take(&mut parsed.records) {
-                                emit(record)?;
-                            }
-                            parsed
-                        } else {
-                            self.scan_sheet_produced(
-                                sheet,
-                                &limits,
-                                DateSystem::Excel1900,
-                                false,
-                                Some(emit),
-                                true,
-                            )?
-                        };
+                        let mut parsed = self.scan_sheet_produced(
+                            sheet,
+                            &limits,
+                            DateSystem::Excel1900,
+                            false,
+                            Some(emit),
+                            true,
+                        )?;
                         if let Some(error) = &parsed.stream_error {
                             return Err(error.to_error());
                         }
