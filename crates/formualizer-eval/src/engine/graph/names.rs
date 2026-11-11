@@ -1,4 +1,5 @@
 use super::*;
+use crate::reference::RangeRef;
 use formualizer_common::parse_a1_1based;
 
 #[inline]
@@ -48,6 +49,70 @@ fn is_valid_excel_name(name: &str) -> bool {
 ///
 /// Named definitions track structural edits regardless of `$` anchors, matching
 /// formula references. Absolute markers affect copy/fill, not structural shifts.
+fn shrinks_on_delete(
+    range: &RangeRef,
+    operation: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+) -> bool {
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
+    matches!(
+        operation,
+        ShiftOperation::DeleteRows { sheet_id, .. } | ShiftOperation::DeleteColumns { sheet_id, .. }
+            if *sheet_id == range.start.sheet_id
+    )
+}
+
+/// One axis of a range after deleting `count` lines from `start`, as Excel does it: the
+/// range shrinks, and only when every line of it is deleted does it become `#REF!`.
+fn shrink_axis(from: u32, to: u32, start: u32, count: u32) -> Option<(u32, u32)> {
+    let last = start + count - 1;
+    if start <= from && last >= to {
+        return None;
+    }
+    let new_from = if from > last {
+        from - count
+    } else if from >= start {
+        start
+    } else {
+        from
+    };
+    let new_to = if to > last {
+        to - count
+    } else if to >= start {
+        start - 1
+    } else {
+        to
+    };
+    Some((new_from, new_to))
+}
+
+fn shrink_named_range(
+    range: &RangeRef,
+    operation: &crate::engine::graph::editor::reference_adjuster::ShiftOperation,
+) -> Option<RangeRef> {
+    use crate::engine::graph::editor::reference_adjuster::ShiftOperation;
+    use crate::reference::Coord;
+    let (start, end) = (range.start.coord, range.end.coord);
+    let (rows, cols) = match *operation {
+        ShiftOperation::DeleteRows {
+            start: at, count, ..
+        } => (
+            shrink_axis(start.row(), end.row(), at, count)?,
+            (start.col(), end.col()),
+        ),
+        ShiftOperation::DeleteColumns {
+            start: at, count, ..
+        } => (
+            (start.row(), end.row()),
+            shrink_axis(start.col(), end.col(), at, count)?,
+        ),
+        _ => return Some(*range),
+    };
+    let mut out = *range;
+    out.start.coord = Coord::new(rows.0, cols.0, start.row_abs(), start.col_abs());
+    out.end.coord = Coord::new(rows.1, cols.1, end.row_abs(), end.col_abs());
+    Some(out)
+}
+
 fn adjust_named_definition(
     definition: &mut NamedDefinition,
     adjuster: &crate::engine::graph::editor::reference_adjuster::ReferenceAdjuster,
@@ -64,6 +129,12 @@ fn adjust_named_definition(
                 *cell_ref = adjusted;
             } else {
                 invalidated = true;
+            }
+        }
+        NamedDefinition::Range(range_ref) if shrinks_on_delete(range_ref, operation) => {
+            match shrink_named_range(range_ref, operation) {
+                Some(shrunk) => *range_ref = shrunk,
+                None => invalidated = true,
             }
         }
         NamedDefinition::Range(range_ref) => {
