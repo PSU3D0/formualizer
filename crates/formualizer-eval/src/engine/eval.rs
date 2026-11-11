@@ -20794,6 +20794,10 @@ where
     ///
     /// Returns the number of `#CIRC!`-stamped vertices, so call sites can
     /// keep their `cycle_errors` accounting (`> 0` ⇒ count the unit).
+    ///
+    /// In an armed pass the members are committed together once the unit
+    /// has run ([`Self::freshness_cycle_unit_committed`]); a skipped unit
+    /// commits nothing.
     fn handle_cycle_unit(
         &mut self,
         cycle: &[VertexId],
@@ -20802,22 +20806,26 @@ where
         cancel_flag: Option<&AtomicBool>,
     ) -> Result<usize, ExcelError> {
         self.resource_checkpoint(cycle.len() as u64)?;
-        match self.config.cycle.detection {
+        // No dirty member: the unit is skipped (Static would stamp nothing,
+        // Runtime would not evaluate) and commits nothing.
+        if let Some(filter) = dirty_filter
+            && !cycle.iter().any(|v| filter.contains(v))
+        {
+            return Ok(0);
+        }
+        let stamped = match self.config.cycle.detection {
             CycleDetection::Static => {
-                Ok(self.apply_cycle_outcome(cycle, delta.as_deref_mut(), dirty_filter))
+                self.apply_cycle_outcome(cycle, delta.as_deref_mut(), dirty_filter)
             }
             CycleDetection::Runtime => {
-                if let Some(filter) = dirty_filter
-                    && !cycle.iter().any(|v| filter.contains(v))
-                {
-                    return Ok(0);
-                }
                 // Both policies share `evaluate_scc_unit`; they differ only
                 // in the settle loop's live-cycle arm (Error stamps,
                 // Iterate keeps passing — RFC #113).
-                self.evaluate_scc_unit(cycle, delta, cancel_flag)
+                self.evaluate_scc_unit(cycle, delta, cancel_flag)?
             }
-        }
+        };
+        self.freshness_cycle_unit_committed(cycle);
+        Ok(stamped)
     }
 
     /// Evaluate one statically-cyclic SCC under `CycleDetection::Runtime`
