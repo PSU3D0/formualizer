@@ -38,6 +38,11 @@ fn formula(engine: &mut Engine<TestWorkbook>, row: u32, col: u32, f: &str) {
         .unwrap();
 }
 
+/// A1 address of a 1-based `(row, col)`.
+fn a1(row: u32, col: u32) -> String {
+    format!("{}{row}", crate::reference::Coord::col_to_letters(col - 1))
+}
+
 fn is_circ(engine: &Engine<TestWorkbook>, row: u32, col: u32) -> bool {
     matches!(
         engine.get_cell_value("Sheet1", row, col),
@@ -561,5 +566,41 @@ fn offset_reader_after_structural_edits_and_undo_is_fresh() {
                 }
             }
         }
+    }
+}
+
+/// A period chain of dynamic readers (`C1 = OFFSET(C1,0,-1)*2`, …) where
+/// every period also has its own dynamic reader in another row
+/// (`C2 = OFFSET(C1,0,0)`). Budget models build opening balances and period
+/// totals this way. Each link and each reader resolves to a fixed cell, so
+/// the dependency order is static once the reads are known; the request
+/// must converge regardless of the number of periods.
+#[test]
+fn dynamic_reader_chain_with_per_period_dynamic_readers_converges() {
+    for periods in [4u32, 6, 7, 12, 30] {
+        // Self-based OFFSET is accepted at edit time only with Runtime
+        // detection and iteration, the configuration Excel models need.
+        let mut e = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig {
+                cycle: crate::engine::CycleConfig::iterate_excel_defaults(),
+                ..EvalConfig::default()
+            },
+        );
+        set(&mut e, 1, 1, 1.0);
+        for c in 2..=periods {
+            formula(&mut e, 1, c, &format!("=OFFSET({},0,-1)*2", a1(1, c)));
+        }
+        for c in 1..=periods {
+            formula(&mut e, 2, c, &format!("=SUM(OFFSET({},0,0,1,1))", a1(1, c)));
+        }
+        e.evaluate_all()
+            .unwrap_or_else(|err| panic!("{periods} periods: {err}"));
+        // No reader may be taken for stale, at any length: before the fix
+        // every per-period reader raised the barrier.
+        assert_eq!(e.freshness_counters_for_test(), (0, 0), "{periods} periods");
+        let last = 2f64.powi(periods as i32 - 1);
+        assert_eq!(num(&e, 1, periods), Some(last), "{periods} periods, chain");
+        assert_eq!(num(&e, 2, periods), Some(last), "{periods} periods, reader");
     }
 }

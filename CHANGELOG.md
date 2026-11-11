@@ -6,6 +6,7 @@ All notable changes to Formualizer will be documented in this file.
 
 ### Fixed
 
+- A chain of self-based `OFFSET` periods (`C1 = OFFSET(C1,0,-1)*2`, …) with a dynamic reader of every period (`=SUM(OFFSET(C1,0,0,1,1))`) no longer fails with "dynamic dependency evaluation did not converge after 5 replans" from seven periods on. Under `CycleDetection::Runtime` each self-based `OFFSET` is a one-member SCC; its members stayed dirty until the end of the pass, so every reader evaluated after them in the same pass was taken for stale, the pass stopped at the barrier and the request advanced one period per replan. Cycle-unit members are now committed together when the unit finishes.
 - `_` and `%` in a text criterion are literal in family execution, as they already were elsewhere. A filled-down `=COUNTIF($A$1:$A$40,C1)` with `a_c` or `50%` in column C counted `abc` or `50x` too, because the family kernel passed the criterion to Arrow `ilike` unescaped.
 
 ## [0.14.0] - 2026-11-08
