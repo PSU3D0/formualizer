@@ -35,6 +35,23 @@ pub fn to_number_lenient(value: &LiteralValue) -> Result<f64, ExcelError> {
     }
 }
 
+/// Date or time text as a serial, the way the arithmetic operators read a text
+/// operand. The text is read uppercased, so that the result does not depend
+/// on case: the parser takes only an uppercase ISO `T`, while month names and
+/// AM/PM are case-insensitive anyway. So `"1999-10-26t00:00"` is a date, as
+/// in Google Sheets (#576).
+pub(crate) fn date_text_serial(system: DateSystem, text: &str) -> Option<f64> {
+    if !text.bytes().any(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let text = if text.contains('t') {
+        std::borrow::Cow::Owned(text.to_ascii_uppercase())
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    };
+    formualizer_common::parse_excel_datetime_text_to_serial_for(system, &text)
+}
+
 /// Lenient numeric coercion that resolves temporal values in a date system.
 ///
 /// Identical to [`to_number_lenient`] except that date-bearing literals are
@@ -109,7 +126,7 @@ pub(crate) fn to_arithmetic_number_with_locale(
     match value {
         LiteralValue::Text(s) => loc
             .parse_number_invariant(s)
-            .or_else(|| formualizer_common::parse_excel_datetime_text_to_serial_for(system, s))
+            .or_else(|| date_text_serial(system, s))
             .ok_or_else(|| {
                 ExcelError::new(ExcelErrorKind::Value)
                     .with_message(format!("Cannot convert '{s}' to arithmetic operand"))

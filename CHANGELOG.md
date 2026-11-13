@@ -7,6 +7,7 @@ All notable changes to Formualizer will be documented in this file.
 ### Fixed
 
 - `_` and `%` in a text criterion are literal in family execution, as they already were elsewhere. A filled-down `=COUNTIF($A$1:$A$40,C1)` with `a_c` or `50%` in column C counted `abc` or `50x` too, because the family kernel passed the criterion to Arrow `ilike` unescaped.
+- Arithmetic reads ISO date text with a lowercase `t`: `="1999-10-26t00:00"+0` is 36459, as it already was with an uppercase `T` and as in Google Sheets. (#576)
 
 ## [0.14.0] - 2026-11-08
 
