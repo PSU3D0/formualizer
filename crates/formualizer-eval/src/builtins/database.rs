@@ -630,6 +630,8 @@ pub struct DSumFn;
 /// `DSUM` filters database rows using a criteria range, then adds the selected field values.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are evaluated with OR semantics; populated criteria columns within one row are ANDed.
 /// - `field` resolves by case-insensitive header text or 1-based column index; unknown headers and out-of-range indexes return `#VALUE!`.
 /// - Non-numeric values in the target field are ignored unless they coerce to numbers.
@@ -782,6 +784,8 @@ pub struct DAverageFn;
 /// `DAVERAGE` applies criteria filtering first, then averages the numeric values in `field`.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are OR conditions, while criteria columns in the same row are AND conditions.
 /// - `field` can be a case-insensitive header name or a 1-based column index; invalid field resolution returns `#VALUE!`.
 /// - If no numeric values match, the function returns `#DIV/0!`.
@@ -934,6 +938,8 @@ pub struct DCountFn;
 /// `DCOUNT` ignores non-numeric values in the selected field even when the row itself matches.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are ORed, and criteria columns inside a single row are ANDed.
 /// - `field` header lookup is case-insensitive, and numeric `field` uses 1-based indexing; unresolved headers or invalid indexes return `#VALUE!`.
 /// - Only numeric field values contribute to the count.
@@ -1086,6 +1092,8 @@ pub struct DMaxFn;
 /// `DMAX` scans the filtered records and returns the maximum numeric value found in `field`.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are OR conditions; multiple non-empty criteria columns in one row are AND conditions.
 /// - `field` can be a case-insensitive header string or a 1-based column index; failed resolution returns `#VALUE!`.
 /// - If no numeric values are matched, this implementation returns `0`.
@@ -1238,6 +1246,8 @@ pub struct DMinFn;
 /// `DMIN` applies criteria filtering and then evaluates the minimum numeric value from `field`.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are ORed together; criteria columns on the same row are ANDed.
 /// - `field` resolves from a case-insensitive header label or 1-based index, and invalid resolution yields `#VALUE!`.
 /// - If no numeric values are matched, this implementation returns `0`.
@@ -1390,6 +1400,8 @@ pub struct DProductFn;
 /// `DPRODUCT` filters the database first, then returns the product of numeric values in `field`.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are evaluated as OR alternatives; criteria columns in one row are AND constraints.
 /// - `field` resolves via case-insensitive header text or 1-based column index; unresolved field references return `#VALUE!`.
 /// - If no numeric values match, this implementation returns `0`.
@@ -1543,6 +1555,8 @@ pub struct DStdevFn;
 /// `DSTDEV` computes standard deviation with the sample denominator (`n - 1`) after criteria filtering.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows represent OR branches; criteria columns in each row are combined with AND.
 /// - `field` is resolved by case-insensitive header text or 1-based column index; invalid field resolution returns `#VALUE!`.
 /// - At least two numeric values must match criteria, otherwise the result is `#DIV/0!`.
@@ -1695,6 +1709,8 @@ pub struct DStdevPFn;
 /// `DSTDEVP` computes standard deviation with the population denominator (`n`) after criteria filtering.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are OR branches, and each row's populated criteria columns are ANDed.
 /// - `field` can be a case-insensitive header label or 1-based index; invalid lookup returns `#VALUE!`.
 /// - At least one numeric value must match criteria, otherwise the result is `#DIV/0!`.
@@ -1847,6 +1863,8 @@ pub struct DVarFn;
 /// `DVAR` filters records first, then computes variance using the sample denominator (`n - 1`).
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are OR alternatives; criteria columns within each row are AND constraints.
 /// - `field` can be resolved by case-insensitive header text or 1-based index; unresolved fields return `#VALUE!`.
 /// - At least two numeric values must match criteria, otherwise the function returns `#DIV/0!`.
@@ -1999,6 +2017,8 @@ pub struct DVarPFn;
 /// `DVARP` computes variance with the population denominator (`n`) over filtered records.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are OR branches; populated criteria cells in the same row are combined with AND.
 /// - `field` accepts case-insensitive header text or 1-based index; bad field/header resolution returns `#VALUE!`.
 /// - At least one numeric value must match criteria, otherwise the function returns `#DIV/0!`.
@@ -2151,6 +2171,8 @@ pub struct DGetFn;
 /// `DGET` is useful for keyed lookups where criteria are expected to identify exactly one record.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria rows are OR alternatives; criteria columns inside one row are AND predicates.
 /// - `field` resolves from a case-insensitive header name or 1-based index; unresolved field/header references return `#VALUE!`.
 /// - Returns `#VALUE!` when no records match and `#NUM!` when multiple records match.
@@ -2301,6 +2323,8 @@ pub struct DCountAFn;
 /// Counts non-blank values in a database field for records matching criteria.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - `DCOUNTA` counts both text and numeric non-empty values.
 /// - Criteria rows are OR-ed; criteria columns in the same row are AND-ed.
 /// - Blank cells are excluded from the count.

@@ -312,3 +312,16 @@ fn non_arithmetic_text_semantics_are_unchanged() {
         }
     }
 }
+
+#[test]
+fn iso_text_with_a_lowercase_t_is_a_date() {
+    // As with an uppercase `T` and as in Google Sheets (#576).
+    for formula in ["=\"1999-10-26t00:00\"+0", "=\"1999-10-26T00:00\"+0"] {
+        assert_expected(
+            DateSystem::Excel1900,
+            formula,
+            "oracle: google-sheets",
+            Expected::Number(36_459.0),
+        );
+    }
+}

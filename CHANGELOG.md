@@ -4,9 +4,17 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `ArgSchema::date_serial_scalar()`: a scalar argument that reads date and time text as a serial (`CoercionPolicy::DateTimeSerial`), as Excel's date functions do. (#576)
+
 ### Fixed
 
 - `_` and `%` in a text criterion are literal in family execution, as they already were elsewhere. A filled-down `=COUNTIF($A$1:$A$40,C1)` with `a_c` or `50%` in column C counted `abc` or `50x` too, because the family kernel passed the criterion to Arrow `ilike` unescaped.
+- Arithmetic reads ISO date text with a lowercase `t`: `="1999-10-26t00:00"+0` is 36459, as it already was with an uppercase `T` and as in Google Sheets. (#576)
+- Date functions read date text. `=YEAR(A1)` with A1 holding the text `10/26/1999` returned `#VALUE!`; it now returns 1999, as Excel does, and `A1` stays text. This covers the date arguments of DAY, MONTH, YEAR, HOUR, MINUTE, SECOND, WEEKDAY, WEEKNUM, ISOWEEKNUM, EDATE, EOMONTH, DATEDIF, DAYS, DAYS360, YEARFRAC, NETWORKDAYS(.INTL) and WORKDAY(.INTL). ISO text with a `T` (`1999-10-26T00:00`, in either case) is a date, as in Google Sheets and arithmetic, and a date before 1900 gives `#NUM!`, as in Sheets; Excel returns `#VALUE!` for both. (#576)
+- NETWORKDAYS(.INTL) and WORKDAY(.INTL) count date text in their holiday lists: `=NETWORKDAYS(A1,A2,A2)` with A1:A2 holding the text `10/26/1999` and `10/27/1999` is 1, as in Excel. Other text is still skipped. (#576)
+- An equality criterion that is a date or a number counts text cells holding that date. `=COUNTIF(A1:A3,"10/26/1999")`, `=COUNTIF(A1:A3,36459)` and `=COUNTIF(A1:A3,"36459")` counted a number cell 36459 but not a text cell `'10/26/1999` or `'1999-10-26`; they now count both, as Excel does. SUMIF(S), COUNTIFS, AVERAGEIF(S), MAXIFS/MINIFS and the D-functions follow, and time text counts too: a `0` or blank criterion cell matches `'0:00`. As in Excel, `<>` and ordering criteria (`">1/1/1999"`) do not read date text, so `"<>10/26/1999"` still counts the text cell. In 1904 workbooks criteria read date text in the 1900 system, as they already read a criterion's own date text. (#576)
 
 ## [0.14.0] - 2026-11-08
 

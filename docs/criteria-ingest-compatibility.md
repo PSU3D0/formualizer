@@ -22,6 +22,8 @@ Mixed-type ranges build scalar-equivalent Boolean masks; text-only ranges retain
 
 General numeric/date-text coercion and escape/metacharacter behavior remain separate issues (#291/#295). This change must not be described as a complete wildcard-parity fix.
 
+Later, #576 made equality criteria match text cells that hold a date. A bare numeric criterion (`"36459"`) then also matches date text by serial, so over a text-only range that holds date text it takes the scalar matcher rather than the vectorized text path.
+
 ## Evidence and oracle limits
 
 Synthetic native, Calamine and Python tests cover equivalent typed inputs, edits, chunk boundaries, explicit blank tails and logical extents. Independent LibreOffice 24.2 checks agree on the isolated blank equality/inequality, SUMIF/SUMIFS and bounded-tail cases.

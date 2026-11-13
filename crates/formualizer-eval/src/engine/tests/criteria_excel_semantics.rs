@@ -7,7 +7,8 @@
 //! - `""` matches blank cells and empty text, `"="` only blank cells, `"<>"`
 //!   every cell that is not blank;
 //! - numeric comparisons match numbers only (not blanks, text or booleans),
-//!   `<>n` matches every other cell, and `=n` matches numeric text by value;
+//!   `<>n` matches every other cell, and `=n` matches numeric text and date
+//!   text by value;
 //! - text comparisons (`">b"`) and wildcards after `=`/`<>` (`"=a*"`,
 //!   `"<>a*"`) apply to text.
 
@@ -359,5 +360,355 @@ fn criteria_text_is_exact_and_date_text_is_a_date() {
                 );
             }
         }
+    }
+}
+
+/// Cells that hold a date as text (an apostrophe-escaped `'10/26/1999`, or ISO
+/// text imported from another tool). Excel keeps them as text (`ISTEXT` is
+/// TRUE), and an exact-match date criterion such as `"10/26/1999"` counts them
+/// (#576). Serials (Excel 1900 system): 10/26/1999 = 36459.
+mod date_text_cells {
+    use crate::engine::{Engine, EvalConfig};
+    use crate::test_workbook::TestWorkbook;
+    use formualizer_common::LiteralValue;
+    use formualizer_parse::parser::parse;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Expected {
+        Number(f64),
+    }
+
+    /// A1:A3 hold date text and B1:B3 the numbers 10, 20, 30; A5:A7 hold the
+    /// inputs of the saved Excel workbook in #576 as typed there; A9 holds ISO
+    /// text with a `T`, A10 the time text `0:00` and A11 ISO text with a
+    /// lowercase `t`. C1 is blank. G1:G4 is a database with field `d`, and
+    /// H1:H2 / I1:I2 are `<>10/26/1999` / `10/26/1999` criteria ranges for it.
+    /// `formula` goes in D1.
+    fn eval_over_date_text(formula: &str) -> LiteralValue {
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        let texts = [
+            (1, "10/26/1999"),
+            (2, "1999-10-27"),
+            (3, "2023-05-04 14:05"),
+            (5, "10/26/1999"),
+            (6, "10/26/1999"),
+            (7, "5/4/2023  2:05:00 PM"),
+            (9, "1999-10-26T00:00"),
+            (10, "0:00"),
+            (11, "1999-10-26t00:00"),
+        ];
+        for (row, text) in texts {
+            engine
+                .set_cell_value("Sheet1", row, 1, LiteralValue::Text(text.into()))
+                .unwrap();
+            engine
+                .set_cell_value("Sheet1", row, 2, LiteralValue::Number(10.0 * row as f64))
+                .unwrap();
+        }
+        // A database: header `d` in G1, records G2:G4; criteria H1:H2, I1:I2.
+        let database = [
+            (1, 7, "d"),
+            (2, 7, "10/26/1999"),
+            (3, 7, "1999-10-27"),
+            (4, 7, "abc"),
+            (1, 8, "d"),
+            (2, 8, "<>10/26/1999"),
+            (1, 9, "d"),
+            (2, 9, "10/26/1999"),
+        ];
+        for (row, col, text) in database {
+            engine
+                .set_cell_value("Sheet1", row, col, LiteralValue::Text(text.into()))
+                .unwrap();
+        }
+        engine
+            .set_cell_formula("Sheet1", 1, 4, parse(formula).unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        engine
+            .get_cell_value("Sheet1", 1, 4)
+            .unwrap_or(LiteralValue::Empty)
+    }
+
+    fn check(cases: &[(&str, Expected)]) {
+        let mut failures = Vec::new();
+        for (formula, expected) in cases {
+            let actual = eval_over_date_text(formula);
+            let Expected::Number(n) = expected;
+            let ok = actual == LiteralValue::Number(*n);
+            if !ok {
+                failures.push(format!("{formula}: expected {expected:?}, got {actual:?}"));
+            }
+        }
+        assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn exact_match_criteria_count_date_text() {
+        check(&[
+            ("=COUNTIF(A1:A3,\"10/26/1999\")", Expected::Number(1.0)),
+            ("=COUNTIF(A1:A3,\"1999-10-27\")", Expected::Number(1.0)),
+            ("=SUMIF(A1:A3,\"10/26/1999\",B1:B3)", Expected::Number(10.0)),
+            ("=COUNTIFS(A1:A3,\"10/26/1999\")", Expected::Number(1.0)),
+            (
+                "=AVERAGEIF(A1:A3,\"10/26/1999\",B1:B3)",
+                Expected::Number(10.0),
+            ),
+            ("=COUNTIF(A1:A3,\"=10/26/1999\")", Expected::Number(1.0)),
+            (
+                "=SUMIFS(B1:B3,A1:A3,\"10/26/1999\")",
+                Expected::Number(10.0),
+            ),
+            (
+                "=AVERAGEIFS(B1:B3,A1:A3,\"10/26/1999\")",
+                Expected::Number(10.0),
+            ),
+            (
+                "=MAXIFS(B1:B3,A1:A3,\"10/26/1999\")",
+                Expected::Number(10.0),
+            ),
+            (
+                "=MINIFS(B1:B3,A1:A3,\"1999-10-27\")",
+                Expected::Number(20.0),
+            ),
+            // The Excel workbook's own inputs (#576).
+            ("=COUNTIF(A5:A7,\"10/26/1999\")", Expected::Number(2.0)),
+            ("=COUNTIF(A5:A7,\"1999-10-26\")", Expected::Number(2.0)),
+            // A number criterion, or numeric text, is the date's serial too.
+            ("=COUNTIF(A1:A3,36459)", Expected::Number(1.0)),
+            ("=COUNTIF(A1:A3,DATE(1999,10,26))", Expected::Number(1.0)),
+            ("=COUNTIF(A1:A3,\"36459\")", Expected::Number(1.0)),
+            ("=COUNTIF(A1:A3,\"=36459\")", Expected::Number(1.0)),
+            ("=SUMIF(A1:A3,\"36459\",B1:B3)", Expected::Number(10.0)),
+            // Time text: `0:00` is serial 0, which a blank criterion cell
+            // also stands for (Excel: 1 and 1).
+            ("=COUNTIF(A10,0)", Expected::Number(1.0)),
+            ("=COUNTIF(A10,C1)", Expected::Number(1.0)),
+            // ISO text with a `T` is a date, as `A9+0` reads it and as in
+            // Google Sheets; Excel 2609 counts 0 (#576).
+            ("=COUNTIF(A9,\"10/26/1999\")", Expected::Number(1.0)),
+            ("=COUNTIF(A9:A10,\"10/26/1999\")", Expected::Number(1.0)),
+            // Lowercase `t` too: the fast paths see lowercased text, so every
+            // path reads it as the date functions do (`YEAR` is 1999).
+            ("=COUNTIF(A11,\"10/26/1999\")", Expected::Number(1.0)),
+            // The D-functions use the per-cell matcher.
+            ("=DCOUNTA(G1:G4,1,I1:I2)", Expected::Number(1.0)),
+            // An array criterion: 32 or more elements are counted from one
+            // pass (`EqualityCounts`), fewer one element at a time.
+            // A1 and A2 are serials 36459 and 36460, both in each array.
+            (
+                "=SUM(COUNTIF(A1:A3,SEQUENCE(40,1,36440)))",
+                Expected::Number(2.0),
+            ),
+            (
+                "=SUM(COUNTIF(A1:A3,SEQUENCE(31,1,36440)))",
+                Expected::Number(2.0),
+            ),
+            (
+                "=SUM(COUNTIF(A1:A3,SEQUENCE(40,1,36440)&\"\"))",
+                Expected::Number(2.0),
+            ),
+            (
+                "=SUM(COUNTIF(A1:A3,SEQUENCE(31,1,36440)&\"\"))",
+                Expected::Number(2.0),
+            ),
+        ]);
+    }
+
+    /// `<>date` still counts date text: Excel and Google Sheets read date text
+    /// for `=` only.
+    #[test]
+    fn not_equal_date_criteria_keep_counting_date_text() {
+        check(&[
+            ("=COUNTIF(A1:A3,\"<>10/26/1999\")", Expected::Number(3.0)),
+            ("=COUNTIF(A1:A3,\"<>1999-10-27\")", Expected::Number(3.0)),
+            (
+                "=SUMIF(A1:A3,\"<>10/26/1999\",B1:B3)",
+                Expected::Number(60.0),
+            ),
+            ("=COUNTIFS(A1:A3,\"<>10/26/1999\")", Expected::Number(3.0)),
+            (
+                "=AVERAGEIF(A1:A3,\"<>10/26/1999\",B1:B3)",
+                Expected::Number(20.0),
+            ),
+            ("=COUNTIF(A1:A3,\"<>abc\")", Expected::Number(3.0)),
+            ("=COUNTIF(A5:A7,\"<>10/26/1999\")", Expected::Number(3.0)),
+            ("=COUNTIF(A1:A3,\"<>36459\")", Expected::Number(3.0)),
+            // The D-functions use the per-cell matcher.
+            ("=DCOUNTA(G1:G4,1,H1:H2)", Expected::Number(3.0)),
+        ]);
+    }
+
+    /// Criteria have no workbook context and read date text in the 1900
+    /// system, criterion and cell alike, so in a 1904 workbook date text
+    /// matches date text, but a 1904 serial does not match it. Pinned as a
+    /// known limitation (date-typed cells behave the same way).
+    #[test]
+    fn criteria_read_date_text_in_the_1900_system_in_1904_workbooks() {
+        use crate::engine::DateSystem;
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_date_system(DateSystem::Excel1904),
+        );
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Text("10/26/1999".into()))
+            .unwrap();
+        let cases = [
+            ("=COUNTIF(A1,\"10/26/1999\")", 1.0),
+            ("=COUNTIF(A1,36459)", 1.0),
+            ("=COUNTIF(A1,DATE(1999,10,26))", 0.0),
+        ];
+        for (row, (formula, _)) in cases.iter().enumerate() {
+            engine
+                .set_cell_formula("Sheet1", row as u32 + 1, 4, parse(formula).unwrap())
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        for (row, (formula, expected)) in cases.iter().enumerate() {
+            assert_eq!(
+                engine.get_cell_value("Sheet1", row as u32 + 1, 4),
+                Some(LiteralValue::Number(*expected)),
+                "{formula}"
+            );
+        }
+    }
+
+    /// The per-cell matcher, used where no fast path applies (the D-functions,
+    /// for one), reads date text for `=n` only, like the sheet paths.
+    #[test]
+    fn per_cell_matcher_reads_date_text_for_equality_only() {
+        use crate::args::CriteriaPredicate as P;
+        use crate::builtins::criteria_match;
+        let serial = LiteralValue::Number(36_459.0);
+        for text in ["10/26/1999", "1999-10-26"] {
+            let cell = LiteralValue::Text(text.into());
+            assert!(criteria_match(&P::Eq(serial.clone()), &cell), "={text}");
+            assert!(criteria_match(&P::Ne(serial.clone()), &cell), "<>{text}");
+        }
+        let numeric = LiteralValue::Text("36459".into());
+        assert!(criteria_match(&P::Eq(serial.clone()), &numeric));
+        assert!(!criteria_match(&P::Ne(serial), &numeric));
+        // A bare numeric criterion (`"36459"`) is text equality, and matches
+        // date text by serial too; `<>` keeps it.
+        let bare = LiteralValue::Text("36459".into());
+        let date = LiteralValue::Text("10/26/1999".into());
+        assert!(criteria_match(&P::Eq(bare.clone()), &date));
+        assert!(criteria_match(&P::Ne(bare), &date));
+    }
+
+    /// The sheet paths count date text the way the per-cell matcher
+    /// (`criteria_match`) does. A1:A300 cycle through date texts (including
+    /// an ISO `T` form, which the Arrow mask sees lowercased), a number with
+    /// the same serial, numeric text and plain text; B holds the row number.
+    /// Columns D and E are filled-down COUNTIF and SUMIF families whose
+    /// criterion is the cell in C. Each run is compared with `criteria_match`
+    /// over the cells, with family execution off (the Arrow mask) and on (the
+    /// lifted criteria index, which must decline: it cannot express date text).
+    #[test]
+    fn criteria_fast_paths_count_date_text_like_the_walk() {
+        use super::super::common::arrow_eval_config;
+        const ROWS: u32 = 300;
+        // `numeric_text: false` swaps the numeric-text and number rows for more
+        // date text, so the column is text only: the criteria index then
+        // declines on date text alone, and the Arrow mask has no number lane.
+        let column = |r: u32, numeric_text: bool| match r % 6 {
+            0 => LiteralValue::Text("10/26/1999".into()),
+            1 => LiteralValue::Text("1999-10-26".into()),
+            2 if numeric_text => LiteralValue::Number(36_459.0),
+            2 => LiteralValue::Text("10/26/1999 ".into()),
+            3 if numeric_text => LiteralValue::Text("36459".into()),
+            3 => LiteralValue::Text("10/26/99".into()),
+            4 => LiteralValue::Text("abc".into()),
+            _ => LiteralValue::Text("1999-10-26T00:00".into()),
+        };
+        // (COUNTIF, SUMIF) per row, and how many criteria indexes the run built.
+        let run = |family: bool, numeric_text: bool, criterion: &str| {
+            let mut e = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig {
+                    family_execution: family,
+                    ..arrow_eval_config()
+                },
+            );
+            for r in 1..=ROWS {
+                e.set_cell_value("Sheet1", r, 1, column(r, numeric_text))
+                    .unwrap();
+                e.set_cell_value("Sheet1", r, 2, LiteralValue::Number(r as f64))
+                    .unwrap();
+                e.set_cell_value("Sheet1", r, 3, LiteralValue::Text(criterion.into()))
+                    .unwrap();
+            }
+            for r in 1..=ROWS {
+                let count = format!("=COUNTIF($A$1:$A${ROWS},C{r})");
+                let sum = format!("=SUMIF($A$1:$A${ROWS},C{r},$B$1:$B${ROWS})");
+                e.set_cell_formula("Sheet1", r, 4, parse(&count).unwrap())
+                    .unwrap();
+                e.set_cell_formula("Sheet1", r, 5, parse(&sum).unwrap())
+                    .unwrap();
+            }
+            let builds = e.criteria_index_builds_for_test();
+            e.evaluate_all().unwrap();
+            let builds = e.criteria_index_builds_for_test() - builds;
+            let values: Vec<(LiteralValue, LiteralValue)> = (1..=ROWS)
+                .map(|r| {
+                    (
+                        e.get_cell_value("Sheet1", r, 4)
+                            .unwrap_or(LiteralValue::Empty),
+                        e.get_cell_value("Sheet1", r, 5)
+                            .unwrap_or(LiteralValue::Empty),
+                    )
+                })
+                .collect();
+            (values, builds)
+        };
+        let expect = |rows: Vec<u32>| {
+            (
+                LiteralValue::Number(rows.len() as f64),
+                LiteralValue::Number(rows.iter().map(|&r| r as f64).sum()),
+            )
+        };
+        // Every row but the plain-text ones reads as serial 36459, whichever date
+        // format the criterion and the cell use (Excel 2609 counts a `1999-10-26`
+        // criterion against a `10/26/1999` text cell; see #576).
+        let matching = expect((1..=ROWS).filter(|r| r % 6 != 4).collect());
+        let mut lifted = false;
+        for numeric_text in [true, false] {
+            // `<>` is not the complement of `=`: it excludes the number and the
+            // numeric text only, and still counts date text (Excel 2609, #576).
+            let not_equal = expect(
+                (1..=ROWS)
+                    .filter(|r| !(numeric_text && (r % 6 == 2 || r % 6 == 3)))
+                    .collect(),
+            );
+            for (criterion, expected) in [
+                ("10/26/1999", &matching),
+                ("1999-10-26", &matching),
+                ("=10/26/1999", &matching),
+                ("36459", &matching),
+                ("<>10/26/1999", &not_equal),
+            ] {
+                let (walk, _) = run(false, numeric_text, criterion);
+                let (family, builds) = run(true, numeric_text, criterion);
+                lifted |= builds > 0;
+                let what = format!("criterion {criterion:?}, numeric text {numeric_text}");
+                let pred =
+                    crate::args::parse_criteria(&LiteralValue::Text(criterion.into())).unwrap();
+                let oracle = expect(
+                    (1..=ROWS)
+                        .filter(|&r| {
+                            crate::builtins::criteria_match(&pred, &column(r, numeric_text))
+                        })
+                        .collect(),
+                );
+                assert_eq!(&oracle, expected, "{what}: criteria_match");
+                assert_eq!(walk, family, "{what}: family differs from walk");
+                for (row, value) in walk.iter().enumerate() {
+                    assert_eq!(value, expected, "{what}, row {}", row + 1);
+                }
+            }
+        }
+        // The family runs built the criteria index, so they reached it and it
+        // declined; the values above show the decline gave the walk's answer.
+        assert!(lifted, "no run used the criteria index");
     }
 }

@@ -2675,16 +2675,16 @@ pub(crate) mod visibility_mask_test_hooks {
 fn is_numeric_text_equality(pred: &crate::args::CriteriaPredicate) -> bool {
     match pred {
         crate::args::CriteriaPredicate::Eq(formualizer_common::LiteralValue::Text(text)) => {
-            text.trim().parse::<f64>().is_ok_and(f64::is_finite)
+            crate::builtins::utils::criteria_numeric_text_target(text).is_some()
         }
         _ => false,
     }
 }
 
 /// Resolve the null (non-number) rows of an `=n` / `<>n` criteria mask over
-/// one row segment: numeric text compares by value, every other non-number
-/// cell (blank, boolean, error) is unequal. Segments without text stay
-/// vectorized.
+/// one row segment: numeric text compares by value, and for `=n` so does date
+/// text; every other non-number cell (blank, boolean, error) is unequal.
+/// Segments without text stay vectorized.
 fn fill_numeric_equality_nulls(
     view: &RangeView<'_>,
     row_start: usize,
@@ -2715,9 +2715,13 @@ fn fill_numeric_equality_nulls(
                 if mask.is_valid(i) {
                     out.append_value(mask.value(i));
                 } else if text.is_valid(i) {
-                    let equal = crate::locale::Locale::invariant()
-                        .parse_number_invariant(text.value(i))
-                        .is_some_and(|x| (x - n).abs() < 1e-12);
+                    // `=n` reads date text too; `<>n` reads numeric text only.
+                    let number = if ne {
+                        crate::builtins::utils::criteria_numeric_text(text.value(i))
+                    } else {
+                        crate::builtins::utils::criteria_text_number(text.value(i))
+                    };
+                    let equal = number.is_some_and(|x| (x - n).abs() < 1e-12);
                     out.append_value(equal != ne);
                 } else {
                     out.append_value(ne);
@@ -2819,7 +2823,8 @@ fn compute_criteria_mask(
         let mut bool_parts: Vec<BooleanArray> = Vec::new();
         // `=n` / `<>n`: the number lane is null for blank, text, boolean and
         // error cells. Blanks, booleans and errors never equal a number;
-        // numeric text does (`5` matches "5"), as in `criteria_match`.
+        // numeric text does (`5` matches "5"), and so does date text for `=n`,
+        // as in `criteria_match`.
         let number = |v: &formualizer_common::LiteralValue| match v {
             formualizer_common::LiteralValue::Number(n) => Some(*n),
             formualizer_common::LiteralValue::Int(i) => Some(*i as f64),
@@ -2863,9 +2868,11 @@ fn compute_criteria_mask(
     // Wildcards and numeric text equality can match non-text cells. The lowered
     // base lane is text-only, unlike the scalar matcher. Keep the vectorized
     // path for text-only data, but cache a scalar-equivalent mask for mixed data.
-    if is_numeric_text_equality(pred)
-        || matches!(pred, crate::args::CriteriaPredicate::TextLike { .. })
-    {
+    // Numeric text equality (`"36459"`) also matches date text by serial, which
+    // the text lane cannot express, so a column with date text is mixed too.
+    let numeric_text_equality = is_numeric_text_equality(pred);
+    if numeric_text_equality || matches!(pred, crate::args::CriteriaPredicate::TextLike { .. }) {
+        let mut mixed = false;
         for tags in view.type_tags_slices() {
             let (_, _, cols) = tags.ok()?;
             let tags = cols.get(col_in_view)?;
@@ -2874,18 +2881,33 @@ fn compute_criteria_mask(
                     || *tag == crate::arrow_store::TypeTag::Number as u8
                     || *tag == crate::arrow_store::TypeTag::Boolean as u8
             }) {
-                let mut mask = BooleanBuilder::new();
-                for chunk in view.iter_row_chunks() {
-                    let chunk = chunk.ok()?;
-                    for row in chunk.row_start..chunk.row_start + chunk.row_len {
-                        mask.append_value(crate::builtins::criteria_match(
-                            pred,
-                            &view.get_cell(row, col_in_view),
-                        ));
-                    }
-                }
-                return Some(std::sync::Arc::new(mask.finish()));
+                mixed = true;
+                break;
             }
+        }
+        let date_text = || {
+            view.lowered_text_slices().any(|slice| {
+                slice.is_ok_and(|(_, _, cols)| {
+                    cols.get(col_in_view).is_some_and(|text| {
+                        text.iter()
+                            .flatten()
+                            .any(|t| crate::builtins::utils::criteria_date_text_serial(t).is_some())
+                    })
+                })
+            })
+        };
+        if mixed || (numeric_text_equality && date_text()) {
+            let mut mask = BooleanBuilder::new();
+            for chunk in view.iter_row_chunks() {
+                let chunk = chunk.ok()?;
+                for row in chunk.row_start..chunk.row_start + chunk.row_len {
+                    mask.append_value(crate::builtins::criteria_match(
+                        pred,
+                        &view.get_cell(row, col_in_view),
+                    ));
+                }
+            }
+            return Some(std::sync::Arc::new(mask.finish()));
         }
     }
 

@@ -9,7 +9,9 @@
 //! - numeric (`>` `>=` `<` `<=`, `=`/`<>` a number): Arrow `cmp` of the
 //!   row's number lane against the operand; a non-number row is null (no
 //!   match), except for `<>` a number, where it matches (a column with
-//!   numeric text, which `=`/`<>` a number compare by value, declines);
+//!   numeric text, which `=`/`<>` a number compare by value, declines, and
+//!   so does `=` a number over a column with date text, which it matches by
+//!   serial);
 //! - `=`/`<>` a non-empty text: Arrow `ilike`/`nilike` of the row's
 //!   lowered-text lane against the lowered operand; a non-text row is null
 //!   for `=` and true for `<>`.
@@ -27,7 +29,8 @@
 //!
 //! Anything else declines (the memo or the walk evaluates it): other
 //! predicates (empty text, wildcards, booleans, errors, blanks), a 1x1
-//! range, numeric text equality over a column containing numbers,
+//! range, numeric text equality over a column containing numbers or date
+//! text,
 //! ranges of different heights or past the sheet's last row,
 //! a lane layout the mask path would read differently, a criterion whose
 //! evaluation fails, and `COUNTIF` whose criterion matches an empty cell
@@ -201,6 +204,10 @@ struct ColumnIndex {
     /// use: `=n`/`<>n` then match text rows by value, which the number
     /// classes cannot express.
     numeric_text: std::sync::OnceLock<Option<bool>>,
+    /// Whether any text in the column holds a date (`"10/26/1999"`), on first
+    /// use: `=n` and a bare numeric criterion (`"36459"`) then match text rows
+    /// by serial, which neither class lane can express.
+    date_text: std::sync::OnceLock<Option<bool>>,
 }
 
 impl ColumnIndex {
@@ -237,12 +244,29 @@ impl ColumnIndex {
     ) -> Option<bool> {
         *self.numeric_text.get_or_init(|| {
             let texts = self.texts(engine, ds, sheet, rows)?;
-            let locale = crate::locale::Locale::invariant();
             Some(
                 texts
                     .values
                     .iter()
-                    .any(|t| locale.parse_number_invariant(t).is_some()),
+                    .any(|t| crate::builtins::utils::criteria_numeric_text(t).is_some()),
+            )
+        })
+    }
+
+    fn has_date_text<R: EvaluationContext>(
+        &self,
+        engine: &Engine<R>,
+        ds: &DataStore,
+        sheet: &str,
+        rows: usize,
+    ) -> Option<bool> {
+        *self.date_text.get_or_init(|| {
+            let texts = self.texts(engine, ds, sheet, rows)?;
+            Some(
+                texts
+                    .values
+                    .iter()
+                    .any(|t| crate::builtins::utils::criteria_date_text_serial(t).is_some()),
             )
         })
     }
@@ -366,6 +390,7 @@ where
                 numbers: std::sync::OnceLock::new(),
                 texts: std::sync::OnceLock::new(),
                 numeric_text: std::sync::OnceLock::new(),
+                date_text: std::sync::OnceLock::new(),
             })
             .collect();
         #[cfg(test)]
@@ -507,8 +532,11 @@ where
             // Numeric text equality can match both text and numeric rows. A
             // single lane's classes cannot express that mask; use the walk.
             // Text-only columns can still use the indexed text verdicts.
+            // It also matches date text by serial (`"36459"` matches
+            // `'10/26/1999`), which the text classes cannot express either.
             if is_numeric_text_equality(&pred)
-                && !column.numbers(self, ds, sheet, rows)?.values.is_empty()
+                && (!column.numbers(self, ds, sheet, rows)?.values.is_empty()
+                    || column.has_date_text(self, ds, sheet, rows)?)
             {
                 return None;
             }
@@ -516,12 +544,15 @@ where
                 P::Gt(n) | P::Ge(n) | P::Lt(n) | P::Le(n) => {
                     number_verdicts(column.numbers(self, ds, sheet, rows)?, &pred, *n)?
                 }
-                // `=n` matches numeric text by value and `<>n` matches every
-                // non-number row but such text: decline when the column has
-                // numeric text, else the null class is all-unequal.
+                // `=n` matches numeric and date text by value and `<>n`
+                // matches every non-number row but numeric text: decline when
+                // the column has such text, else the null class is all-unequal.
                 P::Eq(LiteralValue::Number(_) | LiteralValue::Int(_))
                 | P::Ne(LiteralValue::Number(_) | LiteralValue::Int(_)) => {
-                    if column.has_numeric_text(self, ds, sheet, rows)? {
+                    if column.has_numeric_text(self, ds, sheet, rows)?
+                        || (matches!(pred, P::Eq(_))
+                            && column.has_date_text(self, ds, sheet, rows)?)
+                    {
                         return None;
                     }
                     let x = match &pred {

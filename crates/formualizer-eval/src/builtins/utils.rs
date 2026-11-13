@@ -1,5 +1,5 @@
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
-use formualizer_common::{ExcelError, LiteralValue};
+use formualizer_common::{DateSystem, ExcelError, LiteralValue};
 use std::sync::LazyLock;
 
 /// Small epsilon used to detect near-zero denominators in trig/hyperbolic functions.
@@ -424,7 +424,9 @@ pub fn collapse_if_scalar(
 pub fn criteria_match(pred: &crate::args::CriteriaPredicate, v: &LiteralValue) -> bool {
     use crate::args::CriteriaPredicate as P;
     match pred {
-        P::Eq(t) => values_equal_invariant(t, v),
+        P::Eq(t) => values_equal_invariant(t, v) || number_equals_date_text(t, v),
+        // Not the complement of `Eq`: Excel's `<>10/26/1999` still counts the
+        // text cell `10/26/1999`, because only `=n` reads date text (#576).
         P::Ne(t) => !values_equal_invariant(t, v),
         P::Gt(n) => criteria_number(v).is_some_and(|x| x > *n),
         P::Ge(n) => criteria_number(v).is_some_and(|x| x >= *n),
@@ -452,6 +454,64 @@ pub fn criteria_match(pred: &crate::args::CriteriaPredicate, v: &LiteralValue) -
 
 fn value_to_number(v: &LiteralValue) -> Result<f64, ExcelError> {
     crate::coercion::to_number_lenient(v)
+}
+
+/// The number an `=n` criterion sees in a text cell: numeric text (`"5"`),
+/// else date or time text (`"10/26/1999"`, `"1999-10-27"`) as its serial
+/// (`criteria_date_text_serial`). `<>n` reads numeric text only
+/// (`criteria_numeric_text`), as in Excel. The text stays text everywhere
+/// else (`ISTEXT`, `>`/`<` comparisons skip it).
+pub(crate) fn criteria_text_number(text: &str) -> Option<f64> {
+    criteria_numeric_text(text).or_else(|| date_text_serial_1900(text))
+}
+
+/// The serial of a text cell that holds a date or time (and is not numeric
+/// text), as an `=n` or a bare numeric criterion (`"36459"`) compares it.
+pub(crate) fn criteria_date_text_serial(text: &str) -> Option<f64> {
+    if criteria_numeric_text(text).is_some() {
+        return None;
+    }
+    date_text_serial_1900(text)
+}
+
+/// The date-function reading of text (`coercion::date_text_serial`), in the
+/// 1900 system like the criterion operand: criteria have no workbook context,
+/// so in a 1904 workbook a criterion's date text and a cell's date text match
+/// each other, but a 1904 serial (`DATE(1999,10,26)` is 34997) does not match
+/// the cell's text.
+fn date_text_serial_1900(text: &str) -> Option<f64> {
+    crate::coercion::date_text_serial(DateSystem::Excel1900, text)
+}
+
+/// The number numeric text in a cell (`"5"`) reads as, for `=n` and `<>n`
+/// alike: the invariant-locale parse that `to_number_lenient` uses.
+pub(crate) fn criteria_numeric_text(text: &str) -> Option<f64> {
+    crate::locale::Locale::invariant().parse_number_invariant(text)
+}
+
+/// The number a bare numeric text criterion (`"36459"`, `Eq(Text)`) stands
+/// for. This is the criterion operand, not a cell, so it keeps the stricter
+/// `str::parse` that `is_numeric_text_equality` in the criteria mask has
+/// always used to decide that such a criterion is numeric.
+pub(crate) fn criteria_numeric_text_target(text: &str) -> Option<f64> {
+    text.trim().parse::<f64>().ok().filter(|n| n.is_finite())
+}
+
+/// Whether an equality criterion matches a text cell holding a date: `=n`,
+/// a number criterion, or a bare numeric text criterion (`"36459"`) matches
+/// the date text whose serial is `n`, as in Excel.
+fn number_equals_date_text(target: &LiteralValue, v: &LiteralValue) -> bool {
+    let LiteralValue::Text(cell) = v else {
+        return false;
+    };
+    let n = match target {
+        LiteralValue::Text(t) => criteria_numeric_text_target(t),
+        other => criteria_number(other),
+    };
+    let Some(n) = n else {
+        return false;
+    };
+    criteria_date_text_serial(cell).is_some_and(|y| (n - y).abs() < 1e-12)
 }
 
 /// The number a numeric comparison (`>5`) sees: numbers and dates only.
@@ -509,18 +569,22 @@ fn values_equal_invariant(a: &LiteralValue, b: &LiteralValue) -> bool {
 /// How many cells of one range each equality criterion matches, from one pass
 /// over the range, so that an array of criteria does not walk it per element.
 /// `count` gives what the `COUNTIF` walk gives: a number criterion meets numbers
-/// (exactly, as the walk's numeric lane does), dates and numeric text; a text
-/// criterion meets text, plain numbers and (when empty) blanks. The tolerance of
+/// (exactly, as the walk's numeric lane does), dates, numeric text and date
+/// text; a text criterion meets text, plain numbers, (when empty) blanks, and
+/// (when numeric, `"36459"`) date text. The tolerance of
 /// `values_equal_invariant` applies wherever the walk uses `criteria_match`.
 /// Text is keyed by `text_equality_key`, so it is equal where the walk's is.
 #[derive(Default)]
 pub(crate) struct EqualityCounts {
-    /// Number cells. These three lanes are sorted by `sorted`.
+    /// Number cells. These four lanes are sorted by `sorted`.
     numbers: Vec<f64>,
     /// Date, time and duration cells, as serials.
     serials: Vec<f64>,
     /// Text cells that read as numbers.
     numeric_text: Vec<f64>,
+    /// Text cells that hold a date or time, as serials
+    /// (`criteria_date_text_serial`).
+    date_text: Vec<f64>,
     /// Text cells, by `text_equality_key`.
     text: rustc_hash::FxHashMap<String, u64>,
     trues: u64,
@@ -548,8 +612,10 @@ impl EqualityCounts {
             LiteralValue::Empty => self.blanks += 1,
             LiteralValue::Text(t) => {
                 *self.text.entry(text_equality_key(t)).or_default() += 1;
-                if let Ok(n) = value_to_number(cell) {
+                if let Some(n) = criteria_numeric_text(t) {
                     self.numeric_text.push(n);
+                } else if let Some(serial) = criteria_date_text_serial(t) {
+                    self.date_text.push(serial);
                 }
             }
             other => {
@@ -570,6 +636,7 @@ impl EqualityCounts {
         self.numbers.sort_unstable_by(f64::total_cmp);
         self.serials.sort_unstable_by(f64::total_cmp);
         self.numeric_text.sort_unstable_by(f64::total_cmp);
+        self.date_text.sort_unstable_by(f64::total_cmp);
         self
     }
 
@@ -594,7 +661,8 @@ impl EqualityCounts {
             LiteralValue::Number(n) => Some(
                 exactly(&self.numbers, *n)
                     + within(&self.serials, *n)
-                    + within(&self.numeric_text, *n),
+                    + within(&self.numeric_text, *n)
+                    + within(&self.date_text, *n),
             ),
             LiteralValue::Boolean(true) => Some(self.trues),
             LiteralValue::Boolean(false) => Some(self.falses),
@@ -602,7 +670,9 @@ impl EqualityCounts {
                 let same_text = self.text.get(&text_equality_key(t)).copied().unwrap_or(0);
                 let blanks = if t.is_empty() { self.blanks } else { 0 };
                 let numbers = value_to_number(target).map_or(0, |n| within(&self.numbers, n));
-                Some(same_text + blanks + numbers)
+                let dates =
+                    criteria_numeric_text_target(t).map_or(0, |n| within(&self.date_text, n));
+                Some(same_text + blanks + numbers + dates)
             }
             _ => None,
         }

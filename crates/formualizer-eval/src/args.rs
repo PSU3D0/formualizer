@@ -51,6 +51,21 @@ impl ArgSchema {
             default: None,
         }
     }
+
+    /// A scalar date argument: a serial, a date value, numeric text or
+    /// date/time text (`"10/26/1999"`), as Excel's date functions accept.
+    pub fn date_serial_scalar() -> Self {
+        Self {
+            kinds: smallvec![ArgKind::Number],
+            required: true,
+            by_ref: false,
+            shape: ShapeKind::Scalar,
+            coercion: CoercionPolicy::DateTimeSerial,
+            max: None,
+            repeating: None,
+            default: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -440,7 +455,14 @@ pub(crate) fn validate_and_prepare_inline<'a, 'b>(
                             }
                             CoercionPolicy::Criteria => v, // handled per-function currently
                             CoercionPolicy::DateTimeSerial => {
-                                match crate::coercion::to_datetime_serial(v.as_ref()) {
+                                // Validation has no workbook context, so the
+                                // prepared serial is in the 1900 system; date
+                                // builtins re-read the argument with the
+                                // workbook's system.
+                                match crate::coercion::to_serial_lenient(
+                                    v.as_ref(),
+                                    formualizer_common::DateSystem::Excel1900,
+                                ) {
                                     Ok(n) => Cow::Owned(LiteralValue::Number(n)),
                                     Err(e) => {
                                         if options.warn_only {
