@@ -58,6 +58,8 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i64, ExcelError> {
 /// Returns the day-of-week index for a date serial with configurable numbering.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Default `return_type` is `1` (`Sunday=1` through `Saturday=7`).
 /// - Supported `return_type` values are `1`, `2`, `3`, `11`-`17`; unsupported values return `#NUM!`.
 /// - Input serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
@@ -95,7 +97,7 @@ pub struct WeekdayFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: WEEKDAY(arg1: number@scalar, arg2...: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for WeekdayFn {
@@ -116,7 +118,7 @@ impl Function for WeekdayFn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
                 ArgSchema::number_lenient_scalar(),
             ]
         });
@@ -186,6 +188,8 @@ pub(crate) fn weekday_of_serial(
 /// Returns the week number of the year for a date serial.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Default `return_type` is `1` (week starts on Sunday).
 /// - Supported `return_type` values are `1`, `2`, `11`-`17`, and `21` (ISO week numbering).
 /// - Unsupported `return_type` values return `#NUM!`.
@@ -223,7 +227,7 @@ pub struct WeeknumFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: WEEKNUM(arg1: number@scalar, arg2...: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for WeeknumFn {
@@ -241,7 +245,7 @@ impl Function for WeeknumFn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
                 ArgSchema::number_lenient_scalar(),
             ]
         });
@@ -349,6 +353,8 @@ impl Function for WeeknumFn {
 /// Returns the difference between two dates in a requested unit.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Supported units are `"Y"`, `"M"`, `"D"`, `"MD"`, `"YM"`, and `"YD"`.
 /// - If `start_date > end_date`, the function returns `#NUM!`.
 /// - Unit matching is case-insensitive.
@@ -386,7 +392,7 @@ pub struct DatedifFn;
 /// Max args: 3
 /// Variadic: false
 /// Signature: DATEDIF(arg1: number@scalar, arg2: number@scalar, arg3: any@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for DatedifFn {
@@ -401,8 +407,8 @@ impl Function for DatedifFn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
+                ArgSchema::date_serial_scalar(),
                 ArgSchema::any(),
             ]
         });
@@ -690,6 +696,8 @@ fn literal_to_date(lit: &LiteralValue, system: DateSystem) -> Option<NaiveDate> 
 /// Returns the number of weekday business days between two dates, inclusive.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Weekends are fixed to Saturday and Sunday.
 /// - If `start_date > end_date`, the result is negative.
 /// - Optional `holidays` arguments are excluded from the count and may be provided as scalars,
@@ -728,7 +736,7 @@ pub struct NetworkdaysFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: NETWORKDAYS(arg1: number@scalar, arg2: number@scalar, arg3...: any@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for NetworkdaysFn {
@@ -746,8 +754,8 @@ impl Function for NetworkdaysFn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
+                ArgSchema::date_serial_scalar(),
                 ArgSchema::any(), // holidays (optional)
             ]
         });
@@ -789,6 +797,8 @@ impl Function for NetworkdaysFn {
 /// Returns the date serial that is a given number of weekdays from a start date.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Positive `days` moves forward; negative `days` moves backward.
 /// - Weekends are fixed to Saturday and Sunday.
 /// - Optional `holidays` arguments are excluded and may be provided as scalars, inline arrays,
@@ -826,7 +836,7 @@ pub struct WorkdayFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: WORKDAY(arg1: number@scalar, arg2: number@scalar, arg3...: any@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for WorkdayFn {
@@ -844,7 +854,7 @@ impl Function for WorkdayFn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
                 ArgSchema::number_lenient_scalar(),
                 ArgSchema::any(), // holidays (optional)
             ]
@@ -889,6 +899,8 @@ impl Function for WorkdayFn {
 /// Returns the number of working days between two dates with configurable weekends.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
 ///   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
 /// - The optional `holidays` argument accepts a range or array of date serials to exclude.
@@ -936,7 +948,7 @@ pub struct NetworkdaysIntlFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: NETWORKDAYS.INTL(arg1: number@scalar, arg2: number@scalar, arg3: any@scalar, arg4...: any@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for NetworkdaysIntlFn {
@@ -954,10 +966,10 @@ impl Function for NetworkdaysIntlFn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(), // start_date
-                ArgSchema::number_lenient_scalar(), // end_date
-                ArgSchema::any(),                   // weekend (optional)
-                ArgSchema::any(),                   // holidays (optional)
+                ArgSchema::date_serial_scalar(), // start_date
+                ArgSchema::date_serial_scalar(), // end_date
+                ArgSchema::any(),                // weekend (optional)
+                ArgSchema::any(),                // holidays (optional)
             ]
         });
         &SCHEMA[..]
@@ -1013,6 +1025,8 @@ impl Function for NetworkdaysIntlFn {
 /// with configurable weekends.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Positive `days` moves forward; negative `days` moves backward.
 /// - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
 ///   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
@@ -1060,7 +1074,7 @@ pub struct WorkdayIntlFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: WORKDAY.INTL(arg1: number@scalar, arg2: number@scalar, arg3: any@scalar, arg4...: any@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for WorkdayIntlFn {
@@ -1078,7 +1092,7 @@ impl Function for WorkdayIntlFn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(), // start_date
+                ArgSchema::date_serial_scalar(),    // start_date
                 ArgSchema::number_lenient_scalar(), // days
                 ArgSchema::any(),                   // weekend (optional)
                 ArgSchema::any(),                   // holidays (optional)

@@ -35,11 +35,16 @@ pub fn to_number_lenient(value: &LiteralValue) -> Result<f64, ExcelError> {
     }
 }
 
-/// Date or time text as a serial, the way the arithmetic operators read a text
-/// operand. The text is read uppercased, so that the result does not depend
-/// on case: the parser takes only an uppercase ISO `T`, while month names and
-/// AM/PM are case-insensitive anyway. So `"1999-10-26t00:00"` is a date, as
-/// in Google Sheets (#576).
+/// Date or time text as a serial, the way arithmetic and date functions read a
+/// text cell, so `YEAR(A1)` and `A1+0` agree. The text is read uppercased, so
+/// that the result does not depend on case: the parser takes only an uppercase
+/// ISO `T`, while month names and AM/PM are case-insensitive anyway. So
+/// `"1999-10-26t00:00"` is a date, as in Google Sheets.
+///
+/// Where Excel 2609 errors but Google Sheets reads the text, this follows
+/// Sheets (#576): ISO text with a `T` separator (`"1999-10-26T00:00"`) is a
+/// date, and a date before the epoch (`"1/1/1899"`) is its negative serial,
+/// which the date functions then reject with #NUM! (Excel: #VALUE!).
 pub(crate) fn date_text_serial(system: DateSystem, text: &str) -> Option<f64> {
     if !text.bytes().any(|b| b.is_ascii_digit()) {
         return None;
@@ -52,11 +57,14 @@ pub(crate) fn date_text_serial(system: DateSystem, text: &str) -> Option<f64> {
     formualizer_common::parse_excel_datetime_text_to_serial_for(system, &text)
 }
 
-/// Lenient numeric coercion that resolves temporal values in a date system.
+/// Lenient serial coercion for arguments that Excel reads as a date.
 ///
-/// Identical to [`to_number_lenient`] except that date-bearing literals are
-/// converted to serials using the workbook's date system instead of the
-/// implicit Excel-1900 default.
+/// As [`to_number_lenient`], except that date-bearing literals are converted
+/// to serials in the workbook's date system, and text that is not a number is
+/// parsed as date/time text (`"10/26/1999"`, `"1999-10-27"`), as Excel's date
+/// functions do (`YEAR("10/26/1999")` is 1999). The text parse is the one the
+/// arithmetic operators use, so `YEAR(A1)` and `A1+0` agree on what a date
+/// text cell means.
 pub fn to_serial_lenient(value: &LiteralValue, system: DateSystem) -> Result<f64, ExcelError> {
     match value {
         LiteralValue::Date(_)
@@ -66,6 +74,13 @@ pub fn to_serial_lenient(value: &LiteralValue, system: DateSystem) -> Result<f64
             ExcelError::new(ExcelErrorKind::Value)
                 .with_message("Cannot convert to date/time serial")
         }),
+        LiteralValue::Text(s) => crate::locale::Locale::invariant()
+            .parse_number_invariant(s)
+            .or_else(|| date_text_serial(system, s))
+            .ok_or_else(|| {
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message(format!("Cannot convert '{s}' to a date serial"))
+            }),
         _ => to_number_lenient(value),
     }
 }

@@ -4,10 +4,15 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `ArgSchema::date_serial_scalar()`: a scalar argument that reads date and time text as a serial (`CoercionPolicy::DateTimeSerial`), as Excel's date functions do. (#576)
+
 ### Fixed
 
 - `_` and `%` in a text criterion are literal in family execution, as they already were elsewhere. A filled-down `=COUNTIF($A$1:$A$40,C1)` with `a_c` or `50%` in column C counted `abc` or `50x` too, because the family kernel passed the criterion to Arrow `ilike` unescaped.
 - Arithmetic reads ISO date text with a lowercase `t`: `="1999-10-26t00:00"+0` is 36459, as it already was with an uppercase `T` and as in Google Sheets. (#576)
+- Date functions read date text. `=YEAR(A1)` with A1 holding the text `10/26/1999` returned `#VALUE!`; it now returns 1999, as Excel does, and `A1` stays text. This covers the date arguments of DAY, MONTH, YEAR, HOUR, MINUTE, SECOND, WEEKDAY, WEEKNUM, ISOWEEKNUM, EDATE, EOMONTH, DATEDIF, DAYS, DAYS360, YEARFRAC, NETWORKDAYS(.INTL) and WORKDAY(.INTL). ISO text with a `T` (`1999-10-26T00:00`, in either case) is a date, as in Google Sheets and arithmetic, and a date before 1900 gives `#NUM!`, as in Sheets; Excel returns `#VALUE!` for both. (#576)
 
 ## [0.14.0] - 2026-11-08
 
