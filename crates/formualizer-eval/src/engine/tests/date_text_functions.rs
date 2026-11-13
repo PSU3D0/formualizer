@@ -113,6 +113,19 @@ fn date_functions_read_date_text() {
     ]);
 }
 
+/// A date-text holiday is a holiday, scalar or range (Excel: 1 and 0); other
+/// text is skipped. A2 is a Wednesday.
+#[test]
+fn date_text_holidays_are_holidays() {
+    check(&[
+        ("=NETWORKDAYS(A1,A2,A2)", Expected::Number(1.0)),
+        ("=NETWORKDAYS(A1,A2,A1:A2)", Expected::Number(0.0)),
+        ("=WORKDAY(A1,1,A2)", Expected::Number(36_461.0)),
+        ("=NETWORKDAYS.INTL(A1,A2,1,A2)", Expected::Number(1.0)),
+        ("=NETWORKDAYS(A1,A2,A4)", Expected::Number(2.0)),
+    ]);
+}
+
 /// Every date argument switched to `DateTimeSerial` reads date text as the
 /// serial it holds: each pair is the function over the text cells and over
 /// the serials (10/26/1999 = 36459, 10/27/1999 = 36460, A3 = 5/4/2023 14:05).
@@ -211,6 +224,7 @@ fn date_functions_read_date_text_in_the_1904_system() {
     let cases = [
         ("=YEAR(A1)", 1999.0),
         ("=EDATE(A1,1)", 36_490.0 - 1_462.0),
+        ("=NETWORKDAYS(A1,A2,A2)", 1.0),
         ("=A1+0", 36_459.0 - 1_462.0),
     ];
     for (row, (formula, _)) in cases.iter().enumerate() {

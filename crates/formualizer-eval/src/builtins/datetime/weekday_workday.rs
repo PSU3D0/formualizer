@@ -628,8 +628,9 @@ fn is_weekend_masked(date: &NaiveDate, mask: &WeekendMask) -> bool {
 }
 
 /// Collect holiday dates from argument(s) starting at `arg_start`.
-/// Handles scalars, inline arrays, and range references.
-/// Silently skips non-numeric / empty cells (matching Excel behavior).
+/// Handles scalars, inline arrays, and range references. Date text
+/// (`'10/27/1999`) is a holiday, as in Excel; other text and empty cells are
+/// skipped.
 fn collect_holidays(
     args: &[ArgumentHandle],
     arg_start: usize,
@@ -650,6 +651,24 @@ fn collect_holidays(
                             for i in 0..len {
                                 if !col.is_null(i)
                                     && let Ok(d) = try_serial_to_date_for(system, values[i])
+                                {
+                                    holidays.push(d);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Ok(slices) = rv.text_slices().collect::<Result<Vec<_>, _>>() {
+                    for (_row_start, _row_len, cols) in slices {
+                        for col in cols {
+                            let Some(text) =
+                                col.as_any().downcast_ref::<arrow_array::StringArray>()
+                            else {
+                                continue;
+                            };
+                            for i in 0..text.len() {
+                                if !text.is_null(i)
+                                    && let Some(d) = date_text_to_date(text.value(i), system)
                                 {
                                     holidays.push(d);
                                 }
@@ -689,8 +708,14 @@ fn literal_to_date(lit: &LiteralValue, system: DateSystem) -> Option<NaiveDate> 
         LiteralValue::Int(i) => try_serial_to_date_for(system, *i as f64).ok(),
         LiteralValue::Date(d) => Some(*d),
         LiteralValue::DateTime(dt) => Some(dt.date()),
+        LiteralValue::Text(s) => date_text_to_date(s, system),
         _ => None,
     }
+}
+
+fn date_text_to_date(text: &str, system: DateSystem) -> Option<NaiveDate> {
+    let serial = crate::coercion::date_text_serial(system, text)?;
+    try_serial_to_date_for(system, serial).ok()
 }
 
 /// Returns the number of weekday business days between two dates, inclusive.
@@ -701,7 +726,7 @@ fn literal_to_date(lit: &LiteralValue, system: DateSystem) -> Option<NaiveDate> 
 /// - Weekends are fixed to Saturday and Sunday.
 /// - If `start_date > end_date`, the result is negative.
 /// - Optional `holidays` arguments are excluded from the count and may be provided as scalars,
-///   inline arrays, or ranges.
+///   inline arrays, or ranges, of serials or date text; other text is skipped.
 /// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904); the
 ///   weekend days depend on the calendar dates the serials denote, which differ per system.
 ///
@@ -725,7 +750,7 @@ fn literal_to_date(lit: &LiteralValue, system: DateSystem) -> Option<NaiveDate> 
 ///   - DAYS
 /// faq:
 ///   - q: "Can I exclude custom holidays in NETWORKDAYS?"
-///     a: "Yes. Additional arguments can provide holiday serials, arrays, or ranges to exclude from the weekday count."
+///     a: "Yes. Additional arguments can provide holiday serials or date text, as scalars, arrays, or ranges, to exclude from the weekday count."
 /// ```
 #[derive(Debug)]
 pub struct NetworkdaysFn;
@@ -802,7 +827,7 @@ impl Function for NetworkdaysFn {
 /// - Positive `days` moves forward; negative `days` moves backward.
 /// - Weekends are fixed to Saturday and Sunday.
 /// - Optional `holidays` arguments are excluded and may be provided as scalars, inline arrays,
-///   or ranges.
+///   or ranges, of serials or date text; other text is skipped.
 /// - Input and output serials use the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
@@ -903,7 +928,8 @@ impl Function for WorkdayFn {
 ///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
 ///   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
-/// - The optional `holidays` argument accepts a range or array of date serials to exclude.
+/// - The optional `holidays` argument accepts a range or array of date serials or date text to
+///   exclude; other text is skipped.
 /// - If `start_date > end_date`, the result is negative.
 /// - A weekend string of all `1`s (no workdays) returns `#VALUE!`.
 ///
@@ -1030,7 +1056,8 @@ impl Function for NetworkdaysIntlFn {
 /// - Positive `days` moves forward; negative `days` moves backward.
 /// - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
 ///   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
-/// - The optional `holidays` argument accepts a range or array of date serials to exclude.
+/// - The optional `holidays` argument accepts a range or array of date serials or date text to
+///   exclude; other text is skipped.
 /// - A weekend string of all `1`s (no workdays) returns `#VALUE!`.
 ///
 /// # Examples
