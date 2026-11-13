@@ -35,12 +35,13 @@ pub fn to_number_lenient(value: &LiteralValue) -> Result<f64, ExcelError> {
     }
 }
 
-/// Date or time text as a serial, the way arithmetic, date functions and
-/// holiday lists read a text cell, so `YEAR(A1)` and `A1+0` agree. The text is
-/// read uppercased, so that the result does not depend on case: the parser
-/// takes only an uppercase ISO `T`, while month names and AM/PM are
-/// case-insensitive anyway. So `"1999-10-26t00:00"` is a date, as in Google
-/// Sheets.
+/// Date or time text as a serial, the way arithmetic, date functions,
+/// holiday lists and criteria read a text cell, so `YEAR(A1)` and `A1+0`
+/// agree. The text is read uppercased, so that the result does not depend on
+/// case: the parser takes only an uppercase ISO `T`, while month names and
+/// AM/PM are case-insensitive anyway, and lowercased copies of a cell (as
+/// criteria fast paths hold) read alike. So `"1999-10-26t00:00"` is a date,
+/// as in Google Sheets.
 ///
 /// Where Excel 2609 errors but Google Sheets reads the text, this follows
 /// Sheets (#576): ISO text with a `T` separator (`"1999-10-26T00:00"`) is a

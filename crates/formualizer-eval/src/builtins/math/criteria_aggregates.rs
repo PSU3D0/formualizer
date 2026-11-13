@@ -1030,6 +1030,8 @@ pub struct AverageIfFn;
 /// (or from `range` when `average_range` is omitted).
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria support comparison operators and wildcard text patterns.
 /// - Non-numeric values in the averaged cells are ignored.
 /// - If no cells match, `AVERAGEIF` returns `#DIV/0!`.
@@ -1140,6 +1142,8 @@ pub struct SumIfFn;
 /// `SUMIF` evaluates each cell in `range` against `criteria`, then sums corresponding values.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - If `sum_range` is omitted, matching cells from `range` are summed.
 /// - Criteria support operators like `">10"` and wildcard text patterns.
 /// - Cells that do not coerce to numbers in the sum target contribute `0`.
@@ -1250,6 +1254,8 @@ pub struct CountIfFn;
 /// `COUNTIF` evaluates each candidate cell against one criteria expression.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Criteria support numeric comparisons and wildcard text matching.
 /// - Matching is case-insensitive for text criteria.
 /// - Non-matching or blank cells are not counted.
@@ -1275,6 +1281,16 @@ pub struct CountIfFn;
 /// ```yaml,sandbox
 /// title: "Exact-match criterion"
 /// formula: "=COUNTIF({1,2,2,3}, \"=2\")"
+/// expected: 2
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Date criterion matches date text"
+/// grid:
+///   A1: "10/26/1999"
+///   A2: "1999-10-27"
+///   A3: 36459
+/// formula: "=COUNTIF(A1:A3, \"10/26/1999\")"
 /// expected: 2
 /// ```
 ///
@@ -1350,6 +1366,8 @@ pub struct SumIfsFn; // SUMIFS(sum_range, criteria_range1, criteria1, ...)
 /// `SUMIFS` applies all criteria pairs with logical AND and sums the matching cells.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - The first argument is always the sum target range.
 /// - Criteria are supplied in `(criteria_range, criteria)` pairs.
 /// - Criteria ranges are broadcast/padded according to engine matching rules.
@@ -1456,6 +1474,8 @@ pub struct CountIfsFn; // COUNTIFS(criteria_range1, criteria1, ...)
 /// `COUNTIFS` applies each `(criteria_range, criteria)` pair and counts rows where all tests pass.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Requires one or more criteria pairs.
 /// - Criteria support operators and wildcard matching.
 /// - A row contributes to the result only when every criterion evaluates true.
@@ -1559,6 +1579,8 @@ pub struct AverageIfsFn;
 /// `AVERAGEIFS` filters by all criteria pairs, then averages matching numeric values.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - The first argument is the average target range.
 /// - Criteria are supplied in `(criteria_range, criteria)` pairs.
 /// - If no numeric cells match, the function returns `#DIV/0!`.

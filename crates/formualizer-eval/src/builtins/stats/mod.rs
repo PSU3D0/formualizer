@@ -2127,6 +2127,8 @@ use super::utils::{ARG_ANY_ONE, criteria_match};
 /// matching numeric value.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Arguments must be `target_range` plus one or more criteria pairs.
 /// - Criteria are combined with logical AND.
 /// - Returns `0` when no cells satisfy all criteria.
@@ -2216,6 +2218,8 @@ impl Function for MaxIfsFn {
 /// matching numeric value.
 ///
 /// # Remarks
+/// - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+///   matches text cells holding that date; `<>` and ordering criteria do not read date text.
 /// - Arguments must be `target_range` plus one or more criteria pairs.
 /// - Criteria are combined with logical AND.
 /// - Returns `0` when no cells satisfy all criteria.
