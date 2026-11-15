@@ -1932,7 +1932,10 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn eval_implicit_intersection_calc(&self, cv: crate::traits::CalcValue<'a>) -> LiteralValue {
+    pub(crate) fn eval_implicit_intersection_calc(
+        &self,
+        cv: crate::traits::CalcValue<'a>,
+    ) -> LiteralValue {
         let (cur_r0, cur_c0) = match self.current_cell {
             Some(cell) => (cell.coord.row() as usize, cell.coord.col() as usize),
             None => (0usize, 0usize),
@@ -2005,7 +2008,10 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn implicit_intersection_from_reference(&self, reference: &ReferenceType) -> LiteralValue {
+    pub(crate) fn implicit_intersection_from_reference(
+        &self,
+        reference: &ReferenceType,
+    ) -> LiteralValue {
         let (cur_r1, cur_c1) = match self.current_cell {
             Some(cell) => (
                 cell.coord.row().saturating_add(1),

@@ -106,6 +106,10 @@ fn value_positions_intersect() {
     assert_eq!(rewritten("INDEX(A:A,5)"), "@(INDEX(A:A,5))");
     assert_eq!(rewritten("OFFSET(A1,0,0,3,1)"), "@(OFFSET(A1,0,0,3,1))");
     unchanged("SUM(OFFSET(A1,0,0,3,1))");
+    assert_eq!(
+        rewritten("_xlfn.SINGLE(A1:A3)+B1:B3"),
+        "_xlfn.SINGLE(A1:A3)+@(B1:B3)"
+    );
 }
 
 #[test]
