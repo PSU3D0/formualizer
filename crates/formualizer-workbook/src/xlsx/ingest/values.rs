@@ -271,7 +271,7 @@ impl<'a> ValueSink<'a> {
                 }
             }
         };
-        self.store(row, col, RowValue { scalar, format })
+        self.store(row, col, RowValue { scalar, format }, true)
     }
     /// Already-decoded compatible cells need neither raw attribute spans nor
     /// a second type/index parse. Keep the general scanner entry independent.
@@ -281,6 +281,26 @@ impl<'a> ValueSink<'a> {
         col: u32,
         value: Value<'_>,
         format: Option<FormatId>,
+    ) -> Result<(), IoError> {
+        self.push_decoded_inner(row, col, value, format, true)
+    }
+    /// An already-counted formula's cache occupies the same logical cell.
+    pub(in crate::xlsx) fn push_formula_cache(
+        &mut self,
+        row: u32,
+        col: u32,
+        value: Value<'_>,
+        format: Option<FormatId>,
+    ) -> Result<(), IoError> {
+        self.push_decoded_inner(row, col, value, format, false)
+    }
+    fn push_decoded_inner(
+        &mut self,
+        row: u32,
+        col: u32,
+        value: Value<'_>,
+        format: Option<FormatId>,
+        count_value: bool,
     ) -> Result<(), IoError> {
         let (row, col) = self.coordinate(row, col)?;
         let scalar = match value {
@@ -299,13 +319,19 @@ impl<'a> ValueSink<'a> {
                 ));
             }
         };
-        self.store(row, col, RowValue { scalar, format })
+        self.store(row, col, RowValue { scalar, format }, count_value)
     }
-    fn store(&mut self, row: usize, col: usize, value: RowValue<'a>) -> Result<(), IoError> {
+    fn store(
+        &mut self,
+        row: usize,
+        col: usize,
+        value: RowValue<'a>,
+        count_value: bool,
+    ) -> Result<(), IoError> {
         if matches!(value.scalar, Scalar::Empty) {
             return Ok(());
         }
-        self.values += 1;
+        self.values += usize::from(count_value);
         self.budget()?;
         if let Some(sheet) = self.sparse.as_mut() {
             self.pending.push(sheet, row, col, &value);
