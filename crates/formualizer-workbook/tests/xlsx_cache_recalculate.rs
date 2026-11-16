@@ -126,6 +126,9 @@ fn source_policy_boundary_modes_and_unverified_producers_prevent_false_complete(
     use formualizer_workbook::{CalculationDeferredReason, IoError, SourceCalculationCoverage};
     for formula in [
         "CELL(\"format\",B1)",
+        // Source bytes carry no host identity, so the workbook path is unknown.
+        "CELL(\"filename\",B1)",
+        "CELL(\"filename\")",
         "IF(TRUE,SUM,AVERAGE)",
         "HSTACK(SUM,AVERAGE)",
         "TEXT(1,\"[>0]yyyy;0\")",

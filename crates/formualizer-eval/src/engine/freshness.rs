@@ -37,9 +37,10 @@
 //! Every pass of the replan loops is armed under the authority. Commit
 //! granularity is legacy's (a cell in sequential layers, a phase group in
 //! parallel layers); cycle units evaluate on their own recorded path and
-//! are cleared at pass end as before. A dynamic self read is stale too:
-//! its dependency becomes a replan hint so the existing cycle policy runs
-//! before a first-request numeric value can be committed.
+//! their members are committed together when the unit finishes. A dynamic
+//! self read is stale too: its dependency becomes a replan hint so the
+//! existing cycle policy runs before a first-request numeric value can be
+//! committed.
 
 use super::Engine;
 use crate::engine::authority::geom::{Rect, SYMBOL_SHEET};
@@ -459,6 +460,28 @@ impl<R: EvaluationContext> Engine<R> {
     /// The buffered layer's writes are flushed.
     pub(super) fn freshness_flushed(&mut self) {
         self.freshness.unflushed.clear();
+    }
+
+    /// A cycle unit finished: its members published their values on the
+    /// SCC's own path. Commit them as one unit, so a dynamic reader later in
+    /// the same pass does not take a finished member for a dirty cell. A
+    /// self-based OFFSET (`C1 = OFFSET(C1,0,-1)`) is a one-member SCC; with
+    /// a dynamic reader of every period, deferring the clear to pass end
+    /// raised the barrier at each reader and the request advanced one period
+    /// per replan until `MAX_REPLAN`.
+    ///
+    /// Committed members also take part in FR5: a spill that commits over
+    /// a member's reads later in the pass re-dirties it and the loop
+    /// replans it, where the end-of-pass clear used to drop that re-dirty.
+    /// Under `CyclePolicy::Iterate` an accumulating cycle (`A1 = A1+1`)
+    /// read by such a spill can therefore take one more iteration step in
+    /// the same request.
+    pub(super) fn freshness_cycle_unit_committed(&mut self, cycle: &[VertexId]) {
+        if !self.freshness.armed {
+            return;
+        }
+        self.freshness.committed.extend(cycle.iter().copied());
+        self.graph.clear_dirty_flags(cycle);
     }
 
     pub(super) fn freshness_mark_committed(&mut self, vertex: VertexId) {

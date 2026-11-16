@@ -326,3 +326,23 @@ fn intersected_cell_that_is_a_formula_is_read_after_it_is_calculated() {
     let out = recalc(&bytes);
     assert_eq!(value_at(&out, 1, "C2").as_deref(), Some("201"));
 }
+
+/// `SINGLE` is the stored form of `@`, so it is already one value: only the
+/// bare range beside it takes legacy intersection.
+#[test]
+fn single_beside_a_legacy_range_intersects_only_the_range() {
+    let mut cells: Vec<_> = (1..=10).map(|r| num(&format!("A{r}"), r as f64)).collect();
+    cells.push(formula("F5", "_xlfn.SINGLE(A1:A10)+A1:A10"));
+    let out = recalc(&with_chain(
+        &book(&[Ws::new("Sheet1", cells)], ""),
+        &[(1, "F5")],
+    ));
+    let sheet = parse_sheet(&unpack(&out).remove(SHEET).unwrap());
+    // SINGLE(A1:A10) in row 5 is A5, and so is the intersected A1:A10.
+    assert_eq!(sheet.cell("F5").v.as_deref(), Some("10"));
+    // No spill.
+    assert!(!sheet.cell("F5").attrs.contains_key("cm"));
+    assert!(!sheet.cells.contains_key("F6"));
+    // The stored formula text is untouched.
+    assert!(formula_text(&out, 1, "F5").contains("<f>_xlfn.SINGLE(A1:A10)+A1:A10</f>"));
+}

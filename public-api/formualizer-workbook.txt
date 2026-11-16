@@ -2110,6 +2110,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_row_hidden(&mut self, &str,
 pub fn formualizer_workbook::workbook::Workbook::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::set_workbook_path(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
 pub fn formualizer_workbook::workbook::Workbook::sheet_names(&self) -> alloc::vec::Vec<alloc::string::String>
@@ -3517,6 +3518,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_row_hidden(&mut self, &str,
 pub fn formualizer_workbook::workbook::Workbook::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::set_workbook_path(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
 pub fn formualizer_workbook::workbook::Workbook::sheet_names(&self) -> alloc::vec::Vec<alloc::string::String>

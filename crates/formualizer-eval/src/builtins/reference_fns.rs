@@ -1,5 +1,6 @@
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::{FnCaps, Function, FunctionResolution};
+use crate::function_contract::{FunctionContextDependence, FunctionSemanticContract};
 use crate::traits::{ArgumentHandle, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue, PackedSheetCell};
 use formualizer_parse::parser::ReferenceType;
@@ -1342,6 +1343,111 @@ impl Function for AnchorArrayFn {
 }
 
 #[derive(Debug)]
+pub struct SingleFn;
+
+/// Returns a single value from its argument by implicit intersection.
+///
+/// `SINGLE(x)` is the stored form of the implicit-intersection operator `@x`
+/// (files written by Excel store `_xlfn.SINGLE(x)`). Both evaluate the same
+/// way: a reference, written or returned by a function such as `INDEX` or
+/// `OFFSET`, selects the cell on the formula's row (for a column) or column
+/// (for a row), and a computed array gives its top-left value.
+///
+/// # Remarks
+/// - A multi-row, multi-column reference selects the cell at the formula's
+///   row and column.
+/// - `#VALUE!` when the formula cell is outside the reference's rows or
+///   columns.
+/// - The result never spills: an array constant or an array-returning
+///   function such as `SEQUENCE` gives only its top-left value.
+///
+/// # Formula example
+/// ```excel
+/// # returns: 1
+/// =SINGLE({1,2;3,4})
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - ANCHORARRAY
+///   - INDEX
+/// faq:
+///   - q: "How does SINGLE relate to @?"
+///     a: "They are the same operation: @A1:A10 is written as _xlfn.SINGLE(A1:A10) in stored files, and both return one value by implicit intersection."
+/// ```
+///
+/// [formualizer-docgen:schema:start]
+/// Name: SINGLE
+/// Type: SingleFn
+/// Min args: 1
+/// Max args: 1
+/// Variadic: false
+/// Signature: SINGLE(arg1: any@range)
+/// Arg schema: arg1{kinds=any,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
+impl Function for SingleFn {
+    fn caps(&self) -> FnCaps {
+        FnCaps::PURE
+    }
+    fn name(&self) -> &'static str {
+        "SINGLE"
+    }
+    fn min_args(&self) -> usize {
+        1
+    }
+    fn semantic_contract(&self, _arity: usize) -> Option<FunctionSemanticContract> {
+        // The result depends on the formula cell, as for `@`.
+        let mut contract = FunctionSemanticContract::trusted_builtin_default(None);
+        contract.context = FunctionContextDependence::PlacementDependent;
+        Some(contract)
+    }
+    fn arg_schema(&self) -> &'static [ArgSchema] {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
+            vec![ArgSchema {
+                kinds: smallvec::smallvec![ArgKind::Any],
+                required: true,
+                by_ref: false,
+                shape: ShapeKind::Range,
+                coercion: CoercionPolicy::None,
+                max: None,
+                repeating: None,
+                default: None,
+            }]
+        });
+        &SCHEMA
+    }
+
+    // Skip eager argument validation: it would resolve a reference-returning
+    // operand through `eval_reference` before `eval` evaluates it again as a
+    // value.
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
+
+    fn eval<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        _ctx: &dyn FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+        if args.len() != 1 {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("SINGLE takes exactly one argument"),
+            )));
+        }
+        Ok(crate::traits::CalcValue::Scalar(
+            args[0].implicit_intersection()?,
+        ))
+    }
+}
+
+#[derive(Debug)]
 pub struct HyperlinkFn;
 
 /// Returns the friendly name of a hyperlink, or its link location when no name is given.
@@ -1459,6 +1565,7 @@ pub fn register_builtins() {
     crate::function_registry::register_builtin(std::sync::Arc::new(IndirectFn));
     crate::function_registry::register_builtin(std::sync::Arc::new(HyperlinkFn));
     crate::function_registry::register_builtin(std::sync::Arc::new(AnchorArrayFn));
+    crate::function_registry::register_builtin(std::sync::Arc::new(SingleFn));
 }
 
 #[cfg(test)]
