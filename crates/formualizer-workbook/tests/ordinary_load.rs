@@ -665,3 +665,50 @@ fn array_cells_without_dynamic_metadata_keep_their_saved_values() {
         Some(formualizer_common::LiteralValue::Number(2.0))
     );
 }
+
+#[test]
+fn cell_filename_reports_only_a_path_the_host_supplies() {
+    use formualizer_common::{ExcelErrorKind, LiteralValue};
+    let mut p = parts(false);
+    p.insert(
+        SHEET.into(),
+        format!(
+            "<worksheet xmlns=\"{MAIN}\"><sheetData><row r=\"1\"><c r=\"A1\"><f>CELL(\"filename\")</f></c><c r=\"B1\"><f>CELL(\"filename\",A1)</f></c></row><row r=\"2\"><c r=\"A2\"><f t=\"shared\" ref=\"A2:A3\" si=\"0\">CELL(\"filename\",B2)</f></c></row><row r=\"3\"><c r=\"A3\"><f t=\"shared\" si=\"0\"/></c></row></sheetData></worksheet>"
+        ),
+    );
+    let bytes = pack(&p, CompressionMethod::Deflated);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("Book One.xlsx");
+    std::fs::write(&path, &bytes).unwrap();
+    let load = |adapter| {
+        let mut wb = Workbook::from_reader(
+            adapter,
+            formualizer_workbook::LoadStrategy::EagerAll,
+            formualizer_workbook::WorkbookConfig::ephemeral(),
+        )
+        .unwrap();
+        wb.evaluate_all().unwrap();
+        wb
+    };
+    let cells = |wb: &Workbook| {
+        [(1, 1), (1, 2), (2, 1), (3, 1)].map(|(row, col)| wb.get_value("Sheet1", row, col))
+    };
+    // Neither a file nor bytes say anything the results may disclose.
+    for mut wb in [
+        load(NativeXlsxAdapter::open_path(&path).unwrap()),
+        load(NativeXlsxAdapter::open_bytes(bytes).unwrap()),
+    ] {
+        for value in cells(&wb) {
+            assert!(
+                matches!(&value, Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Value),
+                "{value:?}"
+            );
+        }
+        wb.set_workbook_path(Some("reports/2026/Book One.xlsx".into()));
+        wb.evaluate_all().unwrap();
+        let expected = Some(LiteralValue::Text(
+            "reports/2026/[Book One.xlsx]Sheet1".into(),
+        ));
+        assert_eq!(cells(&wb), [(); 4].map(|()| expected.clone()));
+    }
+}
