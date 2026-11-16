@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking changes and upgrading
+
+- **Text criteria match the same cells on every path.** `COUNTIF`'s criteria mask folds case by Unicode simple case folding (`ος` = `οσ`, `s` = `ſ`) and its `?` is one character; the scalar criteria matcher compared plain lowercase and matched `?` against one byte. The matcher now folds and counts characters as the mask does, so values change for non-ASCII text in `COUNTIFS`/`SUMIFS`/`AVERAGEIFS` with a 1x1 criteria range, `MAXIFS`/`MINIFS`, the database functions, and wildcard criteria over a column that also holds numbers, booleans or blanks: `COUNTIFS(A1,"ΟΣ")` over `οσ` is now 1, and `COUNTIF(A1:A2,"caf?")` over `café` and `7` is now 1.
+
 ### Excel compatibility
 
 - `CELL("filename")` returns the directory, `[file name]` and sheet of its reference, such as `C:\dir\[Book1.xlsx]Sheet1`, from the path a host passes to `Workbook::set_workbook_path` or `Engine::set_workbook_path`, and updates when the sheet is renamed or the path changes. Loading a file does not supply its path. With no path the workbook's identity is unknown, which gives `#VALUE!` and is reported as an unavailable operation; an empty path is a workbook never saved, which gives empty text. (#555, @mcdonaldsam)
