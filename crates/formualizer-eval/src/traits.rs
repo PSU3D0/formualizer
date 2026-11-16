@@ -530,6 +530,27 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
         }
     }
 
+    /// `@` applied to this argument, as the unary operator does: a written
+    /// reference intersects the formula cell; anything else is evaluated once
+    /// and reduced to one value. Evaluation failures propagate, as for `@`.
+    pub(crate) fn implicit_intersection(&self) -> Result<LiteralValue, ExcelError> {
+        let written_reference = match &self.expr {
+            ArgumentExpr::Ast(node) => matches!(node.node_type, ASTNodeType::Reference { .. }),
+            ArgumentExpr::Arena { id, data_store, .. } => matches!(
+                data_store.get_node(*id),
+                Some(crate::engine::arena::AstNodeData::Reference { .. })
+            ),
+        };
+        // A LET local bound to a value is not a reference (`may_return_reference`).
+        if written_reference && self.may_return_reference() {
+            return Ok(match self.reference_for_eval() {
+                Ok(reference) => self.interp.implicit_intersection_from_reference(&reference),
+                Err(e) => LiteralValue::Error(e),
+            });
+        }
+        Ok(self.interp.eval_implicit_intersection_calc(self.value()?))
+    }
+
     /// Returns whether this argument resolves as a spreadsheet reference rather than a value.
     ///
     /// This uses the interpreter's reference-resolution path, so reference-returning functions

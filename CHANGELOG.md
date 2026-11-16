@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `SINGLE`, which Excel writes for `@` as `_xlfn.SINGLE`, now evaluates as implicit intersection instead of `#NAME?` (#565).
+
 ### Breaking changes and upgrading
 
 - **Text criteria match the same cells on every path.** `COUNTIF`'s criteria mask folds case by Unicode simple case folding (`ος` = `οσ`, `s` = `ſ`) and its `?` is one character; the scalar criteria matcher compared plain lowercase and matched `?` against one byte. The matcher now folds and counts characters as the mask does, so values change for non-ASCII text in `COUNTIFS`/`SUMIFS`/`AVERAGEIFS` with a 1x1 criteria range, `MAXIFS`/`MINIFS`, the database functions, and wildcard criteria over a column that also holds numbers, booleans or blanks: `COUNTIFS(A1,"ΟΣ")` over `οσ` is now 1, and `COUNTIF(A1:A2,"caf?")` over `café` and `7` is now 1.

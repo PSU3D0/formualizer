@@ -62,18 +62,27 @@ struct Function {
     params: &'static [Param],
     pairs: bool,
 }
-fn function(name: &str) -> Option<(String, Function)> {
+/// The uppercase function name without its `_xlfn.` / `_xlws.` prefixes.
+fn base_name(name: &str) -> String {
     let mut upper = name.to_ascii_uppercase();
     for prefix in ["_XLFN.", "_XLWS."] {
         if let Some(rest) = upper.strip_prefix(prefix) {
             upper = rest.to_string();
         }
     }
+    upper
+}
+fn function(name: &str) -> Option<(String, Function)> {
+    let upper = base_name(name);
+    lookup(&upper).map(|f| (upper, f))
+}
+/// The legacy classes of a function, by its normalised name (see [`base_name`]).
+fn lookup(upper: &str) -> Option<Function> {
     let i = classes::FUNCTIONS
-        .binary_search_by(|(n, ..)| (*n).cmp(upper.as_str()))
+        .binary_search_by(|(n, ..)| (*n).cmp(upper))
         .ok()?;
     let (_, ret, params, pairs) = classes::FUNCTIONS[i];
-    Some((upper, Function { ret, params, pairs }))
+    Some(Function { ret, params, pairs })
 }
 impl Function {
     fn param(&self, i: usize) -> Param {
@@ -359,8 +368,15 @@ impl Walk<'_> {
                 _ => return Err(Skip("binary operator")),
             },
             ASTNodeType::Function { name, args } => {
-                let (upper, f) = function(name).ok_or(Skip("function without legacy classes"))?;
-                Kind::Function(upper, f, args)
+                let upper = base_name(name);
+                if upper == "SINGLE" {
+                    // An explicit intersection (`@`, stored as `SINGLE`) already
+                    // reduces to one value.
+                    Kind::Leaf
+                } else {
+                    let f = lookup(&upper).ok_or(Skip("function without legacy classes"))?;
+                    Kind::Function(upper, f, args)
+                }
             }
             ASTNodeType::Call { .. } => return Err(Skip("call expression")),
         };

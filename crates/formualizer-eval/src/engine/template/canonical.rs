@@ -1834,6 +1834,31 @@ mod tests {
     }
 
     #[test]
+    fn single_is_not_plane_eligible_via_context_dependence_contract() {
+        // Regression: SINGLE (the stored form of `@`) intersects with the
+        // formula cell's row/column, so a shared span would return the anchor
+        // cell's answer everywhere. Its PlacementDependent context contract
+        // must make the FormulaPlane reject it at canonicalization time.
+        for formula in [
+            "=SINGLE(A1:A10)",
+            "=_xlfn.SINGLE($A$1:$A$10)",
+            "=SINGLE(A1)*2",
+        ] {
+            let template = canonical(formula, 2, 3);
+            assert!(
+                template
+                    .labels
+                    .contains_reject_kind(CanonicalRejectKind::ContextDependentFunction),
+                "{formula}: expected ContextDependentFunction reject"
+            );
+            assert!(
+                !template.labels.is_authority_supported(),
+                "{formula}: SINGLE must not be plane-eligible"
+            );
+        }
+    }
+
+    #[test]
     fn runtime_provider_override_cannot_borrow_global_registry_semantics() {
         struct LocalAbs;
         impl crate::function::Function for LocalAbs {
