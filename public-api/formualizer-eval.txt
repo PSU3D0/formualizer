@@ -1506,6 +1506,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::set_source_table_version(&mut 
 pub fn formualizer_eval::engine::eval::Engine<R>::set_temporal_egress(&mut self, formualizer_eval::engine::TemporalEgress)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_volatile_level(&mut self, formualizer_eval::traits::VolatileLevel)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_load_limits(&mut self, formualizer_eval::engine::WorkbookLoadLimits)
+pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_path(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_seed(&mut self, u64)
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_id(&self, &str) -> core::option::Option<formualizer_eval::reference::SheetId>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_id_mut(&mut self, &str) -> formualizer_eval::reference::SheetId
@@ -1529,6 +1530,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::vertex_value(&self, formualize
 pub fn formualizer_eval::engine::eval::Engine<R>::virtual_dep_fallback_activations(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::with_thread_pool(R, formualizer_eval::engine::EvalConfig, alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>) -> Self
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_load_limits(&self) -> &formualizer_eval::engine::WorkbookLoadLimits
+pub fn formualizer_eval::engine::eval::Engine<R>::workbook_path(&self) -> core::option::Option<&str>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::adopt_file_sheets<'a, I>(&mut self, I) -> core::result::Result<alloc::vec::Vec<formualizer_eval::reference::SheetId>, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = &'a str>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -1580,11 +1582,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c sel
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::eval::Engine<R>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::engine::eval::Engine<R>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::engine::eval::Engine<R>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::eval::Engine<R>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<R> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -3557,11 +3561,13 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
@@ -4970,11 +4976,13 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resol
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
@@ -6462,6 +6470,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::set_source_table_version(&mut 
 pub fn formualizer_eval::engine::eval::Engine<R>::set_temporal_egress(&mut self, formualizer_eval::engine::TemporalEgress)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_volatile_level(&mut self, formualizer_eval::traits::VolatileLevel)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_load_limits(&mut self, formualizer_eval::engine::WorkbookLoadLimits)
+pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_path(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_eval::engine::eval::Engine<R>::set_workbook_seed(&mut self, u64)
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_id(&self, &str) -> core::option::Option<formualizer_eval::reference::SheetId>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_id_mut(&mut self, &str) -> formualizer_eval::reference::SheetId
@@ -6485,6 +6494,7 @@ pub fn formualizer_eval::engine::eval::Engine<R>::vertex_value(&self, formualize
 pub fn formualizer_eval::engine::eval::Engine<R>::virtual_dep_fallback_activations(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::with_thread_pool(R, formualizer_eval::engine::EvalConfig, alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>) -> Self
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_load_limits(&self) -> &formualizer_eval::engine::WorkbookLoadLimits
+pub fn formualizer_eval::engine::eval::Engine<R>::workbook_path(&self) -> core::option::Option<&str>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
 pub fn formualizer_eval::engine::eval::Engine<R>::adopt_file_sheets<'a, I>(&mut self, I) -> core::result::Result<alloc::vec::Vec<formualizer_eval::reference::SheetId>, formualizer_common::error::ExcelError> where I: core::iter::traits::collect::IntoIterator<Item = &'a str>
 impl<R> formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -6536,11 +6546,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c sel
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::eval::Engine<R>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::engine::eval::Engine<R>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::engine::eval::Engine<R>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::eval::Engine<R>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<R> formualizer_eval::traits::FunctionProvider for formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -8681,9 +8693,11 @@ pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::report_unavailable_
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::resolve_range_view(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'a>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::rng_for_current(&self, u64) -> rand::rngs::small::SmallRng
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::workbook_sheet_count(&self) -> core::option::Option<usize>
 pub struct formualizer_eval::traits::InMemoryRange
@@ -8746,11 +8760,13 @@ pub fn formualizer_eval::traits::EvaluationContext::resolve_range_view<'c>(&'c s
 pub fn formualizer_eval::traits::EvaluationContext::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::EvaluationContext::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::traits::EvaluationContext::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::traits::EvaluationContext::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::traits::EvaluationContext::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::traits::EvaluationContext::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::traits::EvaluationContext::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::traits::EvaluationContext::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::traits::EvaluationContext::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::traits::EvaluationContext::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::traits::EvaluationContext::workbook_seed(&self) -> u64
 pub fn formualizer_eval::traits::EvaluationContext::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<'a, R: formualizer_eval::traits::EvaluationContext, S: formualizer_eval::engine::live_edges::ReadSink> formualizer_eval::traits::EvaluationContext for formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>
@@ -8781,11 +8797,13 @@ pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::engine::live_edges::RecordingContext<'a, R, S>::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<'a, R: formualizer_eval::traits::EvaluationContext> formualizer_eval::traits::EvaluationContext for formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>
@@ -8816,11 +8834,13 @@ pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resol
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::engine::virtual_deps::DynamicRefCollector<'a, R>::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<R> formualizer_eval::traits::EvaluationContext for formualizer_eval::engine::eval::Engine<R> where R: formualizer_eval::traits::EvaluationContext
@@ -8851,11 +8871,13 @@ pub fn formualizer_eval::engine::eval::Engine<R>::resolve_range_view<'c>(&'c sel
 pub fn formualizer_eval::engine::eval::Engine<R>::resolve_spill_reference(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_parse::parser::ReferenceType, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_bounds(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::engine::eval::Engine<R>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::eval::Engine<R>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::engine::eval::Engine<R>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::engine::eval::Engine<R>::used_cols_for_rows(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::used_rows_for_columns(&self, &str, u32, u32) -> core::option::Option<(u32, u32)>
 pub fn formualizer_eval::engine::eval::Engine<R>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::engine::eval::Engine<R>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::engine::eval::Engine<R>::workbook_sheet_count(&self) -> core::option::Option<usize>
 pub trait formualizer_eval::traits::Function: core::marker::Send + core::marker::Sync + 'static
@@ -8899,9 +8921,11 @@ pub fn formualizer_eval::traits::FunctionContext::report_unavailable_operation(&
 pub fn formualizer_eval::traits::FunctionContext::resolve_range_view(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'ctx>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::FunctionContext::rng_for_current(&self, u64) -> rand::rngs::small::SmallRng
 pub fn formualizer_eval::traits::FunctionContext::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::traits::FunctionContext::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::traits::FunctionContext::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::traits::FunctionContext::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::traits::FunctionContext::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::traits::FunctionContext::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::traits::FunctionContext::workbook_seed(&self) -> u64
 pub fn formualizer_eval::traits::FunctionContext::workbook_sheet_count(&self) -> core::option::Option<usize>
 impl<'a> formualizer_eval::traits::FunctionContext<'a> for formualizer_eval::traits::DefaultFunctionContext<'a>
@@ -8926,9 +8950,11 @@ pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::report_unavailable_
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::resolve_range_view(&self, &formualizer_parse::parser::ReferenceType, &str) -> core::result::Result<formualizer_eval::engine::range_view::RangeView<'a>, formualizer_common::error::ExcelError>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::rng_for_current(&self, u64) -> rand::rngs::small::SmallRng
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::sheet_index_by_name(&self, &str) -> core::option::Option<usize>
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::sheet_name_by_id(&self, formualizer_eval::reference::SheetId) -> core::option::Option<&str>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::thread_pool(&self) -> core::option::Option<&alloc::sync::Arc<rayon_core::thread_pool::ThreadPool>>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::timezone(&self) -> &formualizer_eval::timezone::TimeZoneSpec
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::volatile_level(&self) -> formualizer_eval::traits::VolatileLevel
+pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::workbook_path(&self) -> core::option::Option<&str>
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::workbook_seed(&self) -> u64
 pub fn formualizer_eval::traits::DefaultFunctionContext<'a>::workbook_sheet_count(&self) -> core::option::Option<usize>
 pub trait formualizer_eval::traits::FunctionProvider: core::marker::Send + core::marker::Sync

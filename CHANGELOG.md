@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Excel compatibility
+
+- `CELL("filename")` returns the directory, `[file name]` and sheet of its reference, such as `C:\dir\[Book1.xlsx]Sheet1`, from the path a host passes to `Workbook::set_workbook_path` or `Engine::set_workbook_path`, and updates when the sheet is renamed or the path changes. Loading a file does not supply its path. With no path the workbook's identity is unknown, which gives `#VALUE!` and is reported as an unavailable operation; an empty path is a workbook never saved, which gives empty text. (#555, @mcdonaldsam)
+
 ### Fixed
 
 - `_` and `%` in a text criterion are literal in family execution, as they already were elsewhere. A filled-down `=COUNTIF($A$1:$A$40,C1)` with `a_c` or `50%` in column C counted `abc` or `50x` too, because the family kernel passed the criterion to Arrow `ilike` unescaped.
