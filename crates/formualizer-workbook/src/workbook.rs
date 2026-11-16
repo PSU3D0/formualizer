@@ -2386,6 +2386,13 @@ impl Workbook {
             .retain(|s| s.name.as_ref() != name);
         Ok(())
     }
+    /// Give the workbook the path `CELL("filename")` reports, as
+    /// [`Engine::set_workbook_path`](formualizer_eval::engine::Engine::set_workbook_path).
+    /// Opening a file never sets it, so that where a file is stored reaches
+    /// calculation results only when the host decides it should.
+    pub fn set_workbook_path(&mut self, path: Option<String>) {
+        self.engine.set_workbook_path(path);
+    }
     pub fn rename_sheet(&mut self, old: &str, new: &str) -> Result<(), ExcelError> {
         if let Some(id) = self.engine.sheet_id(old) {
             self.engine.rename_sheet(id, new)?;
