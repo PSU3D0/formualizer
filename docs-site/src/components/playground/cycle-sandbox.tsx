@@ -302,8 +302,8 @@ export function GuardedPairSandbox() {
       <p className="mt-3 text-xs text-fd-muted-foreground">
         Under <strong>runtime</strong> detection, only the live edges count —
         the guarded pair is a phantom cycle and resolves to a value. Flip to{" "}
-        <strong>static</strong> detection (today's default) and the same SCC is
-        stamped <code>#CIRC!</code> on sight.
+        <strong>static</strong> detection (the default before #570) and the same
+        SCC is stamped <code>#CIRC!</code> on sight.
       </p>
     </div>
   );

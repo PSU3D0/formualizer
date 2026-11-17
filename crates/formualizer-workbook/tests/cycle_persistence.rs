@@ -14,7 +14,7 @@
 //!   self-referential formulas under ANY cycle config. Loading never
 //!   hard-fails on a self-reference and never drops the formula.
 //! - What the cell *evaluates to* is decided by the loaded engine's cycle
-//!   policy: `#CIRC!` under the default (`Static` detection / `Error`
+//!   policy: `#CIRC!` under the default (`Runtime` detection / `Error`
 //!   policy), iterated values under `Runtime` + `Iterate`.
 //! - Only the interactive `set_formula` / `set_cell_formula` edit path
 //!   rejects self-references eagerly (and only when the active config
@@ -64,7 +64,7 @@ fn json_with_self_reference() -> Vec<u8> {
 /// A workbook built under Runtime+Iterate containing `A1 = =A1+1`, saved via
 /// the JSON backend (which does not carry cycle config), reloaded with the
 /// DEFAULT config: the load must NOT hard-fail, the formula must survive, and
-/// the cell yields `#CIRC!` under the default Static/Error policy.
+/// the cell yields `#CIRC!` under the default Runtime/Error policy.
 #[test]
 fn iterate_workbook_self_ref_json_reload_under_default_config_yields_circ() {
     // Build + iterate under Runtime+Iterate (interactive set_formula accepts
@@ -92,7 +92,7 @@ fn iterate_workbook_self_ref_json_reload_under_default_config_yields_circ() {
         .unwrap();
     let bytes = adapter.save_to_bytes().unwrap();
 
-    // Reload with the DEFAULT config (Static detection, Error policy).
+    // Reload with the DEFAULT config (Runtime detection, Error policy).
     let adapter = JsonAdapter::open_bytes(bytes).unwrap();
     let mut reloaded =
         Workbook::from_reader(adapter, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())

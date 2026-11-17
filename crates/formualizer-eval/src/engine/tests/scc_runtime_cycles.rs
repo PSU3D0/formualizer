@@ -3,8 +3,8 @@
 //! Test inventory from `formualizer-stage2-scc-evaluation-design.md` §5 and
 //! the spec's §7 Error-policy subset: phantom (guarded) cycles produce
 //! values, live cycles produce `#CIRC!` with live-cycle-only blast radius,
-//! and `CycleDetection::Static` (the default) stays byte-for-byte today's
-//! behavior.
+//! and `CycleDetection::Static` (the default before #570) stays byte-for-byte
+//! its earlier behavior.
 
 use crate::engine::graph::editor::undo_engine::UndoEngine;
 use crate::engine::named_range::{NameScope, NamedDefinition};

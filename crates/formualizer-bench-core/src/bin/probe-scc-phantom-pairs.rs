@@ -4,10 +4,11 @@
 //! shape: `A = IF(g, k, B)`, `B = IF(g, A, k)`), each with its own guard cell
 //! and a downstream consumer so condensation ordering is exercised. Under
 //! `--mode runtime` every pair is a statically-cyclic SCC that resolves to
-//! values in 1-2 settle passes; under `--mode static` (today's default) every
-//! pair is stamped `#CIRC!`. The probe measures initial `evaluate_all` plus a
-//! configurable number of guard-flip recalc rounds, reporting per-pair µs so
-//! future stages (iterative calc) have a regression gate on SCC-task cost.
+//! values in 1-2 settle passes; under `--mode static` (the default before
+//! #570) every pair is stamped `#CIRC!`. The probe measures initial
+//! `evaluate_all` plus a configurable number of guard-flip recalc rounds,
+//! reporting per-pair µs so future stages (iterative calc) have a regression
+//! gate on SCC-task cost.
 //!
 //! Run (both modes):
 //! ```bash
@@ -52,7 +53,7 @@ fn main() -> Result<()> {
 #[cfg(feature = "formualizer_runner")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Mode {
-    /// Today's behavior: every statically-cyclic SCC is stamped `#CIRC!`.
+    /// Compat switch: every statically-cyclic SCC is stamped `#CIRC!`.
     Static,
     /// RFC #112 Runtime detection: phantom (live-acyclic) SCCs produce values.
     Runtime,

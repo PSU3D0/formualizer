@@ -46,7 +46,7 @@ Recalc order: B1 then C1
 
 Cycles are detected during graph construction. When a circular dependency is found, the anchor cell receives a `#CIRC!` error. The dependency graph uses topological sorting; if sorting fails (cycle detected), the involved cells are marked with the circular reference error. Downstream dependents of a cycle cell also receive errors.
 
-This is the default `Static` behavior. Two opt-in modes change it: [runtime cycle detection](/docs/guides/circular-references-and-cycle-detection) lets guarded/routing-switch cycles resolve to values, and [iterative calculation](/docs/guides/iterative-calculation) settles genuinely circular cycles Excel-style. See the [Cycle Configuration Reference](/docs/reference/cycle-config) for the full surface.
+This is the `Static` detection mode. The default, [runtime cycle detection](/docs/guides/circular-references-and-cycle-detection), evaluates the cells of a cycle and lets guarded/routing-switch cycles resolve to values; only a loop whose reads actually happen gets `#CIRC!`. The opt-in [iterative calculation](/docs/guides/iterative-calculation) settles genuinely circular cycles Excel-style. See the [Cycle Configuration Reference](/docs/reference/cycle-config) for the full surface.
 
 ## Cooperative recalculation
 

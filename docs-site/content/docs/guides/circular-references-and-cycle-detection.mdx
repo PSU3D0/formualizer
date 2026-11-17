@@ -3,9 +3,9 @@ title: Circular References and Runtime Cycle Detection
 description: Resolve guarded and routing-switch cycles to values with runtime cycle detection, while real cycles still surface #CIRC!.
 ---
 
-By default, Formualizer treats every statically circular group of cells as an error: it stamps each member `#CIRC!` the moment the dependency graph closes a loop. That is correct for genuine circular references, but it is too aggressive for a common class of spreadsheet that is only *structurally* circular — the live data path never actually loops.
+Static cycle detection treats every statically circular group of cells as an error: it stamps each member `#CIRC!` the moment the dependency graph closes a loop. That is correct for genuine circular references, but it is too aggressive for a common class of spreadsheet that is only *structurally* circular — the live data path never actually loops.
 
-**Runtime cycle detection** (RFC [#112](https://github.com/PSU3D0/formualizer/pull/112)) keeps the static cycle as a *candidate*, then watches the edges that actually fire during evaluation. If the live edges are acyclic, the cells get ordinary values; only cells that participate in a real, live cycle receive `#CIRC!`.
+**Runtime cycle detection** (RFC [#112](https://github.com/PSU3D0/formualizer/pull/112)), the default, keeps the static cycle as a *candidate*, then watches the edges that actually fire during evaluation. If the live edges are acyclic, the cells get ordinary values; only cells that participate in a real, live cycle receive `#CIRC!`.
 
 ## The problem: guarded and routing-switch cycles
 
@@ -30,25 +30,25 @@ The same shape shows up in routing switches (a `CHOOSE`/`SWITCH` that selects on
 
 | Mode | Behavior | Default |
 |------|----------|---------|
-| `Static` | Every static SCC is stamped `#CIRC!` on sight. No live-edge machinery runs. | Yes |
-| `Runtime` | Static SCCs are candidates; members evaluate with live-edge recording, and only *live* cycles get the policy verdict. | Opt-in |
+| `Static` | Every static SCC is stamped `#CIRC!` on sight. No live-edge machinery runs. | No |
+| `Runtime` | Static SCCs are candidates; members evaluate with live-edge recording, and only *live* cycles get the policy verdict. | Yes |
 
-`Static` remains the default, byte-for-byte compatible with prior releases. `Runtime` is strictly opt-in.
+`Runtime` is the default since [#570](https://github.com/PSU3D0/formualizer/issues/570). `Static`, the default before, stays available as an explicit switch and behaves as it did, byte for byte.
 
-Under `Runtime`, a static SCC whose live edges turn out to be acyclic is called a **phantom cycle**. Phantom cycles produce ordinary values; they are not errors and do not count toward cycle telemetry.
+Under `Runtime`, a static SCC whose live edges turn out to be acyclic is called a **phantom cycle**. Phantom cycles produce ordinary values; they are not errors, and the telemetry counts them as `phantom_sccs`, not as live cycles.
 
 ## Try it
 
-Toggle the guard cell and watch the values flip. Switch the detection mode to **Static** to see the same workbook collapse to `#CIRC!`.
+Toggle the guard cell and watch the values flip. Switch the detection mode to **Static** to see what the same workbook gives with static detection: `#CIRC!`.
 
 <GuardedPairSandbox />
 
 ## Configuration
 
-Runtime detection is set on the engine's cycle config. The policy for *live* cycles stays `Error` here — we are only changing how candidates are confirmed, not what happens to real cycles.
+Detection is set on the engine's cycle config. `Runtime` is the default; the samples choose it explicitly, as you would to pin a mode. The policy for *live* cycles stays `Error` here: the detection mode changes how candidates are confirmed, not what happens to real cycles.
 
 <CodeTabs
-  title="Enable runtime cycle detection"
+  title="Choose runtime cycle detection"
   rust={`use formualizer_eval::engine::{CycleConfig, CycleDetection, CyclePolicy, EvalConfig};
 use formualizer_workbook::{Workbook, WorkbookConfig};
 
@@ -68,7 +68,7 @@ assert_eq!(wb.evaluate_cell("Sheet1", 2, 1)?, 555.0.into());`}
   python={`import formualizer as fz
 
 cfg = fz.EvaluationConfig()
-cfg.cycle_detection = "runtime"   # "static" (default) | "runtime"
+cfg.cycle_detection = "runtime"   # "runtime" (default) | "static"
 cfg.cycle_policy = "error"        # live cycles still produce #CIRC!
 
 wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))
@@ -82,9 +82,10 @@ assert wb.get_value("Sheet1", 2, 1) == 555.0`}
 
 await init();
 
-// The cycle config flows through the *load* entry points
-// (fromJsonWithOptions / fromXlsxBytesWithOptions), not the plain
-// constructor. Build a small JSON workbook and pass the options.
+// The cycle options work on the plain constructor
+// (new Workbook({ cycleDetection: "runtime" })) and on the load entry
+// points (fromJsonWithOptions / fromXlsxBytesWithOptions). Here a small
+// JSON workbook is loaded with them.
 const json = JSON.stringify({
   version: 1,
   sheets: {
@@ -105,10 +106,9 @@ console.log(wb.evaluateCell("Sheet1", 2, 1)); // 555`}
 />
 
 <Callout type="info">
-In the WASM binding, cycle config is accepted only through the load entry points
-(`fromJsonWithOptions`, `fromXlsxBytesWithOptions`). The plain `new Workbook()`
-constructor always uses the default (`Static` / `Error`). Build a JSON or XLSX
-workbook and load it with options to opt into runtime detection.
+In the WASM binding, the plain `new Workbook(options)` constructor and the load
+entry points (`fromJsonWithOptions`, `fromXlsxBytesWithOptions`) accept the cycle
+options. Without them the default is `Runtime` / `Error`.
 </Callout>
 
 ## What changes (and what does not)
@@ -131,7 +131,7 @@ print(t.live_cycles_witnessed)
 print(t.circ_cells_stamped)   # cells stamped #CIRC!
 ```
 
-The WASM binding does not expose telemetry today; its cycle surface is config-only.
+The WASM binding exposes the same counters through `wb.lastCycleTelemetry()` (`staticSccs`, `phantomSccs`, ...).
 
 ## Related
 
