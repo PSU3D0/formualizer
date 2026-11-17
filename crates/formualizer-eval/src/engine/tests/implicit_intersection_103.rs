@@ -458,3 +458,211 @@ fn single_respects_let_locals() {
         Some(LiteralValue::Number(5.0))
     );
 }
+
+#[test]
+fn implicit_intersection_respects_let_locals() {
+    // `@` on a local uses the local, as SINGLE does: a value is reduced like
+    // `@expr`, a reference intersects the formula's row.
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, serial_eval_config());
+    for r in 1..=10 {
+        engine
+            .set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Sheet1", 1, 3, parse("=LET(x,7,@x)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 5, 2, parse("=LET(r,A1:A10,@r)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 4, parse("=LET(a,SEQUENCE(3),@a)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 5, parse("=LET(x,1,LET(X,7,@x))").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 6, parse("=LET(f,LAMBDA(v,v),@f)").unwrap())
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3),
+        Some(LiteralValue::Number(7.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 5, 2),
+        Some(LiteralValue::Number(5.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 4),
+        Some(LiteralValue::Number(1.0))
+    );
+    // No spill should occur.
+    assert_eq!(engine.get_cell_value("Sheet1", 2, 4), None);
+    // The inner local wins, whatever its case.
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 5),
+        Some(LiteralValue::Number(7.0))
+    );
+    match engine.get_cell_value("Sheet1", 1, 6) {
+        Some(LiteralValue::Error(e)) => {
+            assert_eq!(e.kind, formualizer_common::ExcelErrorKind::Calc)
+        }
+        other => panic!("expected #CALC!, got {other:?}"),
+    }
+}
+
+#[test]
+fn implicit_intersection_respects_lambda_parameters() {
+    // LAMBDA bodies run on the AST path; `@` and SINGLE agree there too.
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, serial_eval_config());
+    for r in 1..=10 {
+        engine
+            .set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64))
+            .unwrap();
+    }
+    engine
+        .set_cell_formula("Sheet1", 1, 3, parse("=LET(f,LAMBDA(v,@v),f(7))").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            4,
+            parse("=LET(f,LAMBDA(v,SINGLE(v)),f(7))").unwrap(),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            6,
+            2,
+            parse("=LET(f,LAMBDA(rng,@rng),f(A1:A10))").unwrap(),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            6,
+            3,
+            parse("=LET(f,LAMBDA(rng,SINGLE(rng)),f(A1:A10))").unwrap(),
+        )
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+
+    for (row, col, expected) in [(1, 3, 7.0), (1, 4, 7.0), (6, 2, 6.0), (6, 3, 6.0)] {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, col),
+            Some(LiteralValue::Number(expected)),
+            "R{row}C{col}"
+        );
+    }
+}
+
+#[test]
+fn implicit_intersection_local_shadows_a_workbook_name() {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    use crate::reference::{CellRef, Coord, RangeRef};
+
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, serial_eval_config());
+    for r in 1..=10 {
+        engine
+            .set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64))
+            .unwrap();
+    }
+    let sheet1 = engine.sheet_id("Sheet1").unwrap();
+    engine
+        .define_name(
+            "x",
+            NamedDefinition::Literal(LiteralValue::Number(42.0)),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .define_name(
+            "K",
+            NamedDefinition::Range(RangeRef::new(
+                CellRef::new(sheet1, Coord::from_excel(1, 1, true, true)),
+                CellRef::new(sheet1, Coord::from_excel(10, 1, true, true)),
+            )),
+            NameScope::Workbook,
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 1, 3, parse("=LET(x,7,@x)").unwrap())
+        .unwrap();
+    // `alias` holds the workbook name `K`, not the later local `K`.
+    engine
+        .set_cell_formula("Sheet1", 5, 2, parse("=LET(alias,K,K,7,@alias)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            5,
+            3,
+            parse("=LET(alias,K,K,7,SINGLE(alias))").unwrap(),
+        )
+        .unwrap();
+    let _ = engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 3),
+        Some(LiteralValue::Number(7.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 5, 2),
+        Some(LiteralValue::Number(5.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 5, 3),
+        Some(LiteralValue::Number(5.0))
+    );
+}
+
+#[test]
+fn implicit_intersection_of_a_local_in_a_relative_formula_family_uses_each_placement() {
+    // Same as the `@` family test above, with the window bound to a LET local
+    // (arena path) and to a LAMBDA parameter (AST path).
+    let wb = TestWorkbook::new();
+    let mut engine = Engine::new(wb, serial_eval_config());
+    for r in 1..=40 {
+        engine
+            .set_cell_value("Sheet1", r, 1, LiteralValue::Number(r as f64))
+            .unwrap();
+    }
+    for r in 5..30 {
+        engine
+            .set_cell_formula(
+                "Sheet1",
+                r,
+                2,
+                parse(format!("=LET(r,A{}:A{},@r)", r - 1, r + 5)).unwrap(),
+            )
+            .unwrap();
+        engine
+            .set_cell_formula(
+                "Sheet1",
+                r,
+                3,
+                parse(format!("=LET(f,LAMBDA(rng,@rng),f(A{}:A{}))", r - 1, r + 5)).unwrap(),
+            )
+            .unwrap();
+    }
+    let _ = engine.evaluate_all().unwrap();
+    for r in 5..30 {
+        assert_eq!(
+            engine.get_cell_value("Sheet1", r, 2),
+            Some(LiteralValue::Number(r as f64)),
+            "B{r}"
+        );
+        assert_eq!(
+            engine.get_cell_value("Sheet1", r, 3),
+            Some(LiteralValue::Number(r as f64)),
+            "C{r}"
+        );
+    }
+}
