@@ -301,12 +301,10 @@ fn error_operand(text: &str) -> Option<LiteralValue> {
 }
 
 /// A date or time operand (`"2/1/02"`, `"1-Feb-2002"`, `"13:30"`) as a serial
-/// in `system`, the workbook's date system.
+/// in `system`, read as a date text cell is (`coercion::date_text_serial`), so
+/// `"1999-10-26t00:00"` is a date in either case.
 fn parse_criteria_datetime(text: &str, system: DateSystem) -> Option<f64> {
-    if text.is_empty() || !text.bytes().any(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    formualizer_common::parse_excel_datetime_text_to_serial_for(system, text)
+    crate::coercion::date_text_serial(system, text)
 }
 
 /// A finite number operand of a criteria operator (`">=1e3"`, `"<>-2"`).

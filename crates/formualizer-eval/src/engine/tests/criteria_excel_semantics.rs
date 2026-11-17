@@ -681,6 +681,39 @@ mod date_text_cells {
         );
     }
 
+    /// The criterion operand reads date text as a date text cell does, so a
+    /// lowercase ISO `t` is a date there too, bare or after `=`.
+    #[test]
+    fn criterion_iso_date_text_with_a_lowercase_t_is_a_date() {
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Text("10/26/1999".into()))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(36_459.0))
+            .unwrap();
+        let cases = [
+            "=COUNTIF(A1:A2,\"1999-10-26T00:00\")",
+            "=COUNTIF(A1:A2,\"1999-10-26t00:00\")",
+            "=COUNTIF(A1:A2,\"=1999-10-26t00:00\")",
+            "=COUNTIF(A1:A2,\">=1999-10-26t00:00\")",
+        ];
+        for (row, formula) in cases.iter().enumerate() {
+            engine
+                .set_cell_formula("Sheet1", row as u32 + 1, 4, parse(formula).unwrap())
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+        // `>=` skips the text cell; the others count both.
+        for (row, (formula, expected)) in cases.iter().zip([2.0, 2.0, 2.0, 1.0]).enumerate() {
+            assert_eq!(
+                engine.get_cell_value("Sheet1", row as u32 + 1, 4),
+                Some(LiteralValue::Number(expected)),
+                "{formula}"
+            );
+        }
+    }
+
     /// A date value (from a host or custom function; sheet cells hold serials)
     /// matches the same date, a date criterion and date text in either date
     /// system: both sides of the matcher read it in the workbook's system.
