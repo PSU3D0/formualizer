@@ -539,37 +539,174 @@ mod date_text_cells {
         ]);
     }
 
-    /// Criteria have no workbook context and read date text in the 1900
-    /// system, criterion and cell alike, so in a 1904 workbook date text
-    /// matches date text, but a 1904 serial does not match it. Pinned as a
-    /// known limitation (date-typed cells behave the same way).
+    /// In a 1904 workbook every criteria path reads date text in that
+    /// system, criterion and cell alike: `'10/26/1999` is serial 34997 there,
+    /// as `DATE(1999,10,26)` is, while 36459 is a date in 2003. A1 holds the
+    /// date text, A2 other text, A3 a date-typed cell for the same day and
+    /// A4:A6 more text, so ranges reach the Arrow mask and the per-cell matcher.
+    /// Each formula is filled down 40 rows with family execution off and on,
+    /// so the criteria index and family kernel see it too.
     #[test]
-    fn criteria_read_date_text_in_the_1900_system_in_1904_workbooks() {
+    fn criteria_read_date_text_in_the_workbook_date_system() {
+        use super::super::common::arrow_eval_config;
         use crate::engine::DateSystem;
-        let mut engine = Engine::new(
-            TestWorkbook::new(),
-            EvalConfig::default().with_date_system(DateSystem::Excel1904),
-        );
-        engine
-            .set_cell_value("Sheet1", 1, 1, LiteralValue::Text("10/26/1999".into()))
-            .unwrap();
+        use chrono::NaiveDate;
+        const ROWS: u32 = 40;
         let cases = [
-            ("=COUNTIF(A1,\"10/26/1999\")", 1.0),
-            ("=COUNTIF(A1,36459)", 1.0),
-            ("=COUNTIF(A1,DATE(1999,10,26))", 0.0),
+            ("=COUNTIF($A$1,36459)", 0.0),
+            ("=COUNTIF($A$1:$A$2,36459)", 0.0),
+            ("=COUNTIF($A$1,34997)", 1.0),
+            ("=COUNTIF($A$1:$A$2,34997)", 1.0),
+            ("=COUNTIF($A$1,DATE(1999,10,26))", 1.0),
+            ("=COUNTIF($A$1:$A$2,DATE(1999,10,26))", 1.0),
+            ("=COUNTIF($A$1,\"10/26/1999\")", 1.0),
+            ("=COUNTIF($A$1:$A$2,\"=10/26/1999\")", 1.0),
+            ("=COUNTIF($A$1:$A$2,\"34997\")", 1.0),
+            ("=COUNTIF($A$1:$A$2,\"36459\")", 0.0),
+            // The date-typed cell is stored as its 1904 serial.
+            ("=COUNTIF($A$3,\"10/26/1999\")", 1.0),
+            ("=COUNTIF($A$1:$A$6,\"10/26/1999\")", 2.0),
+            ("=COUNTIF($A$1:$A$6,DATE(1999,10,26))", 2.0),
+            ("=COUNTIF($A$1:$A$6,36459)", 0.0),
+            ("=COUNTIF($A$1:$A$6,\">=10/26/1999\")", 1.0),
+            (
+                "=COUNTIFS($A$1:$A$6,\"10/26/1999\",$A$1:$A$6,\"<>abc\")",
+                2.0,
+            ),
+            ("=SUMPRODUCT(COUNTIF($A$1:$A$6,SEQUENCE(40,1,34980)))", 2.0),
+            ("=SUMPRODUCT(COUNTIF($A$1:$A$6,SEQUENCE(31,1,34980)))", 2.0),
+            ("=SUMPRODUCT(COUNTIF($A$1:$A$6,SEQUENCE(40,1,36440)))", 0.0),
+            (
+                "=SUMPRODUCT(COUNTIF($A$1:$A$6,SEQUENCE(40,1,34980)&\"\"))",
+                2.0,
+            ),
+            ("=MAXIFS($B$1:$B$6,$A$1:$A$6,\"10/26/1999\")", 3.0),
+            ("=MINIFS($B$1:$B$6,$A$1:$A$6,\"10/26/1999\")", 1.0),
+            ("=MINIFS($B$1:$B$6,$A$1:$A$6,34997)", 1.0),
+            ("=MAXIFS($B$1:$B$6,$A$1:$A$6,36459)", 0.0),
+            // Date text as an array element and as a scalar criteria range.
+            ("=SUM(COUNTIFS($A$1:$A$6,{\"10/26/1999\",\"zz\"}))", 2.0),
+            (
+                "=SUMPRODUCT(COUNTIF($A$1:$A$6,IF(SEQUENCE(40)=18,\"10/26/1999\",\"q\")))",
+                2.0,
+            ),
+            ("=COUNTIF(\"10/26/1999\",\"10/26/1999\")", 1.0),
+            ("=COUNTIF(\"10/26/1999\",34997)", 1.0),
+            // A lifted call: one array criterion, one scalar date criterion.
+            (
+                "=SUM(COUNTIFS($A$1:$A$6,\"10/26/1999\",$B$1:$B$6,{1,3}))",
+                2.0,
+            ),
+            ("=DCOUNTA($G$1:$G$3,1,$H$1:$H$2)", 1.0),
         ];
-        for (row, (formula, _)) in cases.iter().enumerate() {
-            engine
-                .set_cell_formula("Sheet1", row as u32 + 1, 4, parse(formula).unwrap())
-                .unwrap();
-        }
-        engine.evaluate_all().unwrap();
-        for (row, (formula, expected)) in cases.iter().enumerate() {
-            assert_eq!(
-                engine.get_cell_value("Sheet1", row as u32 + 1, 4),
-                Some(LiteralValue::Number(*expected)),
-                "{formula}"
+        for family in [false, true] {
+            let mut engine = Engine::new(
+                TestWorkbook::new(),
+                EvalConfig {
+                    family_execution: family,
+                    ..arrow_eval_config().with_date_system(DateSystem::Excel1904)
+                },
             );
+            let column = [
+                LiteralValue::Text("10/26/1999".into()),
+                LiteralValue::Text("abc".into()),
+                LiteralValue::Date(NaiveDate::from_ymd_opt(1999, 10, 26).unwrap()),
+                LiteralValue::Text("x1".into()),
+                LiteralValue::Text("x2".into()),
+                LiteralValue::Text("x3".into()),
+            ];
+            for (row, value) in column.into_iter().enumerate() {
+                let row = row as u32 + 1;
+                engine.set_cell_value("Sheet1", row, 1, value).unwrap();
+                engine
+                    .set_cell_value("Sheet1", row, 2, LiteralValue::Number(row as f64))
+                    .unwrap();
+            }
+            for (row, col, text) in [
+                (1, 7, "d"),
+                (2, 7, "10/26/1999"),
+                (3, 7, "abc"),
+                (1, 8, "d"),
+                (2, 8, "10/26/1999"),
+            ] {
+                engine
+                    .set_cell_value("Sheet1", row, col, LiteralValue::Text(text.into()))
+                    .unwrap();
+            }
+            for (col, (formula, _)) in cases.iter().enumerate() {
+                for row in 1..=ROWS {
+                    engine
+                        .set_cell_formula("Sheet1", row, 10 + col as u32, parse(formula).unwrap())
+                        .unwrap();
+                }
+            }
+            engine.evaluate_all().unwrap();
+            let mut failures = Vec::new();
+            for (col, (formula, expected)) in cases.iter().enumerate() {
+                for row in 1..=ROWS {
+                    let actual = engine.get_cell_value("Sheet1", row, 10 + col as u32);
+                    if actual != Some(LiteralValue::Number(*expected)) {
+                        failures.push(format!(
+                            "family {family}, {formula} row {row}: expected {expected}, got {actual:?}"
+                        ));
+                        break;
+                    }
+                }
+            }
+            assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+        }
+    }
+
+    /// A date value as a criterion (from a host or a custom function; cells
+    /// hold serials) is its serial in the workbook's system.
+    #[test]
+    fn date_value_criteria_are_serials_in_the_workbook_date_system() {
+        use crate::args::{CriteriaPredicate as P, parse_criteria, parse_criteria_for};
+        use crate::engine::DateSystem;
+        use chrono::NaiveDate;
+        let date = LiteralValue::Date(NaiveDate::from_ymd_opt(1999, 10, 26).unwrap());
+        let serial = |p: P| match p {
+            P::Eq(LiteralValue::Number(n)) => n,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(serial(parse_criteria(&date).unwrap()), 36_459.0);
+        assert_eq!(
+            serial(parse_criteria_for(&date, DateSystem::Excel1904).unwrap()),
+            34_997.0
+        );
+        let text = LiteralValue::Text("10/26/1999".into());
+        assert_eq!(
+            serial(parse_criteria_for(&text, DateSystem::Excel1904).unwrap()),
+            34_997.0
+        );
+    }
+
+    /// A date value (from a host or custom function; sheet cells hold serials)
+    /// matches the same date, a date criterion and date text in either date
+    /// system: both sides of the matcher read it in the workbook's system.
+    #[test]
+    fn date_values_match_dates_in_either_date_system() {
+        use crate::args::parse_criteria_for;
+        use crate::builtins::utils::criteria_match_for;
+        use crate::engine::DateSystem;
+        use chrono::NaiveDate;
+        let date = LiteralValue::Date(NaiveDate::from_ymd_opt(1999, 10, 26).unwrap());
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let serial = date.as_serial_number_for(system).unwrap();
+            for criterion in [
+                date.clone(),
+                LiteralValue::Text("10/26/1999".into()),
+                LiteralValue::Text(">=10/26/1999".into()),
+                LiteralValue::Number(serial),
+            ] {
+                let pred = parse_criteria_for(&criterion, system).unwrap();
+                assert!(
+                    criteria_match_for(&pred, &date, system),
+                    "{system:?}: {criterion:?} against a date value"
+                );
+            }
+            let other = parse_criteria_for(&LiteralValue::Number(serial + 1.0), system).unwrap();
+            assert!(!criteria_match_for(&other, &date, system), "{system:?}");
         }
     }
 

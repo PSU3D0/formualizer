@@ -2119,7 +2119,7 @@ pub struct DevsqFn;
 
 /* ─────────────────────────── MAXIFS / MINIFS ──────────────────────────── */
 
-use super::utils::{ARG_ANY_ONE, criteria_match};
+use super::utils::{ARG_ANY_ONE, criteria_match_for};
 
 /// Returns the maximum numeric value in a range that meets all criteria.
 ///
@@ -2206,9 +2206,9 @@ impl Function for MaxIfsFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        eval_maxminifs(args, true)
+        eval_maxminifs(args, true, ctx.date_system())
     }
 }
 
@@ -2297,9 +2297,9 @@ impl Function for MinIfsFn {
     fn eval<'a, 'b, 'c>(
         &self,
         args: &'c [ArgumentHandle<'a, 'b>],
-        _ctx: &dyn FunctionContext<'b>,
+        ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        eval_maxminifs(args, false)
+        eval_maxminifs(args, false, ctx.date_system())
     }
 }
 
@@ -2307,6 +2307,7 @@ impl Function for MinIfsFn {
 fn eval_maxminifs<'a, 'b>(
     args: &[ArgumentHandle<'a, 'b>],
     is_max: bool,
+    date_system: crate::engine::DateSystem,
 ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
     // Validate argument count: must be target_range + N pairs
     if args.len() < 3 || !(args.len() - 1).is_multiple_of(2) {
@@ -2331,8 +2332,11 @@ fn eval_maxminifs<'a, 'b>(
             let mut all_match = true;
             for i in (1..args.len()).step_by(2) {
                 let crit_val = args[i].value()?.into_literal();
-                let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
-                if !criteria_match(&pred, &crit_val) {
+                let pred = crate::args::parse_criteria_for(
+                    &args[i + 1].value()?.into_literal(),
+                    date_system,
+                )?;
+                if !criteria_match_for(&pred, &crit_val, date_system) {
                     all_match = false;
                     break;
                 }
@@ -2354,7 +2358,8 @@ fn eval_maxminifs<'a, 'b>(
     let mut predicates = Vec::new();
     for i in (1..args.len()).step_by(2) {
         let crit_view = args[i].range_view().ok();
-        let pred = crate::args::parse_criteria(&args[i + 1].value()?.into_literal())?;
+        let pred =
+            crate::args::parse_criteria_for(&args[i + 1].value()?.into_literal(), date_system)?;
         criteria_ranges.push(crit_view);
         predicates.push(pred);
     }
@@ -2378,7 +2383,7 @@ fn eval_maxminifs<'a, 'b>(
                     }
                     None => LiteralValue::Empty,
                 };
-                if !criteria_match(pred, &crit_val) {
+                if !criteria_match_for(pred, &crit_val, date_system) {
                     all_match = false;
                     break;
                 }

@@ -1,4 +1,4 @@
-use super::super::utils::{ARG_ANY_ONE, EqualityCounts, coerce_num, criteria_match};
+use super::super::utils::{ARG_ANY_ONE, EqualityCounts, coerce_num, criteria_match_for};
 use super::{AggregateArgument, resolve_aggregate_argument};
 use crate::args::ArgSchema;
 use crate::compute_prelude::{boolean, cmp};
@@ -258,7 +258,7 @@ fn count_argument_equalities<'a, 'b>(
     else {
         return None;
     };
-    let mut counts = EqualityCounts::default();
+    let mut counts = EqualityCounts::new(ctx.date_system());
     view.for_each_cell(&mut |cell| {
         counts.add(cell);
         Ok(())
@@ -291,7 +291,10 @@ fn eval_if_family<'a, 'b>(
         values.push(args[i].value()?.into_literal());
     }
     if !values.iter().any(|v| lifting_shape(v).is_some()) {
-        let preds: Vec<_> = values.iter().map(crate::args::parse_criteria).collect();
+        let preds: Vec<_> = values
+            .iter()
+            .map(|v| crate::args::parse_criteria_for(v, ctx.date_system()))
+            .collect();
         return eval_if_core(args, ctx, agg_type, multi, &preds);
     }
 
@@ -319,7 +322,7 @@ fn eval_if_family<'a, 'b>(
                 .zip(&shapes)
                 .map(|(value, shape)| {
                     let (LiteralValue::Array(arr), Some((ar, ac))) = (value, shape) else {
-                        return crate::args::parse_criteria(value);
+                        return crate::args::parse_criteria_for(value, ctx.date_system());
                     };
                     let rr = if *ar == 1 { 0 } else { r };
                     let cc = if *ac == 1 { 0 } else { c };
@@ -330,7 +333,9 @@ fn eval_if_family<'a, 'b>(
                         Some(LiteralValue::Error(e)) => Ok(crate::args::CriteriaPredicate::Eq(
                             LiteralValue::Error(e.clone()),
                         )),
-                        Some(element) => crate::args::parse_criteria(element),
+                        Some(element) => {
+                            crate::args::parse_criteria_for(element, ctx.date_system())
+                        }
                         None => Ok(crate::args::CriteriaPredicate::Eq(LiteralValue::Error(
                             ExcelError::new(formualizer_common::ExcelErrorKind::Na),
                         ))),
@@ -368,6 +373,7 @@ fn eval_if_core<'a, 'b>(
     multi: bool,
     preds: &[Result<crate::args::CriteriaPredicate, ExcelError>],
 ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
+    let date_system = ctx.date_system();
     let mut sum_view: Option<crate::engine::range_view::RangeView<'_>> = None;
     let mut sum_scalar: Option<LiteralValue> = None;
     let mut crit_specs = Vec::new();
@@ -551,13 +557,13 @@ fn eval_if_core<'a, 'b>(
                 for (j, (_, pred, scalar_val)) in crit_specs.iter().enumerate() {
                     if crit_specs[j].0.is_none() {
                         if let Some(sv) = scalar_val {
-                            if !criteria_match(pred, sv) {
+                            if !criteria_match_for(pred, sv, date_system) {
                                 impossible = true;
                                 break;
                             }
                             continue;
                         }
-                        if !criteria_match(pred, &LiteralValue::Empty) {
+                        if !criteria_match_for(pred, &LiteralValue::Empty, date_system) {
                             impossible = true;
                             break;
                         }
@@ -569,7 +575,8 @@ fn eval_if_core<'a, 'b>(
                         criteria_masks
                             .get_or_build((j, c), || ctx.get_criteria_mask(view, c, pred))
                             .map(|m| {
-                                let fill = criteria_match(pred, &LiteralValue::Empty);
+                                let fill =
+                                    criteria_match_for(pred, &LiteralValue::Empty, date_system);
                                 let m_len = m.len();
 
                                 // The cached mask may be shorter than the current driver's chunk
@@ -678,9 +685,10 @@ fn eval_if_core<'a, 'b>(
                                                 if m0.is_valid(i) {
                                                     bb.append_value(m0.value(i));
                                                 } else {
-                                                    bb.append_value(criteria_match(
+                                                    bb.append_value(criteria_match_for(
                                                         pred,
                                                         &view.get_cell(row_start + i, c),
+                                                        date_system,
                                                     ));
                                                 }
                                             }
@@ -696,9 +704,10 @@ fn eval_if_core<'a, 'b>(
                                             );
                                         let view = crit_specs[j].0.as_ref().unwrap();
                                         for i in 0..row_len {
-                                            bb.append_value(criteria_match(
+                                            bb.append_value(criteria_match_for(
                                                 pred,
                                                 &view.get_cell(row_start + i, c),
+                                                date_system,
                                             ));
                                         }
                                         bb.finish()
@@ -722,9 +731,10 @@ fn eval_if_core<'a, 'b>(
                                                 if m0.is_valid(i) {
                                                     bb.append_value(m0.value(i));
                                                 } else {
-                                                    bb.append_value(criteria_match(
+                                                    bb.append_value(criteria_match_for(
                                                         pred,
                                                         &view.get_cell(row_start + i, c),
+                                                        date_system,
                                                     ));
                                                 }
                                             }
@@ -737,9 +747,10 @@ fn eval_if_core<'a, 'b>(
                                             );
                                         let view = crit_specs[j].0.as_ref().unwrap();
                                         for i in 0..row_len {
-                                            bb.append_value(criteria_match(
+                                            bb.append_value(criteria_match_for(
                                                 pred,
                                                 &view.get_cell(row_start + i, c),
+                                                date_system,
                                             ));
                                         }
                                         bb.finish()
@@ -753,9 +764,10 @@ fn eval_if_core<'a, 'b>(
                                         );
                                     let view = crit_specs[j].0.as_ref().unwrap();
                                     for i in 0..row_len {
-                                        bb.append_value(criteria_match(
+                                        bb.append_value(criteria_match_for(
                                             pred,
                                             &view.get_cell(row_start + i, c),
+                                            date_system,
                                         ));
                                     }
                                     bb.finish()
@@ -780,9 +792,10 @@ fn eval_if_core<'a, 'b>(
                                             if m0.is_valid(i) {
                                                 bb.append_value(m0.value(i));
                                             } else {
-                                                bb.append_value(criteria_match(
+                                                bb.append_value(criteria_match_for(
                                                     pred,
                                                     &view.get_cell(row_start + i, c),
+                                                    date_system,
                                                 ));
                                             }
                                         }
@@ -795,9 +808,10 @@ fn eval_if_core<'a, 'b>(
                                         );
                                     let view = crit_specs[j].0.as_ref().unwrap();
                                     for i in 0..row_len {
-                                        bb.append_value(criteria_match(
+                                        bb.append_value(criteria_match_for(
                                             pred,
                                             &view.get_cell(row_start + i, c),
+                                            date_system,
                                         ));
                                     }
                                     bb.finish()
@@ -820,9 +834,10 @@ fn eval_if_core<'a, 'b>(
                                             if m0.is_valid(i) {
                                                 bb.append_value(m0.value(i));
                                             } else {
-                                                bb.append_value(criteria_match(
+                                                bb.append_value(criteria_match_for(
                                                     pred,
                                                     &view.get_cell(row_start + i, c),
+                                                    date_system,
                                                 ));
                                             }
                                         }
@@ -835,9 +850,10 @@ fn eval_if_core<'a, 'b>(
                                         );
                                     let view = crit_specs[j].0.as_ref().unwrap();
                                     for i in 0..row_len {
-                                        bb.append_value(criteria_match(
+                                        bb.append_value(criteria_match_for(
                                             pred,
                                             &view.get_cell(row_start + i, c),
+                                            date_system,
                                         ));
                                     }
                                     bb.finish()
@@ -848,9 +864,10 @@ fn eval_if_core<'a, 'b>(
                                     arrow_array::builder::BooleanBuilder::with_capacity(row_len);
                                 let view = crit_specs[j].0.as_ref().unwrap();
                                 for i in 0..row_len {
-                                    bb.append_value(criteria_match(
+                                    bb.append_value(criteria_match_for(
                                         pred,
                                         &view.get_cell(row_start + i, c),
+                                        date_system,
                                     ));
                                 }
                                 bb.finish()
@@ -861,9 +878,10 @@ fn eval_if_core<'a, 'b>(
                                 arrow_array::builder::BooleanBuilder::with_capacity(row_len);
                             let view = crit_specs[j].0.as_ref().unwrap();
                             for i in 0..row_len {
-                                bb.append_value(criteria_match(
+                                bb.append_value(criteria_match_for(
                                     pred,
                                     &view.get_cell(row_start + i, c),
+                                    date_system,
                                 ));
                             }
                             bb.finish()
@@ -874,14 +892,15 @@ fn eval_if_core<'a, 'b>(
                                 arrow_array::builder::BooleanBuilder::with_capacity(row_len);
                             if let Some(ref view) = crit_specs[j].0 {
                                 for i in 0..row_len {
-                                    bb.append_value(criteria_match(
+                                    bb.append_value(criteria_match_for(
                                         pred,
                                         &view.get_cell(row_start + i, c),
+                                        date_system,
                                     ));
                                 }
                             } else {
                                 let val = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
-                                let matches = criteria_match(pred, val);
+                                let matches = criteria_match_for(pred, val, date_system);
                                 for _ in 0..row_len {
                                     bb.append_value(matches);
                                 }
@@ -970,7 +989,7 @@ fn eval_if_core<'a, 'b>(
         // without allocating masks or iterating a million empty cells.
         if !multi
             && agg_type == AggregationType::Count
-            && criteria_match(&crit_specs[0].1, &LiteralValue::Empty)
+            && criteria_match_for(&crit_specs[0].1, &LiteralValue::Empty, date_system)
         {
             let logical_cells = logical_count_cells.unwrap_or(dims.0 as u64 * dims.1 as u64);
             total_count += logical_cells.saturating_sub(visited_rows as u64 * dims.1 as u64) as i64;
@@ -980,7 +999,7 @@ fn eval_if_core<'a, 'b>(
         let mut all_match = true;
         for (_, pred, scalar_val) in &crit_specs {
             let val = scalar_val.as_ref().unwrap_or(&LiteralValue::Empty);
-            if !criteria_match(pred, val) {
+            if !criteria_match_for(pred, val, date_system) {
                 all_match = false;
                 break;
             }

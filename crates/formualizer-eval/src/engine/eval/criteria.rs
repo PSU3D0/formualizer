@@ -262,12 +262,10 @@ impl ColumnIndex {
     ) -> Option<bool> {
         *self.date_text.get_or_init(|| {
             let texts = self.texts(engine, ds, sheet, rows)?;
-            Some(
-                texts
-                    .values
-                    .iter()
-                    .any(|t| crate::builtins::utils::criteria_date_text_serial(t).is_some()),
-            )
+            Some(texts.values.iter().any(|t| {
+                crate::builtins::utils::criteria_date_text_serial(t, engine.config.date_system)
+                    .is_some()
+            }))
         })
     }
 }
@@ -521,10 +519,14 @@ where
                 .evaluate_arena_ast_with_offset(arg, row_delta, col_delta, ds, reg)
                 .ok()?
                 .into_literal();
-            let pred = crate::args::parse_criteria(&value).ok()?;
+            let pred = crate::args::parse_criteria_for(&value, self.config.date_system).ok()?;
             if plan.single
                 && plan.agg == Agg::Count
-                && crate::builtins::criteria_match(&pred, &LiteralValue::Empty)
+                && crate::builtins::utils::criteria_match_for(
+                    &pred,
+                    &LiteralValue::Empty,
+                    self.config.date_system,
+                )
             {
                 return None;
             }

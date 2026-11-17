@@ -1,6 +1,6 @@
 use crate::traits::ArgumentHandle;
 // Note: Validator no longer depends on EvaluationContext; keep it engine-agnostic.
-use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_common::{ArgKind, DateSystem, ExcelError, ExcelErrorKind, LiteralValue};
 use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 
@@ -141,7 +141,23 @@ pub struct ValidationOptions {
 ///   with a text operand;
 /// - an error value, or the text of one (`"#N/A"`, `"=#DIV/0!"`), matches
 ///   cells holding that error (`"<>#N/A"` every other cell).
+///
+/// Date operands (`"10/26/1999"`, `">=10/26/1999"`) and date values
+/// (`LiteralValue::Date`) become serials in the Excel 1900 system
+/// (`Eq(Number)`, or the operator's predicate). The engine parses with the
+/// workbook's own system, so a predicate from this function matches dates
+/// correctly only in a 1900 workbook.
 pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError> {
+    parse_criteria_for(v, DateSystem::Excel1900)
+}
+
+/// [`parse_criteria`] in a workbook's date system: a date operand
+/// (`"10/26/1999"`, `">=2/1/02"`) and a date value (`LiteralValue::Date`) are
+/// serials in `system`, as the cells they are compared with are.
+pub(crate) fn parse_criteria_for(
+    v: &LiteralValue,
+    system: DateSystem,
+) -> Result<CriteriaPredicate, ExcelError> {
     match v {
         LiteralValue::Text(s) => {
             // Leading spaces before an operator are tolerated; the text operand
@@ -166,7 +182,7 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
                     // Numbers, then date/time text (`">=2/1/02"`), as Excel
                     // reads the operand the way it reads typed input.
                     if let Some(n) = parse_criteria_number(rhs.trim())
-                        .or_else(|| parse_criteria_datetime(rhs.trim()))
+                        .or_else(|| parse_criteria_datetime(rhs.trim(), system))
                     {
                         return Ok(match *op {
                             ">=" => CriteriaPredicate::Ge(n),
@@ -241,7 +257,7 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
             }
             // Date or time text (`"2/1/2002"`) matches the date's serial.
             if parse_criteria_number(plain.trim()).is_none()
-                && let Some(serial) = parse_criteria_datetime(plain.trim())
+                && let Some(serial) = parse_criteria_datetime(plain.trim(), system)
             {
                 return Ok(CriteriaPredicate::Eq(LiteralValue::Number(serial)));
             }
@@ -260,11 +276,17 @@ pub fn parse_criteria(v: &LiteralValue) -> Result<CriteriaPredicate, ExcelError>
         LiteralValue::Array(arr) => {
             // Treat 1x1 array literals as scalars for criteria parsing
             if arr.len() == 1 && arr.first().map(|r| r.len()).unwrap_or(0) == 1 {
-                parse_criteria(&arr[0][0])
+                parse_criteria_for(&arr[0][0], system)
             } else {
                 Ok(CriteriaPredicate::Eq(LiteralValue::Array(arr.clone())))
             }
         }
+        // A date value (`LiteralValue::Date`, from a host or custom function;
+        // `DATE()` returns a number) is its serial in the workbook's
+        // system, as the cells it is compared with are stored.
+        LiteralValue::Date(_) | LiteralValue::DateTime(_) => Ok(CriteriaPredicate::Eq(
+            LiteralValue::Number(v.as_serial_number_for(system).unwrap_or(f64::NAN)),
+        )),
         other => Ok(CriteriaPredicate::Eq(other.clone())),
     }
 }
@@ -278,17 +300,13 @@ fn error_operand(text: &str) -> Option<LiteralValue> {
         .map(|kind| LiteralValue::Error(ExcelError::new(kind)))
 }
 
-/// A date or time operand (`"2/1/02"`, `"1-Feb-2002"`, `"13:30"`) as a 1900-system
-/// serial. Criteria parsing has no workbook context, so 1904-system workbooks
-/// would see the 1900 serial.
-fn parse_criteria_datetime(text: &str) -> Option<f64> {
+/// A date or time operand (`"2/1/02"`, `"1-Feb-2002"`, `"13:30"`) as a serial
+/// in `system`, the workbook's date system.
+fn parse_criteria_datetime(text: &str, system: DateSystem) -> Option<f64> {
     if text.is_empty() || !text.bytes().any(|b| b.is_ascii_digit()) {
         return None;
     }
-    formualizer_common::parse_excel_datetime_text_to_serial_for(
-        formualizer_common::DateSystem::Excel1900,
-        text,
-    )
+    formualizer_common::parse_excel_datetime_text_to_serial_for(system, text)
 }
 
 /// A finite number operand of a criteria operator (`">=1e3"`, `"<>-2"`).
@@ -374,7 +392,7 @@ pub(crate) fn validate_and_prepare_inline<'a, 'b>(
         // Criteria policy: parse into predicate
         if matches!(spec.coercion, CoercionPolicy::Criteria) {
             let v = arg.value()?.into_literal();
-            match parse_criteria(&v) {
+            match parse_criteria_for(&v, arg.date_system()) {
                 Ok(pred) => {
                     items.push(PreparedArg::Predicate(pred));
                     continue;

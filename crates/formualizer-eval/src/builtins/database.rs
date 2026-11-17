@@ -24,8 +24,8 @@
 //! - Multiple columns in same row have AND relationship
 //! - Supports comparison operators (>, <, >=, <=, <>), wildcards (*, ?)
 
-use super::utils::{ARG_ANY_ONE, coerce_num, criteria_match};
-use crate::args::{ArgSchema, CriteriaPredicate, parse_criteria};
+use super::utils::{ARG_ANY_ONE, coerce_num, criteria_match_for};
+use crate::args::{ArgSchema, CriteriaPredicate, parse_criteria_for};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ExcelError, LiteralValue};
@@ -147,7 +147,8 @@ fn parse_criteria_range(
             has_any_criteria = true;
             match db_col {
                 Some(db_col) => {
-                    let pred = parse_criteria(&crit_val)?;
+                    // Date operands are serials in the workbook's date system.
+                    let pred = parse_criteria_for(&crit_val, criteria_view.sheet().date_system)?;
                     row_criteria.push((*db_col, pred));
                 }
                 None => {
@@ -184,7 +185,7 @@ fn row_matches_criteria(
         // AND relationship within a criteria row
         for (col_idx, pred) in crit_row {
             let cell_val = db_view.get_cell(row, *col_idx);
-            if !criteria_match(pred, &cell_val) {
+            if !criteria_match_for(pred, &cell_val, db_view.sheet().date_system) {
                 all_match = false;
                 break;
             }
@@ -217,9 +218,11 @@ fn resolve_table_arg<'a, 'b>(
             _ => Ok(v),
         },
         Err(_) => match arg.value()?.into_literal() {
+            // Dates in the array are read in the workbook's date system, as
+            // the criteria compare them in it.
             LiteralValue::Array(arr) => Ok(crate::engine::range_view::RangeView::from_owned_rows(
                 arr,
-                crate::engine::DateSystem::Excel1900,
+                arg.date_system(),
             )),
             LiteralValue::Error(e) => Err(e),
             _ => Err(ExcelError::new_value().with_message(if database {

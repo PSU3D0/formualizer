@@ -2721,7 +2721,10 @@ fn fill_numeric_equality_nulls(
                     let number = if ne {
                         crate::builtins::utils::criteria_numeric_text(text.value(i))
                     } else {
-                        crate::builtins::utils::criteria_text_number(text.value(i))
+                        crate::builtins::utils::criteria_text_number(
+                            text.value(i),
+                            view.sheet().date_system,
+                        )
                     };
                     let equal = number.is_some_and(|x| (x - n).abs() < 1e-12);
                     out.append_value(equal != ne);
@@ -2891,9 +2894,13 @@ fn compute_criteria_mask(
             view.lowered_text_slices().any(|slice| {
                 slice.is_ok_and(|(_, _, cols)| {
                     cols.get(col_in_view).is_some_and(|text| {
-                        text.iter()
-                            .flatten()
-                            .any(|t| crate::builtins::utils::criteria_date_text_serial(t).is_some())
+                        text.iter().flatten().any(|t| {
+                            crate::builtins::utils::criteria_date_text_serial(
+                                t,
+                                view.sheet().date_system,
+                            )
+                            .is_some()
+                        })
                     })
                 })
             })
@@ -2903,9 +2910,10 @@ fn compute_criteria_mask(
             for chunk in view.iter_row_chunks() {
                 let chunk = chunk.ok()?;
                 for row in chunk.row_start..chunk.row_start + chunk.row_len {
-                    mask.append_value(crate::builtins::criteria_match(
+                    mask.append_value(crate::builtins::utils::criteria_match_for(
                         pred,
                         &view.get_cell(row, col_in_view),
+                        view.sheet().date_system,
                     ));
                 }
             }
