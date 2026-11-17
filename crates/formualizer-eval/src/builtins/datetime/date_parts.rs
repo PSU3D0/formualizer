@@ -147,6 +147,8 @@ fn days_360_between(start: NaiveDate, end: NaiveDate, european: bool) -> i64 {
 /// Returns the number of whole days between two date serial values.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Result is `end_date - start_date`; negative results are allowed.
 /// - Fractional serial inputs are truncated to their date portion.
 /// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
@@ -185,7 +187,7 @@ pub struct DaysFn;
 /// Max args: 2
 /// Variadic: false
 /// Signature: DAYS(arg1: number@scalar, arg2: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for DaysFn {
@@ -203,8 +205,8 @@ impl Function for DaysFn {
         use std::sync::LazyLock;
         static TWO: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
+                ArgSchema::date_serial_scalar(),
             ]
         });
         &TWO[..]
@@ -227,6 +229,8 @@ impl Function for DaysFn {
 /// Returns the day count between two dates using a 30/360 convention.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - `method` omitted or `FALSE` uses U.S. (NASD) rules; `TRUE` uses the European 30E/360 method.
 /// - U.S. rules as Excel applies them: a start date on the last day of its month becomes the
 ///   30th; an end date on the 31st becomes the 1st of the next month when the start day is
@@ -267,7 +271,7 @@ pub struct Days360Fn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: DAYS360(arg1: number@scalar, arg2: number@scalar, arg3...: any@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg3{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for Days360Fn {
@@ -289,8 +293,8 @@ impl Function for Days360Fn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
+                ArgSchema::date_serial_scalar(),
                 ArgSchema::any(),
             ]
         });
@@ -334,6 +338,8 @@ impl Function for Days360Fn {
 /// Returns the fraction of a year between two dates for a selected day-count basis.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Supported `basis` values: `0` (US 30/360), `1` (actual/actual), `2` (actual/360), `3` (actual/365), `4` (European 30/360).
 /// - The dates are ordered first, so swapping them gives the same positive result.
 /// - Basis `0` follows Excel's US 30/360 month-end rules, which differ from `DAYS360`'s:
@@ -377,7 +383,7 @@ pub struct YearFracFn;
 /// Max args: variadic
 /// Variadic: true
 /// Signature: YEARFRAC(arg1: number@scalar, arg2: number@scalar, arg3...: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg3{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for YearFracFn {
@@ -399,8 +405,8 @@ impl Function for YearFracFn {
         use std::sync::LazyLock;
         static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
+                ArgSchema::date_serial_scalar(),
                 ArgSchema::number_lenient_scalar(),
             ]
         });
@@ -475,6 +481,8 @@ impl Function for YearFracFn {
 /// Returns the ISO 8601 week number (`1` to `53`) for a date serial.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Weeks start on Monday and week 1 is the week containing the first Thursday of the year.
 /// - Input serials are truncated to whole dates before evaluation.
 /// - Serials are read using the workbook's date system (Excel 1900 or Excel 1904).
@@ -511,7 +519,7 @@ pub struct IsoWeekNumFn;
 /// Max args: 1
 /// Variadic: false
 /// Signature: ISOWEEKNUM(arg1: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for IsoWeekNumFn {
@@ -528,7 +536,7 @@ impl Function for IsoWeekNumFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
         static ONE: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+            LazyLock::new(|| vec![ArgSchema::date_serial_scalar()]);
         &ONE[..]
     }
 
@@ -547,6 +555,8 @@ impl Function for IsoWeekNumFn {
 /// Extracts the calendar year from a date serial.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Fractional time is ignored; only the integer date portion is used.
 /// - Input serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 /// - Results are Gregorian calendar years.
@@ -562,6 +572,14 @@ impl Function for IsoWeekNumFn {
 /// title: "Extract year from datetime serial"
 /// formula: "=YEAR(45351.75)"
 /// expected: 2024
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Extract year from date text"
+/// grid:
+///   A1: "10/26/1999"
+/// formula: "=YEAR(A1)"
+/// expected: 1999
 /// ```
 ///
 /// ```yaml,docs
@@ -583,7 +601,7 @@ pub struct YearFn;
 /// Max args: 1
 /// Variadic: false
 /// Signature: YEAR(arg1: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for YearFn {
@@ -604,7 +622,7 @@ impl Function for YearFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
         static ONE: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+            LazyLock::new(|| vec![ArgSchema::date_serial_scalar()]);
         &ONE[..]
     }
 
@@ -626,6 +644,8 @@ impl Function for YearFn {
 /// Extracts the month number (`1` to `12`) from a date serial.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Fractional time is ignored; only the date portion contributes.
 /// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 /// - The result always uses January=`1` through December=`12`.
@@ -662,7 +682,7 @@ pub struct MonthFn;
 /// Max args: 1
 /// Variadic: false
 /// Signature: MONTH(arg1: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for MonthFn {
@@ -683,7 +703,7 @@ impl Function for MonthFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
         static ONE: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+            LazyLock::new(|| vec![ArgSchema::date_serial_scalar()]);
         &ONE[..]
     }
 
@@ -705,6 +725,8 @@ impl Function for MonthFn {
 /// Extracts the day-of-month (`1` to `31`) from a date serial.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - Fractional time is ignored; only the integer serial portion is used.
 /// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 /// - Output is the day within the month, not day-of-year.
@@ -741,7 +763,7 @@ pub struct DayFn;
 /// Max args: 1
 /// Variadic: false
 /// Signature: DAY(arg1: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for DayFn {
@@ -762,7 +784,7 @@ impl Function for DayFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
         static ONE: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+            LazyLock::new(|| vec![ArgSchema::date_serial_scalar()]);
         &ONE[..]
     }
 
@@ -784,6 +806,8 @@ impl Function for DayFn {
 /// Extracts the hour component (`0` to `23`) from a time or datetime serial.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - For values `>= 1`, only the fractional time part is used.
 /// - For values `< 1`, the value is treated directly as a time fraction.
 /// - Date-system choice does not affect hour extraction because only the fractional part is used.
@@ -820,7 +844,7 @@ pub struct HourFn;
 /// Max args: 1
 /// Variadic: false
 /// Signature: HOUR(arg1: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for HourFn {
@@ -837,7 +861,7 @@ impl Function for HourFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
         static ONE: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+            LazyLock::new(|| vec![ArgSchema::date_serial_scalar()]);
         &ONE[..]
     }
 
@@ -862,6 +886,8 @@ impl Function for HourFn {
 /// Extracts the minute component (`0` to `59`) from a time or datetime serial.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - The integer date portion is ignored for minute extraction.
 /// - The date portion, when present, is resolved with the workbook's date system.
 /// - Time is derived from the fractional serial component.
@@ -898,7 +924,7 @@ pub struct MinuteFn;
 /// Max args: 1
 /// Variadic: false
 /// Signature: MINUTE(arg1: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for MinuteFn {
@@ -915,7 +941,7 @@ impl Function for MinuteFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
         static ONE: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+            LazyLock::new(|| vec![ArgSchema::date_serial_scalar()]);
         &ONE[..]
     }
 
@@ -938,6 +964,8 @@ impl Function for MinuteFn {
 /// Extracts the second component (`0` to `59`) from a time or datetime serial.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - The integer date portion is ignored for second extraction.
 /// - The date portion, when present, is resolved with the workbook's date system.
 /// - Time is computed from the serial fraction and rounded to whole seconds.
@@ -974,7 +1002,7 @@ pub struct SecondFn;
 /// Max args: 1
 /// Variadic: false
 /// Signature: SECOND(arg1: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for SecondFn {
@@ -991,7 +1019,7 @@ impl Function for SecondFn {
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use std::sync::LazyLock;
         static ONE: LazyLock<Vec<ArgSchema>> =
-            LazyLock::new(|| vec![ArgSchema::number_lenient_scalar()]);
+            LazyLock::new(|| vec![ArgSchema::date_serial_scalar()]);
         &ONE[..]
     }
 

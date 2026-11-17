@@ -58,6 +58,7 @@ pub formualizer_eval::args::ArgSchema::required: bool
 pub formualizer_eval::args::ArgSchema::shape: formualizer_eval::args::ShapeKind
 impl formualizer_eval::args::ArgSchema
 pub fn formualizer_eval::args::ArgSchema::any() -> Self
+pub fn formualizer_eval::args::ArgSchema::date_serial_scalar() -> Self
 pub fn formualizer_eval::args::ArgSchema::number_lenient_scalar() -> Self
 impl core::clone::Clone for formualizer_eval::args::ArgSchema
 pub fn formualizer_eval::args::ArgSchema::clone(&self) -> formualizer_eval::args::ArgSchema
