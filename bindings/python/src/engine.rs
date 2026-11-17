@@ -551,6 +551,7 @@ mod tests {
     #[test]
     fn setting_iterate_policy_promotes_detection_to_runtime() {
         let mut cfg = PyEvaluationConfig::new();
+        cfg.set_cycle_detection("static".to_string()).unwrap();
         cfg.set_cycle_policy("iterate".to_string()).unwrap();
         assert_eq!(cfg.get_cycle_policy(), "iterate");
         // spec §2: iterate requires runtime; the setter auto-promotes it so the
@@ -562,6 +563,7 @@ mod tests {
     #[test]
     fn iterate_knobs_round_trip() {
         let mut cfg = PyEvaluationConfig::new();
+        cfg.set_cycle_detection("static".to_string()).unwrap();
         cfg.set_iterate_max_iterations(7).unwrap();
         cfg.set_iterate_max_change(0.25).unwrap();
         assert_eq!(cfg.get_cycle_policy(), "iterate");
@@ -600,7 +602,10 @@ mod tests {
         python.set_iterate_max_iterations(42).unwrap();
         python.set_iterate_max_change(0.5).unwrap();
 
-        let mut base = EvalConfig::default();
+        let mut base = EvalConfig::default().with_cycle(CycleConfig {
+            detection: CycleDetection::Static,
+            policy: CyclePolicy::Error,
+        });
         merge_python_eval_config(&mut base, &python.inner);
         match base.cycle.policy {
             CyclePolicy::Iterate {

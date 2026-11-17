@@ -646,7 +646,11 @@ mod tests {
             iterate_delta: Some(0.5),
             ..Default::default()
         };
-        let cfg = apply_calc_settings_to_cycle(&s, CycleConfig::default());
+        let base = CycleConfig {
+            detection: CycleDetection::Static,
+            policy: CyclePolicy::Error,
+        };
+        let cfg = apply_calc_settings_to_cycle(&s, base);
         assert_eq!(cfg.detection, CycleDetection::Runtime);
         assert_eq!(
             cfg.policy,
