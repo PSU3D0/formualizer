@@ -990,9 +990,9 @@ fn recalc_plan_skips_clean_cycles_and_evaluates_dirty_ones_whole() {
 /* ──────────────────────── compat & determinism ───────────────────────── */
 
 #[test]
-fn static_default_keeps_stamping_the_99_pair() {
+fn static_detection_keeps_stamping_the_99_pair() {
     // Golden dual-mode pin: the only documented diff (spec §8) is values vs
-    // #CIRC for the guarded phantom pair.
+    // #CIRC for the guarded phantom pair, which explicit `Static` still stamps.
     let mut engine = static_engine();
     build_99_pair(&mut engine, true);
     let res = engine.evaluate_all().unwrap();
@@ -1004,6 +1004,18 @@ fn static_default_keeps_stamping_the_99_pair() {
         engine.last_cycle_telemetry(),
         &crate::engine::CycleTelemetry::default()
     );
+}
+
+#[test]
+fn default_detection_is_runtime() {
+    // #570: a loop whose reads never happen is calculated by default.
+    assert_eq!(CycleConfig::default().detection, CycleDetection::Runtime);
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    build_99_pair(&mut engine, true);
+    let res = engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, "Sheet1", 2, 1), 555.0);
+    assert_eq!(num(&engine, "Sheet1", 3, 1), 555.0);
+    assert_eq!(res.cycle_errors, 0);
 }
 
 #[test]

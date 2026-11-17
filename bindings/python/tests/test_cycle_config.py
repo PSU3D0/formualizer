@@ -7,7 +7,7 @@ import formualizer as fz
 
 def test_cycle_defaults():
     cfg = fz.EvaluationConfig()
-    assert cfg.cycle_detection == "static"
+    assert cfg.cycle_detection == "runtime"
     assert cfg.cycle_policy == "error"
     # Knob getters read Excel defaults even when not iterating.
     assert cfg.iterate_max_iterations == 100

@@ -540,8 +540,8 @@ mod tests {
     #[test]
     fn defaults_match_engine_cycle_defaults() {
         let cfg = PyEvaluationConfig::new();
-        // Engine default is detection=static, policy=error.
-        assert_eq!(cfg.get_cycle_detection(), "static");
+        // Engine default is detection=runtime, policy=error.
+        assert_eq!(cfg.get_cycle_detection(), "runtime");
         assert_eq!(cfg.get_cycle_policy(), "error");
         // Knob getters read Excel defaults even when not iterating.
         assert_eq!(cfg.get_iterate_max_iterations(), 100);
