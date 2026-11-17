@@ -1836,6 +1836,15 @@ impl Function for CellFn {
     fn min_args(&self) -> usize {
         1
     }
+    // Inspect the reference without eagerly evaluating its value: only the
+    // `contents` and `type` info types read it (`cell_top_left`).
+    fn dispatch<'a, 'b, 'c>(
+        &self,
+        args: &'c [ArgumentHandle<'a, 'b>],
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<CalcValue<'b>, ExcelError> {
+        self.eval(args, ctx)
+    }
     fn semantic_contract(&self, arity: usize) -> Option<FunctionSemanticContract> {
         Some(workbook_metadata_contract(self.dependency_contract(arity)))
     }
@@ -1854,6 +1863,9 @@ impl Function for CellFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
+        if args.is_empty() || args.len() > 2 {
+            return arity_error();
+        }
         let info_type = match args[0].value()?.into_literal() {
             LiteralValue::Error(e) => return Ok(scalar(LiteralValue::Error(e))),
             LiteralValue::Text(t) => t.to_ascii_lowercase(),
