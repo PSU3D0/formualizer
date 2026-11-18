@@ -1861,7 +1861,9 @@ pub struct GroupByFn;
 /// # Remarks
 /// - `row_fields` and `values` must have the same row count.
 /// - Aggregation can be supplied as text (for example `"SUM"`) or numeric code.
-/// - Optional controls: `field_headers`, `total_depth`, `sort_order`.
+/// - Use `field_headers`, `total_depth`, and `sort_order` to control the result layout.
+/// - Unlike Excel's filter mode, a supplied `filter_array` returns `#VALUE!` in Formualizer.
+/// - A supplied `field_relationship` with multiple row fields also returns `#VALUE!`.
 /// - Invalid aggregation names/codes return `#VALUE!`.
 /// - Output is dynamic-array shaped and may include generated headers or totals.
 ///
@@ -2355,77 +2357,6 @@ impl Function for GroupByFn {
 #[derive(Debug)]
 pub struct PivotByFn;
 
-/// Builds a pivot-style summary matrix from row fields, column fields, and values.
-///
-/// `PIVOTBY` aggregates intersections of row keys and column keys into a dynamic result grid.
-///
-/// # Remarks
-/// - `row_fields`, `col_fields`, and `values` must have matching row counts.
-/// - Aggregation accepts text names (for example `"SUM"`) or numeric codes.
-/// - Optional controls include header handling, row/column totals, and sort order.
-/// - Current implementation uses the first column of `col_fields` and `values` for aggregation.
-/// - Invalid setup returns `#VALUE!`.
-///
-/// # Examples
-/// ```yaml,sandbox
-/// title: "Pivot sales by region and quarter"
-/// grid:
-///   A1: "Region"
-///   A2: "East"
-///   A3: "East"
-///   A4: "West"
-///   B1: "Quarter"
-///   B2: "Q1"
-///   B3: "Q2"
-///   B4: "Q1"
-///   C1: "Sales"
-///   C2: 100
-///   C3: 150
-///   C4: 120
-/// formula: '=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,0,1,0,1)'
-/// expected: "Pivot table with regions as rows and quarters as columns"
-/// ```
-///
-/// ```yaml,sandbox
-/// title: "Pivot with totals enabled"
-/// grid:
-///   A1: "Dept"
-///   A2: "Ops"
-///   A3: "Ops"
-///   A4: "Sales"
-///   B1: "Month"
-///   B2: "Jan"
-///   B3: "Feb"
-///   B4: "Jan"
-///   C1: "Cost"
-///   C2: 40
-///   C3: 35
-///   C4: 55
-/// formula: '=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,1,1,1,1)'
-/// expected: "Pivot table including row and column totals"
-/// ```
-///
-/// ```yaml,docs
-/// related:
-///   - GROUPBY
-///   - SORTBY
-///   - UNIQUE
-/// faq:
-///   - q: "What rows must align in PIVOTBY inputs?"
-///     a: "row_fields, col_fields, and values must share the same row count; otherwise PIVOTBY returns #VALUE!."
-///   - q: "What value range is currently aggregated?"
-///     a: "Current implementation aggregates using the first value column (and first col_fields column for keys), so extra columns are not yet summarized independently."
-/// ```
-/// [formualizer-docgen:schema:start]
-/// Name: PIVOTBY
-/// Type: PivotByFn
-/// Min args: 4
-/// Max args: variadic
-/// Variadic: true
-/// Signature: PIVOTBY(arg1: range@range, arg2: range@range, arg3: range@range, arg4: any@scalar, arg5?: number@scalar, arg6?: number@scalar, arg7?: number@scalar, arg8?: number@scalar, arg9?...: number@scalar)
-/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg7{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg8{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg9{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
-/// Caps: PURE
-/// [formualizer-docgen:schema:end]
 impl PivotByFn {
     // These options have provider-specific vector/blank semantics. Keep their
     // admission and classification here rather than changing generic validation.
@@ -2497,6 +2428,77 @@ impl PivotByFn {
     }
 }
 
+/// Builds a pivot-style summary matrix from row fields, column fields, and values.
+///
+/// `PIVOTBY` aggregates intersections of row keys and column keys into a dynamic result grid.
+///
+/// # Remarks
+/// - `row_fields`, `col_fields`, and `values` must have matching row counts.
+/// - Aggregation accepts text names (for example `"SUM"`) or numeric codes.
+/// - Optional controls include header handling, row/column totals, and sort order.
+/// - Current implementation uses the first column of `col_fields` and `values` for aggregation.
+/// - Mismatched row counts and unsupported filter or callable aggregation options return `#VALUE!`.
+///
+/// # Examples
+/// ```yaml,sandbox
+/// title: "Pivot sales by region and quarter"
+/// grid:
+///   A1: "Region"
+///   A2: "East"
+///   A3: "East"
+///   A4: "West"
+///   B1: "Quarter"
+///   B2: "Q1"
+///   B3: "Q2"
+///   B4: "Q1"
+///   C1: "Sales"
+///   C2: 100
+///   C3: 150
+///   C4: 120
+/// formula: '=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,0,1,0,1)'
+/// expected: "Pivot table with regions as rows and quarters as columns"
+/// ```
+///
+/// ```yaml,sandbox
+/// title: "Pivot with totals enabled"
+/// grid:
+///   A1: "Dept"
+///   A2: "Ops"
+///   A3: "Ops"
+///   A4: "Sales"
+///   B1: "Month"
+///   B2: "Jan"
+///   B3: "Feb"
+///   B4: "Jan"
+///   C1: "Cost"
+///   C2: 40
+///   C3: 35
+///   C4: 55
+/// formula: '=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,1,1,1,1)'
+/// expected: "Pivot table including row and column totals"
+/// ```
+///
+/// ```yaml,docs
+/// related:
+///   - GROUPBY
+///   - SORTBY
+///   - UNIQUE
+/// faq:
+///   - q: "What rows must align in PIVOTBY inputs?"
+///     a: "row_fields, col_fields, and values must share the same row count; otherwise PIVOTBY returns #VALUE!."
+///   - q: "What value range is currently aggregated?"
+///     a: "Current implementation aggregates using the first value column (and first col_fields column for keys), so extra columns are not yet summarized independently."
+/// ```
+/// [formualizer-docgen:schema:start]
+/// Name: PIVOTBY
+/// Type: PivotByFn
+/// Min args: 4
+/// Max args: variadic
+/// Variadic: true
+/// Signature: PIVOTBY(arg1: range@range, arg2: range@range, arg3: range@range, arg4: any@scalar, arg5?: number@scalar, arg6?: number@scalar, arg7?: number@scalar, arg8?: number@scalar, arg9?...: number@scalar)
+/// Arg schema: arg1{kinds=range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg2{kinds=range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg3{kinds=range,required=true,shape=range,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg4{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}; arg5{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg6{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg7{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg8{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}; arg9{kinds=number,required=false,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=true}
+/// Caps: PURE
+/// [formualizer-docgen:schema:end]
 impl Function for PivotByFn {
     func_caps!(PURE, MAY_SPILL);
     fn dispatch<'a, 'b, 'c>(

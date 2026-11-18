@@ -1557,21 +1557,27 @@ impl Function for IsOddFn {
     }
 }
 
-/// ERROR.TYPE(error_val) - Returns a number corresponding to an error type
-/// Returns:
-///   1 = #NULL!
-///   2 = #DIV/0!
-///   3 = #VALUE!
-///   4 = #REF!
-///   5 = #NAME?
-///   6 = #NUM!
-///   7 = #N/A
-///   8 = #GETTING_DATA (not commonly used)
-///   #N/A if the value is not an error
-///
-/// NOTE: Error codes 9-13 are non-standard extensions for internal error types.
 #[derive(Debug)]
 pub struct ErrorTypeFn;
+fn error_type_code(kind: ExcelErrorKind) -> i64 {
+    match kind {
+        ExcelErrorKind::Null => 1,
+        ExcelErrorKind::Div => 2,
+        ExcelErrorKind::Value => 3,
+        ExcelErrorKind::Ref => 4,
+        ExcelErrorKind::Name => 5,
+        ExcelErrorKind::Num => 6,
+        ExcelErrorKind::Na => 7,
+        ExcelErrorKind::Error => 8,
+        ExcelErrorKind::NImpl => 9,
+        ExcelErrorKind::Spill => 10,
+        ExcelErrorKind::Calc => 11,
+        ExcelErrorKind::Circ => 12,
+        ExcelErrorKind::Cancelled => 13,
+        _ => 8,
+    }
+}
+
 /// Returns the numeric code for a specific error value.
 ///
 /// # Remarks
@@ -1602,35 +1608,6 @@ pub struct ErrorTypeFn;
 ///   - q: "What if the input is not an error value?"
 ///     a: "ERROR.TYPE returns #N/A when the input is not an error."
 /// ```
-/// [formualizer-docgen:schema:start]
-/// Name: ERROR.TYPE
-/// Type: ErrorTypeFn
-/// Min args: 1
-/// Max args: 1
-/// Variadic: false
-/// Signature: ERROR.TYPE(arg1: any@scalar)
-/// Arg schema: arg1{kinds=any,required=true,shape=scalar,by_ref=false,coercion=None,max=None,repeating=None,default=false}
-/// Caps: PURE
-/// [formualizer-docgen:schema:end]
-fn error_type_code(kind: ExcelErrorKind) -> i64 {
-    match kind {
-        ExcelErrorKind::Null => 1,
-        ExcelErrorKind::Div => 2,
-        ExcelErrorKind::Value => 3,
-        ExcelErrorKind::Ref => 4,
-        ExcelErrorKind::Name => 5,
-        ExcelErrorKind::Num => 6,
-        ExcelErrorKind::Na => 7,
-        ExcelErrorKind::Error => 8,
-        ExcelErrorKind::NImpl => 9,
-        ExcelErrorKind::Spill => 10,
-        ExcelErrorKind::Calc => 11,
-        ExcelErrorKind::Circ => 12,
-        ExcelErrorKind::Cancelled => 13,
-        _ => 8,
-    }
-}
-
 /// [formualizer-docgen:schema:start]
 /// Name: ERROR.TYPE
 /// Type: ErrorTypeFn
@@ -1782,14 +1759,15 @@ pub struct CellFn;
 /// `address`, `col`, `row` or `filename`.
 /// An argument that evaluates to an error propagates that error unchanged.
 ///
-/// Known divergence: without a reference Excel's `filename` names the sheet of
+/// # Differences from Excel
+/// Without a reference Excel's `filename` names the sheet of
 /// the cell selected at calculation time. There is no selection state here, so
 /// it names the formula's own sheet.
 /// Operation diagnostics report both gaps: a call without a reference as the
 /// `implicit_active_cell_reference` mode, even with a path, and any call as the
 /// `filename` mode while the workbook's identity is unknown.
 ///
-/// Known divergence: `CELL("contents", <blank cell>)` produces `Empty` in-graph
+/// `CELL("contents", <blank cell>)` produces `Empty` in-graph
 /// where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
 /// here and FALSE in Excel; tracked in #333 and to be resolved with the #319
 /// blank-coercion variant study.

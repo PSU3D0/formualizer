@@ -121,7 +121,7 @@ impl Function for LeftBFn {
     }
 }
 
-/// Returns text length using non-DBCS byte-compatible semantics.
+/// Returns a numeric value for the character count in a non-DBCS locale.
 ///
 /// In Formualizer's invariant locale, LENB delegates to LEN.
 ///

@@ -96,7 +96,7 @@ fn f_upper_tail(x: f64, d1: f64, d2: f64) -> f64 {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
+/// title: "Find the cumulative standard normal probability at z = 1.333333."
 /// formula: "=NORMSDIST(1.333333)"
 /// expected: 0.908788726
 /// ```
@@ -269,7 +269,7 @@ impl Function for TInvLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
+/// title: "Find the chi-square probability above 18.307 with ten degrees of freedom."
 /// formula: "=CHIDIST(18.307,10)"
 /// expected: 0.0500006
 /// ```
@@ -328,7 +328,7 @@ impl Function for ChiDistLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
+/// title: "Find the chi-square threshold leaving about 5% of the area in the upper tail with ten degrees of freedom."
 /// formula: "=CHIINV(0.050001,10)"
 /// expected: 18.306973
 /// ```
@@ -390,9 +390,9 @@ impl Function for ChiInvLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
-/// formula: "=FDIST(15.20686486,6,4)"
-/// expected: 0.01
+/// title: "Find the upper-tail probability above an F statistic of 14.2 with six and four degrees of freedom."
+/// formula: "=FDIST(14.2,6,4)"
+/// expected: 0.011356126812524
 /// ```
 #[derive(Debug)]
 pub struct FDistLegacyFn;
@@ -454,7 +454,7 @@ impl Function for FDistLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
+/// title: "Find the F critical value with 1% of the area to its right and six and four degrees of freedom."
 /// formula: "=FINV(0.01,6,4)"
 /// expected: 15.206865
 /// ```
@@ -520,7 +520,7 @@ impl Function for FInvLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
+/// title: "Find the cumulative beta probability at 2 on the interval from 1 to 3."
 /// formula: "=BETADIST(2,8,10,1,3)"
 /// expected: 0.6854706
 /// ```
@@ -589,9 +589,9 @@ impl Function for BetaDistLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
-/// formula: "=BETAINV(0.685470581,8,10,1,3)"
-/// expected: 2
+/// title: "Find the 70th percentile for shape parameters 8 and 10 on the interval from 1 to 3."
+/// formula: "=BETAINV(0.7,8,10,1,3)"
+/// expected: 2.00989202077018
 /// ```
 #[derive(Debug)]
 pub struct BetaInvLegacyFn;
@@ -657,7 +657,7 @@ impl Function for BetaInvLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
+/// title: "Find the cumulative probability at 4 with log-scale mean 3.5 and deviation 1.2."
 /// formula: "=LOGNORMDIST(4,3.5,1.2)"
 /// expected: 0.0390836
 /// ```
@@ -720,7 +720,7 @@ impl Function for LognormDistLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
+/// title: "Find the chance of drawing exactly one success in four draws from 20 items with eight successes."
 /// formula: "=HYPGEOMDIST(1,4,8,20)"
 /// expected: 0.3632610939112487
 /// ```
@@ -795,7 +795,7 @@ impl Function for HypgeomDistLegacyFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Documented example"
+/// title: "Find the chance of ten failures before the fifth success at a 25% per-trial success rate."
 /// formula: "=NEGBINOMDIST(10,5,0.25)"
 /// expected: 0.05504866
 /// ```

@@ -1069,7 +1069,10 @@ pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
 /// # Remarks
 /// - If `significance` is omitted (or passed as `0`), the function uses `1`.
 /// - `significance` is treated as a positive magnitude.
-/// - For negative numbers, non-zero `mode` rounds away from zero; otherwise it rounds toward positive infinity.
+/// - Negative numbers round toward positive infinity.
+///
+/// # Differences from Excel
+/// Formualizer accepts one or two arguments. Supplying Excel's third argument, `mode`, returns `#VALUE!`.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -1079,9 +1082,9 @@ pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Use mode to round a negative number away from zero"
-/// formula: "=CEILING.MATH(-24.3,5,1)"
-/// expected: -25
+/// title: "Round a negative number to a multiple of five"
+/// formula: "=CEILING.MATH(-24.3,5)"
+/// expected: -20
 /// ```
 ///
 /// ```yaml,docs
@@ -1090,8 +1093,8 @@ pub struct CeilingMathFn; // CEILING.MATH(number,[significance],[mode])
 ///   - FLOOR.MATH
 ///   - ROUNDUP
 /// faq:
-///   - q: "How does mode affect negative numbers in CEILING.MATH?"
-///     a: "With non-zero mode, negatives round away from zero; otherwise they round toward +infinity."
+///   - q: "How are negative numbers rounded?"
+///     a: "With the supported arguments, negative numbers round toward positive infinity."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: CEILING.MATH
@@ -1274,7 +1277,10 @@ pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
 /// # Remarks
 /// - If `significance` is omitted (or passed as `0`), the function uses `1`.
 /// - `significance` is treated as a positive magnitude.
-/// - For negative numbers, non-zero `mode` rounds toward zero; otherwise it rounds away from zero.
+/// - Negative numbers round away from zero.
+///
+/// # Differences from Excel
+/// Formualizer accepts one or two arguments. Supplying Excel's third argument, `mode`, returns `#VALUE!`.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -1284,9 +1290,9 @@ pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Use mode to round a negative number toward zero"
-/// formula: "=FLOOR.MATH(-24.3,5,1)"
-/// expected: -20
+/// title: "Round a negative number to a multiple of five"
+/// formula: "=FLOOR.MATH(-24.3,5)"
+/// expected: -25
 /// ```
 ///
 /// ```yaml,docs
@@ -1295,8 +1301,8 @@ pub struct FloorMathFn; // FLOOR.MATH(number,[significance],[mode])
 ///   - CEILING.MATH
 ///   - ROUNDDOWN
 /// faq:
-///   - q: "How does mode affect negative numbers in FLOOR.MATH?"
-///     a: "With non-zero mode, negatives round toward zero; otherwise they round away from zero."
+///   - q: "How are negative numbers rounded?"
+///     a: "With the supported arguments, negative numbers round away from zero."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: FLOOR.MATH

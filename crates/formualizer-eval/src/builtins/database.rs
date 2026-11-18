@@ -2351,7 +2351,7 @@ pub struct DCountAFn;
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Count all non-blank values in a field"
+/// title: "Count X, Y and the stored empty string as three entries"
 /// grid:
 ///   A1: "Item"
 ///   A2: "X"
@@ -2359,7 +2359,7 @@ pub struct DCountAFn;
 ///   A4: ""
 ///   C1: "Item"
 /// formula: "=DCOUNTA(A1:A4,\"Item\",C1:C1)"
-/// expected: 2
+/// expected: 3
 /// ```
 ///
 /// ```yaml,docs

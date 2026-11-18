@@ -358,8 +358,10 @@ impl Function for WeeknumFn {
 /// - Supported units are `"Y"`, `"M"`, `"D"`, `"MD"`, `"YM"`, and `"YD"`.
 /// - If `start_date > end_date`, the function returns `#NUM!`.
 /// - Unit matching is case-insensitive.
-/// - `"YD"` uses a Feb-29 normalization strategy that can differ slightly from Excel in edge cases.
 /// - Both endpoints are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
+///
+/// # Differences from Excel
+/// With `"YD"`, Formualizer's February 29 normalization can give a different day count in leap-day edge cases.
 ///
 /// # Examples
 /// ```yaml,sandbox
@@ -726,7 +728,7 @@ fn date_text_to_date(text: &str, system: DateSystem) -> Option<NaiveDate> {
 /// - Weekends are fixed to Saturday and Sunday.
 /// - If `start_date > end_date`, the result is negative.
 /// - Optional `holidays` arguments are excluded from the count and may be provided as scalars,
-///   inline arrays, or ranges, of serials or date text; other text is skipped.
+///   inline arrays, or ranges of serials or date text. Date-typed range cells are skipped.
 /// - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904); the
 ///   weekend days depend on the calendar dates the serials denote, which differ per system.
 ///
@@ -827,7 +829,7 @@ impl Function for NetworkdaysFn {
 /// - Positive `days` moves forward; negative `days` moves backward.
 /// - Weekends are fixed to Saturday and Sunday.
 /// - Optional `holidays` arguments are excluded and may be provided as scalars, inline arrays,
-///   or ranges, of serials or date text; other text is skipped.
+///   or ranges of serials or date text. Date-typed range cells are skipped.
 /// - Input and output serials use the workbook's date system (Excel 1900 or Excel 1904).
 ///
 /// # Examples
@@ -929,7 +931,7 @@ impl Function for WorkdayFn {
 /// - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
 ///   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
 /// - The optional `holidays` argument accepts a range or array of date serials or date text to
-///   exclude; other text is skipped.
+///   exclude. Date-typed range cells are skipped.
 /// - If `start_date > end_date`, the result is negative.
 /// - A weekend string of all `1`s (no workdays) returns `#VALUE!`.
 ///
@@ -1057,7 +1059,7 @@ impl Function for NetworkdaysIntlFn {
 /// - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
 ///   of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
 /// - The optional `holidays` argument accepts a range or array of date serials or date text to
-///   exclude; other text is skipped.
+///   exclude. Date-typed range cells are skipped.
 /// - A weekend string of all `1`s (no workdays) returns `#VALUE!`.
 ///
 /// # Examples
