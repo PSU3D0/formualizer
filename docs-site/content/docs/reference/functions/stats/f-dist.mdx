@@ -1,54 +1,90 @@
 ---
 title: "F.DIST"
-description: "F.DIST: Returns the F-distribution probability for `x` with numerator and denominator degrees of freedom."
+seoTitle: "F.DIST function: formula syntax and examples"
+description: "Returns the F-distribution probability for x with numerator and denominator degrees of freedom. =F.DIST(x, deg_freedom1, deg_freedom2, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/f-dist" />
-
-## Summary
+Returns the F-distribution probability for `x` with numerator and denominator degrees of freedom.
 
 Use `F.DIST` for left-tail cumulative probabilities or density values in variance-ratio tests.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=F.DIST(x, deg_freedom1, deg_freedom2, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom1` | number | Required | — |
+| `deg_freedom2` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+An F variate is the ratio (U/d₁)/(V/d₂) of independent chi-squared variates divided by their degrees of freedom. Input x must be nonnegative and both degrees of freedom positive. The cumulative flag selects the area to the left of x or the density there.
 
 ## Remarks
  - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
  - Requires `x &gt;= 0`, `deg_freedom1 &gt;= 1`, and `deg_freedom2 &gt;= 1`.
- - Returns `#NUM!` when any domain constraint is violated.
  - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Error cases
+
+ - Returns `#NUM!` when any domain constraint is violated.
 
 ## Examples
 
-<Tabs items={["F CDF with symmetric 2 and 2 degrees of freedom", "F PDF with symmetric 2 and 2 degrees of freedom"]}>
-<Tab value="F CDF with symmetric 2 and 2 degrees of freedom">
-<FunctionSandbox
-  title="F CDF with symmetric 2 and 2 degrees of freedom"
-  formula={`=F.DIST(1,2,2,TRUE)`}
+<FunctionExample
+  title={"Evaluate cumulative probability at an F statistic of two."}
+  formula={"=F.DIST(2,5,10,TRUE)"}
   grid={{}}
-  expected={"0.5"}
+  expected={"0.835805049100261"}
 />
-</Tab>
 
-<Tab value="F PDF with symmetric 2 and 2 degrees of freedom">
-<FunctionSandbox
-  title="F PDF with symmetric 2 and 2 degrees of freedom"
-  formula={`=F.DIST(1,2,2,FALSE)`}
+<FunctionExample
+  title={"Evaluate density at the same statistic."}
+  formula={"=F.DIST(2,5,10,FALSE)"}
+  grid={{}}
+  expected={"0.162005742180115"}
+/>
+
+<FunctionExample
+  title={"Evaluate at the lower endpoint of the distribution."}
+  formula={"=F.DIST(0,5,10,TRUE)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A negative F statistic is outside the support."}
+  formula={"=F.DIST(-1,5,10,TRUE)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Accumulate the F distribution up to 0.8 with two degrees of freedom in each sample."}
+  formula={"=F.DIST(0.8,2,2,TRUE)"}
+  grid={{}}
+  expected={"0.444444444444445"}
+/>
+
+<FunctionExample
+  title={"F PDF with symmetric 2 and 2 degrees of freedom"}
+  formula={"=F.DIST(1,2,2,FALSE)"}
   grid={{}}
   expected={"0.25"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [F.INV](/docs/reference/functions/stats/f-inv)
 - [F.TEST](/docs/reference/functions/stats/f-test)
-- [F.INV.RT](/docs/reference/functions/stats/f-inv-rt)
-- [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
-- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
-- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/f-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

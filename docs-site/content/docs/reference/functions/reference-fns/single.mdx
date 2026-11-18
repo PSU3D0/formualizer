@@ -1,0 +1,89 @@
+---
+title: "SINGLE"
+seoTitle: "SINGLE function: formula syntax and examples"
+description: "Returns a single value from its argument by implicit intersection. =SINGLE(value)"
+---
+
+Returns a single value from its argument by implicit intersection.
+
+`SINGLE(x)` is the stored form of the implicit-intersection operator `@x`
+ (files written by Excel store `_xlfn.SINGLE(x)`). Both evaluate the same
+ way: a reference, written or returned by a function such as `INDEX` or
+ `OFFSET`, selects the cell on the formula's row (for a column) or column
+ (for a row), and a computed array gives its top-left value.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SINGLE(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any (range) | Required | — |
+
+The examples enter the formula in cell `CV100`.
+
+## Remarks
+ - A multi-row, multi-column reference selects the cell at the formula's
+   row and column.
+ - The result never spills: an array constant or an array-returning
+   function such as `SEQUENCE` gives only its top-left value.
+
+## Error cases
+
+ - `#VALUE!` when the formula cell is outside the reference's rows or
+   columns.
+
+## Examples
+
+<FunctionExample
+  title={"Intersect a single-cell reference with the formula context."}
+  formula={"=SINGLE(A100)"}
+  grid={{"A100":"42"}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"A scalar expression can be returned as a single value."}
+  formula={"=SINGLE(42)"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"Intersect a vertical range with the formula's row."}
+  formula={"=SINGLE(A100:A101)"}
+  grid={{"A100":"42"}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"The example formula's row is outside this vertical range."}
+  formula={"=SINGLE(A1:A2)"}
+  grid={{"A1":"10","A2":"20"}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Return the top-left element of a two-by-two array."}
+  formula={"=SINGLE({1,2;3,4})"}
+  grid={{}}
+  expected={"1"}
+/>
+
+## Related functions
+
+- [ANCHORARRAY](/docs/reference/functions/reference-fns/anchorarray)
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
+
+## FAQ
+
+### How does SINGLE relate to @?
+They are the same operation: @A1:A10 is written as _xlfn.SINGLE(A1:A10) in stored files, and both return one value by implicit intersection.
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/reference_fns.rs)

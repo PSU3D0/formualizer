@@ -1,13 +1,24 @@
 ---
 title: "FISHERINV"
-description: "FISHERINV: Returns the inverse Fisher transformation of `y`."
+seoTitle: "FISHERINV function: formula syntax and examples"
+description: "Returns the inverse Fisher transformation of y. =FISHERINV(y)"
 ---
 
-<FunctionPageSchema id="stats/fisherinv" />
-
-## Summary
+Returns the inverse Fisher transformation of `y`.
 
 `FISHERINV` maps Fisher z-values back to the open interval `(-1, 1)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FISHERINV(y)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `y` | number (range) | Required | — |
 
 ## Remarks
  - The inverse form is `(e^(2y) - 1) / (e^(2y) + 1)`.
@@ -17,38 +28,41 @@ description: "FISHERINV: Returns the inverse Fisher transformation of `y`."
 
 ## Examples
 
-<Tabs items={["Inverse Fisher at zero", "Round-trip with FISHER(0.5)"]}>
-<Tab value="Inverse Fisher at zero">
-<FunctionSandbox
-  title="Inverse Fisher at zero"
-  formula={`=FISHERINV(0)`}
+<FunctionExample
+  title={"Transform a positive Fisher statistic back to the correlation scale."}
+  formula={"=FISHERINV(0.5)"}
+  grid={{}}
+  expected={"0.46211715726001"}
+/>
+
+<FunctionExample
+  title={"Transform the opposite statistic."}
+  formula={"=FISHERINV(-0.5)"}
+  grid={{}}
+  expected={"-0.46211715726001"}
+/>
+
+<FunctionExample
+  title={"Zero maps back to zero on the correlation scale."}
+  formula={"=FISHERINV(0)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Round-trip with FISHER(0.5)">
-<FunctionSandbox
-  title="Round-trip with FISHER(0.5)"
-  formula={`=FISHERINV(0.5493061443340549)`}
+<FunctionExample
+  title={"A nonnumeric value cannot be inverted."}
+  formula={"=FISHERINV(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Round-trip with FISHER(0.5)"}
+  formula={"=FISHERINV(0.5493061443340549)"}
   grid={{}}
   expected={"0.5"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [FISHER](/docs/reference/functions/stats/fisher)
-- [CORREL](/docs/reference/functions/stats/correl)
-- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
-- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
-- [FORECAST.LINEAR](/docs/reference/functions/stats/forecast-linear)
-- [FREQUENCY](/docs/reference/functions/stats/frequency)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/fisherinv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

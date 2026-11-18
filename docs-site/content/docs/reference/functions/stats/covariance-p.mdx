@@ -1,13 +1,25 @@
 ---
 title: "COVARIANCE.P"
-description: "COVARIANCE.P: Returns population covariance for two paired numeric data sets."
+seoTitle: "COVARIANCE.P function: formula syntax and examples"
+description: "Returns population covariance for two paired numeric data sets. =COVARIANCE.P(array1, array2)"
 ---
 
-<FunctionPageSchema id="stats/covariance-p" />
-
-## Summary
+Returns population covariance for two paired numeric data sets.
 
 `COVARIANCE.P` measures joint variability using `n` in the denominator.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COVARIANCE.P(array1, array2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array1` | number (range) | Required | — |
+| `array2` | number (range) | Required | — |
 
 ## Remarks
  - Arrays must resolve to the same number of numeric points.
@@ -17,38 +29,48 @@ description: "COVARIANCE.P: Returns population covariance for two paired numeric
 
 ## Examples
 
-<Tabs items={["Positive population covariance", "Negative population covariance"]}>
-<Tab value="Positive population covariance">
-<FunctionSandbox
-  title="Positive population covariance"
-  formula={`=COVARIANCE.P({1,3,5},{2,4,6})`}
+<FunctionExample
+  title={"Evaluate matched observations in two equally sized arrays."}
+  formula={"=COVARIANCE.P({1,2,3,4},{1,4,5,7})"}
   grid={{}}
-  expected={"2.6666666666666665"}
+  expected={"2.375"}
 />
-</Tab>
 
-<Tab value="Negative population covariance">
-<FunctionSandbox
-  title="Negative population covariance"
-  formula={`=COVARIANCE.P({1,2,3},{3,2,1})`}
+<FunctionExample
+  title={"Reverse the second series to compare opposite movement."}
+  formula={"=COVARIANCE.P({1,2,3,4},{7,5,4,1})"}
   grid={{}}
-  expected={"-0.6666666666666666"}
+  expected={"-2.375"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Use two observations that follow a perfect positive linear pattern."}
+  formula={"=COVARIANCE.P({1,2},{2,4})"}
+  grid={{}}
+  expected={"0.5"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"Each observation needs a partner in the other array."}
+  formula={"=COVARIANCE.P({1,2,3,4},{1,4,5})"}
+  grid={{}}
+  expected={"#N/A"}
+/>
 
-- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
-- [CORREL](/docs/reference/functions/stats/correl)
-- [INTERCEPT](/docs/reference/functions/stats/intercept)
-- [PEARSON](/docs/reference/functions/stats/pearson)
-- [RSQ](/docs/reference/functions/stats/rsq)
-- [SLOPE](/docs/reference/functions/stats/slope)
+<FunctionExample
+  title={"Positive population covariance"}
+  formula={"=COVARIANCE.P({1,3,5},{2,4,6})"}
+  grid={{}}
+  expected={"2.66666666666667"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Negative population covariance"}
+  formula={"=COVARIANCE.P({1,2,3},{3,2,1})"}
+  grid={{}}
+  expected={"-0.666666666666667"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/covariance-p" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,25 +1,69 @@
 ---
 title: "AVERAGEA"
-description: "AVERAGEA: Returns the arithmetic mean while treating logical values and text as numeric inputs."
+seoTitle: "AVERAGEA function: formula syntax and examples"
+description: "Returns the arithmetic mean while treating logical values and text as numeric inputs. =AVERAGEA(value1, [value2], ...)"
 ---
-
-<FunctionPageSchema id="stats/averagea" />
-
-## Summary
 
 Returns the arithmetic mean while treating logical values and text as numeric inputs.
 
-## returns: 1
- =AVERAGEA(TRUE,2,"x")
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=AVERAGEA(value1, [value2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value1` | number (range) | Required | — |
+| `value2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Return type
+
+Number
+
+## Differences from Excel
+
+Formualizer accepts calls such as `(TRUE,2,"x")`. Excel returns `#VALUE!` for the unparseable text supplied directly.
 
 ## Examples
 
-<FunctionSandbox
-  title="Average with logical and text coercion"
-  formula={`=AVERAGEA(TRUE,2,"x")`}
+<FunctionExample
+  title={"Find the mean with logical and text coercion of 4, 8 and 12."}
+  formula={"=AVERAGEA(4,8,12)"}
   grid={{}}
-  expected={"1"}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the mean with logical and text coercion."}
+  formula={"=AVERAGEA({4,8,12})"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"With a lone numeric observation the coerced mean is 7."}
+  formula={"=AVERAGEA(7)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the mean with logical and text coercion."}
+  formula={"=AVERAGEA(4,1/0,12)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Average 4, TRUE and the text Pending as the values 4, 1 and 0."}
+  formula={"=AVERAGEA(A1:A3)"}
+  grid={{"A1":"4","A2":"TRUE","A3":"\"Pending\""}}
+  expected={"1.66666666666667"}
 />
 
 ## Related functions
@@ -27,17 +71,12 @@ Returns the arithmetic mean while treating logical values and text as numeric in
 - [AVERAGE](/docs/reference/functions/math/average)
 - [MAXA](/docs/reference/functions/stats/maxa)
 - [MINA](/docs/reference/functions/stats/mina)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### How does AVERAGEA treat text and booleans?
 TRUE counts as 1, FALSE and text count as 0, and blanks are ignored.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/averagea" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

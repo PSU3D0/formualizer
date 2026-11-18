@@ -1,59 +1,92 @@
 ---
 title: "LOG"
-description: "Returns the logarithm of a number for a specified base."
+seoTitle: "LOG function: formula syntax and examples"
+description: "Returns the logarithm of a number for a specified base. =LOG(number, [base])"
 ---
 
-<FunctionPageSchema id="math/log" />
-
-## Summary
-
 Returns the logarithm of a number for a specified base.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LOG(number, [base])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `base` | number | Optional | — |
+
+## Differences from Excel
+
+A base of 1 returns `#NUM!` in Formualizer and `#DIV/0!` in Excel.
 
 ## Remarks
  - If `base` is omitted, base 10 is used.
  - `number` must be positive.
  - `base` must be positive and not equal to 1.
+
+## Error cases
+
  - Invalid domains return `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Base-10 logarithm", "Base-2 logarithm"]}>
-<Tab value="Base-10 logarithm">
-<FunctionSandbox
-  title="Base-10 logarithm"
-  formula={`=LOG(1000)`}
+<FunctionExample
+  title={"Use the default base to evaluate a power of ten."}
+  formula={"=LOG(100)"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Supply base two to compute a binary logarithm."}
+  formula={"=LOG(32,2)"}
+  grid={{}}
+  expected={"5"}
+/>
+
+<FunctionExample
+  title={"The logarithm of one is zero in any valid base."}
+  formula={"=LOG(1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A logarithm with base one is undefined."}
+  formula={"=LOG(100,1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Base-10 logarithm"}
+  formula={"=LOG(1000)"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
 
-<Tab value="Base-2 logarithm">
-<FunctionSandbox
-  title="Base-2 logarithm"
-  formula={`=LOG(8,2)`}
+<FunctionExample
+  title={"Base-2 logarithm"}
+  formula={"=LOG(8,2)"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [LN](/docs/reference/functions/math/ln)
 - [LOG10](/docs/reference/functions/math/log10)
 - [EXP](/docs/reference/functions/math/exp)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 
 ## FAQ
 
 ### Which base values are invalid for LOG?
 Base must be positive and not equal to 1; otherwise LOG returns #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/log" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

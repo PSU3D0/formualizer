@@ -1,58 +1,79 @@
 ---
 title: "SQRTPI"
-description: "SQRTPI: Returns the square root of a number multiplied by pi."
+seoTitle: "SQRTPI function: formula syntax and examples"
+description: "Returns the square root of a number multiplied by pi. =SQRTPI(number)"
 ---
-
-<FunctionPageSchema id="math/sqrtpi" />
-
-## Summary
 
 Returns the square root of a number multiplied by pi.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SQRTPI(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
 ## Remarks
  - Computes `SQRT(number * PI())`.
- - `number` must be greater than or equal to `0`; otherwise returns `#NUM!`.
  - Input errors are propagated.
+
+## Error cases
+
+ - `number` must be greater than or equal to `0`; otherwise returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Square root of pi", "Scale before taking square root"]}>
-<Tab value="Square root of pi">
-<FunctionSandbox
-  title="Square root of pi"
-  formula={`=SQRTPI(1)`}
+<FunctionExample
+  title={"Evaluate the square-root calculation on a positive number."}
+  formula={"=SQRTPI(4)"}
   grid={{}}
-  expected={"1.772453850905516"}
+  expected={"3.54490770181103"}
 />
-</Tab>
 
-<Tab value="Scale before taking square root">
-<FunctionSandbox
-  title="Scale before taking square root"
-  formula={`=SQRTPI(4)`}
+<FunctionExample
+  title={"Use a fractional input that does not produce an integer result."}
+  formula={"=SQRTPI(2.5)"}
   grid={{}}
-  expected={"3.544907701811032"}
+  expected={"2.80249560819896"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Evaluate the calculation at its lower boundary."}
+  formula={"=SQRTPI(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A negative input has no real square root."}
+  formula={"=SQRTPI(-1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Square root of pi"}
+  formula={"=SQRTPI(1)"}
+  grid={{}}
+  expected={"1.77245385090552"}
+/>
 
 ## Related functions
 
 - [SQRT](/docs/reference/functions/math/sqrt)
 - [PI](/docs/reference/functions/math/pi)
 - [POWER](/docs/reference/functions/math/power)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
 
 ## FAQ
 
 ### When does SQRTPI return #NUM!?
 It returns #NUM! when the input is negative, because number*PI must be non-negative.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sqrtpi" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

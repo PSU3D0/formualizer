@@ -1,58 +1,99 @@
 ---
 title: "DGET"
-description: "DGET: Returns a single field value from the only record that matches criteria."
+seoTitle: "DGET function: formula syntax and examples"
+description: "Returns a single field value from the only record that matches criteria. =DGET(database, field, criteria)"
 ---
 
-<FunctionPageSchema id="database/dget" />
-
-## Summary
+Returns a single field value from the only record that matches criteria.
 
 `DGET` is useful for keyed lookups where criteria are expected to identify exactly one record.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DGET(database, field, criteria)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `database` | any | Required | — |
+| `field` | any | Required | — |
+| `criteria` | any | Required | — |
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - Criteria rows are OR alternatives; criteria columns inside one row are AND predicates.
+
+## Error cases
+
  - `field` resolves from a case-insensitive header name or 1-based index; unresolved field/header references return `#VALUE!`.
  - Returns `#VALUE!` when no records match and `#NUM!` when multiple records match.
 
 ## Examples
 
-<Tabs items={["Get salesperson for a unique North Widget record", "Multiple matches return NUM error"]}>
-<Tab value="Get salesperson for a unique North Widget record">
-<FunctionSandbox
-  title="Get salesperson for a unique North Widget record"
-  formula={`=DGET(A1:E7, "Salesperson", G1:H2)`}
-  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Region","G2":"North","H1":"Product","H2":"Widget"}}
-  expected={"Kim"}
+<FunctionExample
+  title={"Retrieve the Score from the only West record."}
+  formula={"=DGET(A1:B4,\"Score\",E1:E2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","E1":"\"Team\"","E2":"\"West\""}}
+  expected={"3"}
 />
-</Tab>
 
-<Tab value="Multiple matches return NUM error">
-<FunctionSandbox
-  title="Multiple matches return NUM error"
-  formula={`=DGET(A1:E7, 5, G1:G2)`}
-  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Region","G2":"East"}}
+<FunctionExample
+  title={"Select the same field by numeric position."}
+  formula={"=DGET(A1:B4,2,E1:E2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","E1":"\"Team\"","E2":"\"West\""}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"Return a text field from the matching record."}
+  formula={"=DGET(A1:B4,\"Team\",E1:E2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","E1":"\"Team\"","E2":"\"West\""}}
+  expected={"West"}
+/>
+
+<FunctionExample
+  title={"The East criterion matches two rows, so there is no single record to retrieve."}
+  formula={"=DGET(A1:B4,\"Score\",D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
   expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The North criterion matches no records."}
+  formula={"=DGET(A1:B4,\"Score\",F1:F2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","F1":"\"Team\"","F2":"\"North\""}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Get salesperson for a unique North Widget record"}
+  formula={"=DGET(A1:E7, \"Salesperson\", G1:H2)"}
+  grid={{"A1":"\"Region\"","A2":"\"West\"","A3":"\"East\"","A4":"\"North\"","A5":"\"West\"","A6":"\"South\"","A7":"\"East\"","B1":"\"Salesperson\"","B2":"\"Diaz\"","B3":"\"Patel\"","B4":"\"Kim\"","B5":"\"Ramos\"","B6":"\"Lee\"","B7":"\"Noor\"","C1":"\"Product\"","C2":"\"Widget\"","C3":"\"Gadget\"","C4":"\"Widget\"","C5":"\"Service\"","C6":"\"Gadget\"","C7":"\"Widget\"","D1":"\"Units\"","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"\"Revenue\"","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"\"Region\"","G2":"\"North\"","H1":"\"Product\"","H2":"\"Widget\""}}
+  expected={"Kim"}
+/>
+
+<FunctionExample
+  title={"Multiple matches return NUM error"}
+  formula={"=DGET(A1:E7, 5, G1:G2)"}
+  grid={{"A1":"\"Region\"","A2":"\"West\"","A3":"\"East\"","A4":"\"North\"","A5":"\"West\"","A6":"\"South\"","A7":"\"East\"","B1":"\"Salesperson\"","B2":"\"Diaz\"","B3":"\"Patel\"","B4":"\"Kim\"","B5":"\"Ramos\"","B6":"\"Lee\"","B7":"\"Noor\"","C1":"\"Product\"","C2":"\"Widget\"","C3":"\"Gadget\"","C4":"\"Widget\"","C5":"\"Service\"","C6":"\"Gadget\"","C7":"\"Widget\"","D1":"\"Units\"","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"\"Revenue\"","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"\"Region\"","G2":"\"East\""}}
+  expected={"#NUM!"}
+/>
 
 ## Related functions
 
 - [DSUM](/docs/reference/functions/database/dsum)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
-- [DAVERAGE](/docs/reference/functions/database/daverage)
-- [DCOUNTA](/docs/reference/functions/database/dcounta)
-- [DMAX](/docs/reference/functions/database/dmax)
 
 ## FAQ
 
 ### Why does DGET fail when criteria match two rows?
 DGET requires exactly one matching record; multiple matches produce #NUM! and zero matches produce #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="database/dget" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/database.rs)

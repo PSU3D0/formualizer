@@ -1,61 +1,91 @@
 ---
 title: "EFFECT"
-description: "Converts a nominal annual rate into an effective annual rate."
+seoTitle: "EFFECT function: formula syntax and examples"
+description: "Converts a nominal annual rate into an effective annual rate. =EFFECT(nominal_rate, npery)"
 ---
 
-<FunctionPageSchema id="financial/effect" />
-
-## Summary
+Converts a nominal annual rate into an effective annual rate.
 
 This is useful when nominal APR is quoted with periodic compounding and you need annualized
  yield including compounding effects.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=EFFECT(nominal_rate, npery)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `nominal_rate` | number | Required | — |
+| `npery` | number | Required | — |
 
 ## Remarks
  - `nominal_rate` is annual; `npery` is compounding periods per year.
  - `npery` is truncated to an integer before computation.
  - Sign convention is not cash-flow based; this function transforms rate conventions only.
- - Returns `#NUM!` when `nominal_rate &lt;= 0` or `npery &lt; 1`.
  - Result formula: `(1 + nominal_rate / npery)^npery - 1`.
+
+## Error cases
+
+ - Returns `#NUM!` when `nominal_rate &lt;= 0` or `npery &lt; 1`.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=EFFECT(0.12, 12)`}
+<FunctionExample
+  title={"Convert a 6% nominal annual rate to an effective rate with monthly compounding."}
+  formula={"=EFFECT(0.06,12)"}
   grid={{}}
-  expected={"null"}
+  expected={"0.0616778118644976"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=EFFECT(0.08, 4)`}
+<FunctionExample
+  title={"Find the effective yield when the same 6% nominal rate compounds quarterly."}
+  formula={"=EFFECT(0.06,4)"}
   grid={{}}
-  expected={"null"}
+  expected={"0.0613635506249994"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Annual compounding leaves the effective rate within floating-point rounding of 6%."}
+  formula={"=EFFECT(0.06,1)"}
+  grid={{}}
+  expected={"0.0600000000000001"}
+/>
+
+<FunctionExample
+  title={"An effective annual rate needs at least one compounding period."}
+  formula={"=EFFECT(0.06,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Annualize a 12% nominal rate that compounds monthly."}
+  formula={"=EFFECT(0.12, 12)"}
+  grid={{}}
+  expected={"0.12682503013197"}
+/>
+
+<FunctionExample
+  title={"Calculate the effective annual yield from 8% nominal interest compounded quarterly."}
+  formula={"=EFFECT(0.08, 4)"}
+  grid={{}}
+  expected={"0.08243216"}
+/>
 
 ## Related functions
 
 - [NOMINAL](/docs/reference/functions/financial/nominal)
 - [RATE](/docs/reference/functions/financial/rate)
-- [DOLLARDE](/docs/reference/functions/financial/dollarde)
-- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
-- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
-- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
 
 ## FAQ
 
 ### Does `EFFECT` accept fractional compounding periods?
 `npery` is truncated to an integer first; values less than 1 (or non-positive `nominal_rate`) return `#NUM!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/effect" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

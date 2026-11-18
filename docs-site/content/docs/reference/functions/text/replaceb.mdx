@@ -1,19 +1,65 @@
 ---
 title: "REPLACEB"
-description: "REPLACEB: Replaces text using non-DBCS byte-compatible semantics."
+seoTitle: "REPLACEB function: formula syntax and examples"
+description: "Replaces text using non-DBCS byte-compatible semantics. =REPLACEB(old_text, start_num, num_bytes, new_text)"
 ---
 
-<FunctionPageSchema id="text/replaceb" />
-
-## Summary
+Replaces text using non-DBCS byte-compatible semantics.
 
 In Formualizer's invariant locale, REPLACEB delegates to REPLACE.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=REPLACEB(old_text, start_num, num_bytes, new_text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `old_text` | any | Required | — |
+| `start_num` | any | Required | — |
+| `num_bytes` | any | Required | — |
+| `new_text` | any | Required | — |
+
+## How it works
+
+Delegates to REPLACE. Keeps the characters before the one-based start, inserts the new text, then appends the original suffix after the removed character span. A start before one or negative removal count is invalid.
+
 ## Examples
 
-<FunctionSandbox
-  title="Replace byte-compatible text"
-  formula={`=REPLACEB("abcdef",3,2,"ZZ")`}
+<FunctionExample
+  title={"Replace the two Unicode characters é and 界 with one underscore."}
+  formula={"=REPLACEB(\"aé界z\",2,2,\"_\")"}
+  grid={{}}
+  expected={"a_z"}
+/>
+
+<FunctionExample
+  title={"Insert an underscore before é without discarding any original characters."}
+  formula={"=REPLACEB(\"aé界z\",2,0,\"_\")"}
+  grid={{}}
+  expected={"a_é界z"}
+/>
+
+<FunctionExample
+  title={"Delete é and 界 by replacing them with empty text."}
+  formula={"=REPLACEB(\"aé界z\",2,2,\"\")"}
+  grid={{}}
+  expected={"az"}
+/>
+
+<FunctionExample
+  title={"A replacement cannot start before position one."}
+  formula={"=REPLACEB(\"aé界z\",0,2,\"_\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Replace byte-compatible text"}
+  formula={"=REPLACEB(\"abcdef\",3,2,\"ZZ\")"}
   grid={{}}
   expected={"abZZef"}
 />
@@ -23,17 +69,12 @@ In Formualizer's invariant locale, REPLACEB delegates to REPLACE.
 - [REPLACE](/docs/reference/functions/text/replace)
 - [MIDB](/docs/reference/functions/text/midb)
 - [FINDB](/docs/reference/functions/text/findb)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
-- [CLEAN](/docs/reference/functions/text/clean)
 
 ## FAQ
 
 ### Does REPLACEB operate on raw UTF-8 bytes?
 No. In the invariant locale it delegates to REPLACE.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/replaceb" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/byte.rs)

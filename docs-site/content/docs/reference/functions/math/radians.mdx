@@ -1,13 +1,22 @@
 ---
 title: "RADIANS"
-description: "Converts an angle from degrees to radians."
+seoTitle: "RADIANS function: formula syntax and examples"
+description: "Converts an angle from degrees to radians. =RADIANS(angle)"
 ---
 
-<FunctionPageSchema id="math/radians" />
-
-## Summary
-
 Converts an angle from degrees to radians.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=RADIANS(angle)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `angle` | any | Required | — |
 
 ## Remarks
  - Use this before trigonometric functions when your source angle is in degrees.
@@ -15,43 +24,59 @@ Converts an angle from degrees to radians.
 
 ## Examples
 
-<Tabs items={["Convert 180°", "Convert 45°"]}>
-<Tab value="Convert 180°">
-<FunctionSandbox
-  title="Convert 180°"
-  formula={`=RADIANS(180)`}
+<FunctionExample
+  title={"Convert a right angle from degrees to radians."}
+  formula={"=RADIANS(90)"}
   grid={{}}
-  expected={"3.141592653589793"}
+  expected={"1.5707963267949"}
 />
-</Tab>
 
-<Tab value="Convert 45°">
-<FunctionSandbox
-  title="Convert 45°"
-  formula={`=RADIANS(45)`}
+<FunctionExample
+  title={"Convert a negative half-turn."}
+  formula={"=RADIANS(-180)"}
   grid={{}}
-  expected={"0.7853981633974483"}
+  expected={"-3.14159265358979"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The zero angle stays zero after converting units."}
+  formula={"=RADIANS(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The angle must be numeric."}
+  formula={"=RADIANS(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Convert 180°"}
+  formula={"=RADIANS(180)"}
+  grid={{}}
+  expected={"3.14159265358979"}
+/>
+
+<FunctionExample
+  title={"Convert 45°"}
+  formula={"=RADIANS(45)"}
+  grid={{}}
+  expected={"0.785398163397448"}
+/>
 
 ## Related functions
 
 - [DEGREES](/docs/reference/functions/math/degrees)
 - [SIN](/docs/reference/functions/math/sin)
 - [COS](/docs/reference/functions/math/cos)
-- [ACOSH](/docs/reference/functions/math/acosh)
-- [ATANH](/docs/reference/functions/math/atanh)
-- [SECH](/docs/reference/functions/math/sech)
 
 ## FAQ
 
 ### When should I wrap angles with RADIANS?
 Use it whenever your source angle is in degrees and the downstream trig function expects radians.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/radians" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

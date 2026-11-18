@@ -1,58 +1,89 @@
 ---
 title: "BITLSHIFT"
-description: "BITLSHIFT: Shifts a non-negative integer left or right by a given bit count."
+seoTitle: "BITLSHIFT function: formula syntax and examples"
+description: "Shifts a non-negative integer left or right by a given bit count. =BITLSHIFT(number, shift_amount)"
 ---
 
-<FunctionPageSchema id="engineering/bitlshift" />
-
-## Summary
+Shifts a non-negative integer left or right by a given bit count.
 
 Positive `shift_amount` shifts left; negative `shift_amount` shifts right.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BITLSHIFT(number, shift_amount)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `shift_amount` | number | Required | — |
+
 ## Remarks
  - `number` must be a whole number in `[0, 2^48)`.
+
+## Error cases
+
  - Shift values are numerically coerced; large positive shifts can return `#NUM!`.
  - Left-shift results must remain below `2^48`, or the function returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Shift left by two bits", "Use negative shift to move right"]}>
-<Tab value="Shift left by two bits">
-<FunctionSandbox
-  title="Shift left by two bits"
-  formula={`=BITLSHIFT(6,2)`}
+<FunctionExample
+  title={"Move the bits of 12 by two positions."}
+  formula={"=BITLSHIFT(12,2)"}
+  grid={{}}
+  expected={"48"}
+/>
+
+<FunctionExample
+  title={"A negative shift reverses the direction of the operation."}
+  formula={"=BITLSHIFT(12,-2)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"A zero-position shift leaves the bits in place."}
+  formula={"=BITLSHIFT(12,0)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Negative operands are outside the supported integer domain."}
+  formula={"=BITLSHIFT(-1,2)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Shift left by two bits"}
+  formula={"=BITLSHIFT(6,2)"}
   grid={{}}
   expected={"24"}
 />
-</Tab>
 
-<Tab value="Use negative shift to move right">
-<FunctionSandbox
-  title="Use negative shift to move right"
-  formula={`=BITLSHIFT(32,-3)`}
+<FunctionExample
+  title={"Use negative shift to move right"}
+  formula={"=BITLSHIFT(32,-3)"}
   grid={{}}
   expected={"4"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
 - [BITAND](/docs/reference/functions/engineering/bitand)
 - [BITOR](/docs/reference/functions/engineering/bitor)
-- [BITXOR](/docs/reference/functions/engineering/bitxor)
-- [BESSELI](/docs/reference/functions/engineering/besseli)
-- [BESSELJ](/docs/reference/functions/engineering/besselj)
 
 ## FAQ
 
 ### What does a negative `shift_amount` do in `BITLSHIFT`?
 Negative shifts are interpreted as right shifts, while positive shifts move bits left.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/bitlshift" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

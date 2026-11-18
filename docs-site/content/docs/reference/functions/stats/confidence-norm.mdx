@@ -1,54 +1,80 @@
 ---
 title: "CONFIDENCE.NORM"
-description: "CONFIDENCE.NORM: Returns the half-width of a confidence interval using a normal critical value."
+seoTitle: "CONFIDENCE.NORM function: formula syntax and examples"
+description: "Returns the half-width of a confidence interval using a normal critical value. =CONFIDENCE.NORM(alpha, standard_dev, size)"
 ---
 
-<FunctionPageSchema id="stats/confidence-norm" />
-
-## Summary
+Returns the half-width of a confidence interval using a normal critical value.
 
 `CONFIDENCE.NORM` computes `z_crit * standard_dev / sqrt(size)` for two-sided intervals.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CONFIDENCE.NORM(alpha, standard_dev, size)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `alpha` | number | Required | — |
+| `standard_dev` | number | Required | — |
+| `size` | number | Required | — |
 
 ## Remarks
  - `alpha` must satisfy `0 &lt; alpha &lt; 1`.
  - `standard_dev` must be greater than `0`.
  - `size` must be at least `1`.
+
+## Error cases
+
  - Returns `#NUM!` when any input is outside valid bounds.
 
 ## Examples
 
-<Tabs items={["95% confidence half-width", "90% confidence half-width"]}>
-<Tab value="95% confidence half-width">
-<FunctionSandbox
-  title="95% confidence half-width"
-  formula={`=CONFIDENCE.NORM(0.05,2,100)`}
+<FunctionExample
+  title={"Calculate a margin for a 95-percent confidence interval."}
+  formula={"=CONFIDENCE.NORM(0.05,4,20)"}
   grid={{}}
-  expected={"0.3919927977622559"}
+  expected={"1.75304508115316"}
 />
-</Tab>
 
-<Tab value="90% confidence half-width">
-<FunctionSandbox
-  title="90% confidence half-width"
-  formula={`=CONFIDENCE.NORM(0.1,5,25)`}
+<FunctionExample
+  title={"Change the significance level while holding sample size and spread constant."}
+  formula={"=CONFIDENCE.NORM(0.01,4,20)"}
   grid={{}}
-  expected={"1.644853625133699"}
+  expected={"2.30389176846851"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Calculate the margin with a very small sample."}
+  formula={"=CONFIDENCE.NORM(0.05,4,2)"}
+  grid={{}}
+  expected={"5.54361529739871"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"Significance must be a probability between zero and one."}
+  formula={"=CONFIDENCE.NORM(1.1,4,20)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
-- [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
-- [F.INV](/docs/reference/functions/stats/f-inv)
+<FunctionExample
+  title={"95% confidence half-width"}
+  formula={"=CONFIDENCE.NORM(0.05,2,100)"}
+  grid={{}}
+  expected={"0.391992796908011"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"90% confidence half-width"}
+  formula={"=CONFIDENCE.NORM(0.1,5,25)"}
+  grid={{}}
+  expected={"1.64485362695147"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/confidence-norm" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

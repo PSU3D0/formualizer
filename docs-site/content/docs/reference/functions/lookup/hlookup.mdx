@@ -1,56 +1,91 @@
 ---
 title: "HLOOKUP"
-description: "HLOOKUP: Looks up a value in the first row of a table and returns a value from another row."
+seoTitle: "HLOOKUP function: formula syntax and examples"
+description: "Looks up a value in the first row of a table and returns a value from another row. =HLOOKUP(lookup_value, table_array, row_index_num, [range_lookup])"
 ---
 
-<FunctionPageSchema id="lookup/hlookup" />
-
-## Summary
+Looks up a value in the first row of a table and returns a value from another row.
 
 `HLOOKUP` searches horizontally and returns the matching column's value from `row_index_num`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=HLOOKUP(lookup_value, table_array, row_index_num, [range_lookup])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `lookup_value` | any | Required | — |
+| `table_array` | any (range) | Required | — |
+| `row_index_num` | number | Required | — |
+| `range_lookup` | logical | Optional | `true` |
 
 ## Remarks
  - `row_index_num` is 1-based and must be within the table height.
  - `range_lookup` defaults to `TRUE`, matching Excel and LibreOffice.
  - When `range_lookup=TRUE`, approximate match logic is used against the first row.
  - In exact mode, a blank candidate never matches. A blank lookup value matches a real numeric zero, but not blank, text, or boolean candidates.
- - Approximate matching assumes the first row is sorted ascending. Unsorted data is detected and returns `#N/A` rather than a silently wrong column, matching LibreOffice Calc (#283).
  - Numeric `range_lookup` values use logical coercion: zero is exact and nonzero is approximate.
+ - A matched empty target cell is materialized as numeric `0`.
+
+## Error cases
+
+ - Approximate matching assumes the first row is sorted ascending. Unsorted data is detected and returns `#N/A` rather than a silently wrong column, matching LibreOffice Calc (#283).
  - If the lookup value is not found, returns `#N/A`.
  - If `row_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
- - A matched empty target cell is materialized as numeric `0`.
 
 ## Examples
 
-<Tabs items={["Exact match across header row", "Approximate threshold lookup"]}>
-<Tab value="Exact match across header row">
-<FunctionSandbox
-  title="Exact match across header row"
-  formula={`=HLOOKUP("Feb",A1:B2,2,FALSE)`}
-  grid={{"A1":"Jan","A2":"120","B1":"Feb","B2":"150"}}
+<FunctionExample
+  title={"Match a header exactly and retrieve the second row."}
+  formula={"=HLOOKUP(\"Q2\",{\"Q1\",\"Q2\",\"Q3\";10,20,30},2,FALSE)"}
+  grid={{}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Use an approximate lookup in the sorted first row."}
+  formula={"=HLOOKUP(25,{10,20,30;\"Low\",\"Mid\",\"High\"},2,TRUE)"}
+  grid={{}}
+  expected={"Mid"}
+/>
+
+<FunctionExample
+  title={"Retrieve the value from the first row itself."}
+  formula={"=HLOOKUP(\"Q1\",{\"Q1\",\"Q2\";10,20},1,FALSE)"}
+  grid={{}}
+  expected={"Q1"}
+/>
+
+<FunctionExample
+  title={"A missing exact-match key returns an error."}
+  formula={"=HLOOKUP(\"Q4\",{\"Q1\",\"Q2\",\"Q3\";10,20,30},2,FALSE)"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Exact match across header row"}
+  formula={"=HLOOKUP(\"Feb\",A1:B2,2,FALSE)"}
+  grid={{"A1":"\"Jan\"","A2":"120","B1":"\"Feb\"","B2":"150"}}
   expected={"150"}
 />
-</Tab>
 
-<Tab value="Approximate threshold lookup">
-<FunctionSandbox
-  title="Approximate threshold lookup"
-  formula={`=HLOOKUP(72,A1:C2,2,TRUE)`}
-  grid={{"A1":"0","A2":"F","B1":"50","B2":"C","C1":"80","C2":"A"}}
+<FunctionExample
+  title={"Approximate threshold lookup"}
+  formula={"=HLOOKUP(72,A1:C2,2,TRUE)"}
+  grid={{"A1":"0","A2":"\"F\"","B1":"50","B2":"\"C\"","C1":"80","C2":"\"A\""}}
   expected={"C"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [VLOOKUP](/docs/reference/functions/lookup/vlookup)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
 - [MATCH](/docs/reference/functions/lookup/match)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 
 ## FAQ
 
@@ -60,8 +95,6 @@ It defaults to approximate matching because range_lookup defaults to TRUE; pass 
 ### How are invalid row_index_num values reported?
 If row_index_num is outside table height HLOOKUP returns #REF!; if it is non-numeric it returns #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/hlookup" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/core.rs)

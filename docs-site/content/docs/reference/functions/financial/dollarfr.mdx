@@ -1,60 +1,89 @@
 ---
 title: "DOLLARFR"
-description: "DOLLARFR: Converts a decimal dollar value into fractional-dollar notation."
+seoTitle: "DOLLARFR function: formula syntax and examples"
+description: "Converts a decimal dollar value into fractional-dollar notation. =DOLLARFR(decimal_dollar, fraction)"
 ---
 
-<FunctionPageSchema id="financial/dollarfr" />
-
-## Summary
+Converts a decimal dollar value into fractional-dollar notation.
 
 This is the inverse-style formatting helper used for quoted fractional price conventions.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DOLLARFR(decimal_dollar, fraction)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `decimal_dollar` | number | Required | — |
+| `fraction` | number | Required | — |
 
 ## Remarks
  - `fraction` is truncated to an integer denominator and must be `&gt;= 1`.
  - Sign convention: sign is preserved (`-x` maps to `-result`).
  - No periodic rate is involved in this conversion.
- - Returns `#NUM!` when `fraction &lt; 1` after truncation.
  - Fraction output is encoded by denominator digit width (`ceil(log10(fraction))`).
+
+## Error cases
+
+ - Returns `#NUM!` when `fraction &lt; 1` after truncation.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=DOLLARFR(1.125, 16)`}
+<FunctionExample
+  title={"Convert a dollar amount expressed with a 32-part fraction."}
+  formula={"=DOLLARFR(1.25,32)"}
   grid={{}}
-  expected={"null"}
+  expected={"1.08"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=DOLLARFR(-3.46875, 32)`}
+<FunctionExample
+  title={"Use a negative dollar amount and a different fraction base."}
+  formula={"=DOLLARFR(-1.25,16)"}
   grid={{}}
-  expected={"null"}
+  expected={"-1.04"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Zero remains zero under the conversion."}
+  formula={"=DOLLARFR(0,32)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A zero fraction denominator cannot define the conversion."}
+  formula={"=DOLLARFR(1.25,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Express a decimal dollar quote in sixteenths."}
+  formula={"=DOLLARFR(1.125, 16)"}
+  grid={{}}
+  expected={"1.02"}
+/>
+
+<FunctionExample
+  title={"Express the fractional portion of a negative dollar quote in thirty-seconds."}
+  formula={"=DOLLARFR(-3.46875, 32)"}
+  grid={{}}
+  expected={"-3.15"}
+/>
 
 ## Related functions
 
 - [DOLLARDE](/docs/reference/functions/financial/dollarde)
-- [EFFECT](/docs/reference/functions/financial/effect)
-- [NOMINAL](/docs/reference/functions/financial/nominal)
-- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
-- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [ISPMT](/docs/reference/functions/financial/ispmt)
 
 ## FAQ
 
 ### How does `DOLLARFR` encode the fractional part?
 It scales the numerator into decimal digits based on `ceil(log10(fraction))`, preserving the input sign.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/dollarfr" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

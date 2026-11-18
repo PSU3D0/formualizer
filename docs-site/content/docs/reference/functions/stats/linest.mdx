@@ -1,55 +1,88 @@
 ---
 title: "LINEST"
-description: "LINEST: Returns linear-regression coefficients and optional fit statistics."
+seoTitle: "LINEST function: formula syntax and examples"
+description: "Returns linear-regression coefficients and optional fit statistics. =LINEST(known_ys, [known_xs], [const], [stats])"
 ---
 
-<FunctionPageSchema id="stats/linest" />
+Returns linear-regression coefficients and optional fit statistics.
 
-## Summary
+`LINEST` fits `y = m1*x1 + ... + mk*xk + b` by least squares and returns either
+ `{mk, ..., m1, b}` or that row followed by the regression statistics.
 
-`LINEST` fits a straight line to known y/x pairs and returns either `[slope, intercept]` or a
- larger statistics matrix.
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LINEST(known_ys, [known_xs], [const], [stats])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `known_ys` | number (range) | Required | — |
+| `known_xs` | number (range) | Optional | — |
+| `const` | number (range) | Optional | — |
+| `stats` | number (range) | Optional | — |
 
 ## Remarks
  - `known_y` is required; `known_x` defaults to `1..n` when omitted.
- - `const` controls whether an intercept is fitted (`TRUE` by default).
- - `stats=TRUE` returns a `5x2` result block; otherwise it returns `1x2`.
- - Returns spreadsheet errors for mismatched lengths, empty data, or degenerate x-values.
+ - When `known_y` is a column, each column of `known_x` is a variable; when it is a row, each
+   row is. With one variable the two ranges only need equal dimensions.
+ - Coefficients are returned in reverse order of the variables, then `b`.
+ - `const` controls whether an intercept is fitted (`TRUE` by default); with `FALSE`, `b = 0`.
+ - `stats=TRUE` returns 5 rows: coefficients, standard errors (`se_b` is `#N/A` without a
+   constant), `r2`/`sey`, `F`/`df`, and `ssreg`/`ssresid`, padded with `#N/A`.
+ - A variable that is a linear combination of the others is removed: its coefficient and
+   standard error are `0` and `df` grows by one.
+
+## Error cases
+
+ - Returns `#VALUE!` for non-numeric data and `#REF!` for incompatible shapes.
 
 ## Examples
 
-<Tabs items={["Slope and intercept only", "Linear fit with non-zero intercept"]}>
-<Tab value="Slope and intercept only">
-<FunctionSandbox
-  title="Slope and intercept only"
-  formula={`=LINEST({2,4,6},{1,2,3})`}
+<FunctionExample
+  title={"Fit coefficients using three observations and their known x values."}
+  formula={"=LINEST({2;4;8},{1;2;3})"}
   grid={{}}
-  expected={"[[2,0]]"}
+  expected={"{3, -1.33333333333333}"}
 />
-</Tab>
 
-<Tab value="Linear fit with non-zero intercept">
-<FunctionSandbox
-  title="Linear fit with non-zero intercept"
-  formula={`=LINEST({3,5,7},{1,2,3})`}
+<FunctionExample
+  title={"Request the additional regression statistics."}
+  formula={"=LINEST({2;4;8},{1;2;3},TRUE,TRUE)"}
   grid={{}}
-  expected={"[[2,1]]"}
+  expected={"{3, -1.33333333333333; 0.577350269189626, 1.24721912892465; 0.964285714285714, 0.816496580927726; 27, 1; 18, 0.666666666666667}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Use two observations with distinct x values."}
+  formula={"=LINEST({2;4},{1;2})"}
+  grid={{}}
+  expected={"{2, 0}"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"The independent and dependent observations do not align."}
+  formula={"=LINEST({2;4;8},{1;2})"}
+  grid={{}}
+  expected={"#REF!"}
+/>
 
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
-- [GROWTH](/docs/reference/functions/stats/growth)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
-- [KURT](/docs/reference/functions/stats/kurt)
+<FunctionExample
+  title={"Slope and intercept only"}
+  formula={"=LINEST({2,4,6},{1,2,3})"}
+  grid={{}}
+  expected={"{2, 0}"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Linear fit with non-zero intercept"}
+  formula={"=LINEST({3,5,7},{1,2,3})"}
+  grid={{}}
+  expected={"{2, 1}"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/linest" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

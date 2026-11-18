@@ -1,58 +1,87 @@
 ---
 title: "POWER"
-description: "Raises a base number to a specified power."
+seoTitle: "POWER function: formula syntax and examples"
+description: "Raises a base number to a specified power. =POWER(number, power)"
 ---
-
-<FunctionPageSchema id="math/power" />
-
-## Summary
 
 Raises a base number to a specified power.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=POWER(number, power)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `power` | number | Required | — |
+
 ## Remarks
  - Equivalent to exponentiation (`base^exponent`).
- - Negative bases with fractional exponents return `#NUM!`.
  - Errors are propagated.
+
+## Error cases
+
+ - Negative bases with fractional exponents return `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Integer exponent", "Fractional exponent"]}>
-<Tab value="Integer exponent">
-<FunctionSandbox
-  title="Integer exponent"
-  formula={`=POWER(2,10)`}
+<FunctionExample
+  title={"Raise a positive base to a positive integer power."}
+  formula={"=POWER(2,5)"}
+  grid={{}}
+  expected={"32"}
+/>
+
+<FunctionExample
+  title={"A negative exponent gives the reciprocal of the positive power."}
+  formula={"=POWER(2,-5)"}
+  grid={{}}
+  expected={"0.03125"}
+/>
+
+<FunctionExample
+  title={"A nonzero base raised to zero gives one."}
+  formula={"=POWER(2,0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative base raised to this fractional exponent has no real value."}
+  formula={"=POWER(-2,0.5)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Integer exponent"}
+  formula={"=POWER(2,10)"}
   grid={{}}
   expected={"1024"}
 />
-</Tab>
 
-<Tab value="Fractional exponent">
-<FunctionSandbox
-  title="Fractional exponent"
-  formula={`=POWER(9,0.5)`}
+<FunctionExample
+  title={"Fractional exponent"}
+  formula={"=POWER(9,0.5)"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SQRT](/docs/reference/functions/math/sqrt)
 - [EXP](/docs/reference/functions/math/exp)
 - [LN](/docs/reference/functions/math/ln)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
 
 ## FAQ
 
 ### Why can POWER return #NUM! for negative bases?
 Negative bases with fractional exponents are rejected to avoid complex-number results.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/power" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

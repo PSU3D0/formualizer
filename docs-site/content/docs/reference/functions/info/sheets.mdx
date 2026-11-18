@@ -1,62 +1,69 @@
 ---
 title: "SHEETS"
-description: "Returns the number of sheets in the workbook or reference span."
+seoTitle: "SHEETS function: formula syntax and examples"
+description: "Returns the number of sheets in the workbook or reference span. =SHEETS([reference])"
 ---
 
-<FunctionPageSchema id="info/sheets" />
-
-## Summary
+Returns the number of sheets in the workbook or reference span.
 
 With no argument, returns the active workbook sheet count. With a reference,
  returns the number of sheets covered by that reference.
 
-
-
-
-
-
-
 Returns the number of sheets in the workbook or covered by a 3D reference.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SHEETS([reference])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `reference` | any | Optional | — |
 
 ## Examples
 
-<Tabs items={["Workbook sheet count", "Single-sheet reference count"]}>
-<Tab value="Workbook sheet count">
-<FunctionSandbox
-  title="Workbook sheet count"
-  formula={`=SHEETS()`}
+<FunctionExample
+  title={"Use the default based on the workbook containing the formula."}
+  formula={"=SHEETS()"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Single-sheet reference count">
-<FunctionSandbox
-  title="Single-sheet reference count"
-  formula={`=SHEETS(A1)`}
+<FunctionExample
+  title={"Supply a reference on a second sheet."}
+  formula={"=SHEETS(Sheet2!A1)"}
+  grid={{"Sheet2!A1":"8"}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Evaluate a reference to the first sheet."}
+  formula={"=SHEETS(A1)"}
+  grid={{"A1":"7"}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Single-sheet reference count"}
+  formula={"=SHEETS(A1)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SHEET](/docs/reference/functions/info/sheet)
 - [ISREF](/docs/reference/functions/info/isref)
 - [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [ISBLANK](/docs/reference/functions/info/isblank)
-- [ISERR](/docs/reference/functions/info/iserr)
 
 ## FAQ
 
 ### What does SHEETS return for ordinary references?
 Ordinary references cover one sheet, so the result is 1.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/sheets" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

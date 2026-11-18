@@ -1,63 +1,93 @@
 ---
 title: "INDIRECT"
-description: "INDIRECT: Converts text into a reference and returns the referenced value or range."
+seoTitle: "INDIRECT function: formula syntax and examples"
+description: "Converts text into a reference and returns the referenced value or range. =INDIRECT(ref_text, [a1])"
 ---
 
-<FunctionPageSchema id="reference-fns/indirect" />
-
-## Summary
+Converts text into a reference and returns the referenced value or range.
 
 `INDIRECT` lets formulas build references dynamically from strings such as `"A1"` or
  `"Sheet2!B3:C5"`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=INDIRECT(ref_text, [a1])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `ref_text` | text | Required | — |
+| `a1` | logical or number | Optional | `true` |
+
+## Return type
+
+Can return a reference when evaluated in a reference context.
+
 ## Remarks
  - `a1_style` defaults to `TRUE` (A1 style parsing).
- - `a1_style=FALSE` (R1C1 parsing) is currently not implemented and returns `#N/IMPL!`.
- - Invalid or unresolved references return `#REF!`.
  - The function is volatile because target references can change without direct dependency links.
+
+## Differences from Excel
+ R1C1 cell and range references selected with `a1_style=FALSE` return `#N/IMPL!` in Formualizer.
+
+## Error cases
+
+ - Invalid or unresolved references return `#REF!`.
 
 ## Examples
 
-<Tabs items={["Resolve a direct cell reference", "Resolve a range and aggregate it"]}>
-<Tab value="Resolve a direct cell reference">
-<FunctionSandbox
-  title="Resolve a direct cell reference"
-  formula={`=INDIRECT("A1")`}
+<FunctionExample
+  title={"Resolve an A1-style address provided as text."}
+  formula={"=INDIRECT(\"A1\")"}
   grid={{"A1":"99"}}
   expected={"99"}
 />
-</Tab>
 
-<Tab value="Resolve a range and aggregate it">
-<FunctionSandbox
-  title="Resolve a range and aggregate it"
-  formula={`=SUM(INDIRECT("A1:A3"))`}
+<FunctionExample
+  title={"Resolve an absolute A1-style reference and explicitly select A1 notation."}
+  formula={"=INDIRECT(\"$B$2\",TRUE)"}
+  grid={{"B2":"42"}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"Resolve the reference to an empty cell."}
+  formula={"=INDIRECT(\"B1\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A string that cannot be resolved to a reference returns an error."}
+  formula={"=INDIRECT(\"not a reference\")"}
+  grid={{}}
+  expected={"#REF!"}
+/>
+
+<FunctionExample
+  title={"Resolve a range and aggregate it"}
+  formula={"=SUM(INDIRECT(\"A1:A3\"))"}
   grid={{"A1":"5","A2":"7","A3":"9"}}
   expected={"21"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [ADDRESS](/docs/reference/functions/lookup/address)
 - [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [OFFSET](/docs/reference/functions/reference-fns/offset)
-- [FIXED](/docs/reference/functions/text/fixed)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
-- [DOLLAR](/docs/reference/functions/text/dollar)
 
 ## FAQ
 
 ### What happens if a1_style is FALSE?
-R1C1 parsing is not implemented here yet, so INDIRECT(...,FALSE) returns #N/IMPL!.
+R1C1 cell and range references are unsupported. Defined names and table references can still resolve with either flag.
 
 ### How are bad reference strings reported?
 If the text cannot be parsed or resolved to a valid reference, INDIRECT returns #REF!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="reference-fns/indirect" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/reference_fns.rs)

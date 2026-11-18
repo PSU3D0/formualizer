@@ -1,58 +1,73 @@
 ---
 title: "MROUND"
-description: "MROUND: Rounds a number to the nearest multiple."
+seoTitle: "MROUND function: formula syntax and examples"
+description: "Rounds a number to the nearest multiple. =MROUND(number, multiple)"
 ---
-
-<FunctionPageSchema id="math/mround" />
-
-## Summary
 
 Rounds a number to the nearest multiple.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MROUND(number, multiple)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `multiple` | number | Required | — |
+
 ## Remarks
  - Returns `0` when `multiple` is `0`.
- - If `number` and `multiple` have different signs, returns `#NUM!`.
  - Midpoints are rounded away from zero.
+
+## Error cases
+
+ - If `number` and `multiple` have different signs, returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Round to nearest 5", "Round negative value"]}>
-<Tab value="Round to nearest 5">
-<FunctionSandbox
-  title="Round to nearest 5"
-  formula={`=MROUND(17,5)`}
+<FunctionExample
+  title={"Round 17 to the nearest multiple of five."}
+  formula={"=MROUND(17,5)"}
   grid={{}}
   expected={"15"}
 />
-</Tab>
 
-<Tab value="Round negative value">
-<FunctionSandbox
-  title="Round negative value"
-  formula={`=MROUND(-17,-5)`}
+<FunctionExample
+  title={"Use negative inputs on both sides of the rounding calculation."}
+  formula={"=MROUND(-17,-5)"}
   grid={{}}
   expected={"-15"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A value already at a multiple stays in place."}
+  formula={"=MROUND(15,5)"}
+  grid={{}}
+  expected={"15"}
+/>
+
+<FunctionExample
+  title={"Opposite signs for the number and multiple are rejected."}
+  formula={"=MROUND(17,-5)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
 ## Related functions
 
 - [ROUND](/docs/reference/functions/math/round)
 - [CEILING](/docs/reference/functions/math/ceiling)
 - [FLOOR](/docs/reference/functions/math/floor)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
 
 ## FAQ
 
 ### Why does MROUND return #NUM! for mixed signs?
 If number and multiple have different signs (excluding zero), MROUND returns #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/mround" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

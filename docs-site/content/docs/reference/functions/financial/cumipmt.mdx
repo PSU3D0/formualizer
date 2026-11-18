@@ -1,60 +1,95 @@
 ---
 title: "CUMIPMT"
-description: "CUMIPMT: Returns cumulative interest paid between two inclusive payment periods."
+seoTitle: "CUMIPMT function: formula syntax and examples"
+description: "Returns cumulative interest paid between two inclusive payment periods. =CUMIPMT(rate, nper, pv, start_period, end_period, type)"
 ---
 
-<FunctionPageSchema id="financial/cumipmt" />
-
-## Summary
+Returns cumulative interest paid between two inclusive payment periods.
 
 Use this to total the interest component over a slice of an amortization schedule.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CUMIPMT(rate, nper, pv, start_period, end_period, type)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `nper` | number | Required | — |
+| `pv` | number | Required | — |
+| `start_period` | number | Required | — |
+| `end_period` | number | Required | — |
+| `type` | number | Required | — |
 
 ## Remarks
  - `rate` is the interest rate per payment period.
  - `start_period` and `end_period` are 1-based, inclusive integer periods.
  - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
- - Sign convention follows this implementation's balance model; with positive `pv`, cumulative interest is typically positive.
+ - With positive `pv`, cumulative interest is a negative cash outflow.
+
+## Error cases
+
  - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=CUMIPMT(0.06/12, 360, 300000, 1, 12, 0)`}
+<FunctionExample
+  title={"Calculate the portion paid during the first year of a three-year loan."}
+  formula={"=CUMIPMT(0.05/12,36,10000,1,12,0)"}
   grid={{}}
-  expected={"null"}
+  expected={"-428.043486354402"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=CUMIPMT(0.06/12, 360, 300000, 13, 24, 0)`}
+<FunctionExample
+  title={"Move payments to the beginning of each month."}
+  formula={"=CUMIPMT(0.05/12,36,10000,1,12,1)"}
   grid={{}}
-  expected={"null"}
+  expected={"-384.773596369529"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Limit the calculation to the final payment."}
+  formula={"=CUMIPMT(0.05/12,36,10000,36,36,0)"}
+  grid={{}}
+  expected={"-1.24360568899041"}
+/>
+
+<FunctionExample
+  title={"The ending period cannot precede the starting period."}
+  formula={"=CUMIPMT(0.05/12,36,10000,12,1,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Total the interest paid in the first year of a 30-year mortgage."}
+  formula={"=CUMIPMT(0.06/12, 360, 300000, 1, 12, 0)"}
+  grid={{}}
+  expected={"-17899.7837686689"}
+/>
+
+<FunctionExample
+  title={"Total the interest paid in the second year of that mortgage."}
+  formula={"=CUMIPMT(0.06/12, 360, 300000, 13, 24, 0)"}
+  grid={{}}
+  expected={"-17672.5605425973"}
+/>
 
 ## Related functions
 
 - [IPMT](/docs/reference/functions/financial/ipmt)
 - [PMT](/docs/reference/functions/financial/pmt)
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [DOLLARDE](/docs/reference/functions/financial/dollarde)
-- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
 
 ## FAQ
 
 ### Are `start_period` and `end_period` inclusive in `CUMIPMT`?
 Yes. Both bounds are inclusive and interpreted as 1-based periods after truncation to integers.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/cumipmt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

@@ -1,58 +1,87 @@
 ---
 title: "QUOTIENT"
-description: "QUOTIENT: Returns the integer portion of a division result, truncated toward zero."
+seoTitle: "QUOTIENT function: formula syntax and examples"
+description: "Returns the integer portion of a division result, truncated toward zero. =QUOTIENT(numerator, denominator)"
 ---
-
-<FunctionPageSchema id="math/quotient" />
-
-## Summary
 
 Returns the integer portion of a division result, truncated toward zero.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=QUOTIENT(numerator, denominator)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `numerator` | number | Required | — |
+| `denominator` | number | Required | — |
+
 ## Remarks
  - Fractional remainder is discarded without rounding.
- - Dividing by `0` returns `#DIV/0!`.
  - Input errors are propagated.
+
+## Error cases
+
+ - Dividing by `0` returns `#DIV/0!`.
 
 ## Examples
 
-<Tabs items={["Positive quotient", "Negative quotient truncates toward zero"]}>
-<Tab value="Positive quotient">
-<FunctionSandbox
-  title="Positive quotient"
-  formula={`=QUOTIENT(10,3)`}
+<FunctionExample
+  title={"Divide two positive integers with a remainder."}
+  formula={"=QUOTIENT(17,5)"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
 
-<Tab value="Negative quotient truncates toward zero">
-<FunctionSandbox
-  title="Negative quotient truncates toward zero"
-  formula={`=QUOTIENT(-10,3)`}
+<FunctionExample
+  title={"Compare the result when the first number is negative."}
+  formula={"=QUOTIENT(-17,5)"}
   grid={{}}
   expected={"-3"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Divide integers with no remainder."}
+  formula={"=QUOTIENT(15,5)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"A zero denominator makes the operation undefined."}
+  formula={"=QUOTIENT(17,0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Positive quotient"}
+  formula={"=QUOTIENT(10,3)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"Negative quotient truncates toward zero"}
+  formula={"=QUOTIENT(-10,3)"}
+  grid={{}}
+  expected={"-3"}
+/>
 
 ## Related functions
 
 - [MOD](/docs/reference/functions/math/mod)
 - [INT](/docs/reference/functions/math/int)
 - [TRUNC](/docs/reference/functions/math/trunc)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
 
 ## FAQ
 
 ### How is QUOTIENT different from regular division?
 It truncates the fractional part toward zero instead of returning a decimal result.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/quotient" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

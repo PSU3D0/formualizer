@@ -1,61 +1,79 @@
 ---
 title: "ISREF"
-description: "ISREF: Returns TRUE when the argument resolves to a reference."
+seoTitle: "ISREF function: formula syntax and examples"
+description: "Returns TRUE when the argument resolves to a reference. =ISREF(value)"
 ---
-
-<FunctionPageSchema id="info/isref" />
-
-## Summary
-
-Checks reference metadata without materializing the referenced value or range.
-
-
-
-
-
-
 
 Returns TRUE when the argument resolves to a reference.
 
+Checks reference metadata without materializing the referenced value or range.
+
+Returns TRUE when the argument resolves to a reference.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISREF(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
+## Return type
+
+Logical (TRUE or FALSE)
+
 ## Examples
 
-<Tabs items={["Cell reference", "Expression is not a reference"]}>
-<Tab value="Cell reference">
-<FunctionSandbox
-  title="Cell reference"
-  formula={`=ISREF(A1)`}
-  grid={{}}
-  expected={"true"}
+<FunctionExample
+  title={"Test a reference to a populated cell."}
+  formula={"=ISREF(A1)"}
+  grid={{"A1":"7"}}
+  expected={"TRUE"}
 />
-</Tab>
 
-<Tab value="Expression is not a reference">
-<FunctionSandbox
-  title="Expression is not a reference"
-  formula={`=ISREF(1+1)`}
-  grid={{}}
-  expected={"false"}
+<FunctionExample
+  title={"A rectangular range is also a reference."}
+  formula={"=ISREF(A1:B2)"}
+  grid={{"A1":"7"}}
+  expected={"TRUE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A number written directly in the formula is a value."}
+  formula={"=ISREF(7)"}
+  grid={{}}
+  expected={"FALSE"}
+/>
+
+<FunctionExample
+  title={"Cell reference"}
+  formula={"=ISREF(A1)"}
+  grid={{}}
+  expected={"TRUE"}
+/>
+
+<FunctionExample
+  title={"Expression is not a reference"}
+  formula={"=ISREF(1+1)"}
+  grid={{}}
+  expected={"FALSE"}
+/>
 
 ## Related functions
 
 - [FORMULATEXT](/docs/reference/functions/info/formulatext)
 - [SHEET](/docs/reference/functions/info/sheet)
 - [ISFORMULA](/docs/reference/functions/info/isformula)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [ISBLANK](/docs/reference/functions/info/isblank)
-- [ISERR](/docs/reference/functions/info/iserr)
 
 ## FAQ
 
 ### Does ISREF read cell values?
 No. It inspects whether the argument can resolve as a reference.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/isref" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

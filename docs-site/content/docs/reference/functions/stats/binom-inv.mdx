@@ -1,23 +1,62 @@
 ---
 title: "BINOM.INV"
-description: "BINOM.INV: Returns the smallest number of successes whose cumulative binomial probability meets a threshold."
+seoTitle: "BINOM.INV function: formula syntax and examples"
+description: "Returns the smallest number of successes whose cumulative binomial probability meets a threshold. =BINOM.INV(trials, probability_s, alpha)"
 ---
-
-<FunctionPageSchema id="stats/binom-inv" />
-
-## Summary
 
 Returns the smallest number of successes whose cumulative binomial probability meets a threshold.
 
-## returns: 5
- =BINOM.INV(10,0.5,0.5)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BINOM.INV(trials, probability_s, alpha)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `trials` | number | Required | — |
+| `probability_s` | number | Required | — |
+| `alpha` | number | Required | — |
+
+## How it works
+
+Finds the first integer k for which the binomial cumulative probability P(X ≤ k) is at least alpha. Both p and alpha are probabilities, and k can never exceed the trial count.
 
 ## Examples
 
-<FunctionSandbox
-  title="Median success threshold"
-  formula={`=BINOM.INV(10,0.5,0.5)`}
+<FunctionExample
+  title={"Find the first success count that reaches cumulative probability one-half."}
+  formula={"=BINOM.INV(8,0.4,0.5)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"Use a higher probability threshold for the same experiment."}
+  formula={"=BINOM.INV(8,0.4,0.9)"}
+  grid={{}}
+  expected={"5"}
+/>
+
+<FunctionExample
+  title={"Use the lower probability boundary."}
+  formula={"=BINOM.INV(8,0.4,0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The cumulative threshold cannot be greater than one."}
+  formula={"=BINOM.INV(8,0.4,1.1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Median success threshold"}
+  formula={"=BINOM.INV(10,0.5,0.5)"}
   grid={{}}
   expected={"5"}
 />
@@ -26,18 +65,12 @@ Returns the smallest number of successes whose cumulative binomial probability m
 
 - [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
 - [BINOM.DIST.RANGE](/docs/reference/functions/stats/binom-dist-range)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
-- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
-- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
 
 ## FAQ
 
 ### Is CRITBINOM supported?
 Yes. CRITBINOM is registered as an alias of BINOM.INV.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/binom-inv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

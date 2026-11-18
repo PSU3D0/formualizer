@@ -1,13 +1,29 @@
 ---
 title: "BIN2HEX"
-description: "BIN2HEX: Converts a binary text value to hexadecimal text."
+seoTitle: "BIN2HEX function: formula syntax and examples"
+description: "Converts a binary text value to hexadecimal text. =BIN2HEX(number, [places])"
 ---
 
-<FunctionPageSchema id="engineering/bin2hex" />
-
-## Summary
+Converts a binary text value to hexadecimal text.
 
 Optionally pads the output with leading zeros using `places`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BIN2HEX(number, [places])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `places` | number | Optional | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Input must be a binary string up to 10 digits; 10-digit values may be signed.
@@ -16,43 +32,52 @@ Optionally pads the output with leading zeros using `places`.
 
 ## Examples
 
-<Tabs items={["Convert binary to hex", "Pad hexadecimal output"]}>
-<Tab value="Convert binary to hex">
-<FunctionSandbox
-  title="Convert binary to hex"
-  formula={`=BIN2HEX("1010")`}
+<FunctionExample
+  title={"Convert a binary value using the shortest output."}
+  formula={"=BIN2HEX(\"1010\")"}
   grid={{}}
   expected={"A"}
 />
-</Tab>
 
-<Tab value="Pad hexadecimal output">
-<FunctionSandbox
-  title="Pad hexadecimal output"
-  formula={`=BIN2HEX("1010",4)`}
+<FunctionExample
+  title={"Ask for five output places, padding on the left."}
+  formula={"=BIN2HEX(\"1010\",5)"}
+  grid={{}}
+  expected={"0000A"}
+/>
+
+<FunctionExample
+  title={"Convert zero with a one-place width."}
+  formula={"=BIN2HEX(\"0\",1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The input contains a digit outside base two."}
+  formula={"=BIN2HEX(\"102\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Pad hexadecimal output"}
+  formula={"=BIN2HEX(\"1010\",4)"}
   grid={{}}
   expected={"000A"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
-- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
 
 ## FAQ
 
 ### Does `BIN2HEX` preserve signed binary meaning?
 Yes. A 10-bit binary with leading `1` is interpreted as signed and converted using two's-complement semantics.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/bin2hex" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

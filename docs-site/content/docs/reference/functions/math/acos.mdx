@@ -1,58 +1,85 @@
 ---
 title: "ACOS"
-description: "ACOS: Returns the angle in radians whose cosine is the input value."
+seoTitle: "ACOS function: formula syntax and examples"
+description: "Returns the angle in radians whose cosine is the input value. =ACOS(number)"
 ---
 
-<FunctionPageSchema id="math/acos" />
-
-## Summary
+Returns the angle in radians whose cosine is the input value.
 
 Use `ACOS` when you need an angle from a normalized adjacent/hypotenuse ratio.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ACOS(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Inverts cosine on the interval from 0 to π. The real input must be from −1 through 1 inclusive.
 
 ## Remarks
  - Domain: input must be between `-1` and `1`, inclusive.
  - Radians: output is in the range `[0, PI()]`.
+
+## Error cases
+
  - Errors: returns `#NUM!` when the input is outside the valid domain.
 
 ## Examples
 
-<Tabs items={["Arccosine of one half", "Upper-angle boundary"]}>
-<Tab value="Arccosine of one half">
-<FunctionSandbox
-  title="Arccosine of one half"
-  formula={`=ACOS(0.5)`}
+<FunctionExample
+  title={"Find the angle with horizontal coordinate one half."}
+  formula={"=ACOS(0.5)"}
   grid={{}}
-  expected={"1.0471975511965979"}
+  expected={"1.0471975511966"}
 />
-</Tab>
 
-<Tab value="Upper-angle boundary">
-<FunctionSandbox
-  title="Upper-angle boundary"
-  formula={`=ACOS(-1)`}
+<FunctionExample
+  title={"A negative horizontal coordinate of one half gives an obtuse angle."}
+  formula={"=ACOS(-0.5)"}
   grid={{}}
-  expected={"3.141592653589793"}
+  expected={"2.0943951023932"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A zero cosine maps to π/2."}
+  formula={"=ACOS(0)"}
+  grid={{}}
+  expected={"1.5707963267949"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the inverse cosine."}
+  formula={"=ACOS(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Upper-angle boundary"}
+  formula={"=ACOS(-1)"}
+  grid={{}}
+  expected={"3.14159265358979"}
+/>
 
 ## Related functions
 
 - [COS](/docs/reference/functions/math/cos)
 - [ASIN](/docs/reference/functions/math/asin)
 - [ATAN2](/docs/reference/functions/math/atan2)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
-- [ASINH](/docs/reference/functions/math/asinh)
 
 ## FAQ
 
 ### Why does ACOS reject values like 1.0001?
 ACOS is only defined on [-1, 1], so out-of-range inputs return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/acos" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

@@ -1,13 +1,28 @@
 ---
 title: "ISNUMBER"
-description: "ISNUMBER: Returns TRUE when the value is numeric."
+seoTitle: "ISNUMBER function: formula syntax and examples"
+description: "Returns TRUE when the value is numeric. =ISNUMBER(value)"
 ---
 
-<FunctionPageSchema id="info/isnumber" />
-
-## Summary
+Returns TRUE when the value is numeric.
 
 This includes integer, floating-point, and temporal serial-compatible values.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISNUMBER(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
+## Return type
+
+Logical (TRUE or FALSE)
 
 ## Remarks
  - Returns TRUE for `Int`, `Number`, `Date`, `DateTime`, `Time`, and `Duration`.
@@ -16,43 +31,52 @@ This includes integer, floating-point, and temporal serial-compatible values.
 
 ## Examples
 
-<Tabs items={["Number is numeric", "Numeric text is not numeric"]}>
-<Tab value="Number is numeric">
-<FunctionSandbox
-  title="Number is numeric"
-  formula={`=ISNUMBER(42)`}
+<FunctionExample
+  title={"Test how the predicate classifies a logical value."}
+  formula={"=ISNUMBER(TRUE)"}
   grid={{}}
-  expected={"true"}
+  expected={"FALSE"}
 />
-</Tab>
 
-<Tab value="Numeric text is not numeric">
-<FunctionSandbox
-  title="Numeric text is not numeric"
-  formula={`=ISNUMBER("42")`}
+<FunctionExample
+  title={"Test numeric-looking text without converting it to a number."}
+  formula={"=ISNUMBER(\"123\")"}
   grid={{}}
-  expected={"false"}
+  expected={"FALSE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Test an empty string, which still has a text type."}
+  formula={"=ISNUMBER(\"\")"}
+  grid={{}}
+  expected={"FALSE"}
+/>
+
+<FunctionExample
+  title={"Number is numeric"}
+  formula={"=ISNUMBER(42)"}
+  grid={{}}
+  expected={"TRUE"}
+/>
+
+<FunctionExample
+  title={"Numeric text is not numeric"}
+  formula={"=ISNUMBER(\"42\")"}
+  grid={{}}
+  expected={"FALSE"}
+/>
 
 ## Related functions
 
 - [VALUE](/docs/reference/functions/text/value)
 - [N](/docs/reference/functions/info/n)
 - [TYPE](/docs/reference/functions/info/type)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
 ### Does numeric-looking text count as a number?
 No. ISNUMBER checks the stored value type, so text like "42" returns FALSE.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/isnumber" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

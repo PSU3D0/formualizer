@@ -1,55 +1,93 @@
 ---
 title: "NORM.DIST"
-description: "NORM.DIST: Returns the normal-distribution probability at `x` for a given mean and standard deviation."
+seoTitle: "NORM.DIST function: formula syntax and examples"
+description: "Returns the normal-distribution probability at x for a given mean and standard deviation. =NORM.DIST(x, mean, standard_dev, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/norm-dist" />
-
-## Summary
+Returns the normal-distribution probability at `x` for a given mean and standard deviation.
 
 Use `NORM.DIST` for either cumulative probabilities or point density under a non-standard
  normal model.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NORM.DIST(x, mean, standard_dev, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `mean` | number | Required | — |
+| `standard_dev` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+Standardize x to z = (x − mean) / standard_dev. The cumulative result is Φ(z), the standard normal area below z. The density is φ(z) divided by the standard deviation, which must be positive.
+
 ## Remarks
  - Set `cumulative` to non-zero for `P(X &lt;= x)`; set it to `0` for density mode.
  - `standard_dev` must be strictly greater than `0`.
- - Returns `#NUM!` when `standard_dev &lt;= 0`.
  - Invalid numeric coercions propagate as spreadsheet errors.
+ - Alias `NORMDIST` (the Excel 2007 compatibility name) is supported.
+
+## Error cases
+
+ - Returns `#NUM!` when `standard_dev &lt;= 0`.
 
 ## Examples
 
-<Tabs items={["Normal CDF at the mean", "Normal PDF at the mean"]}>
-<Tab value="Normal CDF at the mean">
-<FunctionSandbox
-  title="Normal CDF at the mean"
-  formula={`=NORM.DIST(50,50,10,TRUE)`}
+<FunctionExample
+  title={"Find the standard normal cumulative probability at two standard deviations."}
+  formula={"=NORM.DIST(2,0,1,TRUE)"}
+  grid={{}}
+  expected={"0.977249868051821"}
+/>
+
+<FunctionExample
+  title={"Evaluate the standard normal density at z = 2."}
+  formula={"=NORM.DIST(2,0,1,FALSE)"}
+  grid={{}}
+  expected={"0.0539909665131881"}
+/>
+
+<FunctionExample
+  title={"At z = 1 the cumulative area is the probability below one standard deviation."}
+  formula={"=NORM.DIST(1,0,1,TRUE)"}
+  grid={{}}
+  expected={"0.841344746068543"}
+/>
+
+<FunctionExample
+  title={"The standard deviation must be positive."}
+  formula={"=NORM.DIST(2,0,0,TRUE)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Normal CDF at the mean"}
+  formula={"=NORM.DIST(50,50,10,TRUE)"}
   grid={{}}
   expected={"0.5"}
 />
-</Tab>
 
-<Tab value="Normal PDF at the mean">
-<FunctionSandbox
-  title="Normal PDF at the mean"
-  formula={`=NORM.DIST(50,50,10,FALSE)`}
+<FunctionExample
+  title={"Normal PDF at the mean"}
+  formula={"=NORM.DIST(50,50,10,FALSE)"}
   grid={{}}
-  expected={"0.03989422804014327"}
+  expected={"0.0398942280401433"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [NORM.INV](/docs/reference/functions/stats/norm-inv)
 - [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
 - [NORM.S.INV](/docs/reference/functions/stats/norm-s-inv)
-- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
-- [F.DIST](/docs/reference/functions/stats/f-dist)
-- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/norm-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

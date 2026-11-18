@@ -1,19 +1,61 @@
 ---
 title: "FLOOR.PRECISE"
-description: "FLOOR.PRECISE: Rounds a number down toward negative infinity using absolute significance."
+seoTitle: "FLOOR.PRECISE function: formula syntax and examples"
+description: "Rounds a number down toward negative infinity using absolute significance. =FLOOR.PRECISE(number, [significance])"
 ---
-
-<FunctionPageSchema id="math/floor-precise" />
-
-## Summary
 
 Rounds a number down toward negative infinity using absolute significance.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FLOOR.PRECISE(number, [significance])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `significance` | number | Optional | — |
+
+## How it works
+
+For nonzero significance s, the result is |s| times the greatest integer at most x / |s|. A zero significance yields zero, and negative numbers round toward negative infinity on the nonzero grid.
+
 ## Examples
 
-<FunctionSandbox
-  title="Round a negative number downward"
-  formula={`=FLOOR.PRECISE(-4.3)`}
+<FunctionExample
+  title={"Round a fractional number to a multiple of two."}
+  formula={"=FLOOR.PRECISE(7.2,2)"}
+  grid={{}}
+  expected={"6"}
+/>
+
+<FunctionExample
+  title={"Use the default significance."}
+  formula={"=FLOOR.PRECISE(7.2)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A number already at a multiple of the significance stays at that multiple."}
+  formula={"=FLOOR.PRECISE(8,2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"The number argument cannot be read from this text."}
+  formula={"=FLOOR.PRECISE(\"invalid\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Round a negative number downward"}
+  formula={"=FLOOR.PRECISE(-4.3)"}
   grid={{}}
   expected={"-5"}
 />
@@ -21,19 +63,12 @@ Rounds a number down toward negative infinity using absolute significance.
 ## Related functions
 
 - [CEILING.PRECISE](/docs/reference/functions/math/ceiling-precise)
-- [FLOOR](/docs/reference/functions/math/floor)
-- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 
 ## FAQ
 
 ### Does FLOOR.PRECISE keep negative significance?
 No. Like Excel, this implementation uses the absolute value of significance.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/floor-precise" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

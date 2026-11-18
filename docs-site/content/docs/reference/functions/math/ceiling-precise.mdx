@@ -1,19 +1,61 @@
 ---
 title: "CEILING.PRECISE"
-description: "CEILING.PRECISE: Rounds a number up toward positive infinity using absolute significance."
+seoTitle: "CEILING.PRECISE function: formula syntax and examples"
+description: "Rounds a number up toward positive infinity using absolute significance. =CEILING.PRECISE(number, [significance])"
 ---
-
-<FunctionPageSchema id="math/ceiling-precise" />
-
-## Summary
 
 Rounds a number up toward positive infinity using absolute significance.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CEILING.PRECISE(number, [significance])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `significance` | number | Optional | — |
+
+## How it works
+
+For nonzero significance s, the result is |s| times the least integer at least x / |s|. The sign of s does not change the result. A zero significance yields zero.
+
 ## Examples
 
-<FunctionSandbox
-  title="Round a negative number upward"
-  formula={`=CEILING.PRECISE(-4.3)`}
+<FunctionExample
+  title={"Round a fractional number to a multiple of two."}
+  formula={"=CEILING.PRECISE(7.2,2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"Use the default significance."}
+  formula={"=CEILING.PRECISE(7.2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"A number already at a multiple of the significance stays at that multiple."}
+  formula={"=CEILING.PRECISE(8,2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"The number argument cannot be read from this text."}
+  formula={"=CEILING.PRECISE(\"invalid\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Round a negative number upward"}
+  formula={"=CEILING.PRECISE(-4.3)"}
   grid={{}}
   expected={"-4"}
 />
@@ -22,18 +64,12 @@ Rounds a number up toward positive infinity using absolute significance.
 
 - [FLOOR.PRECISE](/docs/reference/functions/math/floor-precise)
 - [ISO.CEILING](/docs/reference/functions/math/iso-ceiling)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [FLOOR](/docs/reference/functions/math/floor)
 
 ## FAQ
 
 ### Does the sign of significance matter?
 No. CEILING.PRECISE uses the absolute value of significance.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/ceiling-precise" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

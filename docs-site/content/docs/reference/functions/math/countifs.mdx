@@ -1,50 +1,70 @@
 ---
 title: "COUNTIFS"
-description: "COUNTIFS: Counts cells that satisfy all supplied criteria pairs."
+seoTitle: "COUNTIFS function: formula syntax and examples"
+description: "Counts cells that satisfy all supplied criteria pairs. =COUNTIFS(criteria_range1, criteria1, [(criteria_range2, criteria2), ...])"
 ---
 
-<FunctionPageSchema id="math/countifs" />
-
-## Summary
+Counts cells that satisfy all supplied criteria pairs.
 
 `COUNTIFS` applies each `(criteria_range, criteria)` pair and counts rows where all tests pass.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COUNTIFS(criteria_range1, criteria1, [(criteria_range2, criteria2), ...])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `criteria_range1` | any | Required | — |
+| `criteria1` | any | Required | — |
+| `criteria_range2` | any | Optional | — |
+| `criteria2` | any | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 2.
+
+## Differences from Excel
+
+Formualizer accepts array constants as criteria ranges. Excel requires references. An invalid INDIRECT result in a criteria range can raise `#NAME?` in Formualizer, where Excel returns `#REF!`.
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - Requires one or more criteria pairs.
  - Criteria support operators and wildcard matching.
  - A row contributes to the result only when every criterion evaluates true.
 
 ## Examples
 
-<Tabs items={["Count rows matching two filters", "Wildcard text matching", "No rows meeting all criteria"]}>
-<Tab value="Count rows matching two filters">
-<FunctionSandbox
-  title="Count rows matching two filters"
-  formula={`=COUNTIFS(A1:A3, "East", B1:B3, ">=10")`}
-  grid={{"A1":"East","A2":"East","A3":"West","B1":"12","B2":"8","B3":"15"}}
-  expected={"1"}
-/>
-</Tab>
-
-<Tab value="Wildcard text matching">
-<FunctionSandbox
-  title="Wildcard text matching"
-  formula={`=COUNTIFS({"apple","pear","apricot"}, "ap*")`}
-  grid={{}}
+<FunctionExample
+  title={"Count records from one region with a single criteria pair."}
+  formula={"=COUNTIFS(A1:A3,\"East\")"}
+  grid={{"A1":"\"East\"","A2":"\"West\"","A3":"\"East\""}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="No rows meeting all criteria">
-<FunctionSandbox
-  title="No rows meeting all criteria"
-  formula={`=COUNTIFS({1,2,3}, ">5", {"a","b","c"}, "a")`}
-  grid={{}}
+<FunctionExample
+  title={"Count records that meet both the region and numeric requirements."}
+  formula={"=COUNTIFS(A1:A3,\"East\",B1:B3,\">15\")"}
+  grid={{"A1":"\"East\"","A2":"\"West\"","A3":"\"East\"","B1":"10","B2":"50","B3":"20"}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"No row meets the missing region criterion, so the match count is zero."}
+  formula={"=COUNTIFS(A1:A3,\"South\",B1:B3,\">15\")"}
+  grid={{"A1":"\"East\"","A2":"\"West\"","A3":"\"East\"","B1":"10","B2":"50","B3":"20"}}
   expected={"0"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Count rows matching two filters"}
+  formula={"=COUNTIFS(A1:A3, \"East\", B1:B3, \">=10\")"}
+  grid={{"A1":"\"East\"","A2":"\"East\"","A3":"\"West\"","B1":"12","B2":"8","B3":"15"}}
+  expected={"1"}
+/>
 
 ## Related functions
 
@@ -52,8 +72,6 @@ description: "COUNTIFS: Counts cells that satisfy all supplied criteria pairs."
 - [SUMIFS](/docs/reference/functions/math/sumifs)
 - [AVERAGEIFS](/docs/reference/functions/math/averageifs)
 - [FILTER](/docs/reference/functions/lookup/filter)
-- [AVERAGEIF](/docs/reference/functions/math/averageif)
-- [SUMIF](/docs/reference/functions/math/sumif)
 
 ## FAQ
 
@@ -63,8 +81,6 @@ Each row must satisfy every criterion pair; partial matches are excluded.
 ### Does COUNTIFS require at least one criteria pair?
 Yes. It expects arguments in (range, criteria) pairs.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/countifs" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/criteria_aggregates.rs)

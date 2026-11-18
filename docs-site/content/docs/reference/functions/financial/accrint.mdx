@@ -1,14 +1,32 @@
 ---
 title: "ACCRINT"
-description: "ACCRINT: Returns accrued interest for a coupon-bearing security."
+seoTitle: "ACCRINT function: formula syntax and examples"
+description: "Returns accrued interest for a coupon-bearing security. =ACCRINT(issue, first_interest, settlement, rate, par, frequency, [basis], [calc_method])"
 ---
 
-<FunctionPageSchema id="financial/accrint" />
-
-## Summary
+Returns accrued interest for a coupon-bearing security.
 
 `ACCRINT` calculates interest from either `issue` or the previous coupon date up to
  `settlement`, depending on `calc_method`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ACCRINT(issue, first_interest, settlement, rate, par, frequency, [basis], [calc_method])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `issue` | number | Required | — |
+| `first_interest` | number | Required | — |
+| `settlement` | number | Required | — |
+| `rate` | number | Required | — |
+| `par` | number | Required | — |
+| `frequency` | number | Required | — |
+| `basis` | number | Optional | — |
+| `calc_method` | number | Optional | — |
 
 ## Remarks
  - Date inputs are spreadsheet serial dates; `settlement` must be after `issue`.
@@ -20,35 +38,53 @@ description: "ACCRINT: Returns accrued interest for a coupon-bearing security."
 
 ## Examples
 
-<Tabs items={["Accrue from issue date (default calc_method)", "Accrue from previous coupon (calc_method = 0)"]}>
-<Tab value="Accrue from issue date (default calc_method)">
-<FunctionSandbox
-  title="Accrue from issue date (default calc_method)"
-  formula={`=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,7,1), 0.06, 1000, 2, 0)`}
-  grid={{}}
-  expected={"30"}
-/>
-</Tab>
-
-<Tab value="Accrue from previous coupon (calc_method = 0)">
-<FunctionSandbox
-  title="Accrue from previous coupon (calc_method = 0)"
-  formula={`=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,10,1), 0.08, 1000, 2, 0, 0)`}
+<FunctionExample
+  title={"Compute accrued interest between issue and a settlement before the first coupon."}
+  formula={"=ACCRINT(DATE(2024,1,1),DATE(2024,7,1),DATE(2024,5,1),0.06,1000,2)"}
   grid={{}}
   expected={"20"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Use an actual-day count and a 365-day year instead of the default basis."}
+  formula={"=ACCRINT(DATE(2024,1,1),DATE(2024,7,1),DATE(2024,5,1),0.06,1000,2,3)"}
+  grid={{}}
+  expected={"19.8904109589041"}
+/>
+
+<FunctionExample
+  title={"Measure accrued interest one day after issue."}
+  formula={"=ACCRINT(DATE(2024,1,1),DATE(2024,7,1),DATE(2024,1,2),0.06,1000,2)"}
+  grid={{}}
+  expected={"0.166666666666667"}
+/>
+
+<FunctionExample
+  title={"A frequency of three is outside the supported coupon schedules."}
+  formula={"=ACCRINT(DATE(2024,1,1),DATE(2024,7,1),DATE(2024,5,1),0.06,1000,3)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Accrue from issue date (default calc_method)"}
+  formula={"=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,7,1), 0.06, 1000, 2, 0)"}
+  grid={{}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"Accrue from previous coupon (calc_method = 0)"}
+  formula={"=ACCRINT(DATE(2024,1,1), DATE(2024,7,1), DATE(2024,10,1), 0.08, 1000, 2, 0, 0)"}
+  grid={{}}
+  expected={"20"}
+/>
 
 ## Related functions
 
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
 - [PRICE](/docs/reference/functions/financial/price)
 - [YIELD](/docs/reference/functions/financial/yield)
-- [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
-- [FV](/docs/reference/functions/financial/fv)
 
 ## FAQ
 
@@ -58,8 +94,6 @@ description: "ACCRINT: Returns accrued interest for a coupon-bearing security."
 ### Which inputs return `#NUM!`?
 Invalid `basis`, non-positive `rate`/`par`, unsupported `frequency`, or `settlement &lt;= issue` return `#NUM!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/accrint" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/bonds.rs)

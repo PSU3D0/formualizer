@@ -1,20 +1,67 @@
 ---
 title: "IMTAN"
-description: "IMTAN: Returns the tangent of a complex number."
+seoTitle: "IMTAN function: formula syntax and examples"
+description: "Returns the tangent of a complex number. =IMTAN(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imtan" />
-
-## Summary
+Returns the tangent of a complex number.
 
 Accepts an Excel-style complex number string and returns the complex tangent
  as text.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMTAN(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## How it works
+
+The complex tangent is sin(z) / cos(z). It is undefined at the zeros of cos(z), which occur at π/2 plus integer multiples of π.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
+
 ## Examples
 
-<FunctionSandbox
-  title="Tangent of zero"
-  formula={`=IMTAN("0")`}
+<FunctionExample
+  title={"Divide the complex sine of 3 + 4i by its cosine."}
+  formula={"=IMTAN(\"3+4i\")"}
+  grid={{}}
+  expected={"-0.000187346204629488+0.999355987381473i"}
+/>
+
+<FunctionExample
+  title={"Reflect the input to flip the imaginary sign of the tangent."}
+  formula={"=IMTAN(\"3-4j\")"}
+  grid={{}}
+  expected={"-0.000187346204629488-0.999355987381473j"}
+/>
+
+<FunctionExample
+  title={"With a real argument the result is tan(1)."}
+  formula={"=IMTAN(\"1\")"}
+  grid={{}}
+  expected={"1.5574077246549"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to take the complex tangent."}
+  formula={"=IMTAN(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Tangent of zero"}
+  formula={"=IMTAN(\"0\")"}
   grid={{}}
   expected={"0"}
 />
@@ -24,17 +71,12 @@ Accepts an Excel-style complex number string and returns the complex tangent
 - [IMSIN](/docs/reference/functions/engineering/imsin)
 - [IMCOS](/docs/reference/functions/engineering/imcos)
 - [IMCOT](/docs/reference/functions/engineering/imcot)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### How is IMTAN related to sine and cosine?
 It computes the complex tangent, equivalent to IMSIN divided by IMCOS.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imtan" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

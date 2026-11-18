@@ -1,62 +1,92 @@
 ---
 title: "HSTACK"
-description: "HSTACK: Concatenates arrays horizontally into a single spilled array."
+seoTitle: "HSTACK function: formula syntax and examples"
+description: "Concatenates arrays horizontally into a single spilled array. =HSTACK(array1, [array2], ...)"
 ---
 
-<FunctionPageSchema id="lookup/hstack" />
-
-## Summary
+Concatenates arrays horizontally into a single spilled array.
 
 `HSTACK` appends columns from each argument left-to-right.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=HSTACK(array1, [array2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array1` | range or any (range) | Required | — |
+| `array2` | range or any (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
- - All non-empty range arguments must have the same row count.
+ - The output has the maximum input row count.
  - Scalar arguments are treated as 1x1 values.
- - Mismatched row counts return `#VALUE!`.
+ - Missing rows in shorter inputs are padded with `#N/A`.
  - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
 
 ## Examples
 
-<Tabs items={["Join two 2-row ranges side by side", "Append a scalar column"]}>
-<Tab value="Join two 2-row ranges side by side">
-<FunctionSandbox
-  title="Join two 2-row ranges side by side"
-  formula={`=HSTACK(A1:A2,B1:B2)`}
+<FunctionExample
+  title={"Join two equally sized rectangular arrays."}
+  formula={"=HSTACK({1,2;3,4},{5,6;7,8})"}
+  grid={{}}
+  expected={"{1, 2, 5, 6; 3, 4, 7, 8}"}
+/>
+
+<FunctionExample
+  title={"Join three arrays in their argument order."}
+  formula={"=HSTACK({1,2},{3,4},{5,6})"}
+  grid={{}}
+  expected={"{1, 2, 3, 4, 5, 6}"}
+/>
+
+<FunctionExample
+  title={"Pass the smallest array as the only argument."}
+  formula={"=HSTACK({42})"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"A division-by-zero error is carried into the assembled output."}
+  formula={"=HSTACK(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Join two 2-row ranges side by side"}
+  formula={"=HSTACK(A1:A2,B1:B2)"}
   grid={{"A1":"1","A2":"2","B1":"10","B2":"20"}}
-  expected={"[[1,10],[2,20]]"}
+  expected={"{1, 10; 2, 20}"}
 />
-</Tab>
 
-<Tab value="Append a scalar column">
-<FunctionSandbox
-  title="Append a scalar column"
-  formula={`=HSTACK(A1,"OK")`}
-  grid={{"A1":"Item"}}
-  expected={"[[\"Item\",\"OK\"]]"}
+<FunctionExample
+  title={"Append a scalar column"}
+  formula={"=HSTACK(A1,\"OK\")"}
+  grid={{"A1":"\"Item\""}}
+  expected={"{\"Item\", \"OK\"}"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [VSTACK](/docs/reference/functions/lookup/vstack)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [TAKE](/docs/reference/functions/lookup/take)
-- [TOCOL](/docs/reference/functions/lookup/tocol)
-- [TOROW](/docs/reference/functions/lookup/torow)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 
 ## FAQ
 
-### Why does HSTACK return #VALUE! when combining ranges?
-All non-empty inputs must have identical row counts; mismatched heights produce #VALUE!.
+### How does HSTACK combine ranges of different heights?
+The output uses the tallest input and pads shorter inputs with #N/A.
 
 ### How are scalar arguments treated in HSTACK?
-Each scalar is treated as a 1x1 block, so it only aligns with other arguments when the target row count is 1.
+Each scalar is treated as a 1x1 block, with #N/A below it when other inputs are taller.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/hstack" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/stack.rs)

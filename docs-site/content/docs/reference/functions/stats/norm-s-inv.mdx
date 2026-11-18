@@ -1,55 +1,77 @@
 ---
 title: "NORM.S.INV"
-description: "NORM.S.INV: Returns the z-score whose standard normal cumulative probability matches `probability`."
+seoTitle: "NORM.S.INV function: formula syntax and examples"
+description: "Returns the z-score whose standard normal cumulative probability matches probability. =NORM.S.INV(probability)"
 ---
 
-<FunctionPageSchema id="stats/norm-s-inv" />
-
-## Summary
+Returns the z-score whose standard normal cumulative probability matches `probability`.
 
 This is the inverse of `NORM.S.DIST(z, TRUE)` and is commonly used for critical-value
  thresholds.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NORM.S.INV(probability)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+
+## How it works
+
+Solves Φ(z) = probability for z. The probability must be strictly between zero and one. A probability of 0.5 maps to zero.
+
 ## Remarks
  - `probability` must be strictly between `0` and `1`.
- - Returns `#NUM!` when `probability &lt;= 0` or `probability &gt;= 1`.
  - Output can be negative, zero, or positive depending on which side of `0.5` you query.
  - Invalid numeric coercions propagate as spreadsheet errors.
+ - Alias `NORMSINV` (the Excel 2007 compatibility name) is supported.
+
+## Error cases
+
+ - Returns `#NUM!` when `probability &lt;= 0` or `probability &gt;= 1`.
 
 ## Examples
 
-<Tabs items={["Median probability maps to zero", "Upper-tail critical z-score"]}>
-<Tab value="Median probability maps to zero">
-<FunctionSandbox
-  title="Median probability maps to zero"
-  formula={`=NORM.S.INV(0.5)`}
+<FunctionExample
+  title={"Find the z score for the median probability 0.5."}
+  formula={"=NORM.S.INV(0.5)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Upper-tail critical z-score">
-<FunctionSandbox
-  title="Upper-tail critical z-score"
-  formula={`=NORM.S.INV(0.975)`}
+<FunctionExample
+  title={"Find the z score that leaves one quarter of the area above it."}
+  formula={"=NORM.S.INV(0.75)"}
   grid={{}}
-  expected={"1.9599639845400536"}
+  expected={"0.674489750196082"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A cumulative probability of 0.01 lies in the lower tail."}
+  formula={"=NORM.S.INV(0.01)"}
+  grid={{}}
+  expected={"-2.32634787404084"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"The input must be numeric."}
+  formula={"=NORM.S.INV(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
-- [NORM.DIST](/docs/reference/functions/stats/norm-dist)
-- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
-- [NORM.INV](/docs/reference/functions/stats/norm-inv)
-- [FISHER](/docs/reference/functions/stats/fisher)
-- [FISHERINV](/docs/reference/functions/stats/fisherinv)
-- [GAMMA](/docs/reference/functions/stats/gamma)
+<FunctionExample
+  title={"Upper-tail critical z-score"}
+  formula={"=NORM.S.INV(0.975)"}
+  grid={{}}
+  expected={"1.95996398454005"}
+/>
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/norm-s-inv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

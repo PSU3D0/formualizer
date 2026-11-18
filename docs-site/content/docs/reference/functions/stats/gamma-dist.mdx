@@ -1,54 +1,86 @@
 ---
 title: "GAMMA.DIST"
-description: "GAMMA.DIST: Returns the gamma-distribution probability at `x` for shape `alpha` and scale `beta`."
+seoTitle: "GAMMA.DIST function: formula syntax and examples"
+description: "Returns the gamma-distribution probability at x for shape alpha and scale beta. =GAMMA.DIST(x, alpha, beta, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/gamma-dist" />
-
-## Summary
+Returns the gamma-distribution probability at `x` for shape `alpha` and scale `beta`.
 
 `GAMMA.DIST` supports cumulative and density modes for right-skewed waiting-time models.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GAMMA.DIST(x, alpha, beta, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `alpha` | number | Required | — |
+| `beta` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+With positive shape α and scale β, the density for x &gt; 0 is x raised to α−1 times exp(−x/β), divided by Γ(α)β raised to α. The cumulative option integrates from zero through x. Negative observations are outside the support.
 
 ## Remarks
  - Requires `x &gt;= 0`, `alpha &gt; 0`, and `beta &gt; 0`.
  - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
- - Returns `#NUM!` when any parameter is outside its valid range.
  - Invalid numeric coercions propagate as spreadsheet errors.
+ - Alias `GAMMADIST` (the Excel 2007 compatibility name) is supported.
+
+## Error cases
+
+ - Returns `#NUM!` when any parameter is outside its valid range.
 
 ## Examples
 
-<Tabs items={["Gamma CDF with alpha=1 and beta=2", "Gamma PDF with alpha=1 and beta=2"]}>
-<Tab value="Gamma CDF with alpha=1 and beta=2">
-<FunctionSandbox
-  title="Gamma CDF with alpha=1 and beta=2"
-  formula={`=GAMMA.DIST(2,1,2,TRUE)`}
+<FunctionExample
+  title={"Find the cumulative probability for a gamma distribution with shape three."}
+  formula={"=GAMMA.DIST(2,3,2,TRUE)"}
   grid={{}}
-  expected={"0.6321205588285577"}
+  expected={"0.0803013970713941"}
 />
-</Tab>
 
-<Tab value="Gamma PDF with alpha=1 and beta=2">
-<FunctionSandbox
-  title="Gamma PDF with alpha=1 and beta=2"
-  formula={`=GAMMA.DIST(2,1,2,FALSE)`}
+<FunctionExample
+  title={"Evaluate density at the same point."}
+  formula={"=GAMMA.DIST(2,3,2,FALSE)"}
   grid={{}}
-  expected={"0.18393972058572117"}
+  expected={"0.0919698602928605"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Evaluate the cumulative distribution at its lower boundary."}
+  formula={"=GAMMA.DIST(0,3,2,TRUE)"}
+  grid={{}}
+  expected={"0"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"A negative observation is outside the distribution."}
+  formula={"=GAMMA.DIST(-1,3,2,TRUE)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-- [GAMMA.INV](/docs/reference/functions/stats/gamma-inv)
-- [GAMMA](/docs/reference/functions/stats/gamma)
-- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
-- [F.DIST](/docs/reference/functions/stats/f-dist)
-- [LOGNORM.DIST](/docs/reference/functions/stats/lognorm-dist)
-- [NEGBINOM.DIST](/docs/reference/functions/stats/negbinom-dist)
+<FunctionExample
+  title={"Gamma CDF with alpha=1 and beta=2"}
+  formula={"=GAMMA.DIST(2,1,2,TRUE)"}
+  grid={{}}
+  expected={"0.632120558828558"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Gamma PDF with alpha=1 and beta=2"}
+  formula={"=GAMMA.DIST(2,1,2,FALSE)"}
+  grid={{}}
+  expected={"0.183939720585721"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/gamma-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

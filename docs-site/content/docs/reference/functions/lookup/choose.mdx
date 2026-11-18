@@ -1,51 +1,84 @@
 ---
 title: "CHOOSE"
-description: "CHOOSE: Returns one value from a list using a 1-based index."
+seoTitle: "CHOOSE function: formula syntax and examples"
+description: "Returns one value from a list using a 1-based index. =CHOOSE(index_num, value1, [value2], ...)"
 ---
 
-<FunctionPageSchema id="lookup/choose" />
-
-## Summary
+Returns one value from a list using a 1-based index.
 
 `CHOOSE` selects from `value1, value2, ...` based on `index_num`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CHOOSE(index_num, value1, [value2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `index_num` | number | Required | — |
+| `value1` | any | Required | — |
+| `value2` | value | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 2.
+
+## Return type
+
+Can return a reference when evaluated in a reference context.
+
 ## Remarks
  - `index_num` is 1-based and is truncated to an integer.
- - Indexes less than 1 or greater than the number of choices return `#VALUE!`.
  - Errors in `index_num` are propagated.
  - The selected argument is returned as-is, including non-text/non-numeric values.
 
+## Error cases
+
+ - Indexes less than 1 or greater than the number of choices return `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["Select a label", "Use numeric choices"]}>
-<Tab value="Select a label">
-<FunctionSandbox
-  title="Select a label"
-  formula={`=CHOOSE(2,"Low","Medium","High")`}
+<FunctionExample
+  title={"Select the second member of a list."}
+  formula={"=CHOOSE(2,\"Low\",\"Medium\",\"High\")"}
   grid={{}}
   expected={"Medium"}
 />
-</Tab>
 
-<Tab value="Use numeric choices">
-<FunctionSandbox
-  title="Use numeric choices"
-  formula={`=CHOOSE(3,10,20,30,40)`}
+<FunctionExample
+  title={"Select a numeric value from a longer choice list."}
+  formula={"=CHOOSE(3,10,20,30)"}
   grid={{}}
   expected={"30"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Select the only item in the minimum-size list."}
+  formula={"=CHOOSE(1,\"Only choice\")"}
+  grid={{}}
+  expected={"Only choice"}
+/>
+
+<FunctionExample
+  title={"An index beyond the last choice is invalid."}
+  formula={"=CHOOSE(4,\"Low\",\"Medium\",\"High\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Use numeric choices"}
+  formula={"=CHOOSE(3,10,20,30,40)"}
+  grid={{}}
+  expected={"30"}
+/>
 
 ## Related functions
 
 - [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [MATCH](/docs/reference/functions/lookup/match)
-- [HLOOKUP](/docs/reference/functions/lookup/hlookup)
-- [LOOKUP](/docs/reference/functions/lookup/lookup)
 
 ## FAQ
 
@@ -55,8 +88,6 @@ The index is truncated toward zero before selection, so CHOOSE(2.9,...) selects 
 ### What error do I get for index_num 0 or too large?
 CHOOSE returns #VALUE! when index_num is less than 1 or greater than the number of provided choices.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/choose" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/choose.rs)

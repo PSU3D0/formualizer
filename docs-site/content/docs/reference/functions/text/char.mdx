@@ -1,61 +1,88 @@
 ---
 title: "CHAR"
-description: "Returns the character specified by a number Excel uses Windows-1252 encoding for codes 1-255."
+seoTitle: "CHAR function: formula syntax and examples"
+description: "Returns the character specified by a number Excel uses Windows-1252 encoding for codes 1-255. =CHAR(number)"
 ---
 
-<FunctionPageSchema id="text/char" />
-
-## Summary
+Returns the character specified by a number Excel uses Windows-1252 encoding for codes 1-255.
 
 Returns the character represented by a numeric code.
 
  `CHAR` follows Excel-style Windows-1252 behavior for codes `1..255`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CHAR(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
+
+## Return type
+
+Can return text.
+
 ## Remarks
  - Input is truncated to an integer code.
- - Valid code range is `1` through `255`; outside this range returns `#VALUE!`.
  - Codes in the Windows-1252 extension range (128-159) are mapped to Unicode equivalents.
  - Errors are propagated unchanged.
 
+## Error cases
+
+ - Valid code range is `1` through `255`; outside this range returns `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["ASCII character", "Out-of-range code"]}>
-<Tab value="ASCII character">
-<FunctionSandbox
-  title="ASCII character"
-  formula={`=CHAR(65)`}
+<FunctionExample
+  title={"Return the character at the numeric code for the letter A."}
+  formula={"=CHAR(65)"}
   grid={{}}
   expected={"A"}
 />
-</Tab>
 
-<Tab value="Out-of-range code">
-<FunctionSandbox
-  title="Out-of-range code"
-  formula={`=CHAR(300)`}
+<FunctionExample
+  title={"Compare the character at the numeric code for the letter a."}
+  formula={"=CHAR(97)"}
+  grid={{}}
+  expected={"a"}
+/>
+
+<FunctionExample
+  title={"Return the space character at code 32."}
+  formula={"=CHAR(32)"}
+  grid={{}}
+  expected={" "}
+/>
+
+<FunctionExample
+  title={"Code zero is outside the supported input range."}
+  formula={"=CHAR(0)"}
   grid={{}}
   expected={"#VALUE!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Out-of-range code"}
+  formula={"=CHAR(300)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
 ## Related functions
 
 - [CODE](/docs/reference/functions/text/code)
 - [UNICHAR](/docs/reference/functions/text/unichar)
 - [UNICODE](/docs/reference/functions/text/unicode)
-- [ASC](/docs/reference/functions/text/asc)
-- [CLEAN](/docs/reference/functions/text/clean)
-- [LEN](/docs/reference/functions/text/len)
 
 ## FAQ
 
 ### Which character set does CHAR use for codes 128-159?
 It follows Excel-style Windows-1252 mappings, including extended symbols in that range.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/char" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/char_code_rept.rs)

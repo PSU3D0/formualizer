@@ -1,59 +1,93 @@
 ---
 title: "FIXED"
-description: "Formats a number as text with fixed decimal places."
+seoTitle: "FIXED function: formula syntax and examples"
+description: "Formats a number as text with fixed decimal places. =FIXED(number, [decimals], [no_commas])"
 ---
 
-<FunctionPageSchema id="text/fixed" />
-
-## Summary
-
 Formats a number as text with fixed decimal places.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FIXED(number, [decimals], [no_commas])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `decimals` | number | Optional | `2` |
+| `no_commas` | logical | Optional | `false` |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Default decimal places is `2` when omitted.
  - Third argument controls comma grouping (`TRUE` disables commas).
  - Values are rounded to the requested decimal precision.
+
+## Error cases
+
  - Numeric coercion failures return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Fixed with commas", "Fixed without commas"]}>
-<Tab value="Fixed with commas">
-<FunctionSandbox
-  title="Fixed with commas"
-  formula={`=FIXED(12345.678, 1, FALSE)`}
+<FunctionExample
+  title={"Format a number with the default precision and digit grouping."}
+  formula={"=FIXED(1234.567)"}
+  grid={{}}
+  expected={"1,234.57"}
+/>
+
+<FunctionExample
+  title={"Use one decimal place and suppress the grouping separator."}
+  formula={"=FIXED(1234.567,1,TRUE)"}
+  grid={{}}
+  expected={"1234.6"}
+/>
+
+<FunctionExample
+  title={"Format zero without decimal digits."}
+  formula={"=FIXED(0,0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A nonnumeric amount cannot be formatted as a number."}
+  formula={"=FIXED(\"amount\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Fixed with commas"}
+  formula={"=FIXED(12345.678, 1, FALSE)"}
   grid={{}}
   expected={"12,345.7"}
 />
-</Tab>
 
-<Tab value="Fixed without commas">
-<FunctionSandbox
-  title="Fixed without commas"
-  formula={`=FIXED(12345.678, 1, TRUE)`}
+<FunctionExample
+  title={"Fixed without commas"}
+  formula={"=FIXED(12345.678, 1, TRUE)"}
   grid={{}}
   expected={"12345.7"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [DOLLAR](/docs/reference/functions/text/dollar)
 - [TEXT](/docs/reference/functions/text/text)
 - [VALUE](/docs/reference/functions/text/value)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
-- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
-- [VALUETOTEXT](/docs/reference/functions/text/valuetotext)
 
 ## FAQ
 
 ### What does the third argument control?
 Set it to TRUE to suppress thousands separators; FALSE keeps comma grouping.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/fixed" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/extended.rs)

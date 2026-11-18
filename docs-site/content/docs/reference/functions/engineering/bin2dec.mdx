@@ -1,58 +1,81 @@
 ---
 title: "BIN2DEC"
-description: "BIN2DEC: Converts a binary text value to decimal."
+seoTitle: "BIN2DEC function: formula syntax and examples"
+description: "Converts a binary text value to decimal. =BIN2DEC(number)"
 ---
 
-<FunctionPageSchema id="engineering/bin2dec" />
-
-## Summary
+Converts a binary text value to decimal.
 
 Supports up to 10 binary digits, including two's-complement negative values.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BIN2DEC(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
 
 ## Remarks
  - Input is coerced to text and must contain only `0` and `1`.
  - 10-digit values starting with `1` are interpreted as signed two's-complement numbers.
+
+## Error cases
+
  - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
 
 ## Examples
 
-<Tabs items={["Convert an unsigned binary value", "Interpret signed 10-bit binary"]}>
-<Tab value="Convert an unsigned binary value">
-<FunctionSandbox
-  title="Convert an unsigned binary value"
-  formula={`=BIN2DEC("101010")`}
+<FunctionExample
+  title={"Convert a binary string into a decimal number."}
+  formula={"=BIN2DEC(\"1010\")"}
   grid={{}}
-  expected={"42"}
+  expected={"10"}
 />
-</Tab>
 
-<Tab value="Interpret signed 10-bit binary">
-<FunctionSandbox
-  title="Interpret signed 10-bit binary"
-  formula={`=BIN2DEC("1111111111")`}
+<FunctionExample
+  title={"Read the signed value represented by ten set bits."}
+  formula={"=BIN2DEC(\"1111111111\")"}
   grid={{}}
   expected={"-1"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Convert the all-zero value."}
+  formula={"=BIN2DEC(\"0\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The digit 2 is outside base two."}
+  formula={"=BIN2DEC(\"102\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert an unsigned binary value"}
+  formula={"=BIN2DEC(\"101010\")"}
+  grid={{}}
+  expected={"42"}
+/>
 
 ## Related functions
 
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 - [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
 - [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
-- [ERFC.PRECISE](/docs/reference/functions/engineering/erfc-precise)
 
 ## FAQ
 
 ### How does `BIN2DEC` handle 10-bit values starting with `1`?
 They are interpreted as signed two's-complement values, so `1111111111` becomes `-1`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/bin2dec" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

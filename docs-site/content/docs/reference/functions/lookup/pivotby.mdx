@@ -1,52 +1,98 @@
 ---
 title: "PIVOTBY"
-description: "PIVOTBY: Builds a pivot-style summary matrix from row fields, column fields, and values."
+seoTitle: "PIVOTBY function: formula syntax and examples"
+description: "Builds a pivot-style summary matrix from row fields, column fields, and values. PIVOTBY"
 ---
 
-<FunctionPageSchema id="lookup/pivotby" />
-
-## Summary
+Builds a pivot-style summary matrix from row fields, column fields, and values.
 
 `PIVOTBY` aggregates intersections of row keys and column keys into a dynamic result grid.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PIVOTBY(row_fields, col_fields, values, function, [field_headers], [row_total_depth], [row_sort_order], [col_total_depth], [col_sort_order], [filter_array], [relative_to])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `row_fields` | range (range) | Required | — |
+| `col_fields` | range (range) | Required | — |
+| `values` | range (range) | Required | — |
+| `function` | any | Required | — |
+| `field_headers` | number | Optional | `1` |
+| `row_total_depth` | number | Optional | `0` |
+| `row_sort_order` | number | Optional | `0` |
+| `col_total_depth` | number | Optional | `0` |
+| `col_sort_order` | number | Optional | `0` |
+| `filter_array` | value | Optional | — |
+| `relative_to` | value | Optional | — |
+
+## Differences from Excel
+
+A supplied filter array returns `#VALUE!` in Formualizer. Omitted `row_total_depth` and `col_total_depth` default to 0 (no totals) in Formualizer. Excel chooses grand totals and, where possible, subtotals automatically for both axes.
 
 ## Remarks
  - `row_fields`, `col_fields`, and `values` must have matching row counts.
  - Aggregation accepts text names (for example `"SUM"`) or numeric codes.
  - Optional controls include header handling, row/column totals, and sort order.
  - Current implementation uses the first column of `col_fields` and `values` for aggregation.
- - Invalid setup returns `#VALUE!`.
+
+## Error cases
+
+ - Mismatched row counts and unsupported filter or callable aggregation options return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Pivot sales by region and quarter", "Pivot with totals enabled"]}>
-<Tab value="Pivot sales by region and quarter">
-<FunctionSandbox
-  title="Pivot sales by region and quarter"
-  formula={`=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,0,1,0,1)`}
-  grid={{"A1":"Region","A2":"East","A3":"East","A4":"West","B1":"Quarter","B2":"Q1","B3":"Q2","B4":"Q1","C1":"Sales","C2":"100","C3":"150","C4":"120"}}
-  expected={"Pivot table with regions as rows and quarters as columns"}
+<FunctionExample
+  title={"Sum sales by region and quarter from three columns that include headers."}
+  formula={"=PIVOTBY({\"Region\";\"East\";\"East\";\"West\"},{\"Quarter\";\"Q1\";\"Q2\";\"Q1\"},{\"Sales\";10;20;8},\"SUM\")"}
+  grid={{}}
+  expected={"{0, \"Q1\", \"Q2\"; \"East\", 10, 20; \"West\", 8, 0}"}
 />
-</Tab>
 
-<Tab value="Pivot with totals enabled">
-<FunctionSandbox
-  title="Pivot with totals enabled"
-  formula={`=PIVOTBY(A1:A4,B1:B4,C1:C4,"SUM",3,1,1,1,1)`}
-  grid={{"A1":"Dept","A2":"Ops","A3":"Ops","A4":"Sales","B1":"Month","B2":"Jan","B3":"Feb","B4":"Jan","C1":"Cost","C2":"40","C3":"35","C4":"55"}}
-  expected={"Pivot table including row and column totals"}
+<FunctionExample
+  title={"Average the groups, omit totals and sort both the row and column labels."}
+  formula={"=PIVOTBY({\"East\";\"East\";\"West\"},{\"Q1\";\"Q2\";\"Q1\"},{10;20;8},\"AVERAGE\",0,0,1,0,1,,0)"}
+  grid={{}}
+  expected={"{\"East\", 10, 20; \"West\", 8, 0}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Pivot a single observation into one row and one column group."}
+  formula={"=PIVOTBY({\"East\"},{\"Q1\"},{10},\"SUM\",0,0,1,0)"}
+  grid={{}}
+  expected={"{\"East\", 10}"}
+/>
+
+<FunctionExample
+  title={"The grouping and value arrays must align row for row."}
+  formula={"=PIVOTBY({\"East\";\"West\"},{\"Q1\"},{10;8},\"SUM\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Pivot sales by region and quarter"}
+  formula={"=PIVOTBY(A1:A4,B1:B4,C1:C4,\"SUM\",3,0,1,0,1)"}
+  grid={{"A1":"\"Region\"","A2":"\"East\"","A3":"\"East\"","A4":"\"West\"","B1":"\"Quarter\"","B2":"\"Q1\"","B3":"\"Q2\"","B4":"\"Q1\"","C1":"\"Sales\"","C2":"100","C3":"150","C4":"120"}}
+  expected={"{0, \"Q1\", \"Q2\"; \"East\", 100, 150; \"West\", 120, 0}"}
+/>
+
+<FunctionExample
+  title={"Pivot with totals enabled"}
+  formula={"=PIVOTBY(A1:A4,B1:B4,C1:C4,\"SUM\",3,1,1,1,1)"}
+  grid={{"A1":"\"Dept\"","A2":"\"Ops\"","A3":"\"Ops\"","A4":"\"Sales\"","B1":"\"Month\"","B2":"\"Jan\"","B3":"\"Feb\"","B4":"\"Jan\"","C1":"\"Cost\"","C2":"40","C3":"35","C4":"55"}}
+  expected={"{0, \"Feb\", \"Jan\", \"Total\"; \"Ops\", 35, 40, 75; \"Sales\", 0, 55, 55; \"Total\", 35, 95, 130}"}
+/>
 
 ## Related functions
 
 - [GROUPBY](/docs/reference/functions/lookup/groupby)
 - [SORTBY](/docs/reference/functions/lookup/sortby)
 - [UNIQUE](/docs/reference/functions/lookup/unique)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [TOCOL](/docs/reference/functions/lookup/tocol)
 
 ## FAQ
 
@@ -56,8 +102,6 @@ row_fields, col_fields, and values must share the same row count; otherwise PIVO
 ### What value range is currently aggregated?
 Current implementation aggregates using the first value column (and first col_fields column for keys), so extra columns are not yet summarized independently.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/pivotby" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

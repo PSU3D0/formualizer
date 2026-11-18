@@ -1,58 +1,82 @@
 ---
 title: "MULTINOMIAL"
-description: "Returns the multinomial coefficient for one or more values."
+seoTitle: "MULTINOMIAL function: formula syntax and examples"
+description: "Returns the multinomial coefficient for one or more values. =MULTINOMIAL(number1, [number2], ...)"
 ---
-
-<FunctionPageSchema id="math/multinomial" />
-
-## Summary
 
 Returns the multinomial coefficient for one or more values.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MULTINOMIAL(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number | Required | — |
+| `number2` | number | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
  - Each input is truncated toward zero before factorial is applied.
+
+## Error cases
+
  - Any negative term returns `#NUM!`.
  - Values that require factorials outside `0..=170` return `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Compute a standard multinomial coefficient", "Non-integers are truncated first"]}>
-<Tab value="Compute a standard multinomial coefficient">
-<FunctionSandbox
-  title="Compute a standard multinomial coefficient"
-  formula={`=MULTINOMIAL(2,3,4)`}
+<FunctionExample
+  title={"Count the arrangements of three groups with different sizes."}
+  formula={"=MULTINOMIAL(2,3,4)"}
   grid={{}}
   expected={"1260"}
 />
-</Tab>
 
-<Tab value="Non-integers are truncated first">
-<FunctionSandbox
-  title="Non-integers are truncated first"
-  formula={`=MULTINOMIAL(1.9,2.2)`}
+<FunctionExample
+  title={"Compare four groups of size one."}
+  formula={"=MULTINOMIAL(1,1,1,1)"}
+  grid={{}}
+  expected={"24"}
+/>
+
+<FunctionExample
+  title={"A single zero-size group gives one empty arrangement."}
+  formula={"=MULTINOMIAL(0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A group cannot have negative size."}
+  formula={"=MULTINOMIAL(-1,2)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Non-integers are truncated first"}
+  formula={"=MULTINOMIAL(1.9,2.2)"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [FACT](/docs/reference/functions/math/fact)
 - [COMBIN](/docs/reference/functions/math/combin)
 - [PERMUT](/docs/reference/functions/math/permut)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 
 ## FAQ
 
 ### Why does MULTINOMIAL return #NUM! for large terms?
 If any required factorial falls outside 0..=170, the function returns #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/multinomial" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

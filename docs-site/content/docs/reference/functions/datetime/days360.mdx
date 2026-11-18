@@ -1,58 +1,91 @@
 ---
 title: "DAYS360"
-description: "DAYS360: Returns the day count between two dates using a 30/360 convention."
+seoTitle: "DAYS360 function: formula syntax and examples"
+description: "Returns the day count between two dates using a 30/360 convention. =DAYS360(start_date, end_date, [method])"
 ---
-
-<FunctionPageSchema id="datetime/days360" />
-
-## Summary
 
 Returns the day count between two dates using a 30/360 convention.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DAYS360(start_date, end_date, [method])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `start_date` | number | Required | — |
+| `end_date` | number | Required | — |
+| `method` | any | Optional | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - `method` omitted or `FALSE` uses U.S. (NASD) rules; `TRUE` uses the European 30E/360 method.
+ - U.S. rules as Excel applies them: a start date on the last day of its month becomes the
+   30th; an end date on the 31st becomes the 1st of the next month when the start day is
+   before the 30th, otherwise the 30th. An end date on the 30th or on the last day of
+   February is not adjusted (`DAYS360(DATE(2001,11,24),DATE(2001,11,30))` is 6).
  - Inputs are coerced to dates by truncating serials to integer days.
- - Serials are interpreted with the Excel 1900 date mapping, not a workbook-specific date system.
+ - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
 
 ## Examples
 
-<Tabs items={["U.S. 30/360 method", "European 30E/360 method"]}>
-<Tab value="U.S. 30/360 method">
-<FunctionSandbox
-  title="U.S. 30/360 method"
-  formula={`=DAYS360(40574, 40602)`}
+<FunctionExample
+  title={"Measure two full months on the 360-day financial calendar."}
+  formula={"=DAYS360(DATE(2024,1,1),DATE(2024,3,1))"}
   grid={{}}
-  expected={"30"}
+  expected={"60"}
 />
-</Tab>
 
-<Tab value="European 30E/360 method">
-<FunctionSandbox
-  title="European 30E/360 method"
-  formula={`=DAYS360(40574, 40602, TRUE)`}
+<FunctionExample
+  title={"Select the European convention for the month-end adjustment."}
+  formula={"=DAYS360(DATE(2024,2,29),DATE(2024,3,31),TRUE)"}
+  grid={{}}
+  expected={"31"}
+/>
+
+<FunctionExample
+  title={"A zero-length interval at the start of a month counts as zero."}
+  formula={"=DAYS360(DATE(2024,1,1),DATE(2024,1,1))"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The start date must be a valid serial or supported date string."}
+  formula={"=DAYS360(\"invalid\",45000)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"U.S. 30/360 method"}
+  formula={"=DAYS360(40574, 40602)"}
   grid={{}}
   expected={"28"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"European 30E/360 method"}
+  formula={"=DAYS360(40574, 40602, TRUE)"}
+  grid={{}}
+  expected={"28"}
+/>
 
 ## Related functions
 
 - [DAYS](/docs/reference/functions/datetime/days)
 - [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
 - [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
-- [NETWORKDAYS.INTL](/docs/reference/functions/datetime/networkdays-intl)
-- [WORKDAY](/docs/reference/functions/datetime/workday)
 
 ## FAQ
 
 ### Why does DAYS360 differ from actual day counts?
 DAYS360 applies 30/360 financial conventions, so month-end dates are adjusted by rule instead of using calendar day totals.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/days360" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_parts.rs)

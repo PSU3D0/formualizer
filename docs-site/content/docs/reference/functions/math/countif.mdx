@@ -1,50 +1,73 @@
 ---
 title: "COUNTIF"
-description: "COUNTIF: Counts cells in a range that satisfy a single criterion."
+seoTitle: "COUNTIF function: formula syntax and examples"
+description: "Counts cells in a range that satisfy a single criterion. =COUNTIF(range, criteria)"
 ---
 
-<FunctionPageSchema id="math/countif" />
-
-## Summary
+Counts cells in a range that satisfy a single criterion.
 
 `COUNTIF` evaluates each candidate cell against one criteria expression.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COUNTIF(range, criteria)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `range` | any | Required | — |
+| `criteria` | any | Required | — |
+
+## Differences from Excel
+
+Formualizer accepts an array constant as the range. Excel requires a reference.
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - Criteria support numeric comparisons and wildcard text matching.
  - Matching is case-insensitive for text criteria.
  - Non-matching or blank cells are not counted.
 
 ## Examples
 
-<Tabs items={["Count numbers greater than 10", "Count text with wildcard", "Exact-match criterion"]}>
-<Tab value="Count numbers greater than 10">
-<FunctionSandbox
-  title="Count numbers greater than 10"
-  formula={`=COUNTIF(A1:A3, ">10")`}
+<FunctionExample
+  title={"Count records equal to a region label."}
+  formula={"=COUNTIF(A1:A4,\"East\")"}
+  grid={{"A1":"\"East\"","A2":"\"West\"","A3":"\"East\"","A4":"\"Northeast\""}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Use a wildcard to include labels with the same ending."}
+  formula={"=COUNTIF(A1:A4,\"*east\")"}
+  grid={{"A1":"\"East\"","A2":"\"West\"","A3":"\"East\"","A4":"\"Northeast\""}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"A criterion matching no cell produces a zero count."}
+  formula={"=COUNTIF(A1:A4,\"South\")"}
+  grid={{"A1":"\"East\"","A2":"\"West\"","A3":"\"East\"","A4":"\"Northeast\""}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Count numbers greater than 10"}
+  formula={"=COUNTIF(A1:A3, \">10\")"}
   grid={{"A1":"5","A2":"15","A3":"22"}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Count text with wildcard">
-<FunctionSandbox
-  title="Count text with wildcard"
-  formula={`=COUNTIF({"alpha","beta","alphabet"}, "al*")`}
-  grid={{}}
+<FunctionExample
+  title={"Date criterion matches date text"}
+  formula={"=COUNTIF(A1:A3, \"10/26/1999\")"}
+  grid={{"A1":"\"10/26/1999\"","A2":"\"1999-10-27\"","A3":"36459"}}
   expected={"2"}
 />
-</Tab>
-
-<Tab value="Exact-match criterion">
-<FunctionSandbox
-  title="Exact-match criterion"
-  formula={`=COUNTIF({1,2,2,3}, "=2")`}
-  grid={{}}
-  expected={"2"}
-/>
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -52,8 +75,6 @@ description: "COUNTIF: Counts cells in a range that satisfy a single criterion."
 - [COUNTA](/docs/reference/functions/math/counta)
 - [COUNTBLANK](/docs/reference/functions/math/countblank)
 - [SUMIF](/docs/reference/functions/math/sumif)
-- [AVERAGEIF](/docs/reference/functions/math/averageif)
-- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
 
 ## FAQ
 
@@ -63,8 +84,6 @@ No. Text criteria matching is case-insensitive.
 ### Can COUNTIF evaluate wildcard criteria?
 Yes. Criteria expressions support wildcard patterns for text.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/countif" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/criteria_aggregates.rs)

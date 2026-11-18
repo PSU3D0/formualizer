@@ -13,11 +13,12 @@ use std::process::Command as ProcessCommand;
 use syn::visit::Visit;
 use syn::{Expr, ExprCall, ImplItem, Item, ItemImpl, ItemStruct, Lit, Meta, Type};
 
+mod content_dates;
+mod ref_examples;
+
 const BUILTINS_DIR: &str = "crates/formualizer-eval/src/builtins";
 const DOCGEN_SCHEMA_START: &str = "[formualizer-docgen:schema:start]";
 const DOCGEN_SCHEMA_END: &str = "[formualizer-docgen:schema:end]";
-const DOCGEN_FUNC_META_START: &str = "{/* [formualizer-docgen:function-meta:start] */}";
-const DOCGEN_FUNC_META_END: &str = "{/* [formualizer-docgen:function-meta:end] */}";
 const EXPLICIT_FILTER_ZERO_MATCHES: &str = "no matches for explicit filters";
 
 #[derive(Parser, Debug)]
@@ -150,6 +151,7 @@ struct RuntimeArgMeta {
     max: Option<String>,
     repeating: Option<String>,
     has_default: bool,
+    default: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -168,7 +170,7 @@ struct SandboxExample {
     title: Option<String>,
     formula: String,
     expected: Option<String>,
-    grid: std::collections::BTreeMap<String, String>,
+    grid: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +202,7 @@ struct FunctionRefEntry {
     arg_schema: Option<String>,
     args: Vec<RuntimeArgMeta>,
     caps: Vec<String>,
+    implementation_return_type: Option<&'static str>,
     short_summary: String,
     overview: String,
     remarks: String,
@@ -207,6 +210,9 @@ struct FunctionRefEntry {
     related_hints: Vec<String>,
     faq_entries: Vec<FaqEntry>,
     related_functions: Vec<RelatedFunctionRef>,
+    excel_differences: Option<&'static str>,
+    function_detail: Option<&'static str>,
+    unique_share: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -219,6 +225,7 @@ struct ImplInfo {
     arg_schema: Option<String>,
     caps: Vec<String>,
     doc_text: String,
+    return_type: Option<&'static str>,
 }
 
 #[derive(Debug, Default)]
@@ -675,12 +682,41 @@ fn run_docs_ref(args: DocsRefArgs) -> Result<()> {
 
     let inventory = BuiltinInventory::discover(Path::new(BUILTINS_DIR))?;
     let runtime_meta = collect_runtime_function_meta()?;
+    let update_dates = args.out_dir == Path::new("docs-site/content/docs/reference/functions")
+        && !filters_requested(&args.paths, &args.functions);
+    let apply = args.apply;
+    let engine = if apply && update_dates {
+        ReferenceEngine::from_checkout()?
+    } else {
+        let engine: ReferenceEngine =
+            serde_json::from_str(&fs::read_to_string(REFERENCE_ENGINE_PATH)?)?;
+        anyhow::ensure!(
+            engine.version == reference_engine_version(),
+            "reference engine version is stale; run cargo run -p xtask -- ref --apply --allow-dirty"
+        );
+        engine
+    };
+    let compatibility: EditorCompatibility = serde_json::from_str(&fs::read_to_string(
+        "docs-site/src/generated/example-editor-compatibility.json",
+    )?)?;
     run_docs_ref_with_inventory(
         args,
         &inventory,
         &runtime_meta,
         Path::new("docs-site/src/generated/functions-meta.json"),
-    )
+        &engine.standing_line(),
+        &compatibility.unavailable_functions,
+    )?;
+    if update_dates {
+        if apply {
+            let updated = serde_json::to_string_pretty(&engine)? + "\n";
+            if fs::read_to_string(REFERENCE_ENGINE_PATH).ok().as_deref() != Some(&updated) {
+                fs::write(REFERENCE_ENGINE_PATH, updated)?;
+            }
+        }
+        content_dates::update(apply)?;
+    }
+    Ok(())
 }
 
 fn run_docs_ref_with_inventory(
@@ -688,10 +724,16 @@ fn run_docs_ref_with_inventory(
     inventory: &BuiltinInventory,
     runtime_meta: &BTreeMap<String, RuntimeFunctionMeta>,
     metadata_path: &Path,
+    standing_line: &str,
+    unavailable_functions: &BTreeSet<String>,
 ) -> Result<()> {
     let explicitly_filtered = filters_requested(&args.paths, &args.functions);
-    let entries =
+    let mut entries =
         collect_function_ref_entries(inventory, &args.paths, &args.functions, runtime_meta)?;
+    if !runtime_meta.is_empty() && !entries.is_empty() {
+        ref_examples::prepare(&mut entries, explicitly_filtered)?;
+        measure_unique_prose(&mut entries, standing_line);
+    }
     let matched_entries = entries.len();
     ensure_matches_or_filtered(matched_entries, explicitly_filtered, "reference entries")?;
     if entries.is_empty() {
@@ -778,7 +820,7 @@ fn run_docs_ref_with_inventory(
             expected_mdx_files.insert(filename.clone());
 
             let page_path = category_dir.join(&filename);
-            let updated = render_function_page(entry);
+            let updated = render_function_page(entry, standing_line);
 
             apply_or_check_file(
                 &page_path,
@@ -799,7 +841,17 @@ fn run_docs_ref_with_inventory(
         )?;
     }
 
-    let mut top_pages = vec!["index".to_string()];
+    if !explicitly_filtered {
+        apply_or_check_file(
+            &args.out_dir.join("a-z.mdx"),
+            &render_function_index(&all_entries),
+            args.apply,
+            &mut stale_files,
+            &mut changed_files,
+        )?;
+    }
+
+    let mut top_pages = vec!["index".to_string(), "a-z".to_string()];
     top_pages.extend(by_category.keys().cloned());
 
     let top_meta = serde_json::to_string_pretty(&serde_json::json!({
@@ -814,7 +866,7 @@ fn run_docs_ref_with_inventory(
         &mut changed_files,
     )?;
 
-    let functions_meta_json = render_functions_meta_json(&all_entries)?;
+    let functions_meta_json = render_functions_meta_json(&all_entries, unavailable_functions)?;
     apply_or_check_file(
         metadata_path,
         &(functions_meta_json + "\n"),
@@ -928,10 +980,14 @@ fn collect_function_ref_entries(
             short_summary: parsed_doc.short_summary,
             overview: parsed_doc.overview,
             remarks: parsed_doc.remarks,
+            implementation_return_type: impl_info.return_type,
             sandboxes: parsed_doc.sandboxes,
             related_hints: parsed_doc.related_hints,
             faq_entries: parsed_doc.faq_entries,
             related_functions: Vec::new(),
+            excel_differences: None,
+            function_detail: None,
+            unique_share: 1.0,
         });
     }
 
@@ -999,66 +1055,6 @@ fn known_related_pairs(name: &str) -> &'static [&'static str] {
     }
 }
 
-fn function_family(name: &str) -> String {
-    name.split('.').next().unwrap_or(name).to_string()
-}
-
-fn function_kinds(entry: &FunctionRefEntry) -> BTreeSet<String> {
-    let mut kinds = BTreeSet::new();
-    for arg in &entry.args {
-        for kind in &arg.kinds {
-            kinds.insert(kind.to_ascii_lowercase());
-        }
-    }
-    kinds
-}
-
-fn related_similarity_score(a: &FunctionRefEntry, b: &FunctionRefEntry) -> i32 {
-    let mut score = 0i32;
-
-    if a.category_slug == b.category_slug {
-        score += 60;
-    }
-
-    let shared_caps = a
-        .caps
-        .iter()
-        .filter(|cap| b.caps.iter().any(|other| other == *cap))
-        .count() as i32;
-    score += (shared_caps * 6).min(24);
-
-    let a_kinds = function_kinds(a);
-    let b_kinds = function_kinds(b);
-    let shared_kinds = a_kinds.intersection(&b_kinds).count() as i32;
-    score += (shared_kinds * 4).min(16);
-
-    if a.variadic == b.variadic {
-        score += 4;
-    }
-    if a.min_args == b.min_args {
-        score += 4;
-    }
-    if a.max_args == b.max_args {
-        score += 3;
-    }
-
-    let a_family = function_family(&a.function_name.to_uppercase());
-    let b_family = function_family(&b.function_name.to_uppercase());
-    if a_family == b_family {
-        score += 18;
-
-        let a_upper = a.function_name.to_uppercase();
-        let b_upper = b.function_name.to_uppercase();
-        let inv_dist_pair = (a_upper.contains("INV") && b_upper.contains("DIST"))
-            || (a_upper.contains("DIST") && b_upper.contains("INV"));
-        if inv_dist_pair {
-            score += 8;
-        }
-    }
-
-    score
-}
-
 fn populate_related_functions(entries: &mut [FunctionRefEntry]) {
     let mut by_name: BTreeMap<String, RelatedFunctionRef> = BTreeMap::new();
 
@@ -1074,21 +1070,12 @@ fn populate_related_functions(entries: &mut [FunctionRefEntry]) {
         );
     }
 
-    let links_by_idx = entries
-        .iter()
-        .map(|entry| RelatedFunctionRef {
-            name: entry.function_name.clone(),
-            category_slug: entry.category_slug.clone(),
-            function_slug: entry.function_slug.clone(),
-        })
-        .collect::<Vec<_>>();
-
-    for idx in 0..entries.len() {
-        let self_key = entries[idx].function_name.to_uppercase();
+    for entry in entries {
+        let self_key = entry.function_name.to_uppercase();
         let mut seen: BTreeSet<String> = BTreeSet::new();
         let mut related = Vec::new();
 
-        for hint in &entries[idx].related_hints {
+        for hint in &entry.related_hints {
             let key = hint.trim().to_uppercase();
             if key.is_empty() || key == self_key {
                 continue;
@@ -1115,70 +1102,7 @@ fn populate_related_functions(entries: &mut [FunctionRefEntry]) {
             }
         }
 
-        if related.len() < 6 {
-            let current = &entries[idx];
-            let mut scored = Vec::new();
-
-            for (cand_idx, candidate) in entries.iter().enumerate() {
-                if cand_idx == idx {
-                    continue;
-                }
-                if seen.contains(&candidate.function_name) {
-                    continue;
-                }
-
-                let score = related_similarity_score(current, candidate);
-                if score <= 0 {
-                    continue;
-                }
-
-                scored.push((
-                    score,
-                    current.category_slug == candidate.category_slug,
-                    candidate.function_name.clone(),
-                    cand_idx,
-                ));
-            }
-
-            scored.sort_by(|a, b| {
-                b.0.cmp(&a.0)
-                    .then_with(|| b.1.cmp(&a.1))
-                    .then_with(|| a.2.cmp(&b.2))
-            });
-
-            for (_score, _same_category, name, cand_idx) in scored {
-                if related.len() >= 6 {
-                    break;
-                }
-                if seen.insert(name) {
-                    related.push(links_by_idx[cand_idx].clone());
-                }
-            }
-        }
-
-        if related.len() < 6 {
-            let self_category = entries[idx].category_slug.clone();
-            for candidate in entries.iter() {
-                if related.len() >= 6 {
-                    break;
-                }
-                if candidate.function_name.to_uppercase() == self_key {
-                    continue;
-                }
-                if candidate.category_slug != self_category {
-                    continue;
-                }
-                if seen.insert(candidate.function_name.clone()) {
-                    related.push(RelatedFunctionRef {
-                        name: candidate.function_name.clone(),
-                        category_slug: candidate.category_slug.clone(),
-                        function_slug: candidate.function_slug.clone(),
-                    });
-                }
-            }
-        }
-
-        entries[idx].related_functions = related;
+        entry.related_functions = related;
     }
 }
 
@@ -1194,7 +1118,7 @@ fn sanitize_function_slug(slug: String) -> String {
 struct SandboxYamlSpec {
     title: Option<String>,
     formula: String,
-    #[serde(default)]
+    #[serde(default, alias = "result")]
     expected: Option<serde_yaml::Value>,
     #[serde(default)]
     grid: std::collections::BTreeMap<String, serde_yaml::Value>,
@@ -1235,7 +1159,27 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
     let mut faq_entries: Vec<FaqEntry> = Vec::new();
     let fenced_blocks = parse_fenced_blocks(&clean_doc);
 
+    let mut legacy_examples = Vec::new();
     for block in fenced_blocks {
+        if matches!(block.language.as_str(), "excel" | "formula") {
+            let mut expected = None;
+            for line in block.content.lines().map(str::trim) {
+                if let Some(value) = line
+                    .strip_prefix("# returns:")
+                    .or_else(|| line.strip_prefix("// returns:"))
+                {
+                    expected = Some(value.trim().to_string());
+                } else if line.starts_with('=') {
+                    legacy_examples.push(SandboxExample {
+                        title: None,
+                        formula: line.to_string(),
+                        expected: expected.take(),
+                        grid: BTreeMap::new(),
+                    });
+                }
+            }
+        }
+
         if block.raw_fence.contains("yaml,sandbox")
             && let Ok(spec) = serde_yaml::from_str::<SandboxYamlSpec>(&block.content)
         {
@@ -1246,16 +1190,16 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
                 _ => serde_json::to_string(&v).unwrap_or_default(),
             });
 
-            let mut grid = std::collections::BTreeMap::new();
-            for (k, v) in spec.grid {
-                let val_str = match v {
-                    serde_yaml::Value::String(s) => s,
-                    serde_yaml::Value::Number(n) => n.to_string(),
-                    serde_yaml::Value::Bool(b) => b.to_string(),
-                    _ => serde_json::to_string(&v).unwrap_or_default(),
-                };
-                grid.insert(k, val_str);
-            }
+            let grid = spec
+                .grid
+                .into_iter()
+                .map(|(cell, value)| {
+                    (
+                        cell,
+                        serde_json::to_value(value).expect("sandbox cell serializes"),
+                    )
+                })
+                .collect();
 
             sandboxes.push(SandboxExample {
                 title: spec.title,
@@ -1288,13 +1232,19 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
         }
     }
 
+    if sandboxes.is_empty() {
+        sandboxes = legacy_examples;
+    }
+
     // Remove machine-readable fenced blocks from prose extraction.
     let re_sandbox = Regex::new(r"(?s)```yaml,sandbox.*?```").unwrap();
     let without_sandbox = re_sandbox.replace_all(&clean_doc, "").to_string();
     let re_docs = Regex::new(r"(?s)```yaml,docs.*?```").unwrap();
-    let text_no_sandboxes = re_docs.replace_all(&without_sandbox, "").to_string();
+    let without_docs = re_docs.replace_all(&without_sandbox, "");
+    let re_formula = Regex::new(r"(?ms)^ *```(?:excel|formula)\b.*?^ *```").unwrap();
+    let prose = re_formula.replace_all(&without_docs, "");
 
-    let mut lines = text_no_sandboxes.lines();
+    let mut lines = prose.lines();
     let mut short_summary = String::new();
     let mut overview_lines = Vec::new();
     let mut remarks_lines = Vec::new();
@@ -1320,7 +1270,7 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
         let trimmed = line.trim();
         if trimmed.starts_with("# ") {
             let heading = trimmed.trim_start_matches("# ").trim().to_lowercase();
-            if heading == "examples" {
+            if heading == "example" || heading == "examples" {
                 current_section = "examples";
             } else if heading == "formula example" || heading == "rust example" {
                 current_section = "skip"; // legacy, skip
@@ -1343,10 +1293,6 @@ fn parse_docstring_for_ref(doc_text: &str, fn_name: &str) -> ParsedDocContent {
     }
 
     short_summary = normalize_short_summary(&short_summary, fn_name);
-
-    if overview_lines.is_empty() {
-        overview_lines.push(short_summary.clone());
-    }
 
     let overview = normalize_overview_text(&overview_lines.join("\n"));
 
@@ -1422,7 +1368,14 @@ fn normalize_short_summary(raw: &str, fn_name: &str) -> String {
 fn normalize_overview_text(raw: &str) -> String {
     Regex::new(r"\n{3,}")
         .expect("valid regex")
-        .replace_all(raw.trim(), "\n\n")
+        .replace_all(
+            &raw.lines()
+                .map(str::trim_end)
+                .collect::<Vec<_>>()
+                .join("\n"),
+            "\n\n",
+        )
+        .trim()
         .to_string()
 }
 
@@ -1472,131 +1425,275 @@ fn display_category_name(raw: &str) -> String {
     }
 }
 
-fn render_category_index_page(category_name: &str, entries: &[FunctionRefEntry]) -> String {
+fn function_index_link(entry: &FunctionRefEntry) -> String {
+    format!(
+        "- [{}](/docs/reference/functions/{}/{})",
+        entry.function_name, entry.category_slug, entry.function_slug
+    )
+}
+
+fn render_function_index(entries: &[FunctionRefEntry]) -> String {
+    let mut entries = entries.iter().collect::<Vec<_>>();
+    entries.sort_by_key(|entry| &entry.function_name);
     let mut lines = vec![
         "---".to_string(),
-        format!("title: {} Functions", category_name),
-        format!(
-            "description: Generated reference pages for {} functions.",
-            category_name
-        ),
+        "title: Excel Functions A–Z".to_string(),
+        "description: Browse the Excel formula functions documented by Formualizer in alphabetical order.".to_string(),
         "---".to_string(),
-        "".to_string(),
-        format!(
-            "This section contains {} generated function reference pages.",
-            entries.len()
-        ),
-        "".to_string(),
-        "## Functions".to_string(),
-        "".to_string(),
     ];
 
+    let mut previous_initial = None;
     for entry in entries {
-        lines.push(format!(
-            "- [{}](/docs/reference/functions/{}/{})",
-            entry.function_name, entry.category_slug, entry.function_slug
-        ));
+        let initial = entry.function_name.chars().next();
+        if initial != previous_initial {
+            lines.push(format!("\n## {}\n", initial.unwrap_or('#')));
+            previous_initial = initial;
+        }
+        lines.push(function_index_link(entry));
     }
-
     lines.push(String::new());
     lines.join("\n")
 }
 
-fn render_function_page(entry: &FunctionRefEntry) -> String {
+fn render_category_index_page(category_name: &str, entries: &[FunctionRefEntry]) -> String {
+    let search_category = match category_name {
+        "Date & Time" => "Date and Time",
+        "Financial" => "Financial",
+        "Information" => "Information",
+        "LET / LAMBDA" => "LET and LAMBDA",
+        "Logical (Extended)" => "Advanced Logical",
+        "Lookup" => "Lookup",
+        "Math" => "Math and Trigonometry",
+        "Reference" => "Cell and Range Reference",
+        "Statistics" => "Statistical",
+        _ => category_name,
+    };
+    let title = format!("Excel {search_category} Functions");
+    let description = format!(
+        "Browse Excel {} functions supported by Formualizer, with formula syntax, arguments, and examples where documented.",
+        search_category.to_lowercase()
+    );
+    let mut lines = vec![
+        "---".to_string(),
+        format!("title: {title}"),
+        format!("description: {description}"),
+        "---".to_string(),
+        String::new(),
+        "## Functions".to_string(),
+        String::new(),
+    ];
+    lines.extend(entries.iter().map(function_index_link));
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn reference_engine_version() -> &'static str {
+    include_str!("../../formualizer-eval/Cargo.toml")
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("version = \"")
+                .and_then(|v| v.strip_suffix('"'))
+        })
+        .expect("engine package version")
+}
+
+const REFERENCE_ENGINE_PATH: &str = "docs-site/src/generated/reference-engine.json";
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReferenceEngine {
+    version: String,
+    unreleased_changes: bool,
+}
+
+impl ReferenceEngine {
+    fn from_checkout() -> Result<Self> {
+        let version = reference_engine_version().to_string();
+        let head = ProcessCommand::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()?;
+        anyhow::ensure!(
+            head.status.success(),
+            "could not resolve the reference engine checkout"
+        );
+        let tag = ProcessCommand::new("git")
+            .args([
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("refs/tags/v{version}^{{commit}}"),
+            ])
+            .output()?;
+        Ok(Self {
+            version,
+            unreleased_changes: !tag.status.success() || head.stdout != tag.stdout,
+        })
+    }
+
+    fn standing_line(&self) -> String {
+        let suffix = if self.unreleased_changes {
+            " plus unreleased changes"
+        } else {
+            ""
+        };
+        format!(
+            "The Formualizer engine in this repository at {}{suffix} computes the example results. Known differences from Excel are listed on this page.",
+            self.version
+        )
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorCompatibility {
+    unavailable_functions: BTreeSet<String>,
+}
+
+fn measure_unique_prose(entries: &mut [FunctionRefEntry], standing_line: &str) {
+    let words = Regex::new(r"[\p{L}]+").expect("word pattern");
+    let mut frequency = BTreeMap::<String, usize>::new();
+    let pages = entries
+        .iter()
+        .map(|entry| {
+            let body = render_function_page(entry, standing_line);
+            let mut segments = BTreeMap::<String, usize>::new();
+            let mut in_example = false;
+            for line in body.lines().skip(5) {
+                let line = line.trim();
+                if line == "<FunctionExample" {
+                    in_example = true;
+                    continue;
+                }
+                if line == "/>" {
+                    in_example = false;
+                    continue;
+                }
+                let text = if in_example {
+                    let Some(title) = line
+                        .strip_prefix("title={")
+                        .and_then(|t| t.strip_suffix('}'))
+                    else {
+                        continue;
+                    };
+                    serde_json::from_str::<String>(title).expect("encoded example title")
+                } else if line.starts_with('|') || line.starts_with('[') || line.starts_with('`') {
+                    continue;
+                } else {
+                    line.to_string()
+                };
+                // Count repeated text even when punctuation, case or numbers vary.
+                let tokens = words
+                    .find_iter(&text)
+                    .map(|word| word.as_str().to_lowercase())
+                    .collect::<Vec<_>>();
+                if !tokens.is_empty() {
+                    *segments.entry(tokens.join(" ")).or_default() += tokens.len();
+                }
+            }
+            for segment in segments.keys() {
+                *frequency.entry(segment.clone()).or_default() += 1;
+            }
+            segments
+        })
+        .collect::<Vec<_>>();
+    for (entry, segments) in entries.iter_mut().zip(pages) {
+        let total = segments.values().sum::<usize>();
+        let unique = segments
+            .iter()
+            .filter(|(text, _)| frequency[*text] == 1)
+            .map(|(_, words)| words)
+            .sum::<usize>();
+        entry.unique_share = if total == 0 {
+            0.0
+        } else {
+            unique as f64 / total as f64
+        };
+    }
+}
+
+fn render_function_page(entry: &FunctionRefEntry, standing_line: &str) -> String {
     let mut lines = Vec::new();
 
     // Frontmatter
     lines.push("---".to_string());
-    lines.push(format!("title: \"{}\"", entry.function_name));
-
-    // Description (escape quotes + keep on one line)
-    let desc = build_frontmatter_description(entry);
-    let escaped_desc = desc.replace("\"", "\\\"");
-    lines.push(format!("description: \"{}\"", escaped_desc));
+    lines.push(format!("title: {}", json_string(&entry.function_name)));
+    lines.push(format!(
+        "seoTitle: {}",
+        json_string(&format!(
+            "{} function: formula syntax and examples",
+            entry.function_name
+        ))
+    ));
+    lines.push(format!(
+        "description: {}",
+        json_string(&build_frontmatter_description(entry))
+    ));
     lines.push("---".to_string());
     lines.push("".to_string());
 
-    lines.push(format!(
-        "<FunctionPageSchema id=\"{}\" />",
-        function_meta_id(entry)
-    ));
-    lines.push("".to_string());
+    if !entry.short_summary.starts_with("Reference for the ") {
+        lines.push(sanitize_mdx_text(&entry.short_summary));
+        lines.push(String::new());
+    }
 
-    // Overview
-    lines.push("## Summary".to_string());
-    lines.push("".to_string());
-    lines.push(sanitize_mdx_text(&entry.overview));
-    lines.push("".to_string());
+    if !entry.overview.is_empty() && entry.overview != entry.short_summary {
+        lines.push(sanitize_mdx_text(&entry.overview));
+        lines.push(String::new());
+    }
+
+    lines.push(standing_line.to_string());
+    lines.push(String::new());
+    render_usage(entry, &mut lines);
+    if let Some(detail) = entry.function_detail {
+        lines.extend([
+            "## How it works".to_string(),
+            String::new(),
+            sanitize_mdx_text(detail),
+            String::new(),
+        ]);
+    }
+    if let Some(difference) = entry.excel_differences {
+        lines.extend([
+            "## Differences from Excel".to_string(),
+            String::new(),
+            sanitize_mdx_text(difference),
+            String::new(),
+        ]);
+    }
+    if matches!(entry.function_name.as_str(), "ROW" | "COLUMN" | "SINGLE") {
+        lines.push("The examples enter the formula in cell `CV100`.".to_string());
+        lines.push(String::new());
+    }
 
     // Remarks
-    if !entry.remarks.is_empty() {
-        lines.push(sanitize_mdx_text(&entry.remarks));
-        lines.push("".to_string());
-    }
+    render_remarks(&entry.remarks, &mut lines);
 
     // Examples (Sandboxes)
     if !entry.sandboxes.is_empty() {
         lines.push("## Examples".to_string());
         lines.push("".to_string());
 
-        if entry.sandboxes.len() > 1 {
-            let tab_items = entry
-                .sandboxes
-                .iter()
-                .map(|sandbox| {
-                    serde_json::to_string(sandbox.title.as_deref().unwrap_or("Example"))
-                        .unwrap_or_else(|_| "\"Example\"".to_string())
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            lines.push(format!("<Tabs items={{[{}]}}>", tab_items));
-        }
-
         for sandbox in &entry.sandboxes {
-            let title = sandbox.title.as_deref().unwrap_or("Example");
-            let title_attr = escape_jsx_attr(title);
-            let grid_json =
-                serde_json::to_string(&sandbox.grid).unwrap_or_else(|_| "{}".to_string());
-            let expected_json = sandbox.expected.as_deref().unwrap_or("null");
-            let expected_json_escaped =
-                serde_json::to_string(&expected_json).unwrap_or_else(|_| "\"\"".to_string());
-
-            if entry.sandboxes.len() > 1 {
-                lines.push(format!("<Tab value=\"{}\">", title_attr));
-            }
-
+            let title = sandbox
+                .title
+                .as_deref()
+                .filter(|title| {
+                    !title
+                        .strip_prefix("Example ")
+                        .is_some_and(|n| n.parse::<usize>().is_ok())
+                })
+                .unwrap_or("");
             lines.push(format!(
-                "<FunctionSandbox\n  title=\"{}\"\n  formula={{`{}`}}\n  grid={{{}}}\n  expected={{{}}}\n/>",
-                title_attr,
-                sandbox.formula.replace("`", "\\`"),
-                grid_json,
-                expected_json_escaped
+                "<FunctionExample\n  title={{{}}}\n  formula={{{}}}\n  grid={{{}}}\n  expected={{{}}}\n/>",
+                json_string(title),
+                json_string(&sandbox.formula),
+                serde_json::to_string(&sandbox.grid.iter()
+                    .map(|(cell, value)| (cell, ref_examples::encode_cell(value)))
+                    .collect::<BTreeMap<_, _>>()).expect("example grid serializes"),
+                serde_json::to_string(&sandbox.expected).expect("expected result serializes")
             ));
-
-            if entry.sandboxes.len() > 1 {
-                lines.push("</Tab>".to_string());
-            }
-            lines.push("".to_string());
+            lines.push(String::new());
         }
-
-        if entry.sandboxes.len() > 1 {
-            lines.push("</Tabs>".to_string());
-            lines.push("".to_string());
-        }
-    } else {
-        // Fallback dummy example if none exists yet, so docs are populated
-        let example_formula = match entry.min_args.unwrap_or(1) {
-            0 => format!("={}()", entry.function_name),
-            1 => format!("={}(A1)", entry.function_name),
-            _ => format!("={}(A1, B1)", entry.function_name),
-        };
-
-        lines.push("## Formula example".to_string());
-        lines.push("".to_string());
-        lines.push("```text".to_string());
-        lines.push(example_formula);
-        lines.push("```".to_string());
-        lines.push("".to_string());
     }
 
     if !entry.related_functions.is_empty() {
@@ -1621,43 +1718,196 @@ fn render_function_page(entry: &FunctionRefEntry) -> String {
         }
     }
 
-    // Runtime metadata
-    lines.push("## Runtime metadata".to_string());
-    lines.push("".to_string());
-    lines.push(render_function_meta_block(entry));
-    lines.push("".to_string());
+    lines.push("## Implementation".to_string());
+    lines.push(String::new());
+    lines.push(format!(
+        "[Engine source](https://github.com/psu3d0/formualizer/blob/main/{})",
+        entry.impl_file
+    ));
+    lines.push(String::new());
 
     lines.join("\n")
 }
 
-fn build_frontmatter_description(entry: &FunctionRefEntry) -> String {
-    let mut desc = sanitize_mdx_text(&entry.short_summary).replace('\n', " ");
-    desc = Regex::new(r"\s+")
-        .expect("valid regex")
-        .replace_all(desc.trim(), " ")
-        .to_string();
-
-    if !desc
-        .to_uppercase()
-        .contains(&entry.function_name.to_uppercase())
-    {
-        desc = format!("{}: {}", entry.function_name, desc);
-    }
-
-    const MAX_DESC: usize = 165;
-    if desc.chars().count() > MAX_DESC {
-        let mut cut = 0usize;
-        for (i, _) in desc.char_indices() {
-            if i < MAX_DESC {
-                cut = i;
-            } else {
-                break;
-            }
+fn documented_return_type(entry: &FunctionRefEntry) -> Option<&'static str> {
+    let summary = entry.short_summary.to_ascii_lowercase().replace('`', "");
+    for (prefixes, kind) in [
+        (
+            &[
+                "returns true ",
+                "returns false ",
+                "returns whether ",
+                "returns a boolean",
+            ][..],
+            "Logical (TRUE or FALSE)",
+        ),
+        (
+            &[
+                "returns text ",
+                "returns a text string",
+                "returns the formula text",
+            ][..],
+            "Text",
+        ),
+        (
+            &[
+                "returns a number",
+                "returns a numeric value",
+                "returns the numeric code",
+                "returns the arithmetic mean",
+                "adds numeric values",
+            ][..],
+            "Number",
+        ),
+        (&["returns the #n/a error value"][..], "Error (#N/A)"),
+    ] {
+        if prefixes.iter().any(|prefix| summary.starts_with(prefix)) {
+            return Some(kind);
         }
-        desc = format!("{}…", desc[..cut].trim_end());
+    }
+    None
+}
+
+fn render_usage(entry: &FunctionRefEntry, lines: &mut Vec<String>) {
+    if let Some(syntax) = &entry.signature {
+        lines.extend([
+            "## Syntax".to_string(),
+            String::new(),
+            format!("`{syntax}`"),
+            String::new(),
+        ]);
     }
 
-    desc
+    if !entry.args.is_empty() {
+        lines.extend([
+            "## Arguments".to_string(),
+            String::new(),
+            "| Argument | Type | Required | Default |".to_string(),
+            "| --- | --- | --- | --- |".to_string(),
+        ]);
+        for arg in &entry.args {
+            let name = &arg.name;
+            let kinds = arg.kinds.join(" or ");
+            let arg_type = if arg.shape == "scalar" {
+                kinds
+            } else {
+                format!("{kinds} ({})", arg.shape)
+            };
+            let required = if arg.required { "Required" } else { "Optional" };
+            let default = match arg.default.as_deref() {
+                Some("") => r#"`""`"#.to_string(),
+                Some(value) => format!("`{}`", value.replace('|', "\\|")),
+                None => "—".to_string(),
+            };
+            lines.push(format!(
+                "| `{}` | {arg_type} | {required} | {default} |",
+                name
+            ));
+        }
+        lines.push(String::new());
+        if entry.variadic == Some(true)
+            && let Some(minimum) = entry.min_args
+        {
+            lines.push(format!(
+                "Accepts a variable number of arguments. Minimum: {minimum}."
+            ));
+            lines.push(String::new());
+        }
+    }
+
+    if let Some(kind) = documented_return_type(entry) {
+        lines.extend([
+            "## Return type".to_string(),
+            String::new(),
+            kind.to_string(),
+            String::new(),
+        ]);
+    } else if entry.caps.iter().any(|cap| cap == "RETURNS_REFERENCE") {
+        lines.extend([
+            "## Return type".to_string(),
+            String::new(),
+            "Can return a reference when evaluated in a reference context.".to_string(),
+            String::new(),
+        ]);
+    } else if let Some(kind) = entry
+        .implementation_return_type
+        .filter(|kind| *kind != "a number")
+    {
+        lines.extend([
+            "## Return type".to_string(),
+            String::new(),
+            format!("Can return {kind}."),
+            String::new(),
+        ]);
+    }
+}
+
+fn render_remarks(remarks: &str, lines: &mut Vec<String>) {
+    let error_bullet = Regex::new(
+        r"(?i)^ *- +(?:errors?:|(?:.*\breturns? |returns? )(?:`#[A-Z0-9/?!._]+`|argument-related errors)|`#[A-Z0-9/?!._]+` (?:if|when|for)\b)",
+    ).expect("valid error bullet pattern");
+    let mut prose = Vec::new();
+    let mut errors = Vec::new();
+    let mut in_remarks = false;
+    let mut in_error = false;
+    for line in remarks.lines().map(str::trim_end) {
+        if line.starts_with("## ") {
+            in_remarks = line == "## Remarks";
+        }
+        in_error =
+            in_remarks && (error_bullet.is_match(line) || (in_error && line.starts_with("   ")));
+        if in_error {
+            errors.push(line);
+        } else {
+            prose.push(line);
+        }
+    }
+    // A remarks section containing only error bullets has no prose left.
+    let prose = prose.join("\n").replace("## Remarks\n\n## ", "## ");
+    let prose = prose.trim_end_matches("## Remarks").trim();
+    if !prose.is_empty() {
+        lines.extend([sanitize_mdx_text(prose), String::new()]);
+    }
+    if !errors.is_empty() {
+        lines.extend([
+            "## Error cases".to_string(),
+            String::new(),
+            sanitize_mdx_text(&errors.join("\n")),
+            String::new(),
+        ]);
+    }
+}
+
+fn build_frontmatter_description(entry: &FunctionRefEntry) -> String {
+    let summary = match entry.function_name.as_str() {
+        "GROUPBY" => "Summarize rows by shared keys and spill the group totals into a table.".to_string(),
+        "RRI" => "Find the constant growth rate that takes a starting value to a final value over a fixed number of periods.".to_string(),
+        _ => entry.short_summary.replace('`', ""),
+    };
+    if matches!(
+        entry.function_name.as_str(),
+        "GROUPBY" | "RRI" | "TEXTSPLIT"
+    ) {
+        return summary;
+    }
+    let suffix = entry
+        .signature
+        .as_deref()
+        .filter(|syntax| summary.chars().count() + syntax.chars().count() < 165)
+        .unwrap_or(&entry.function_name);
+    let limit = 164 - suffix.chars().count();
+    if summary.chars().count() <= limit {
+        return format!("{summary} {suffix}");
+    }
+    let short = summary.chars().take(limit - 1).collect::<String>();
+    let whole_words = short
+        .rsplit_once(' ')
+        .map_or(short.as_str(), |(words, _)| words);
+    format!("{whole_words}… {suffix}")
+}
+
+fn json_string(value: &str) -> String {
+    serde_json::to_string(value).expect("string serializes")
 }
 
 fn sanitize_mdx_text(input: &str) -> String {
@@ -1667,25 +1917,8 @@ fn sanitize_mdx_text(input: &str) -> String {
         .replace('>', "&gt;")
 }
 
-fn escape_jsx_attr(input: &str) -> String {
-    input
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
 fn function_meta_id(entry: &FunctionRefEntry) -> String {
     format!("{}/{}", entry.category_slug, entry.function_slug)
-}
-
-fn render_function_meta_block(entry: &FunctionRefEntry) -> String {
-    [
-        DOCGEN_FUNC_META_START.to_string(),
-        format!("<FunctionMeta id=\"{}\" />", function_meta_id(entry)),
-        DOCGEN_FUNC_META_END.to_string(),
-    ]
-    .join("\n")
 }
 
 fn print_docs_ref_quality_warnings(entries: &[FunctionRefEntry]) {
@@ -1714,7 +1947,10 @@ fn print_docs_ref_quality_warnings(entries: &[FunctionRefEntry]) {
     println!("  metadata duplicate description collisions: {duplicates}");
 }
 
-fn render_functions_meta_json(entries: &[FunctionRefEntry]) -> Result<String> {
+fn render_functions_meta_json(
+    entries: &[FunctionRefEntry],
+    unavailable_functions: &BTreeSet<String>,
+) -> Result<String> {
     let mut map = serde_json::Map::new();
 
     for entry in entries {
@@ -1722,6 +1958,11 @@ fn render_functions_meta_json(entries: &[FunctionRefEntry]) -> Result<String> {
             function_meta_id(entry),
             serde_json::json!({
                 "name": entry.function_name,
+                "uniqueShare": entry.unique_share,
+                // Shared prose between sibling functions (LEFT/RIGHT, AND/OR) lowers
+                // this share without making a page poor, so it is recorded for
+                // review and does not decide indexing on its own.
+                "noindex": unavailable_functions.contains(&entry.function_name),
                 "category": entry.category,
                 "shortSummary": entry.short_summary,
                 "typeName": entry.type_name,
@@ -1751,7 +1992,11 @@ fn apply_or_check_file(
     changed_files: &mut usize,
 ) -> Result<()> {
     let current = fs::read_to_string(path).ok();
-    let needs_update = current.as_deref() != Some(content);
+    let needs_update = current.as_deref() != Some(content)
+        && !(content.contains("<FunctionExample")
+            && current
+                .as_deref()
+                .is_some_and(|current| ref_examples::same_displayed_page(current, content)));
     if !needs_update {
         return Ok(());
     }
@@ -1971,6 +2216,7 @@ fn collect_function_impl(item_impl: &ItemImpl, file_rel: &str, facts: &mut FileF
     let mut variadic = None;
     let mut arg_schema = None;
     let mut caps = Vec::new();
+    let mut return_type = None;
 
     for impl_item in &item_impl.items {
         match impl_item {
@@ -1988,6 +2234,9 @@ fn collect_function_impl(item_impl: &ItemImpl, file_rel: &str, facts: &mut FileF
             }
             ImplItem::Fn(function) if function.sig.ident == "arg_schema" => {
                 arg_schema = extract_expr_string_from_block(&function.block);
+            }
+            ImplItem::Fn(function) if function.sig.ident == "eval" => {
+                return_type = extract_scalar_return_type(&function.block);
             }
             ImplItem::Macro(mac)
                 if mac
@@ -2015,8 +2264,57 @@ fn collect_function_impl(item_impl: &ItemImpl, file_rel: &str, facts: &mut FileF
             arg_schema,
             caps,
             doc_text: collect_doc_attrs(&item_impl.attrs),
+            return_type,
         },
     ));
+}
+
+// A literal in the evaluator's success tail shows one possible result type.
+fn extract_scalar_return_type(block: &syn::Block) -> Option<&'static str> {
+    fn constructor(expr: &Expr) -> Option<(&syn::Path, &Expr)> {
+        let Expr::Call(call) = unwrap_expr(expr) else {
+            return None;
+        };
+        let Expr::Path(path) = unwrap_expr(&call.func) else {
+            return None;
+        };
+        Some((&path.path, call.args.first()?))
+    }
+
+    let (ok, value) = constructor(extract_tail_expr(block)?)?;
+    if !ok.is_ident("Ok") {
+        return None;
+    }
+    let (scalar, literal) = constructor(value)?;
+    let mut scalar_parts = scalar.segments.iter().rev();
+    if scalar_parts.next()?.ident != "Scalar" || scalar_parts.next()?.ident != "CalcValue" {
+        return None;
+    }
+
+    let path = match unwrap_expr(literal) {
+        Expr::Call(call) => match unwrap_expr(&call.func) {
+            Expr::Path(path) => &path.path,
+            _ => return None,
+        },
+        Expr::Path(path) => &path.path,
+        _ => return None,
+    };
+    let mut parts = path.segments.iter().rev();
+    let variant = parts.next()?.ident.to_string();
+    if parts.next()?.ident != "LiteralValue" {
+        return None;
+    }
+    match variant.as_str() {
+        "Int" | "Number" => Some("a number"),
+        "Text" => Some("text"),
+        "Boolean" => Some("a logical value (TRUE or FALSE)"),
+        "Array" => Some("an array"),
+        "Date" => Some("a date"),
+        "DateTime" => Some("a date and time"),
+        "Time" => Some("a time"),
+        "Duration" => Some("a duration"),
+        _ => None,
+    }
 }
 
 fn extract_name_literal_from_block(block: &syn::Block) -> Option<String> {
@@ -2482,6 +2780,7 @@ fn format_runtime_args(schema: &[ArgSchema]) -> Vec<RuntimeArgMeta> {
                 max: spec.max.map(|value| format!("{:?}", value)),
                 repeating: spec.repeating.map(|value| format!("{:?}", value)),
                 has_default: spec.default.is_some(),
+                default: spec.default.as_ref().map(ToString::to_string),
             }
         })
         .collect()
@@ -3054,7 +3353,15 @@ fn register() { register_builtin(Arc::new(RefFn)); }
             allow_dirty: true,
         };
 
-        run_docs_ref_with_inventory(args(), &inventory, &BTreeMap::new(), &metadata_path).unwrap();
+        run_docs_ref_with_inventory(
+            args(),
+            &inventory,
+            &BTreeMap::new(),
+            &metadata_path,
+            "Example results from Formualizer.",
+            &Default::default(),
+        )
+        .unwrap();
 
         let page_path = out_dir.join("function/ref-test.mdx");
         fs::write(&page_path, "stale page\n").unwrap();
@@ -3062,9 +3369,15 @@ fn register() { register_builtin(Arc::new(RefFn)); }
 
         let mut check_args = args();
         check_args.apply = false;
-        let error =
-            run_docs_ref_with_inventory(check_args, &inventory, &BTreeMap::new(), &metadata_path)
-                .unwrap_err();
+        let error = run_docs_ref_with_inventory(
+            check_args,
+            &inventory,
+            &BTreeMap::new(),
+            &metadata_path,
+            "Example results from Formualizer.",
+            &Default::default(),
+        )
+        .unwrap_err();
         assert!(
             error
                 .to_string()

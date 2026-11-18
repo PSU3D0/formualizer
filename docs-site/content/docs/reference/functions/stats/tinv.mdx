@@ -1,0 +1,75 @@
+---
+title: "TINV"
+seoTitle: "TINV function: formula syntax and examples"
+description: "Returns the two-tailed inverse of the Student's t distribution (legacy name). =TINV(probability, deg_freedom)"
+---
+
+Returns the two-tailed inverse of the Student's t distribution (legacy name).
+
+`TINV(probability, deg_freedom)` is the `t` with `P(|T| &gt; t) = probability`,
+ the same as `T.INV.2T`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TINV(probability, deg_freedom)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+
+## How it works
+
+Maps to T.INV.2T with the same argument order. It finds the nonnegative cutoff with the given probability outside the interval from −x to x. Degrees of freedom must be positive.
+
+## Remarks
+ - `deg_freedom` is truncated to an integer.
+
+## Error cases
+
+ - Returns `#NUM!` when `probability &lt;= 0`, `probability &gt; 1`, or `deg_freedom &lt; 1`.
+
+## Examples
+
+<FunctionExample
+  title={"Use the legacy inverse to find the t cutoff for combined tail probability 0.25."}
+  formula={"=TINV(0.25,10)"}
+  grid={{}}
+  expected={"1.22125539500392"}
+/>
+
+<FunctionExample
+  title={"Move the cutoff inward until the two-tail probability reaches 0.75."}
+  formula={"=TINV(0.75,10)"}
+  grid={{}}
+  expected={"0.327558264952591"}
+/>
+
+<FunctionExample
+  title={"Find the two-sided cutoff at probability one half with one degree of freedom."}
+  formula={"=TINV(0.5,1)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A probability above one cannot identify a t statistic."}
+  formula={"=TINV(1.1,10)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Two-tailed critical value"}
+  formula={"=TINV(0.05,10)"}
+  grid={{}}
+  expected={"2.22813885198627"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

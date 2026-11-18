@@ -1,59 +1,87 @@
 ---
 title: "UNICODE"
-description: "Returns the Unicode code point of the first character in text."
+seoTitle: "UNICODE function: formula syntax and examples"
+description: "Returns the Unicode code point of the first character in text. =UNICODE(text)"
 ---
-
-<FunctionPageSchema id="text/unicode" />
-
-## Summary
 
 Returns the Unicode code point of the first character in text.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=UNICODE(text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+
 ## Remarks
  - Only the first character is evaluated.
- - Empty text returns `#VALUE!`.
  - Non-text inputs are coerced to text before inspection.
  - Errors are propagated unchanged.
 
+## Error cases
+
+ - Empty text returns `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["Code point for letter A", "Code point for emoji"]}>
-<Tab value="Code point for letter A">
-<FunctionSandbox
-  title="Code point for letter A"
-  formula={`=UNICODE("A")`}
+<FunctionExample
+  title={"Return the numeric character code for the first character in a string."}
+  formula={"=UNICODE(\"ABC\")"}
   grid={{}}
   expected={"65"}
 />
-</Tab>
 
-<Tab value="Code point for emoji">
-<FunctionSandbox
-  title="Code point for emoji"
-  formula={`=UNICODE("😀")`}
+<FunctionExample
+  title={"Change the leading character while keeping the rest of the string."}
+  formula={"=UNICODE(\"aBC\")"}
+  grid={{}}
+  expected={"97"}
+/>
+
+<FunctionExample
+  title={"Read the numeric code of a single space."}
+  formula={"=UNICODE(\" \")"}
+  grid={{}}
+  expected={"32"}
+/>
+
+<FunctionExample
+  title={"An empty string has no first character to encode."}
+  formula={"=UNICODE(\"\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Code point for letter A"}
+  formula={"=UNICODE(\"A\")"}
+  grid={{}}
+  expected={"65"}
+/>
+
+<FunctionExample
+  title={"Code point for emoji"}
+  formula={"=UNICODE(\"😀\")"}
   grid={{}}
   expected={"128512"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [UNICHAR](/docs/reference/functions/text/unichar)
 - [CODE](/docs/reference/functions/text/code)
 - [CHAR](/docs/reference/functions/text/char)
-- [ASC](/docs/reference/functions/text/asc)
-- [CLEAN](/docs/reference/functions/text/clean)
-- [LEN](/docs/reference/functions/text/len)
 
 ## FAQ
 
 ### If text has multiple characters, which one is used?
 UNICODE inspects only the first character and ignores the rest.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/unicode" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/extended.rs)

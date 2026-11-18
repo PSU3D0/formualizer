@@ -1,13 +1,29 @@
 ---
 title: "ARRAYTOTEXT"
-description: "ARRAYTOTEXT: Converts an array or range into a text representation."
+seoTitle: "ARRAYTOTEXT function: formula syntax and examples"
+description: "Converts an array or range into a text representation. =ARRAYTOTEXT(array, [format])"
 ---
 
-<FunctionPageSchema id="text/arraytotext" />
-
-## Summary
+Converts an array or range into a text representation.
 
 `ARRAYTOTEXT(array, [format])` supports concise (`0`) and strict (`1`) output styles.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ARRAYTOTEXT(array, [format])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | any or range (range) | Required | — |
+| `format` | number | Optional | `0` |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Strict mode returns brace-delimited array syntax with row/column separators.
@@ -17,43 +33,59 @@ description: "ARRAYTOTEXT: Converts an array or range into a text representation
 
 ## Examples
 
-<Tabs items={["Concise flattened output", "Strict 2D representation"]}>
-<Tab value="Concise flattened output">
-<FunctionSandbox
-  title="Concise flattened output"
-  formula={`=ARRAYTOTEXT({1,2,3})`}
+<FunctionExample
+  title={"Convert a rectangular array containing numbers and text to its concise representation."}
+  formula={"=ARRAYTOTEXT({1,\"East\";2,\"West\"})"}
+  grid={{}}
+  expected={"1, East, 2, West"}
+/>
+
+<FunctionExample
+  title={"Use strict representation to preserve the two-dimensional array syntax."}
+  formula={"=ARRAYTOTEXT({1,\"East\";2,\"West\"},1)"}
+  grid={{}}
+  expected={"{1,\"East\";2,\"West\"}"}
+/>
+
+<FunctionExample
+  title={"Show how an empty text element is represented in strict format."}
+  formula={"=ARRAYTOTEXT({\"\"},1)"}
+  grid={{}}
+  expected={"{\"\"}"}
+/>
+
+<FunctionExample
+  title={"An error in the format expression propagates."}
+  formula={"=ARRAYTOTEXT({1,\"East\"},1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Concise flattened output"}
+  formula={"=ARRAYTOTEXT({1,2,3})"}
   grid={{}}
   expected={"1, 2, 3"}
 />
-</Tab>
 
-<Tab value="Strict 2D representation">
-<FunctionSandbox
-  title="Strict 2D representation"
-  formula={`=ARRAYTOTEXT({1,2;3,4}, 1)`}
+<FunctionExample
+  title={"Strict 2D representation"}
+  formula={"=ARRAYTOTEXT({1,2;3,4}, 1)"}
   grid={{}}
   expected={"{1,2;3,4}"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [VALUETOTEXT](/docs/reference/functions/text/valuetotext)
 - [TEXTJOIN](/docs/reference/functions/text/textjoin)
 - [TEXTSPLIT](/docs/reference/functions/text/textsplit)
-- [DOLLAR](/docs/reference/functions/text/dollar)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
 
 ## FAQ
 
 ### What changes when format is 1?
 Format 1 returns brace-delimited array syntax; format 0 flattens values into a comma-space list.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/arraytotext" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/array_text.rs)

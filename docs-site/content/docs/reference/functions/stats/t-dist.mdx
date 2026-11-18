@@ -1,42 +1,76 @@
 ---
 title: "T.DIST"
-description: "T.DIST: Returns the Student's t probability for `x` and a given degrees-of-freedom value."
+seoTitle: "T.DIST function: formula syntax and examples"
+description: "Returns the Student's t probability for x and a given degrees-of-freedom value. =T.DIST(x, deg_freedom, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/t-dist" />
-
-## Summary
+Returns the Student's t probability for `x` and a given degrees-of-freedom value.
 
 Use `T.DIST` in either cumulative mode (left-tail probability) or density mode.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=T.DIST(x, deg_freedom, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+For positive degrees of freedom ν, Student’s t density is proportional to (1 + x²/ν) raised to −(ν+1)/2. The cumulative option integrates that density from negative infinity through the supplied statistic.
 
 ## Remarks
  - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
  - `deg_freedom` must be at least `1`.
- - Returns `#NUM!` when `deg_freedom &lt; 1`.
  - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Error cases
+
+ - Returns `#NUM!` when `deg_freedom &lt; 1`.
 
 ## Examples
 
-<Tabs items={["t CDF at zero", "t PDF at zero"]}>
-<Tab value="t CDF at zero">
-<FunctionSandbox
-  title="t CDF at zero"
-  formula={`=T.DIST(0,10,TRUE)`}
+<FunctionExample
+  title={"Find the cumulative Student t probability at a statistic of one."}
+  formula={"=T.DIST(1,10,TRUE)"}
+  grid={{}}
+  expected={"0.829553433848971"}
+/>
+
+<FunctionExample
+  title={"Evaluate the density at that statistic."}
+  formula={"=T.DIST(1,10,FALSE)"}
+  grid={{}}
+  expected={"0.230361989229139"}
+/>
+
+<FunctionExample
+  title={"The center of this symmetric distribution has cumulative probability one-half."}
+  formula={"=T.DIST(0,10,TRUE)"}
   grid={{}}
   expected={"0.5"}
 />
-</Tab>
 
-<Tab value="t PDF at zero">
-<FunctionSandbox
-  title="t PDF at zero"
-  formula={`=T.DIST(0,10,FALSE)`}
+<FunctionExample
+  title={"Degrees of freedom must be positive."}
+  formula={"=T.DIST(1,0,TRUE)"}
   grid={{}}
-  expected={"0.389108383966031"}
+  expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"t PDF at zero"}
+  formula={"=T.DIST(0,10,FALSE)"}
+  grid={{}}
+  expected={"0.389108383966032"}
+/>
 
 ## Related functions
 
@@ -44,11 +78,7 @@ Use `T.DIST` in either cumulative mode (left-tail probability) or density mode.
 - [T.TEST](/docs/reference/functions/stats/t-test)
 - [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
 - [T.INV.2T](/docs/reference/functions/stats/t-inv-2t)
-- [T.DIST.RT](/docs/reference/functions/stats/t-dist-rt)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/t-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

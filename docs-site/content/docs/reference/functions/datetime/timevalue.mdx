@@ -1,13 +1,22 @@
 ---
 title: "TIMEVALUE"
-description: "TIMEVALUE: Parses a time string and returns its fractional-day serial value."
+seoTitle: "TIMEVALUE function: formula syntax and examples"
+description: "Parses a time string and returns its fractional-day serial value. =TIMEVALUE(time_text)"
 ---
 
-<FunctionPageSchema id="datetime/timevalue" />
-
-## Summary
-
 Parses a time string and returns its fractional-day serial value.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TIMEVALUE(time_text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `time_text` | any | Required | — |
 
 ## Remarks
  - Supported formats include 24-hour and AM/PM text forms with optional seconds.
@@ -16,43 +25,59 @@ Parses a time string and returns its fractional-day serial value.
 
 ## Examples
 
-<Tabs items={["Parse 24-hour time", "Parse 12-hour AM/PM time"]}>
-<Tab value="Parse 24-hour time">
-<FunctionSandbox
-  title="Parse 24-hour time"
-  formula={`=TIMEVALUE("14:30")`}
+<FunctionExample
+  title={"Parse a time written with a 24-hour clock."}
+  formula={"=TIMEVALUE(\"14:35:27\")"}
   grid={{}}
-  expected={"0.6041666667"}
+  expected={"0.607951388888889"}
 />
-</Tab>
 
-<Tab value="Parse 12-hour AM/PM time">
-<FunctionSandbox
-  title="Parse 12-hour AM/PM time"
-  formula={`=TIMEVALUE("02:30 PM")`}
+<FunctionExample
+  title={"Parse a time that uses an afternoon marker."}
+  formula={"=TIMEVALUE(\"2:35 PM\")"}
   grid={{}}
-  expected={"0.6041666667"}
+  expected={"0.607638888888889"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Parse midnight at the start of a day."}
+  formula={"=TIMEVALUE(\"00:00:00\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The input must use a recognized time format."}
+  formula={"=TIMEVALUE(\"later\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Parse 24-hour time"}
+  formula={"=TIMEVALUE(\"14:30\")"}
+  grid={{}}
+  expected={"0.604166666666667"}
+/>
+
+<FunctionExample
+  title={"Parse 12-hour AM/PM time"}
+  formula={"=TIMEVALUE(\"02:30 PM\")"}
+  grid={{}}
+  expected={"0.604166666666667"}
+/>
 
 ## Related functions
 
 - [TIME](/docs/reference/functions/datetime/time)
 - [DATEVALUE](/docs/reference/functions/datetime/datevalue)
 - [SECOND](/docs/reference/functions/datetime/second)
-- [DAY](/docs/reference/functions/datetime/day)
-- [HOUR](/docs/reference/functions/datetime/hour)
-- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 
 ## FAQ
 
 ### Does TIMEVALUE depend on the 1900 vs 1904 date system?
 No. TIMEVALUE returns only a time fraction, so date-system selection does not change the result.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/timevalue" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_value.rs)

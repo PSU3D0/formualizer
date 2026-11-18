@@ -1,20 +1,65 @@
 ---
 title: "SEARCHB"
-description: "SEARCHB: Searches text using non-DBCS byte-compatible semantics."
+seoTitle: "SEARCHB function: formula syntax and examples"
+description: "Searches text using non-DBCS byte-compatible semantics. =SEARCHB(find_text, within_text, [start_num])"
 ---
 
-<FunctionPageSchema id="text/searchb" />
-
-## Summary
+Searches text using non-DBCS byte-compatible semantics.
 
 In Formualizer's invariant locale, SEARCHB delegates to SEARCH and supports
  the same wildcard behavior.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SEARCHB(find_text, within_text, [start_num])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `find_text` | any | Required | — |
+| `within_text` | any | Required | — |
+| `start_num` | any | Optional | — |
+
+## How it works
+
+Delegates to SEARCH. Returns the one-based character position of a case-insensitive match, with Excel-style wildcards, in Formualizer’s invariant locale. It returns an error if there is no match at or after the start.
+
 ## Examples
 
-<FunctionSandbox
-  title="Wildcard byte-compatible search"
-  formula={`=SEARCHB("d?f","abcDEF")`}
+<FunctionExample
+  title={"Find lowercase z at character position three despite the uppercase search term."}
+  formula={"=SEARCHB(\"Z\",\"é界z\")"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"Match a single character starting at 界, the second position."}
+  formula={"=SEARCHB(\"?\",\"é界z\",2)"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"A one-character match starts at position one."}
+  formula={"=SEARCHB(\"界\",\"界\")"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"No character matches the search term."}
+  formula={"=SEARCHB(\"x\",\"é界z\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Wildcard byte-compatible search"}
+  formula={"=SEARCHB(\"d?f\",\"abcDEF\")"}
   grid={{}}
   expected={"4"}
 />
@@ -24,17 +69,12 @@ In Formualizer's invariant locale, SEARCHB delegates to SEARCH and supports
 - [SEARCH](/docs/reference/functions/text/search)
 - [FINDB](/docs/reference/functions/text/findb)
 - [LENB](/docs/reference/functions/text/lenb)
-- [FIND](/docs/reference/functions/text/find)
-- [CONCAT](/docs/reference/functions/text/concat)
-- [CONCATENATE](/docs/reference/functions/text/concatenate)
 
 ## FAQ
 
 ### Is SEARCHB case-sensitive?
 No. It follows SEARCH behavior in the invariant locale.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/searchb" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/byte.rs)

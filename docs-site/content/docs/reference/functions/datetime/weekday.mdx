@@ -1,58 +1,91 @@
 ---
 title: "WEEKDAY"
-description: "WEEKDAY: Returns the day-of-week index for a date serial with configurable numbering."
+seoTitle: "WEEKDAY function: formula syntax and examples"
+description: "Returns the day-of-week index for a date serial with configurable numbering. =WEEKDAY(serial_number, [return_type])"
 ---
-
-<FunctionPageSchema id="datetime/weekday" />
-
-## Summary
 
 Returns the day-of-week index for a date serial with configurable numbering.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=WEEKDAY(serial_number, [return_type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `serial_number` | number | Required | — |
+| `return_type` | number | Optional | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Default `return_type` is `1` (`Sunday=1` through `Saturday=7`).
+ - Input serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
+   Because the epochs are 1462 days apart (`1462 % 7 == 6`), the same serial denotes a different
+   weekday in each system.
+
+## Error cases
+
  - Supported `return_type` values are `1`, `2`, `3`, `11`-`17`; unsupported values return `#NUM!`.
- - Input serials are interpreted with Excel 1900 date mapping, including its historical leap-year quirk.
 
 ## Examples
 
-<Tabs items={["Default numbering (Sunday-first)", "Monday-first numbering"]}>
-<Tab value="Default numbering (Sunday-first)">
-<FunctionSandbox
-  title="Default numbering (Sunday-first)"
-  formula={`=WEEKDAY(45292)`}
+<FunctionExample
+  title={"Find the day number using the default Sunday-first convention."}
+  formula={"=WEEKDAY(DATE(2024,1,1))"}
   grid={{}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Monday-first numbering">
-<FunctionSandbox
-  title="Monday-first numbering"
-  formula={`=WEEKDAY(45292, 2)`}
+<FunctionExample
+  title={"Switch to Monday-first numbering."}
+  formula={"=WEEKDAY(DATE(2024,1,1),2)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Sunday is the final day under Monday-first numbering."}
+  formula={"=WEEKDAY(DATE(2024,1,7),2)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"Return type 99 is outside the supported numbering codes."}
+  formula={"=WEEKDAY(DATE(2024,1,1),99)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Default numbering (Sunday-first)"}
+  formula={"=WEEKDAY(45292)"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Monday-first numbering"}
+  formula={"=WEEKDAY(45292, 2)"}
+  grid={{}}
+  expected={"1"}
+/>
 
 ## Related functions
 
 - [WEEKNUM](/docs/reference/functions/datetime/weeknum)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 - [WORKDAY](/docs/reference/functions/datetime/workday)
-- [DAYS360](/docs/reference/functions/datetime/days360)
-- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
-- [NETWORKDAYS.INTL](/docs/reference/functions/datetime/networkdays-intl)
 
 ## FAQ
 
 ### Why do I get #NUM! for some return_type values?
 WEEKDAY only accepts specific Excel return_type codes (1, 2, 3, 11-17); other codes return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/weekday" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/weekday_workday.rs)

@@ -1,60 +1,94 @@
 ---
 title: "DATEDIF"
-description: "DATEDIF: Returns the difference between two dates in a requested unit."
+seoTitle: "DATEDIF function: formula syntax and examples"
+description: "Returns the difference between two dates in a requested unit. =DATEDIF(start_date, end_date, unit)"
 ---
-
-<FunctionPageSchema id="datetime/datedif" />
-
-## Summary
 
 Returns the difference between two dates in a requested unit.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DATEDIF(start_date, end_date, unit)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `start_date` | number | Required | — |
+| `end_date` | number | Required | — |
+| `unit` | any | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Supported units are `"Y"`, `"M"`, `"D"`, `"MD"`, `"YM"`, and `"YD"`.
- - If `start_date &gt; end_date`, the function returns `#NUM!`.
  - Unit matching is case-insensitive.
- - `"YD"` uses a Feb-29 normalization strategy that can differ slightly from Excel in edge cases.
- - Input serials are interpreted with Excel 1900 date mapping.
+ - Both endpoints are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
+
+## Differences from Excel
+ With `"YD"`, Formualizer's February 29 normalization can give a different day count in leap-day edge cases.
+
+## Error cases
+
+ - If `start_date &gt; end_date`, the function returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Difference in days", "Complete months difference"]}>
-<Tab value="Difference in days">
-<FunctionSandbox
-  title="Difference in days"
-  formula={`=DATEDIF(44197, 44378, "D")`}
+<FunctionExample
+  title={"Count elapsed days across a month boundary."}
+  formula={"=DATEDIF(DATE(2024,1,1),DATE(2024,2,15),\"d\")"}
+  grid={{}}
+  expected={"45"}
+/>
+
+<FunctionExample
+  title={"Count complete months between the same dates."}
+  formula={"=DATEDIF(DATE(2024,1,1),DATE(2024,2,15),\"m\")"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The elapsed interval between identical dates is zero."}
+  formula={"=DATEDIF(DATE(2024,1,1),DATE(2024,1,1),\"d\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A start date after the end date falls outside the supported interval."}
+  formula={"=DATEDIF(DATE(2024,2,15),DATE(2024,1,1),\"d\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Difference in days"}
+  formula={"=DATEDIF(44197, 44378, \"D\")"}
   grid={{}}
   expected={"181"}
 />
-</Tab>
 
-<Tab value="Complete months difference">
-<FunctionSandbox
-  title="Complete months difference"
-  formula={`=DATEDIF(44197, 44378, "M")`}
+<FunctionExample
+  title={"Complete months difference"}
+  formula={"=DATEDIF(44197, 44378, \"M\")"}
   grid={{}}
   expected={"6"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [DAYS](/docs/reference/functions/datetime/days)
 - [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
 - [DATE](/docs/reference/functions/datetime/date)
-- [TIME](/docs/reference/functions/datetime/time)
-- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
-- [DAY](/docs/reference/functions/datetime/day)
 
 ## FAQ
 
 ### How are unit strings interpreted in DATEDIF?
 Unit text is case-insensitive, but only Y, M, D, MD, YM, and YD are supported; other units return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/datedif" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/weekday_workday.rs)

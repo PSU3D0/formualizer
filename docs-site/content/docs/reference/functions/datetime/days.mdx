@@ -1,59 +1,88 @@
 ---
 title: "DAYS"
-description: "Returns the number of whole days between two date serial values."
+seoTitle: "DAYS function: formula syntax and examples"
+description: "Returns the number of whole days between two date serial values. =DAYS(end_date, start_date)"
 ---
-
-<FunctionPageSchema id="datetime/days" />
-
-## Summary
 
 Returns the number of whole days between two date serial values.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DAYS(end_date, start_date)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `end_date` | number | Required | — |
+| `start_date` | number | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Result is `end_date - start_date`; negative results are allowed.
  - Fractional serial inputs are truncated to their date portion.
- - Serials are interpreted with the Excel 1900 mapping (including the 1900 leap-year bug behavior).
- - This function currently does not switch interpretation based on workbook `1900`/`1904` mode.
+ - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
+ - In the Excel 1900 system the historical leap-year quirk applies; the Excel 1904 system has no
+   phantom leap day.
 
 ## Examples
 
-<Tabs items={["Positive day difference", "Negative day difference"]}>
-<Tab value="Positive day difference">
-<FunctionSandbox
-  title="Positive day difference"
-  formula={`=DAYS(45366, 45323)`}
+<FunctionExample
+  title={"Count the days across February 29 in a leap year."}
+  formula={"=DAYS(DATE(2024,3,1),DATE(2024,2,28))"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Reverse the order to get a signed day difference."}
+  formula={"=DAYS(DATE(2024,2,28),DATE(2024,3,1))"}
+  grid={{}}
+  expected={"-2"}
+/>
+
+<FunctionExample
+  title={"Identical serials have no elapsed days."}
+  formula={"=DAYS(45000,45000)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The end date cannot be read from this text."}
+  formula={"=DAYS(\"invalid\",45000)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Positive day difference"}
+  formula={"=DAYS(45366, 45323)"}
   grid={{}}
   expected={"43"}
 />
-</Tab>
 
-<Tab value="Negative day difference">
-<FunctionSandbox
-  title="Negative day difference"
-  formula={`=DAYS(45323, 45366)`}
+<FunctionExample
+  title={"Negative day difference"}
+  formula={"=DAYS(45323, 45366)"}
   grid={{}}
   expected={"-43"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [DATEDIF](/docs/reference/functions/datetime/datedif)
 - [DAYS360](/docs/reference/functions/datetime/days360)
 - [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
-- [EDATE](/docs/reference/functions/datetime/edate)
-- [EOMONTH](/docs/reference/functions/datetime/eomonth)
-- [DATE](/docs/reference/functions/datetime/date)
 
 ## FAQ
 
 ### Does DAYS count partial-day time fractions?
 No. DAYS truncates both serial inputs to whole dates before subtracting end_date - start_date.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/days" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_parts.rs)

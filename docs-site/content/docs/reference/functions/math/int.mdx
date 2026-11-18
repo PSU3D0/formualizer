@@ -1,13 +1,24 @@
 ---
 title: "INT"
-description: "Rounds a number down to the nearest integer."
+seoTitle: "INT function: formula syntax and examples"
+description: "Rounds a number down to the nearest integer. =INT(number)"
 ---
 
-<FunctionPageSchema id="math/int" />
-
-## Summary
+Rounds a number down to the nearest integer.
 
 `INT` uses floor semantics, so negative values move farther from zero.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=INT(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
 
 ## Remarks
  - Equivalent to mathematical floor (`floor(x)`).
@@ -16,43 +27,59 @@ description: "Rounds a number down to the nearest integer."
 
 ## Examples
 
-<Tabs items={["Drop decimal digits from a positive number", "Floor a negative number"]}>
-<Tab value="Drop decimal digits from a positive number">
-<FunctionSandbox
-  title="Drop decimal digits from a positive number"
-  formula={`=INT(8.9)`}
+<FunctionExample
+  title={"Evaluate a negative number with a fractional part."}
+  formula={"=INT(-4.7)"}
+  grid={{}}
+  expected={"-5"}
+/>
+
+<FunctionExample
+  title={"Compare the result on the positive side of zero."}
+  formula={"=INT(4.7)"}
+  grid={{}}
+  expected={"4"}
+/>
+
+<FunctionExample
+  title={"Evaluate the function at the zero boundary."}
+  formula={"=INT(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A nonnumeric text value cannot be used as the number."}
+  formula={"=INT(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Drop decimal digits from a positive number"}
+  formula={"=INT(8.9)"}
   grid={{}}
   expected={"8"}
 />
-</Tab>
 
-<Tab value="Floor a negative number">
-<FunctionSandbox
-  title="Floor a negative number"
-  formula={`=INT(-8.9)`}
+<FunctionExample
+  title={"Floor a negative number"}
+  formula={"=INT(-8.9)"}
   grid={{}}
   expected={"-9"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [TRUNC](/docs/reference/functions/math/trunc)
 - [ROUNDDOWN](/docs/reference/functions/math/rounddown)
 - [FLOOR](/docs/reference/functions/math/floor)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
 
 ## FAQ
 
 ### Why is INT(-8.9) equal to -9 instead of -8?
 INT uses floor semantics, so negative values round toward negative infinity.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/int" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

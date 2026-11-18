@@ -1,54 +1,91 @@
 ---
 title: "NORM.INV"
-description: "NORM.INV: Returns the value `x` whose normal cumulative probability equals `probability`."
+seoTitle: "NORM.INV function: formula syntax and examples"
+description: "Returns the value x whose normal cumulative probability equals probability. =NORM.INV(probability, mean, standard_dev)"
 ---
 
-<FunctionPageSchema id="stats/norm-inv" />
-
-## Summary
+Returns the value `x` whose normal cumulative probability equals `probability`.
 
 This function is the inverse of `NORM.DIST(x, mean, standard_dev, TRUE)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NORM.INV(probability, mean, standard_dev)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `mean` | number | Required | — |
+| `standard_dev` | number | Required | — |
+
+## How it works
+
+Adds mean to standard_dev times the standard normal quantile at the supplied probability. Standard deviation must be positive and the probability must lie strictly between zero and one.
 
 ## Remarks
  - `probability` must be strictly between `0` and `1`.
  - `standard_dev` must be strictly greater than `0`.
- - Returns `#NUM!` for invalid probability bounds or non-positive standard deviation.
  - Invalid numeric coercions propagate as spreadsheet errors.
+ - Alias `NORMINV` (the Excel 2007 compatibility name) is supported.
+
+## Error cases
+
+ - Returns `#NUM!` for invalid probability bounds or non-positive standard deviation.
 
 ## Examples
 
-<Tabs items={["Median probability returns the mean", "One-standard-deviation quantile"]}>
-<Tab value="Median probability returns the mean">
-<FunctionSandbox
-  title="Median probability returns the mean"
-  formula={`=NORM.INV(0.5,10,2)`}
+<FunctionExample
+  title={"Find the median of a normal distribution centered at zero."}
+  formula={"=NORM.INV(0.5,0,1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Find the 90th percentile of a normal distribution with deviation two."}
+  formula={"=NORM.INV(0.9,0,2)"}
+  grid={{}}
+  expected={"2.5631031310892"}
+/>
+
+<FunctionExample
+  title={"At probability 0.01 the quantile is in the negative tail."}
+  formula={"=NORM.INV(0.01,0,1)"}
+  grid={{}}
+  expected={"-2.32634787404084"}
+/>
+
+<FunctionExample
+  title={"A probability greater than one is outside the distribution."}
+  formula={"=NORM.INV(1.1,0,1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Median probability returns the mean"}
+  formula={"=NORM.INV(0.5,10,2)"}
   grid={{}}
   expected={"10"}
 />
-</Tab>
 
-<Tab value="One-standard-deviation quantile">
-<FunctionSandbox
-  title="One-standard-deviation quantile"
-  formula={`=NORM.INV(0.841344746068543,0,1)`}
+<FunctionExample
+  title={"One-standard-deviation quantile"}
+  formula={"=NORM.INV(0.841344746068543,0,1)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [NORM.DIST](/docs/reference/functions/stats/norm-dist)
 - [NORM.S.INV](/docs/reference/functions/stats/norm-s-inv)
 - [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/norm-inv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

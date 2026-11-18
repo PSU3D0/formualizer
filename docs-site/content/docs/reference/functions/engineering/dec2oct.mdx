@@ -1,13 +1,29 @@
 ---
 title: "DEC2OCT"
-description: "DEC2OCT: Converts a decimal integer to octal text."
+seoTitle: "DEC2OCT function: formula syntax and examples"
+description: "Converts a decimal integer to octal text. =DEC2OCT(number, [places])"
 ---
 
-<FunctionPageSchema id="engineering/dec2oct" />
-
-## Summary
+Converts a decimal integer to octal text.
 
 Optionally pads the result with leading zeros using `places`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DEC2OCT(number, [places])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `places` | number | Optional | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - `number` is coerced to an integer and must be in `[-2^29, 2^29 - 1]`.
@@ -16,43 +32,52 @@ Optionally pads the result with leading zeros using `places`.
 
 ## Examples
 
-<Tabs items={["Convert decimal to octal", "Two's-complement negative output"]}>
-<Tab value="Convert decimal to octal">
-<FunctionSandbox
-  title="Convert decimal to octal"
-  formula={`=DEC2OCT(64)`}
+<FunctionExample
+  title={"Convert a decimal integer using the shortest output."}
+  formula={"=DEC2OCT(30)"}
   grid={{}}
-  expected={"100"}
+  expected={"36"}
 />
-</Tab>
 
-<Tab value="Two's-complement negative output">
-<FunctionSandbox
-  title="Two's-complement negative output"
-  formula={`=DEC2OCT(-1)`}
+<FunctionExample
+  title={"Request eight characters to see the leading-zero padding."}
+  formula={"=DEC2OCT(30,8)"}
+  grid={{}}
+  expected={"00000036"}
+/>
+
+<FunctionExample
+  title={"Convert a negative value to its signed representation."}
+  formula={"=DEC2OCT(-1)"}
   grid={{}}
   expected={"7777777777"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A nonzero value cannot fit in a zero-place output."}
+  formula={"=DEC2OCT(30,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert decimal to octal"}
+  formula={"=DEC2OCT(64)"}
+  grid={{}}
+  expected={"100"}
+/>
 
 ## Related functions
 
 - [OCT2DEC](/docs/reference/functions/engineering/oct2dec)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [DELTA](/docs/reference/functions/engineering/delta)
 
 ## FAQ
 
 ### What range does `DEC2OCT` support?
 `number` must be in `[-2^29, 2^29 - 1]`; outside that range returns `#NUM!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/dec2oct" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

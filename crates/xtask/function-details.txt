@@ -1,0 +1,106 @@
+# Space-separated function names | defining operation and input domain
+COMPLEX | Builds the text representation of a + bi or a + bj from real coefficients a and b. The suffix must be i or j.
+IMABS | For z = a + bi, the magnitude is √(a² + b²). It is defined for every complex number, including zero.
+IMAGINARY | For z = a + bi, the result is b, the signed imaginary coefficient. A purely real input has imaginary coefficient zero.
+IMARGUMENT | The principal angle of z = a + bi is atan2(b, a) in radians. Zero has no direction.
+IMCONJUGATE | Conjugation reflects a + bi across the real axis to a − bi. Real inputs are unchanged.
+IMCOS | The complex cosine is (exp(iz) + exp(−iz)) / 2. It is defined everywhere in the complex plane.
+IMCOSH | The complex hyperbolic cosine is (exp(z) + exp(−z)) / 2. It is defined everywhere, and equals 1 at zero.
+IMCOT | The complex cotangent is cos(z) / sin(z). It has poles at integer multiples of π, including zero.
+IMCSC | The complex cosecant is 1 / sin(z). It has poles at integer multiples of π.
+IMCSCH | The complex hyperbolic cosecant is 1 / sinh(z). It has poles at integer multiples of πi.
+IMDIV | Dividing z by w is equivalent to multiplying z by the conjugate of w and dividing by |w|². A zero denominator is undefined.
+IMEXP | For a + bi, the exponential is exp(a) times cos(b) + i sin(b). It exists for every complex input.
+IMLN | The principal logarithm of z is ln(|z|) + i arg(z). Zero has no logarithm, and the principal value uses a branch cut on the negative real axis.
+IMLOG10 | The principal logarithm in base 10 is the principal natural logarithm divided by ln(10). It is undefined at zero and inherits the negative real branch cut.
+IMLOG2 | The principal logarithm in base 2 is the principal natural logarithm divided by ln(2). It is undefined at zero and inherits the negative real branch cut.
+IMPOWER | For nonzero z and real p, the principal power is exp(p ln(z)), using the principal complex logarithm. Zero to a negative power is undefined.
+IMPRODUCT | Multiplying a + bi by c + di gives (ac − bd) + (ad + bc)i. Each additional operand multiplies the accumulated product. Any complex value is allowed.
+IMREAL | For z = a + bi, the result is a. A purely imaginary input has real coefficient zero.
+IMSEC | The complex secant is 1 / cos(z). Its poles are π/2 plus integer multiples of π.
+IMSECH | The complex hyperbolic secant is 1 / cosh(z). Its poles are i times π/2 plus integer multiples of πi.
+IMSIN | The complex sine is (exp(iz) − exp(−iz)) / (2i). It is defined for every complex input.
+IMSINH | The complex hyperbolic sine is (exp(z) − exp(−z)) / 2. It exists throughout the complex plane and vanishes at zero.
+IMSQRT | For a nonzero z with magnitude r and principal angle θ, the principal square root has magnitude √r and angle θ/2. Zero has square root zero.
+IMSUB | Subtract corresponding components to get (a − c) + (b − d)i. Subtraction is defined for every pair of complex numbers.
+IMSUM | Add corresponding components to get (a + c) + (b + d)i. An additional argument adds its real and imaginary coefficients independently.
+SIN | Sine is the vertical coordinate on the unit circle at angle x. The angle is in radians and can be any real number.
+COS | Cosine is the horizontal coordinate on the unit circle at angle x, measured in radians. Its real domain is unrestricted.
+TAN | Tangent is sin(x) / cos(x) for a radian angle x. It is undefined at π/2 plus integer multiples of π.
+COT | Cotangent is cos(x) / sin(x) for a radian angle x. It is undefined at integer multiples of π.
+SEC | Secant is 1 / cos(x) for a radian angle x. Its poles are π/2 plus integer multiples of π.
+CSC | Cosecant is 1 / sin(x) for a radian angle x. It is undefined where sine is zero, at integer multiples of π.
+SINH | Hyperbolic sine is (exp(x) − exp(−x)) / 2 and is defined over the real numbers.
+COSH | Hyperbolic cosine is (exp(x) + exp(−x)) / 2. It is at least 1 for all real inputs.
+TANH | Hyperbolic tangent is sinh(x) / cosh(x). Since cosh(x) is positive for real x, the ratio is defined everywhere on the real line and stays between −1 and 1.
+COTH | Hyperbolic cotangent is cosh(x) / sinh(x). The denominator is zero at x = 0, its only real pole.
+SECH | Hyperbolic secant is 1 / cosh(x). It is defined for all real x and reaches its maximum of 1 at zero.
+CSCH | Hyperbolic cosecant is 1 / sinh(x). Its only real pole is at zero.
+ASIN | Inverts sine on the interval from −π/2 to π/2. A real result exists only for inputs from −1 through 1 inclusive.
+ACOS | Inverts cosine on the interval from 0 to π. The real input must be from −1 through 1 inclusive.
+ATAN | Inverts tangent on the open interval from −π/2 to π/2. Every finite real input has an angle in that interval.
+ACOT | Inverts cotangent on the open interval from 0 to π. Every finite real input is valid and zero maps to π/2.
+ASINH | Inverts hyperbolic sine. It equals ln(x + √(x² + 1)) and is real for every real x.
+ACOSH | Inverts hyperbolic cosine on nonnegative outputs. It equals ln(x + √(x² − 1)) for x at least 1 and is nonreal below 1.
+ATANH | Inverts hyperbolic tangent. It equals ln((1 + x) / (1 − x)) / 2 for −1 < x < 1, with singularities at both endpoints.
+ACOTH | Inverts hyperbolic cotangent. The real expression ln((x + 1) / (x − 1)) / 2 requires |x| > 1.
+CEILING.PRECISE | For nonzero significance s, the result is |s| times the least integer at least x / |s|. The sign of s does not change the result. A zero significance yields zero.
+FLOOR.PRECISE | For nonzero significance s, the result is |s| times the greatest integer at most x / |s|. A zero significance yields zero, and negative numbers round toward negative infinity on the nonzero grid.
+ERF.PRECISE | Integrates exp(−t²) from zero to x and multiplies the result by 2 / √π. It is defined on the real line and changes sign when x does. Unlike ERF, it takes just one limit.
+ERFC.PRECISE | Evaluates 1 minus the error function at x, equivalently the Gaussian integral from x to infinity scaled by 2 / √π. It is defined for real x and tends to zero as x grows.
+GAMMALN.PRECISE | Evaluates ln(Γ(x)) on positive real inputs. Γ(x) continues the factorial through Γ(n) = (n − 1)! for positive integers. The real function used here excludes zero and negative arguments.
+BETADIST | Legacy equivalent of BETA.DIST with cumulative set to TRUE. Lower and upper limits follow beta directly because BETADIST has no cumulative switch. The density is supported on the interval between those limits, with both shapes positive.
+BETAINV | Legacy spelling of BETA.INV with the same argument order. Finds the point in the supplied interval whose cumulative beta probability matches probability. Both shape parameters must be positive.
+CHIDIST | Maps to CHISQ.DIST.RT(x, degrees_freedom), with both arguments in the same order. Integrates the chi-squared density above nonnegative x, with positive degrees of freedom.
+CHIINV | Maps to CHISQ.INV.RT with the same two arguments. Inverts the upper chi-squared tail for positive degrees of freedom and a probability greater than zero and at most one.
+FDIST | Maps to F.DIST.RT(x, degrees_freedom1, degrees_freedom2) with the same arguments. Finds the probability above x in a ratio of independent sample variances, with nonnegative x and two positive degrees of freedom.
+FINV | Maps to F.INV.RT with the same arguments. Finds the nonnegative F statistic that leaves a given right-tail probability, using numerator degrees of freedom before denominator degrees of freedom.
+HYPGEOMDIST | Maps to HYPGEOM.DIST with a final FALSE argument for point probability. With s successes in the population, the probability at k is the number of ways to pick k successes and the remaining failures divided by the number of possible samples. The counts must describe a sample drawn without replacement.
+LOGNORMDIST | Maps to LOGNORM.DIST with cumulative set to TRUE. Its result is the standard normal CDF of (ln(x) − mean) / standard_dev. The logarithm requires x > 0, and the standard deviation must be positive.
+NEGBINOMDIST | Maps to NEGBINOM.DIST with cumulative set to FALSE. The result at f failures before the rth success is the binomial coefficient C(f+r−1,f) times pʳ(1−p)ᶠ. Counts require f ≥ 0 and r ≥ 1, with probability in [0,1].
+NORMSDIST | Maps to NORM.S.DIST with cumulative set to TRUE. Integrates the standard normal density from negative infinity to z, for any real z.
+TDIST | A tails argument of 1 maps to T.DIST.RT(x, degrees_freedom). A value of 2 maps to T.DIST.2T(x, degrees_freedom). The legacy argument x must be nonnegative and degrees of freedom positive.
+TINV | Maps to T.INV.2T with the same argument order. It finds the nonnegative cutoff with the given probability outside the interval from −x to x. Degrees of freedom must be positive.
+IMTAN | The complex tangent is sin(z) / cos(z). It is undefined at the zeros of cos(z), which occur at π/2 plus integer multiples of π.
+ERFC | The complementary error function is the area under exp(−t²) from x to infinity, scaled by 2 / √π. The result is 1 at x = 0 and approaches 2 as x goes to negative infinity.
+GAMMALN | Returns the natural logarithm of Γ(x), the gamma function. For positive integer n, Γ(n) = (n − 1)!. This spreadsheet function requires positive x.
+BETA.DIST | With t = (x − A)/(B − A), the density on [A,B] is proportional to t raised to alpha − 1 times (1 − t) raised to beta − 1. Both shapes must be positive, B must exceed A, and x must lie within the closed interval. The cumulative switch integrates that density from A to x.
+BETA.INV | Solves the cumulative beta equation F(x) = probability for x in [A,B]. Both shapes must be positive and the probability must be in [0,1]. The two extreme probabilities give the endpoints.
+BINOM.DIST | For k successes in n independent trials, the point mass is C(n,k) pᵏ(1−p)ⁿ⁻ᵏ. The cumulative mode sums point masses from zero through k. Valid counts satisfy 0 ≤ k ≤ n and p is between zero and one.
+BINOM.DIST.RANGE | Adds binomial point masses from the first success count through the last inclusive. Each term is C(n,k) pᵏ(1−p)ⁿ⁻ᵏ. Both counts must lie between 0 and n in ascending order.
+BINOM.INV | Finds the first integer k for which the binomial cumulative probability P(X ≤ k) is at least alpha. Both p and alpha are probabilities, and k can never exceed the trial count.
+CHISQ.DIST | The chi-squared distribution with ν degrees of freedom is a gamma distribution with shape ν/2 and scale 2. Use a nonnegative statistic and positive degrees of freedom. The cumulative flag selects probability from zero through x or the density at x.
+CHISQ.DIST.RT | Returns P(X ≥ x) for a chi-squared variate, the integral above x of a gamma density with shape ν/2 and scale 2. The statistic must be nonnegative and ν positive.
+CHISQ.INV | Finds the cutoff q with P(X ≤ q) equal to the requested probability, using a chi-squared variate with positive degrees of freedom.
+CHISQ.INV.RT | Finds the cutoff q with P(X ≥ q) equal to the requested probability. With positive degrees of freedom and probability 1, the right-tail cutoff is zero.
+EXPON.DIST | With positive rate λ, the density at waiting time x is λ exp(−λx), and the cumulative probability is 1 − exp(−λx). The waiting time must be nonnegative.
+F.DIST | An F variate is the ratio (U/d₁)/(V/d₂) of independent chi-squared variates divided by their degrees of freedom. Input x must be nonnegative and both degrees of freedom positive. The cumulative flag selects the area to the left of x or the density there.
+F.DIST.RT | Gives P((U/d₁)/(V/d₂) ≥ x) for independent chi-squared variates. Both degrees of freedom must be positive. Swapping them generally changes the tail at the same nonnegative x.
+F.INV | Solves P(F ≤ q) = probability for the lower-tail F quantile, with positive numerator and denominator degrees of freedom.
+F.INV.RT | Solves P(F ≥ q) = probability for the upper-tail F cutoff. Increasing the probability moves the cutoff downward for fixed positive degrees of freedom.
+GAMMA.DIST | With positive shape α and scale β, the density for x > 0 is x raised to α−1 times exp(−x/β), divided by Γ(α)β raised to α. The cumulative option integrates from zero through x. Negative observations are outside the support.
+GAMMA.INV | Takes a probability and solves for the nonnegative x whose gamma CDF equals that probability at the chosen positive shape and scale. Zero probability gives zero.
+GAUSS | Gives Φ(z) − 0.5, the signed standard-normal area between zero and z. Any real z is valid and the result changes sign when z does.
+PHI | Gives exp(−z²/2) / √(2π), the standard normal density for any real z. Its maximum occurs at zero.
+HYPGEOM.DIST | For k sample successes among n draws from N items with K successes, the point probability is C(K,k) C(N−K,n−k) / C(N,n). The counts must support drawing without replacement. The cumulative option sums the feasible counts through k.
+LOGNORM.DIST | Standardize ln(x) to z = (ln(x) − mean) / standard_dev. The cumulative probability is Φ(z) and the density is φ(z) / (x × standard_dev). Both x and the standard deviation must be positive.
+LOGNORM.INV | Converts a standard normal quantile z into exp(mean + standard_dev × z). The probability must lie strictly between zero and one and the standard deviation must be positive.
+NEGBINOM.DIST | At f failures before the rth success, the probability is C(f+r−1,f) pʳ(1−p)ᶠ. The cumulative mode counts at most f failures. Valid inputs have f ≥ 0, r ≥ 1 and p in [0,1].
+NORM.DIST | Standardize x to z = (x − mean) / standard_dev. The cumulative result is Φ(z), the standard normal area below z. The density is φ(z) divided by the standard deviation, which must be positive.
+NORM.INV | Adds mean to standard_dev times the standard normal quantile at the supplied probability. Standard deviation must be positive and the probability must lie strictly between zero and one.
+NORM.S.DIST | With cumulative TRUE, returns the integral of exp(−t²/2) / √(2π) up to z from negative infinity. With FALSE it returns the integrand at z. The domain is the real line.
+NORM.S.INV | Solves Φ(z) = probability for z. The probability must be strictly between zero and one. A probability of 0.5 maps to zero.
+POISSON.DIST | With mean λ, the mass at integer k is exp(−λ) times λᵏ/k!. The cumulative calculation adds masses through k. Both the count and the mean must be nonnegative.
+T.DIST | For positive degrees of freedom ν, Student’s t density is proportional to (1 + x²/ν) raised to −(ν+1)/2. The cumulative option integrates that density from negative infinity through the supplied statistic.
+T.DIST.2T | For nonnegative x, returns P(|T| ≥ x), twice the right-tail probability of a Student t variate. Degrees of freedom must be positive. At x = 0 the two tails cover all outcomes.
+T.DIST.RT | For nonnegative x, returns P(T ≥ x) for a Student t variate with positive degrees of freedom. At x = 0 the right tail is half the probability.
+T.INV | Solves P(T ≤ q) = probability for a Student t variate with positive degrees of freedom. Probabilities below one half return a negative quantile.
+T.INV.2T | Finds the nonnegative cutoff q with P(|T| ≥ q) equal to the requested probability. Degrees of freedom must be positive.
+WEIBULL.DIST | With positive shape α and scale β, the Weibull CDF is 1 − exp(−(x/β) raised to α). Density is its derivative with respect to x. The observation must be nonnegative.
+FINDB | Delegates to FIND in Formualizer’s invariant locale. It returns 1 plus the number of Unicode scalar characters before the case-sensitive match. An out-of-range start or absent match returns an error.
+LEFTB | Delegates to LEFT. Takes the first n Unicode scalar characters in Formualizer’s invariant locale, so a multibyte character occupies one position. A negative count is invalid.
+LENB | Delegates to LEN. Sums one for each Unicode scalar character in Formualizer’s invariant locale. The result can differ from a byte count in a double-byte Excel locale.
+MIDB | Delegates to MID. Starting at a one-based character index, takes up to the requested count of Unicode scalar characters. A nonpositive starting position or negative count is invalid.
+REPLACEB | Delegates to REPLACE. Keeps the characters before the one-based start, inserts the new text, then appends the original suffix after the removed character span. A start before one or negative removal count is invalid.
+RIGHTB | Delegates to RIGHT. Takes up to the final n Unicode scalar characters in Formualizer’s invariant locale. At zero it returns empty text, and a negative count is invalid.
+SEARCHB | Delegates to SEARCH. Returns the one-based character position of a case-insensitive match, with Excel-style wildcards, in Formualizer’s invariant locale. It returns an error if there is no match at or after the start.

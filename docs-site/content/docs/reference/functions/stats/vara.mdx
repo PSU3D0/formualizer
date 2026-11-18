@@ -1,25 +1,65 @@
 ---
 title: "VARA"
-description: "VARA: Returns the sample variance using A-variant coercion semantics."
+seoTitle: "VARA function: formula syntax and examples"
+description: "Returns the sample variance using A-variant coercion semantics. =VARA(value1, [value2], ...)"
 ---
-
-<FunctionPageSchema id="stats/vara" />
-
-## Summary
 
 Returns the sample variance using A-variant coercion semantics.
 
-## returns: 1
- =VARA(TRUE,2,"x")
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=VARA(value1, [value2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value1` | number (range) | Required | — |
+| `value2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Differences from Excel
+
+Formualizer accepts calls such as `(TRUE,2,"x")`. Excel returns `#VALUE!` for the unparseable text supplied directly.
 
 ## Examples
 
-<FunctionSandbox
-  title="Sample variance with coerced values"
-  formula={`=VARA(TRUE,2,"x")`}
+<FunctionExample
+  title={"Find the sample variance with logical and text coercion of 4, 8 and 12."}
+  formula={"=VARA(4,8,12)"}
   grid={{}}
-  expected={"1"}
+  expected={"16"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the sample variance with logical and text coercion."}
+  formula={"=VARA({4,8,12})"}
+  grid={{}}
+  expected={"16"}
+/>
+
+<FunctionExample
+  title={"Use 4 and 12, the minimum two observations for the sample variance with logical and text coercion."}
+  formula={"=VARA(4,12)"}
+  grid={{}}
+  expected={"32"}
+/>
+
+<FunctionExample
+  title={"A lone observation cannot supply the denominator for the sample variance with logical and text coercion."}
+  formula={"=VARA(4)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Compute sample variance over 4, TRUE and Pending with the coerced values 4, 1 and 0."}
+  formula={"=VARA(A1:A3)"}
+  grid={{"A1":"4","A2":"TRUE","A3":"\"Pending\""}}
+  expected={"4.33333333333333"}
 />
 
 ## Related functions
@@ -27,17 +67,12 @@ Returns the sample variance using A-variant coercion semantics.
 - [VARPA](/docs/reference/functions/stats/varpa)
 - [STDEVA](/docs/reference/functions/stats/stdeva)
 - [AVERAGEA](/docs/reference/functions/stats/averagea)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### How are blanks handled in VARA?
 Blanks are ignored, while booleans and text are coerced under A-variant rules.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/vara" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

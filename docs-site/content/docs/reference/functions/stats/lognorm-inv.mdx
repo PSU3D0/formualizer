@@ -1,54 +1,78 @@
 ---
 title: "LOGNORM.INV"
-description: "LOGNORM.INV: Returns the positive value `x` whose log-normal cumulative probability is `probability`."
+seoTitle: "LOGNORM.INV function: formula syntax and examples"
+description: "Returns the positive value x whose log-normal cumulative probability is probability. =LOGNORM.INV(probability, mean, standard_dev)"
 ---
 
-<FunctionPageSchema id="stats/lognorm-inv" />
-
-## Summary
+Returns the positive value `x` whose log-normal cumulative probability is `probability`.
 
 This function inverts `LOGNORM.DIST(x, mean, standard_dev, TRUE)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LOGNORM.INV(probability, mean, standard_dev)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `mean` | number | Required | — |
+| `standard_dev` | number | Required | — |
+
+## How it works
+
+Converts a standard normal quantile z into exp(mean + standard_dev × z). The probability must lie strictly between zero and one and the standard deviation must be positive.
 
 ## Remarks
  - `probability` must be strictly between `0` and `1`.
  - `standard_dev` must be strictly greater than `0`.
- - Returns `#NUM!` when inputs violate probability or scale constraints.
  - Invalid numeric coercions propagate as spreadsheet errors.
+ - Alias `LOGINV` (the Excel 2007 compatibility name) is supported.
+
+## Error cases
+
+ - Returns `#NUM!` when inputs violate probability or scale constraints.
 
 ## Examples
 
-<Tabs items={["Median log-normal quantile", "Upper quantile for mean 0 and stdev 1"]}>
-<Tab value="Median log-normal quantile">
-<FunctionSandbox
-  title="Median log-normal quantile"
-  formula={`=LOGNORM.INV(0.5,0,1)`}
+<FunctionExample
+  title={"Exponentiate the median log-scale value zero to get the lognormal median."}
+  formula={"=LOGNORM.INV(0.5,0,1)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Upper quantile for mean 0 and stdev 1">
-<FunctionSandbox
-  title="Upper quantile for mean 0 and stdev 1"
-  formula={`=LOGNORM.INV(0.841344746068543,0,1)`}
+<FunctionExample
+  title={"Find the upper lognormal decile with log-scale deviation two."}
+  formula={"=LOGNORM.INV(0.9,0,2)"}
   grid={{}}
-  expected={"2.718281828459045"}
+  expected={"12.976021199118"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"At probability 0.01 the lognormal quantile is positive and below one."}
+  formula={"=LOGNORM.INV(0.01,0,1)"}
+  grid={{}}
+  expected={"0.097651733070336"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"A probability greater than one is outside the distribution."}
+  formula={"=LOGNORM.INV(1.1,0,1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-- [LOGNORM.DIST](/docs/reference/functions/stats/lognorm-dist)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
-- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
-- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
+<FunctionExample
+  title={"Upper quantile for mean 0 and stdev 1"}
+  formula={"=LOGNORM.INV(0.841344746068543,0,1)"}
+  grid={{}}
+  expected={"2.71828182845905"}
+/>
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/lognorm-inv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,19 +1,57 @@
 ---
 title: "SUMX2PY2"
-description: "SUMX2PY2: Returns the sum of squares of corresponding values from two arrays."
+seoTitle: "SUMX2PY2 function: formula syntax and examples"
+description: "Returns the sum of squares of corresponding values from two arrays. =SUMX2PY2(array1, array2)"
 ---
-
-<FunctionPageSchema id="math/sumx2py2" />
-
-## Summary
 
 Returns the sum of squares of corresponding values from two arrays.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SUMX2PY2(array1, array2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array1` | number (range) | Required | — |
+| `array2` | number (range) | Required | — |
+
 ## Examples
 
-<FunctionSandbox
-  title="Pairwise squared sums"
-  formula={`=SUMX2PY2({2,3},{1,4})`}
+<FunctionExample
+  title={"Pair three observations by position before evaluating the squared terms."}
+  formula={"=SUMX2PY2({1,2,3},{4,6,8})"}
+  grid={{}}
+  expected={"130"}
+/>
+
+<FunctionExample
+  title={"Include negative observations to see how signed inputs affect the terms."}
+  formula={"=SUMX2PY2({1,-2,3},{4,6,-8})"}
+  grid={{}}
+  expected={"130"}
+/>
+
+<FunctionExample
+  title={"Evaluate a single pair of equal observations."}
+  formula={"=SUMX2PY2({4},{4})"}
+  grid={{}}
+  expected={"32"}
+/>
+
+<FunctionExample
+  title={"The arrays must have an equal number of observations."}
+  formula={"=SUMX2PY2({1,2,3},{4,6})"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Pairwise squared sums"}
+  formula={"=SUMX2PY2({2,3},{1,4})"}
   grid={{}}
   expected={"30"}
 />
@@ -22,18 +60,12 @@ Returns the sum of squares of corresponding values from two arrays.
 
 - [SUMX2MY2](/docs/reference/functions/math/sumx2my2)
 - [SUMXMY2](/docs/reference/functions/math/sumxmy2)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
-- [DECIMAL](/docs/reference/functions/math/decimal)
 
 ## FAQ
 
 ### Does SUMX2PY2 coerce booleans and blanks?
 It follows the same collection rules as the engine's paired-array helpers, coercing booleans and treating blanks/text as zero.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sumx2py2" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

@@ -1,55 +1,101 @@
 ---
 title: "INDEX"
-description: "INDEX: Returns the value or reference at a 1-based row and column within an array or range."
+seoTitle: "INDEX function: formula syntax and examples"
+description: "Returns the value or reference at a 1-based row and column within an array or range. =INDEX(array, row_num, [column_num])"
 ---
 
-<FunctionPageSchema id="reference-fns/index-fn" />
-
-## Summary
+Returns the value or reference at a 1-based row and column within an array or range.
 
 `INDEX` can operate on both references and array literals. When the first argument is
  a reference, this implementation resolves a referenced cell and materializes its value in
  value context.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=INDEX(array, row_num, [column_num])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | any (range) | Required | — |
+| `row_num` | number | Required | — |
+| `column_num` | number | Optional | — |
+
+## Return type
+
+Can return a reference when evaluated in a reference context.
+
+## Differences from Excel
+
+Formualizer does not accept the `area_num` argument from Excel’s reference form.
 
 ## Remarks
  - Indexing is 1-based for both `row_num` and `column_num`.
  - If `column_num` is omitted for a single-row or single-column input, `row_num` selects the
    position along that 1D vector.
  - For rectangular 2D inputs, omitted `column_num` defaults to the first column.
- - `row_num &lt;= 0`, `column_num &lt;= 0`, or out-of-bounds indexes return `#REF!`.
- - Non-numeric index arguments return `#VALUE!`.
+ - A `row_num` or `column_num` of `0` selects the entire column or row respectively
+   (both `0` selects the whole range), matching Excel.
+ - Index arguments coerce like Excel: a blank is `0`, `TRUE` is `1` and numeric text is
+   parsed; other text returns `#VALUE!`.
+
+## Error cases
+
+ - Negative or out-of-bounds indexes return `#REF!`. Excel returns `#VALUE!` for a negative
+   index; this implementation does not match that yet.
 
 ## Examples
 
-<Tabs items={["Pick a value from a 2D table", "Index into a 1D vector"]}>
-<Tab value="Pick a value from a 2D table">
-<FunctionSandbox
-  title="Pick a value from a 2D table"
-  formula={`=INDEX(A1:B3,3,2)`}
-  grid={{"A1":"Item","A2":"Pen","A3":"Book","B1":"Price","B2":"2.5","B3":"8"}}
+<FunctionExample
+  title={"Retrieve the value in row two of the first column."}
+  formula={"=INDEX({10,20;30,40},2,1)"}
+  grid={{}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"Omit the column on a single-column array."}
+  formula={"=INDEX({10;20;30},2)"}
+  grid={{}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Retrieve the first row and first column."}
+  formula={"=INDEX({10,20;30,40},1,1)"}
+  grid={{}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"A row outside the input array has no value."}
+  formula={"=INDEX({10,20;30,40},3,1)"}
+  grid={{}}
+  expected={"#REF!"}
+/>
+
+<FunctionExample
+  title={"Pick a value from a 2D table"}
+  formula={"=INDEX(A1:B3,3,2)"}
+  grid={{"A1":"\"Item\"","A2":"\"Pen\"","A3":"\"Book\"","B1":"\"Price\"","B2":"2.5","B3":"8"}}
   expected={"8"}
 />
-</Tab>
 
-<Tab value="Index into a 1D vector">
-<FunctionSandbox
-  title="Index into a 1D vector"
-  formula={`=INDEX(A1:A3,2)`}
-  grid={{"A1":"Q1","A2":"Q2","A3":"Q3"}}
+<FunctionExample
+  title={"Index into a 1D vector"}
+  formula={"=INDEX(A1:A3,2)"}
+  grid={{"A1":"\"Q1\"","A2":"\"Q2\"","A3":"\"Q3\""}}
   expected={"Q2"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [MATCH](/docs/reference/functions/lookup/match)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
 - [OFFSET](/docs/reference/functions/reference-fns/offset)
-- [INDIRECT](/docs/reference/functions/reference-fns/indirect)
-- [TEXTAFTER](/docs/reference/functions/text/textafter)
-- [TEXTBEFORE](/docs/reference/functions/text/textbefore)
 
 ## FAQ
 
@@ -57,10 +103,8 @@ description: "INDEX: Returns the value or reference at a 1-based row and column 
 For single-row or single-column inputs, row_num selects the position along that vector; for 2D inputs, omitted column_num defaults to the first column.
 
 ### Which errors indicate bad indexes?
-Non-numeric index arguments return #VALUE!, while 0/negative or out-of-bounds indexes return #REF!.
+Text that is not a number returns #VALUE! (a blank index is 0, TRUE is 1, numeric text is parsed). A 0 row_num/column_num selects an entire column/row (Excel behavior); negative or out-of-bounds indexes return #REF!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="reference-fns/index-fn" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/reference_fns.rs)

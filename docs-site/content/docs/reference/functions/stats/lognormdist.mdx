@@ -1,0 +1,73 @@
+---
+title: "LOGNORMDIST"
+seoTitle: "LOGNORMDIST function: formula syntax and examples"
+description: "Returns the cumulative log-normal distribution (legacy name). =LOGNORMDIST(x, mean, standard_dev)"
+---
+
+Returns the cumulative log-normal distribution (legacy name).
+
+`LOGNORMDIST(x, mean, standard_dev)` is `LOGNORM.DIST(x, mean, standard_dev, TRUE)`: the
+ compatibility form has no `cumulative` argument.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LOGNORMDIST(x, mean, standard_dev)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `mean` | number | Required | — |
+| `standard_dev` | number | Required | — |
+
+## How it works
+
+Maps to LOGNORM.DIST with cumulative set to TRUE. Its result is the standard normal CDF of (ln(x) − mean) / standard_dev. The logarithm requires x &gt; 0, and the standard deviation must be positive.
+
+## Error cases
+
+ - Returns `#NUM!` when `x &lt;= 0` or `standard_dev &lt;= 0`.
+
+## Examples
+
+<FunctionExample
+  title={"Evaluate the cumulative lognormal distribution above one."}
+  formula={"=LOGNORMDIST(2,0,1)"}
+  grid={{}}
+  expected={"0.755891404214417"}
+/>
+
+<FunctionExample
+  title={"Evaluate a point below one with the same distribution parameters."}
+  formula={"=LOGNORMDIST(0.5,0,1)"}
+  grid={{}}
+  expected={"0.244108595785583"}
+/>
+
+<FunctionExample
+  title={"With mean zero and standard deviation one, x = 1 is the median."}
+  formula={"=LOGNORMDIST(1,0,1)"}
+  grid={{}}
+  expected={"0.5"}
+/>
+
+<FunctionExample
+  title={"The lognormal calculation requires a positive observation."}
+  formula={"=LOGNORMDIST(0,0,1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the cumulative probability at 4 with log-scale mean 3.5 and deviation 1.2."}
+  formula={"=LOGNORMDIST(4,3.5,1.2)"}
+  grid={{}}
+  expected={"0.0390835557068005"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

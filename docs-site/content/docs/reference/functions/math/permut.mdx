@@ -1,59 +1,83 @@
 ---
 title: "PERMUT"
-description: "Returns the number of permutations for selecting and ordering `k` items from `n`."
+seoTitle: "PERMUT function: formula syntax and examples"
+description: "Returns the number of permutations for selecting and ordering k items from n. =PERMUT(number, number_chosen)"
 ---
 
-<FunctionPageSchema id="math/permut" />
-
-## Summary
+Returns the number of permutations for selecting and ordering `k` items from `n`.
 
 `PERMUT` computes `n!/(n-k)!` after truncating both inputs toward zero.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PERMUT(number, number_chosen)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `number_chosen` | number | Required | — |
+
 ## Remarks
  - Fractional inputs are truncated to integers.
- - If `n &lt; 0`, `k &lt; 0`, or `k &gt; n`, the function returns `#NUM!`.
  - Argument errors propagate directly.
+
+## Error cases
+
+ - If `n &lt; 0`, `k &lt; 0`, or `k &gt; n`, the function returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Basic permutations", "Fractional arguments are truncated", "Out-of-range k returns numeric error"]}>
-<Tab value="Basic permutations">
-<FunctionSandbox
-  title="Basic permutations"
-  formula={`=PERMUT(5, 2)`}
+<FunctionExample
+  title={"Count selections of size two from a population of five."}
+  formula={"=PERMUT(5,2)"}
   grid={{}}
   expected={"20"}
 />
-</Tab>
 
-<Tab value="Fractional arguments are truncated">
-<FunctionSandbox
-  title="Fractional arguments are truncated"
-  formula={`=PERMUT(7.9, 3.1)`}
+<FunctionExample
+  title={"Compare the result when selecting a single member."}
+  formula={"=PERMUT(5,1)"}
   grid={{}}
-  expected={"210"}
+  expected={"5"}
 />
-</Tab>
 
-<Tab value="Out-of-range k returns numeric error">
-<FunctionSandbox
-  title="Out-of-range k returns numeric error"
-  formula={`=PERMUT(4, 6)`}
+<FunctionExample
+  title={"Count the ways to make an empty selection."}
+  formula={"=PERMUT(5,0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative population size is invalid."}
+  formula={"=PERMUT(-1,2)"}
   grid={{}}
   expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Fractional arguments are truncated"}
+  formula={"=PERMUT(7.9, 3.1)"}
+  grid={{}}
+  expected={"210"}
+/>
+
+<FunctionExample
+  title={"Out-of-range k returns numeric error"}
+  formula={"=PERMUT(4, 6)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
 ## Related functions
 
 - [COMBIN](/docs/reference/functions/math/combin)
 - [FACT](/docs/reference/functions/math/fact)
 - [MULTINOMIAL](/docs/reference/functions/math/multinomial)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBINA](/docs/reference/functions/math/combina)
-- [DECIMAL](/docs/reference/functions/math/decimal)
 
 ## FAQ
 
@@ -63,8 +87,6 @@ Permutations require choosing at most n items, so k &gt; n returns #NUM!.
 ### How are decimal inputs handled?
 PERMUT truncates n and k toward zero before computing n!/(n-k)!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/permut" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/combinatorics.rs)

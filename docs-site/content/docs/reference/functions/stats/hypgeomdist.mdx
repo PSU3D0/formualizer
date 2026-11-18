@@ -1,0 +1,80 @@
+---
+title: "HYPGEOMDIST"
+seoTitle: "HYPGEOMDIST function: formula syntax and examples"
+description: "Returns the hypergeometric probability of exactly sample_s successes (legacy name). =HYPGEOMDIST(sample_s, number_sample, population_s, number_pop)"
+---
+
+Returns the hypergeometric probability of exactly `sample_s` successes (legacy name).
+
+`HYPGEOMDIST(sample_s, number_sample, population_s, number_pop)` is the probability mass
+ form of `HYPGEOM.DIST`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=HYPGEOMDIST(sample_s, number_sample, population_s, number_pop)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `sample_s` | number | Required | — |
+| `number_sample` | number | Required | — |
+| `population_s` | number | Required | — |
+| `number_pop` | number | Required | — |
+
+## How it works
+
+Maps to HYPGEOM.DIST with a final FALSE argument for point probability. With s successes in the population, the probability at k is the number of ways to pick k successes and the remaining failures divided by the number of possible samples. The counts must describe a sample drawn without replacement.
+
+## Remarks
+ - All arguments are truncated to integers.
+
+## Error cases
+
+ - Returns `#NUM!` when `sample_s` is negative, above `MIN(number_sample, population_s)`, or
+   below `MAX(0, number_sample - number_pop + population_s)`.
+ - Returns `#NUM!` when `number_sample &lt;= 0`, `number_sample &gt; number_pop`,
+   `population_s &lt;= 0`, `population_s &gt; number_pop`, or `number_pop &lt;= 0`.
+
+## Examples
+
+<FunctionExample
+  title={"Find the probability of exactly two successes without replacement."}
+  formula={"=HYPGEOMDIST(2,5,8,20)"}
+  grid={{}}
+  expected={"0.397316821465427"}
+/>
+
+<FunctionExample
+  title={"Compare the probability of exactly three successes in the same experiment."}
+  formula={"=HYPGEOMDIST(3,5,8,20)"}
+  grid={{}}
+  expected={"0.238390092879257"}
+/>
+
+<FunctionExample
+  title={"Evaluate a sample with no successes."}
+  formula={"=HYPGEOMDIST(0,5,8,20)"}
+  grid={{}}
+  expected={"0.0510835913312692"}
+/>
+
+<FunctionExample
+  title={"The successes in the sample cannot outnumber the sampled items."}
+  formula={"=HYPGEOMDIST(6,5,8,20)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the chance of drawing exactly one success in four draws from 20 items with eight successes."}
+  formula={"=HYPGEOMDIST(1,4,8,20)"}
+  grid={{}}
+  expected={"0.363261093911247"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

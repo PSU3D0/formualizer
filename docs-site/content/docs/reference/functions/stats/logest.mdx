@@ -1,54 +1,79 @@
 ---
 title: "LOGEST"
-description: "LOGEST: Returns parameters for an exponential model fitted to known data."
+seoTitle: "LOGEST function: formula syntax and examples"
+description: "Returns parameters for an exponential model fitted to known data. =LOGEST(known_ys, [known_xs], [const], [stats])"
 ---
 
-<FunctionPageSchema id="stats/logest" />
-
-## Summary
+Returns parameters for an exponential model fitted to known data.
 
 `LOGEST` fits `y = b * m^x` and returns either `[m, b]` or an expanded statistics matrix.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LOGEST(known_ys, [known_xs], [const], [stats])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `known_ys` | number (range) | Required | — |
+| `known_xs` | number (range) | Optional | — |
+| `const` | number (range) | Optional | — |
+| `stats` | number (range) | Optional | — |
+
 ## Remarks
  - All known y-values must be strictly greater than `0`.
- - `known_x` defaults to `1..n` when omitted.
+ - `known_x` defaults to `1..n` when omitted; several variables are laid out as in `LINEST`
+   and the bases come back in reverse order of the variables, then `b`.
  - `const` controls whether `b` is fitted (`TRUE` by default).
- - `stats=TRUE` returns a `5x2` statistics block; otherwise returns `1x2`.
+ - `stats=TRUE` returns the `LINEST` statistics block of the fit of `ln(y)`.
 
 ## Examples
 
-<Tabs items={["Exponential base and intercept", "Alternative growth series"]}>
-<Tab value="Exponential base and intercept">
-<FunctionSandbox
-  title="Exponential base and intercept"
-  formula={`=LOGEST({2,4,8},{1,2,3})`}
+<FunctionExample
+  title={"Fit coefficients using three observations and their known x values."}
+  formula={"=LOGEST({2;4;8},{1;2;3})"}
   grid={{}}
-  expected={"[[2,1]]"}
+  expected={"{2, 1}"}
 />
-</Tab>
 
-<Tab value="Alternative growth series">
-<FunctionSandbox
-  title="Alternative growth series"
-  formula={`=LOGEST({3,6,12},{1,2,3})`}
+<FunctionExample
+  title={"Return exponential regression statistics for three imperfectly aligned observations."}
+  formula={"=LOGEST({2;4;7},{1;2;3},TRUE,TRUE)"}
   grid={{}}
-  expected={"[[2,1.5]]"}
+  expected={"{1.87082869338697, 1.09310353301279; 0.0385471927385168, 0.083271453596626; 0.996227180101123, 0.0545139627622202; 264.053733494562, 1; 0.784707527616663, 0.00297177213604073}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Use two observations with distinct x values."}
+  formula={"=LOGEST({2;4},{1;2})"}
+  grid={{}}
+  expected={"{2, 1}"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"The independent and dependent observations do not align."}
+  formula={"=LOGEST({2;4;8},{1;2})"}
+  grid={{}}
+  expected={"#REF!"}
+/>
 
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
-- [GROWTH](/docs/reference/functions/stats/growth)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
-- [KURT](/docs/reference/functions/stats/kurt)
+<FunctionExample
+  title={"Exponential base and intercept"}
+  formula={"=LOGEST({2,4,8},{1,2,3})"}
+  grid={{}}
+  expected={"{2, 1}"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Alternative growth series"}
+  formula={"=LOGEST({3,6,12},{1,2,3})"}
+  grid={{}}
+  expected={"{2, 1.5}"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/logest" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

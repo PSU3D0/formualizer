@@ -1,55 +1,81 @@
 ---
 title: "CONFIDENCE.T"
-description: "CONFIDENCE.T: Returns the half-width of a confidence interval using a t critical value."
+seoTitle: "CONFIDENCE.T function: formula syntax and examples"
+description: "Returns the half-width of a confidence interval using a t critical value. =CONFIDENCE.T(alpha, standard_dev, size)"
 ---
 
-<FunctionPageSchema id="stats/confidence-t" />
-
-## Summary
+Returns the half-width of a confidence interval using a t critical value.
 
 `CONFIDENCE.T` is typically used when population standard deviation is unknown and sample size
  is limited.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CONFIDENCE.T(alpha, standard_dev, size)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `alpha` | number | Required | — |
+| `standard_dev` | number | Required | — |
+| `size` | number | Required | — |
 
 ## Remarks
  - `alpha` must satisfy `0 &lt; alpha &lt; 1`.
  - `standard_dev` must be greater than `0`.
  - `size` must be at least `2` so that `df = size - 1` is valid.
+
+## Error cases
+
  - Returns `#NUM!` when inputs are outside valid bounds.
 
 ## Examples
 
-<Tabs items={["95% t-interval half-width", "90% t-interval half-width"]}>
-<Tab value="95% t-interval half-width">
-<FunctionSandbox
-  title="95% t-interval half-width"
-  formula={`=CONFIDENCE.T(0.05,2,25)`}
+<FunctionExample
+  title={"Calculate a margin for a 95-percent confidence interval."}
+  formula={"=CONFIDENCE.T(0.05,4,20)"}
   grid={{}}
-  expected={"0.8256636934020788"}
+  expected={"1.87205762567968"}
 />
-</Tab>
 
-<Tab value="90% t-interval half-width">
-<FunctionSandbox
-  title="90% t-interval half-width"
-  formula={`=CONFIDENCE.T(0.1,5,10)`}
+<FunctionExample
+  title={"Change the significance level while holding sample size and spread constant."}
+  formula={"=CONFIDENCE.T(0.01,4,20)"}
   grid={{}}
-  expected={"2.9158049866307585"}
+  expected={"2.55889770369492"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Calculate the margin with a very small sample."}
+  formula={"=CONFIDENCE.T(0.05,4,2)"}
+  grid={{}}
+  expected={"35.938574128375"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"Significance must be a probability between zero and one."}
+  formula={"=CONFIDENCE.T(1.1,4,20)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
-- [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
-- [F.INV](/docs/reference/functions/stats/f-inv)
+<FunctionExample
+  title={"95% t-interval half-width"}
+  formula={"=CONFIDENCE.T(0.05,2,25)"}
+  grid={{}}
+  expected={"0.825559424651208"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"90% t-interval half-width"}
+  formula={"=CONFIDENCE.T(0.1,5,10)"}
+  grid={{}}
+  expected={"2.89840603775228"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/confidence-t" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,13 +1,30 @@
 ---
 title: "ROW"
-description: "Returns the row number of a reference, or of the current cell when omitted."
+seoTitle: "ROW function: formula syntax and examples"
+description: "Returns the row number of a reference, or of the current cell when omitted. =ROW([reference])"
 ---
 
-<FunctionPageSchema id="lookup/row" />
-
-## Summary
+Returns the row number of a reference, or of the current cell when omitted.
 
 `ROW` returns a 1-based row index.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ROW([reference])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `reference` | range (range) | Optional | — |
+
+## Differences from Excel
+
+Excel requires a reference when the argument is supplied. Formualizer can also evaluate expressions in that position and propagate their errors.
+
+The examples enter the formula in cell `CV100`.
 
 ## Remarks
  - With a range argument, `ROW` returns the first row in that reference.
@@ -17,35 +34,46 @@ description: "Returns the row number of a reference, or of the current cell when
 
 ## Examples
 
-<Tabs items={["Row of a single-cell reference", "Row of a multi-cell range"]}>
-<Tab value="Row of a single-cell reference">
-<FunctionSandbox
-  title="Row of a single-cell reference"
-  formula={`=ROW(B5)`}
+<FunctionExample
+  title={"Read the coordinate of an explicit cell reference."}
+  formula={"=ROW(B4)"}
+  grid={{}}
+  expected={"4"}
+/>
+
+<FunctionExample
+  title={"Omit the reference to use the cell containing the example formula."}
+  formula={"=ROW()"}
+  grid={{}}
+  expected={"100"}
+/>
+
+<FunctionExample
+  title={"The first cell has coordinate one along both axes."}
+  formula={"=ROW(A1)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Row of a single-cell reference"}
+  formula={"=ROW(B5)"}
   grid={{}}
   expected={"5"}
 />
-</Tab>
 
-<Tab value="Row of a multi-cell range">
-<FunctionSandbox
-  title="Row of a multi-cell range"
-  formula={`=ROW(C3:E9)`}
+<FunctionExample
+  title={"Row of a multi-cell range"}
+  formula={"=ROW(C3:E9)"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [ROWS](/docs/reference/functions/lookup/rows)
 - [COLUMN](/docs/reference/functions/lookup/column)
 - [ADDRESS](/docs/reference/functions/lookup/address)
-- [TRANSPOSE](/docs/reference/functions/lookup/transpose)
-- [COLUMNS](/docs/reference/functions/lookup/columns)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
 
 ## FAQ
 
@@ -55,8 +83,6 @@ ROW returns the first row index of the reference, not an array of every row numb
 ### What if ROW() is called without arguments?
 It uses the formula cell position; if no current cell context exists, it returns #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/row" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/reference_info.rs)

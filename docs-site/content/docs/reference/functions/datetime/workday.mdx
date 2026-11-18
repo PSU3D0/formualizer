@@ -1,60 +1,93 @@
 ---
 title: "WORKDAY"
-description: "WORKDAY: Returns the date serial that is a given number of weekdays from a start date."
+seoTitle: "WORKDAY function: formula syntax and examples"
+description: "Returns the date serial that is a given number of weekdays from a start date. =WORKDAY(start_date, days, [holidays])"
 ---
-
-<FunctionPageSchema id="datetime/workday" />
-
-## Summary
 
 Returns the date serial that is a given number of weekdays from a start date.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=WORKDAY(start_date, days, [holidays])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `start_date` | number | Required | — |
+| `days` | number | Required | — |
+| `holidays` | any | Optional | — |
+
+## Differences from Excel
+
+A holiday range cell containing a date-typed value, such as one produced by DATE, can be skipped by Formualizer. Excel counts it as a holiday. Supply numeric serials in the range in Formualizer.
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Positive `days` moves forward; negative `days` moves backward.
  - Weekends are fixed to Saturday and Sunday.
  - Optional `holidays` arguments are excluded and may be provided as scalars, inline arrays,
-   or ranges.
- - Input and output serials use Excel 1900 date mapping.
+   or ranges of serials or date text. Date-typed range cells are skipped.
+ - Input and output serials use the workbook's date system (Excel 1900 or Excel 1904).
 
 ## Examples
 
-<Tabs items={["Move forward by five workdays", "Holiday exclusions push the target date out"]}>
-<Tab value="Move forward by five workdays">
-<FunctionSandbox
-  title="Move forward by five workdays"
-  formula={`=WORKDAY(45292, 5)`}
+<FunctionExample
+  title={"Advance one working day from a Friday across the weekend."}
+  formula={"=WORKDAY(DATE(2024,1,5),1)"}
   grid={{}}
   expected={"45299"}
 />
-</Tab>
 
-<Tab value="Holiday exclusions push the target date out">
-<FunctionSandbox
-  title="Holiday exclusions push the target date out"
-  formula={`=WORKDAY(45292, 5, 45293)`}
+<FunctionExample
+  title={"Skip Monday as a holiday as well as skipping the weekend."}
+  formula={"=WORKDAY(DATE(2024,1,5),1,A1)"}
+  grid={{"A1":"45299"}}
+  expected={"45300"}
+/>
+
+<FunctionExample
+  title={"A zero-day offset preserves the working start date."}
+  formula={"=WORKDAY(DATE(2024,1,5),0)"}
+  grid={{}}
+  expected={"45296"}
+/>
+
+<FunctionExample
+  title={"The offset must be a number of working days."}
+  formula={"=WORKDAY(DATE(2024,1,5),\"tomorrow\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Move forward by five workdays"}
+  formula={"=WORKDAY(45292, 5)"}
+  grid={{}}
+  expected={"45299"}
+/>
+
+<FunctionExample
+  title={"Holiday exclusions push the target date out"}
+  formula={"=WORKDAY(45292, 5, 45293)"}
   grid={{}}
   expected={"45300"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
 - [WEEKDAY](/docs/reference/functions/datetime/weekday)
 - [TODAY](/docs/reference/functions/datetime/today)
-- [WORKDAY.INTL](/docs/reference/functions/datetime/workday-intl)
-- [DAYS360](/docs/reference/functions/datetime/days360)
-- [NETWORKDAYS.INTL](/docs/reference/functions/datetime/networkdays-intl)
 
 ## FAQ
 
 ### Does WORKDAY include the start date when days=0?
 Yes. With zero offset, WORKDAY returns the start date serial unchanged; nonzero offsets skip weekend days while stepping.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/workday" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/weekday_workday.rs)

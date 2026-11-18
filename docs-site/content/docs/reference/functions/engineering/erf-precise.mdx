@@ -1,13 +1,28 @@
 ---
 title: "ERF.PRECISE"
-description: "ERF.PRECISE: Returns the error function of a number."
+seoTitle: "ERF.PRECISE function: formula syntax and examples"
+description: "Returns the error function of a number. =ERF.PRECISE(x)"
 ---
 
-<FunctionPageSchema id="engineering/erf-precise" />
-
-## Summary
+Returns the error function of a number.
 
 This is the one-argument precise variant of `ERF`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ERF.PRECISE(x)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | any | Required | — |
+
+## How it works
+
+Integrates exp(−t²) from zero to x and multiplies the result by 2 / √π. It is defined on the real line and changes sign when x does. Unlike ERF, it takes just one limit.
 
 ## Remarks
  - Input is numerically coerced.
@@ -16,43 +31,44 @@ This is the one-argument precise variant of `ERF`.
 
 ## Examples
 
-<Tabs items={["Positive input", "Negative input"]}>
-<Tab value="Positive input">
-<FunctionSandbox
-  title="Positive input"
-  formula={`=ERF.PRECISE(1)`}
+<FunctionExample
+  title={"Integrate the scaled Gaussian from zero to one."}
+  formula={"=ERF.PRECISE(1)"}
   grid={{}}
-  expected={"0.8427007929497149"}
+  expected={"0.842700792949715"}
 />
-</Tab>
 
-<Tab value="Negative input">
-<FunctionSandbox
-  title="Negative input"
-  formula={`=ERF.PRECISE(-1)`}
+<FunctionExample
+  title={"Reverse the orientation of the integral using a negative limit."}
+  formula={"=ERF.PRECISE(-1)"}
   grid={{}}
-  expected={"-0.8427007929497149"}
+  expected={"-0.842700792949715"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The integral from zero to zero vanishes."}
+  formula={"=ERF.PRECISE(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The input must be numeric."}
+  formula={"=ERF.PRECISE(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
 ## Related functions
 
 - [ERF](/docs/reference/functions/engineering/erf)
 - [ERFC](/docs/reference/functions/engineering/erfc)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERFC.PRECISE](/docs/reference/functions/engineering/erfc-precise)
-- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
 
 ## FAQ
 
 ### How is `ERF.PRECISE` different from `ERF`?
 `ERF.PRECISE` is the one-argument form only; numerically it matches `ERF(x)` for single input mode.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/erf-precise" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

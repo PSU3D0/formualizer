@@ -1,58 +1,85 @@
 ---
 title: "SINH"
-description: "SINH: Returns the hyperbolic sine of a number."
+seoTitle: "SINH function: formula syntax and examples"
+description: "Returns the hyperbolic sine of a number. =SINH(number)"
 ---
 
-<FunctionPageSchema id="math/sinh" />
-
-## Summary
+Returns the hyperbolic sine of a number.
 
 `SINH` computes `(e^x - e^-x) / 2`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SINH(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Hyperbolic sine is (exp(x) − exp(−x)) / 2 and is defined over the real numbers.
 
 ## Remarks
  - Domain: accepts any real number.
  - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+
+## Error cases
+
  - Errors: no function-specific domain errors are produced.
 
 ## Examples
 
-<Tabs items={["Hyperbolic sine at zero", "Hyperbolic sine at one"]}>
-<Tab value="Hyperbolic sine at zero">
-<FunctionSandbox
-  title="Hyperbolic sine at zero"
-  formula={`=SINH(0)`}
+<FunctionExample
+  title={"Subtract exp(−0.5) from exp(0.5) and halve the difference."}
+  formula={"=SINH(0.5)"}
+  grid={{}}
+  expected={"0.521095305493747"}
+/>
+
+<FunctionExample
+  title={"Swapping the two exponentials reverses the sign."}
+  formula={"=SINH(-0.5)"}
+  grid={{}}
+  expected={"-0.521095305493747"}
+/>
+
+<FunctionExample
+  title={"At zero the two exponentials cancel."}
+  formula={"=SINH(0)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Hyperbolic sine at one">
-<FunctionSandbox
-  title="Hyperbolic sine at one"
-  formula={`=SINH(1)`}
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the hyperbolic sine."}
+  formula={"=SINH(\"invalid\")"}
   grid={{}}
-  expected={"1.1752011936438014"}
+  expected={"#VALUE!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Hyperbolic sine at one"}
+  formula={"=SINH(1)"}
+  grid={{}}
+  expected={"1.1752011936438"}
+/>
 
 ## Related functions
 
 - [ASINH](/docs/reference/functions/math/asinh)
 - [COSH](/docs/reference/functions/math/cosh)
 - [TANH](/docs/reference/functions/math/tanh)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### Is SINH expecting radians like SIN?
 No. SINH is hyperbolic and treats input as a pure numeric value, not an angle unit.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sinh" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

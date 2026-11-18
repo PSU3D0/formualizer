@@ -1,13 +1,31 @@
 ---
 title: "MAX"
-description: "MAX: Returns the largest numeric value from one or more arguments."
+seoTitle: "MAX function: formula syntax and examples"
+description: "Returns the largest numeric value from one or more arguments. =MAX(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="math/max" />
-
-## Summary
+Returns the largest numeric value from one or more arguments.
 
 `MAX` scans scalar values and ranges, considering only values that can be treated as numbers.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MAX(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Differences from Excel
+
+Unparseable text supplied directly, such as `"x"`, is ignored by Formualizer. Excel returns `#VALUE!`.
 
 ## Remarks
  - Errors in any scalar argument or range cell propagate immediately.
@@ -17,35 +35,47 @@ description: "MAX: Returns the largest numeric value from one or more arguments.
 
 ## Examples
 
-<Tabs items={["Maximum in a numeric range", "Scalar text can be coerced", "No numeric values returns zero"]}>
-<Tab value="Maximum in a numeric range">
-<FunctionSandbox
-  title="Maximum in a numeric range"
-  formula={`=MAX(A1:A3)`}
+<FunctionExample
+  title={"Find the largest numeric value of 4, 8 and 12."}
+  formula={"=MAX(4,8,12)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the largest numeric value."}
+  formula={"=MAX({4,8,12})"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"The lone number is the maximum."}
+  formula={"=MAX(7)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the largest numeric value."}
+  formula={"=MAX(4,1/0,12)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Maximum in a numeric range"}
+  formula={"=MAX(A1:A3)"}
   grid={{"A1":"5","A2":"9","A3":"1"}}
   expected={"9"}
 />
-</Tab>
 
-<Tab value="Scalar text can be coerced">
-<FunctionSandbox
-  title="Scalar text can be coerced"
-  formula={`=MAX(2, "11", 4)`}
+<FunctionExample
+  title={"Scalar text can be coerced"}
+  formula={"=MAX(2, \"11\", 4)"}
   grid={{}}
   expected={"11"}
 />
-</Tab>
-
-<Tab value="No numeric values returns zero">
-<FunctionSandbox
-  title="No numeric values returns zero"
-  formula={`=MAX("x")`}
-  grid={{}}
-  expected={"0"}
-/>
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -53,8 +83,6 @@ description: "MAX: Returns the largest numeric value from one or more arguments.
 - [LARGE](/docs/reference/functions/stats/large)
 - [SMALL](/docs/reference/functions/stats/small)
 - [MAXIFS](/docs/reference/functions/stats/maxifs)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [SUMSQ](/docs/reference/functions/math/sumsq)
 
 ## FAQ
 
@@ -64,8 +92,6 @@ When no numeric values are found, MAX returns 0 by design.
 ### Does MAX evaluate scalar text arguments?
 Yes, but only when scalar text can be coerced to a numeric value.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/max" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/reduction.rs)

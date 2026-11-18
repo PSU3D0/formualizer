@@ -1,58 +1,92 @@
 ---
 title: "COT"
-description: "Returns the cotangent of an angle, defined as `1 / TAN(angle)`."
+seoTitle: "COT function: formula syntax and examples"
+description: "Returns the cotangent of an angle, defined as 1 / TAN(angle). =COT(number)"
 ---
 
-<FunctionPageSchema id="math/cot" />
-
-## Summary
+Returns the cotangent of an angle, defined as `1 / TAN(angle)`.
 
 `COT` is useful when working with reciprocal tangent relationships.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COT(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Cotangent is cos(x) / sin(x) for a radian angle x. It is undefined at integer multiples of π.
 
 ## Remarks
  - Domain: valid for all real angles except where `TAN(angle) = 0`.
  - Radians: input is interpreted in radians.
+
+## Error cases
+
  - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
 
 ## Examples
 
-<Tabs items={["Cotangent at PI over 4", "Undefined cotangent at zero"]}>
-<Tab value="Cotangent at PI over 4">
-<FunctionSandbox
-  title="Cotangent at PI over 4"
-  formula={`=COT(PI()/4)`}
+<FunctionExample
+  title={"Divide cosine by sine at one half radian."}
+  formula={"=COT(0.5)"}
+  grid={{}}
+  expected={"1.83048772171245"}
+/>
+
+<FunctionExample
+  title={"Changing the sign of the angle changes the sign of its cotangent."}
+  formula={"=COT(-0.5)"}
+  grid={{}}
+  expected={"-1.83048772171245"}
+/>
+
+<FunctionExample
+  title={"Near zero, a small positive sine makes the cotangent large."}
+  formula={"=COT(0.01)"}
+  grid={{}}
+  expected={"99.9966666444442"}
+/>
+
+<FunctionExample
+  title={"Nonnumeric text cannot be used as the input."}
+  formula={"=COT(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Cotangent at PI over 4"}
+  formula={"=COT(PI()/4)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Undefined cotangent at zero">
-<FunctionSandbox
-  title="Undefined cotangent at zero"
-  formula={`=COT(0)`}
+<FunctionExample
+  title={"Undefined cotangent at zero"}
+  formula={"=COT(0)"}
   grid={{}}
   expected={"#DIV/0!"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [TAN](/docs/reference/functions/math/tan)
 - [SEC](/docs/reference/functions/math/sec)
 - [CSC](/docs/reference/functions/math/csc)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### Why is COT undefined at integer multiples of PI()?
 At those points TAN is zero, so 1/TAN triggers a #DIV/0! condition.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/cot" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

@@ -1,59 +1,94 @@
 ---
 title: "GCD"
-description: "GCD: Returns the greatest common divisor of one or more integers."
+seoTitle: "GCD function: formula syntax and examples"
+description: "Returns the greatest common divisor of one or two integers. =GCD(number1, [number2])"
 ---
 
-<FunctionPageSchema id="math/gcd" />
-
-## Summary
+Returns the greatest common divisor of one or two integers.
 
 `GCD` truncates each argument toward zero before calculating the divisor.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GCD(number1, [number2])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number | Required | — |
+| `number2` | number | Optional | — |
+
+## Differences from Excel
+
+Formualizer accepts at most two arguments. Excel accepts up to 255.
+
 ## Remarks
  - Inputs must be between `0` and `9.99999999e9` after truncation, or `#NUM!` is returned.
- - Negative values return `#NUM!`.
  - Any argument error propagates immediately.
+
+## Error cases
+
+ - Negative values return `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Greatest common divisor of two numbers", "Variadic and fractional arguments", "Negative values are invalid"]}>
-<Tab value="Greatest common divisor of two numbers">
-<FunctionSandbox
-  title="Greatest common divisor of two numbers"
-  formula={`=GCD(24, 36)`}
-  grid={{}}
-  expected={"12"}
-/>
-</Tab>
-
-<Tab value="Variadic and fractional arguments">
-<FunctionSandbox
-  title="Variadic and fractional arguments"
-  formula={`=GCD(18.9, 6, 30)`}
+<FunctionExample
+  title={"Compute the result for two positive integers with common factors."}
+  formula={"=GCD(18,24)"}
   grid={{}}
   expected={"6"}
 />
-</Tab>
 
-<Tab value="Negative values are invalid">
-<FunctionSandbox
-  title="Negative values are invalid"
-  formula={`=GCD(-2, 4)`}
+<FunctionExample
+  title={"Use fractional inputs to see the effect of truncation."}
+  formula={"=GCD(18.7,24.2)"}
+  grid={{}}
+  expected={"6"}
+/>
+
+<FunctionExample
+  title={"Include a zero as one of the operands."}
+  formula={"=GCD(0,24)"}
+  grid={{}}
+  expected={"24"}
+/>
+
+<FunctionExample
+  title={"A negative operand falls outside the supported domain."}
+  formula={"=GCD(-18,24)"}
   grid={{}}
   expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Greatest common divisor of two numbers"}
+  formula={"=GCD(24, 36)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Fractional arguments are truncated"}
+  formula={"=GCD(18.9, 6)"}
+  grid={{}}
+  expected={"6"}
+/>
+
+<FunctionExample
+  title={"Negative values are invalid"}
+  formula={"=GCD(-2, 4)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
 ## Related functions
 
 - [LCM](/docs/reference/functions/math/lcm)
 - [MOD](/docs/reference/functions/math/mod)
 - [QUOTIENT](/docs/reference/functions/math/quotient)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 
 ## FAQ
 
@@ -63,8 +98,6 @@ Each argument is truncated toward zero before the divisor is computed.
 ### When does GCD return #NUM!?
 Negative values or values outside the supported bound return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/gcd" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/combinatorics.rs)

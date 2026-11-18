@@ -1,45 +1,87 @@
 ---
 title: "XLOOKUP"
-description: "XLOOKUP: Looks up a value in one array and returns the aligned value from another array."
+seoTitle: "XLOOKUP function: formula syntax and examples"
+description: "Looks up a value in one array and returns the aligned value from another array. XLOOKUP"
 ---
 
-<FunctionPageSchema id="lookup/xlookup" />
-
-## Summary
+Looks up a value in one array and returns the aligned value from another array.
 
 `XLOOKUP` supports exact, approximate, and wildcard matching with forward or reverse search.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=XLOOKUP(lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `lookup_value` | any | Required | — |
+| `lookup_array` | range (range) | Required | — |
+| `return_array` | range (range) | Required | — |
+| `if_not_found` | any | Optional | — |
+| `match_mode` | number | Optional | `0` |
+| `search_mode` | number | Optional | `1` |
 
 ## Remarks
  - Defaults: `match_mode=0` (exact), `search_mode=1` (first-to-last).
  - In exact and wildcard modes, a blank lookup value selects only a blank candidate; numeric zero and empty text remain distinct.
- - `if_not_found` is optional; if omitted and no match exists, returns `#N/A`.
  - `match_mode`: `0` exact, `-1` exact-or-next-smaller, `1` exact-or-next-larger, `2` wildcard.
- - `search_mode`: `1` forward, `-1` reverse. Other modes are accepted with current fallback behavior.
- - `lookup_array` must be 1D. Invalid shape returns `#VALUE!`.
+ - `search_mode`: `1` forward, `-1` reverse; approximate `2`/`-2` use linear forward/reverse fallback with ascending/descending sorted input.
+ - Exact/wildcard `2`/`-2` retain forward fallback. Approximate ties follow scan direction.
+ - Approximate modes otherwise retain the ascending-input requirement.
  - If `return_array` is multi-column or multi-row, the matched row/column is returned as a spill.
+
+## Error cases
+
+ - `if_not_found` is optional; if omitted and no match exists, returns `#N/A`.
+ - `lookup_array` must be 1D. Invalid shape returns `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Exact key lookup with fallback", "Return a full row from a matched key"]}>
-<Tab value="Exact key lookup with fallback">
-<FunctionSandbox
-  title="Exact key lookup with fallback"
-  formula={`=XLOOKUP(102,A2:A3,B2:B3,"Missing")`}
-  grid={{"A1":"id","A2":"101","A3":"102","B1":"name","B2":"Ana","B3":"Bo"}}
+<FunctionExample
+  title={"Find a name and return the corresponding number."}
+  formula={"=XLOOKUP(\"Bo\",{\"Ana\";\"Bo\";\"Cy\"},{10;20;30})"}
+  grid={{}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Use a custom result for a missing key."}
+  formula={"=XLOOKUP(\"Dee\",{\"Ana\";\"Bo\";\"Cy\"},{10;20;30},\"No match\")"}
+  grid={{}}
+  expected={"No match"}
+/>
+
+<FunctionExample
+  title={"Search a one-item array from the end for an exact match."}
+  formula={"=XLOOKUP(\"Bo\",{\"Bo\"},{20},\"\",0,-1)"}
+  grid={{}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"A missing lookup without a fallback returns an error."}
+  formula={"=XLOOKUP(\"Dee\",{\"Ana\";\"Bo\";\"Cy\"},{10;20;30})"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Exact key lookup with fallback"}
+  formula={"=XLOOKUP(102,A2:A3,B2:B3,\"Missing\")"}
+  grid={{"A2":"101","A3":"102","B2":"\"Ana\"","B3":"\"Bo\""}}
   expected={"Bo"}
 />
-</Tab>
 
-<Tab value="Return a full row from a matched key">
-<FunctionSandbox
-  title="Return a full row from a matched key"
-  formula={`=XLOOKUP(2,A1:A2,B1:C2)`}
-  grid={{"A1":"1","A2":"2","B1":"East","B2":"West","C1":"120","C2":"140"}}
-  expected={"[[\"West\",140]]"}
+<FunctionExample
+  title={"Return a full row from a matched key"}
+  formula={"=XLOOKUP(2,A1:A2,B1:C2)"}
+  grid={{"A1":"1","A2":"2","B1":"\"East\"","B2":"\"West\"","C1":"120","C2":"140"}}
+  expected={"{\"West\", 140}"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -48,7 +90,6 @@ description: "XLOOKUP: Looks up a value in one array and returns the aligned val
 - [FILTER](/docs/reference/functions/lookup/filter)
 - [VLOOKUP](/docs/reference/functions/lookup/vlookup)
 - [HLOOKUP](/docs/reference/functions/lookup/hlookup)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 
 ## FAQ
 
@@ -61,8 +102,6 @@ If if_not_found is provided, XLOOKUP returns that value; otherwise it returns #N
 ### Why do I get #VALUE! from XLOOKUP on valid ranges?
 The lookup_array must be one-dimensional (single row or single column); multi-row-and-column lookup ranges return #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/xlookup" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

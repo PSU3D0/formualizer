@@ -1,13 +1,29 @@
 ---
 title: "OCT2HEX"
-description: "OCT2HEX: Converts an octal text value to hexadecimal text."
+seoTitle: "OCT2HEX function: formula syntax and examples"
+description: "Converts an octal text value to hexadecimal text. =OCT2HEX(number, [places])"
 ---
 
-<FunctionPageSchema id="engineering/oct2hex" />
-
-## Summary
+Converts an octal text value to hexadecimal text.
 
 Supports optional left-padding through the `places` argument.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=OCT2HEX(number, [places])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `places` | number | Optional | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Input must be octal text up to 10 digits and may be signed two's-complement.
@@ -16,43 +32,59 @@ Supports optional left-padding through the `places` argument.
 
 ## Examples
 
-<Tabs items={["Convert octal to hex", "Convert signed octal"]}>
-<Tab value="Convert octal to hex">
-<FunctionSandbox
-  title="Convert octal to hex"
-  formula={`=OCT2HEX("77")`}
+<FunctionExample
+  title={"Convert octal 36 with no output padding."}
+  formula={"=OCT2HEX(\"36\")"}
+  grid={{}}
+  expected={"1E"}
+/>
+
+<FunctionExample
+  title={"Use eight output characters to preserve leading zeros."}
+  formula={"=OCT2HEX(\"36\",8)"}
+  grid={{}}
+  expected={"0000001E"}
+/>
+
+<FunctionExample
+  title={"Convert zero with a one-place width."}
+  formula={"=OCT2HEX(\"0\",1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The input contains a digit outside base eight."}
+  formula={"=OCT2HEX(\"8\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert octal to hex"}
+  formula={"=OCT2HEX(\"77\")"}
   grid={{}}
   expected={"3F"}
 />
-</Tab>
 
-<Tab value="Convert signed octal">
-<FunctionSandbox
-  title="Convert signed octal"
-  formula={`=OCT2HEX("7777777777")`}
+<FunctionExample
+  title={"Convert signed octal"}
+  formula={"=OCT2HEX(\"7777777777\")"}
   grid={{}}
   expected={"FFFFFFFFFF"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
 - [OCT2DEC](/docs/reference/functions/engineering/oct2dec)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 
 ## FAQ
 
 ### How does `OCT2HEX` treat signed octal input?
 Signed 10-digit octal is decoded via two's-complement and then emitted as hex, preserving signed meaning.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/oct2hex" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

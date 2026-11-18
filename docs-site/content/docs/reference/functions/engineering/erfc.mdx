@@ -1,13 +1,28 @@
 ---
 title: "ERFC"
-description: "ERFC: Returns the complementary error function of a number."
+seoTitle: "ERFC function: formula syntax and examples"
+description: "Returns the complementary error function of a number. =ERFC(x)"
 ---
 
-<FunctionPageSchema id="engineering/erfc" />
-
-## Summary
+Returns the complementary error function of a number.
 
 `ERFC(x)` is equivalent to `1 - ERF(x)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ERFC(x)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | any | Required | — |
+
+## How it works
+
+The complementary error function is the area under exp(−t²) from x to infinity, scaled by 2 / √π. The result is 1 at x = 0 and approaches 2 as x goes to negative infinity.
 
 ## Remarks
  - Input is numerically coerced.
@@ -16,43 +31,44 @@ description: "ERFC: Returns the complementary error function of a number."
 
 ## Examples
 
-<Tabs items={["Complement at one", "Complement at zero"]}>
-<Tab value="Complement at one">
-<FunctionSandbox
-  title="Complement at one"
-  formula={`=ERFC(1)`}
+<FunctionExample
+  title={"Evaluate one minus the error function at one."}
+  formula={"=ERFC(1)"}
   grid={{}}
-  expected={"0.1572992070502851"}
+  expected={"0.157299207050285"}
 />
-</Tab>
 
-<Tab value="Complement at zero">
-<FunctionSandbox
-  title="Complement at zero"
-  formula={`=ERFC(0)`}
+<FunctionExample
+  title={"At negative one the error function is negative, so its complement exceeds one."}
+  formula={"=ERFC(-1)"}
+  grid={{}}
+  expected={"1.84270079294971"}
+/>
+
+<FunctionExample
+  title={"The error function vanishes at zero, giving a complement of one."}
+  formula={"=ERFC(0)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The input must be numeric."}
+  formula={"=ERFC(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
 ## Related functions
 
 - [ERF](/docs/reference/functions/engineering/erf)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC.PRECISE](/docs/reference/functions/engineering/erfc-precise)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
 
 ## FAQ
 
 ### Is `ERFC(x)` equivalent to `1-ERF(x)` here?
 Yes. It computes the complementary error function and matches `1 - erf(x)` behavior.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/erfc" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

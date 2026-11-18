@@ -1,13 +1,31 @@
 ---
 title: "COUNTBLANK"
-description: "COUNTBLANK: Counts blank cells, including empty-string text results."
+seoTitle: "COUNTBLANK function: formula syntax and examples"
+description: "Counts blank cells, including empty-string text results. =COUNTBLANK(range, [range2], ...)"
 ---
 
-<FunctionPageSchema id="math/countblank" />
-
-## Summary
+Counts blank cells, including empty-string text results.
 
 `COUNTBLANK` treats both true empty cells and `""` text values as blank.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COUNTBLANK(range, [range2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `range` | any | Required | — |
+| `range2` | any | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Differences from Excel
+
+Formualizer accepts multiple arguments and can count scalar values. Excel takes a single range reference.
 
 ## Remarks
  - Empty-string text values are counted.
@@ -16,44 +34,39 @@ description: "COUNTBLANK: Counts blank cells, including empty-string text result
 
 ## Examples
 
-<Tabs items={["Count blanks in a range", "Scalar empty-string counts as blank", "Non-empty values are excluded"]}>
-<Tab value="Count blanks in a range">
-<FunctionSandbox
-  title="Count blanks in a range"
-  formula={`=COUNTBLANK(A1:A3)`}
-  grid={{"A1":"10","A2":""}}
+<FunctionExample
+  title={"Count one genuinely empty cell and one formula returning empty text."}
+  formula={"=COUNTBLANK(A1:A3)"}
+  grid={{"A1":"3","A2":"(blank)","A3":"=\"\""}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Scalar empty-string counts as blank">
-<FunctionSandbox
-  title="Scalar empty-string counts as blank"
-  formula={`=COUNTBLANK("", 5)`}
-  grid={{}}
-  expected={"1"}
+<FunctionExample
+  title={"Formualizer accepts multiple references and counts one blank in A2 and two in B1:B2."}
+  formula={"=COUNTBLANK(A2,B1:B2)"}
+  grid={{"A2":"(blank)","B1":"(blank)","B2":"(blank)"}}
+  expected={"3"}
 />
-</Tab>
 
-<Tab value="Non-empty values are excluded">
-<FunctionSandbox
-  title="Non-empty values are excluded"
-  formula={`=COUNTBLANK(1, "x", TRUE)`}
-  grid={{}}
+<FunctionExample
+  title={"A populated numeric cell contributes no blanks."}
+  formula={"=COUNTBLANK(A1)"}
+  grid={{"A1":"3"}}
   expected={"0"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Count blanks in a range"}
+  formula={"=COUNTBLANK(A1:A3)"}
+  grid={{"A1":"10","A2":"\"\""}}
+  expected={"2"}
+/>
 
 ## Related functions
 
 - [COUNTA](/docs/reference/functions/math/counta)
 - [COUNT](/docs/reference/functions/math/count)
 - [COUNTIF](/docs/reference/functions/math/countif)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [AVERAGEIF](/docs/reference/functions/math/averageif)
-- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
 
 ## FAQ
 
@@ -63,8 +76,6 @@ Yes. Empty-string text values are treated as blank for COUNTBLANK.
 ### Are numeric zeros considered blank?
 No. Zero is a numeric value, so it is not counted as blank.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/countblank" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/criteria_aggregates.rs)

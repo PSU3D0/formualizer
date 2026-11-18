@@ -1,59 +1,90 @@
 ---
 title: "LARGE"
-description: "Returns the k-th largest value in a data set."
+seoTitle: "LARGE function: formula syntax and examples"
+description: "Returns the k-th largest value in a data set. =LARGE(array, k)"
 ---
 
-<FunctionPageSchema id="stats/large" />
-
-## Summary
+Returns the k-th largest value in a data set.
 
 `LARGE` is useful for top-N analysis, such as highest score, second-highest sale, or third-best
  result.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LARGE(array, k)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | number (range) | Required | — |
+| `k` | number (range) | Required | — |
+
 ## Remarks
  - `k` must be at least `1`.
- - Returns `#NUM!` if `k` is greater than the count of numeric values.
  - Non-numeric values in referenced ranges are ignored.
+
+## Error cases
+
+ - Returns `#NUM!` if `k` is greater than the count of numeric values.
 
 ## Examples
 
-<Tabs items={["Second-largest from direct values", "Third-largest from a range"]}>
-<Tab value="Second-largest from direct values">
-<FunctionSandbox
-  title="Second-largest from direct values"
-  formula={`=LARGE({4,9,1,7},2)`}
+<FunctionExample
+  title={"Select the second value from the requested end of an unsorted data set."}
+  formula={"=LARGE({10,30,20,40},2)"}
+  grid={{}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"Move one position farther into the ordering."}
+  formula={"=LARGE({10,30,20,40},3)"}
+  grid={{}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Select the last valid rank in the four-value array."}
+  formula={"=LARGE({10,30,20,40},4)"}
+  grid={{}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"Rank five is outside the size of the source array."}
+  formula={"=LARGE({10,30,20,40},5)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Second-largest from direct values"}
+  formula={"=LARGE({4,9,1,7},2)"}
   grid={{}}
   expected={"7"}
 />
-</Tab>
 
-<Tab value="Third-largest from a range">
-<FunctionSandbox
-  title="Third-largest from a range"
-  formula={`=LARGE(A1:A4,3)`}
+<FunctionExample
+  title={"Third-largest from a range"}
+  formula={"=LARGE(A1:A4,3)"}
   grid={{"A1":"3","A2":"12","A3":"8","A4":"5"}}
   expected={"5"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SMALL](/docs/reference/functions/stats/small)
 - [MAX](/docs/reference/functions/math/max)
 - [RANK.EQ](/docs/reference/functions/stats/rank-eq)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### When does LARGE return #NUM!?
 It returns #NUM! when k &lt; 1, k exceeds numeric count, or no numeric values exist.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/large" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

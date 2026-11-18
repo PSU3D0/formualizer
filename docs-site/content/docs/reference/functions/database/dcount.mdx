@@ -1,58 +1,92 @@
 ---
 title: "DCOUNT"
-description: "DCOUNT: Counts numeric cells in a database field for records matching criteria."
+seoTitle: "DCOUNT function: formula syntax and examples"
+description: "Counts numeric cells in a database field for records matching criteria. =DCOUNT(database, field, criteria)"
 ---
 
-<FunctionPageSchema id="database/dcount" />
-
-## Summary
+Counts numeric cells in a database field for records matching criteria.
 
 `DCOUNT` ignores non-numeric values in the selected field even when the row itself matches.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DCOUNT(database, field, criteria)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `database` | any | Required | — |
+| `field` | any | Required | — |
+| `criteria` | any | Required | — |
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - Criteria rows are ORed, and criteria columns inside a single row are ANDed.
- - `field` header lookup is case-insensitive, and numeric `field` uses 1-based indexing; unresolved headers or invalid indexes return `#VALUE!`.
  - Only numeric field values contribute to the count.
+
+## Error cases
+
+ - `field` header lookup is case-insensitive, and numeric `field` uses 1-based indexing; unresolved headers or invalid indexes return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Count numeric revenue entries in East region", "Count numeric units for Widget or Service products"]}>
-<Tab value="Count numeric revenue entries in East region">
-<FunctionSandbox
-  title="Count numeric revenue entries in East region"
-  formula={`=DCOUNT(A1:E7, "Revenue", G1:G2)`}
-  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Region","G2":"East"}}
+<FunctionExample
+  title={"Count the numeric values in the Score column for the two East records."}
+  formula={"=DCOUNT(A1:B4,\"Score\",D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Count numeric units for Widget or Service products">
-<FunctionSandbox
-  title="Count numeric units for Widget or Service products"
-  formula={`=DCOUNT(A1:E7, 4, G1:G3)`}
-  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Product","G2":"Widget","G3":"Service"}}
+<FunctionExample
+  title={"Use field number 2 to get the same numeric count for East."}
+  formula={"=DCOUNT(A1:B4,2,D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"With the West filter, only the score of 3 contributes to the numeric count."}
+  formula={"=IFERROR(DCOUNT(A1:B4,\"Score\",E1:E2),\"Insufficient data\")"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","E1":"\"Team\"","E2":"\"West\""}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The missing field header prevents calculating the numeric count for East."}
+  formula={"=DCOUNT(A1:B4,\"Missing\",D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Count numeric revenue entries in East region"}
+  formula={"=DCOUNT(A1:E7, \"Revenue\", G1:G2)"}
+  grid={{"A1":"\"Region\"","A2":"\"West\"","A3":"\"East\"","A4":"\"North\"","A5":"\"West\"","A6":"\"South\"","A7":"\"East\"","B1":"\"Salesperson\"","B2":"\"Diaz\"","B3":"\"Patel\"","B4":"\"Kim\"","B5":"\"Ramos\"","B6":"\"Lee\"","B7":"\"Noor\"","C1":"\"Product\"","C2":"\"Widget\"","C3":"\"Gadget\"","C4":"\"Widget\"","C5":"\"Service\"","C6":"\"Gadget\"","C7":"\"Widget\"","D1":"\"Units\"","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"\"Revenue\"","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"\"Region\"","G2":"\"East\""}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Count numeric units for Widget or Service products"}
+  formula={"=DCOUNT(A1:E7, 4, G1:G3)"}
+  grid={{"A1":"\"Region\"","A2":"\"West\"","A3":"\"East\"","A4":"\"North\"","A5":"\"West\"","A6":"\"South\"","A7":"\"East\"","B1":"\"Salesperson\"","B2":"\"Diaz\"","B3":"\"Patel\"","B4":"\"Kim\"","B5":"\"Ramos\"","B6":"\"Lee\"","B7":"\"Noor\"","C1":"\"Product\"","C2":"\"Widget\"","C3":"\"Gadget\"","C4":"\"Widget\"","C5":"\"Service\"","C6":"\"Gadget\"","C7":"\"Widget\"","D1":"\"Units\"","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"\"Revenue\"","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"\"Product\"","G2":"\"Widget\"","G3":"\"Service\""}}
   expected={"4"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [DCOUNTA](/docs/reference/functions/database/dcounta)
 - [DSUM](/docs/reference/functions/database/dsum)
 - [COUNTIFS](/docs/reference/functions/math/countifs)
-- [DAVERAGE](/docs/reference/functions/database/daverage)
-- [DGET](/docs/reference/functions/database/dget)
-- [DMAX](/docs/reference/functions/database/dmax)
 
 ## FAQ
 
 ### Does DCOUNT count text values that look like numbers?
 Only values resolved as numeric in the target field are counted; true non-numeric text is ignored.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="database/dcount" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/database.rs)

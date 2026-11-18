@@ -1,53 +1,80 @@
 ---
 title: "DEVSQ"
-description: "DEVSQ: Returns the sum of squared deviations from the mean."
+seoTitle: "DEVSQ function: formula syntax and examples"
+description: "Returns the sum of squared deviations from the mean. =DEVSQ(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="stats/devsq" />
-
-## Summary
+Returns the sum of squared deviations from the mean.
 
 `DEVSQ` is useful for variance-related calculations and diagnostics of spread.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DEVSQ(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
- - Returns `#NUM!` when no numeric values are available.
  - Non-numeric values in referenced ranges are ignored.
  - Uses the arithmetic mean of included values.
 
+## Error cases
+
+ - Returns `#NUM!` when no numeric values are available.
+
 ## Examples
 
-<Tabs items={["Sum of squared deviations from scalar values", "Sum of squared deviations from a range"]}>
-<Tab value="Sum of squared deviations from scalar values">
-<FunctionSandbox
-  title="Sum of squared deviations from scalar values"
-  formula={`=DEVSQ(2,4,6)`}
+<FunctionExample
+  title={"Find the sum of squared deviations from the mean of 4, 8 and 12."}
+  formula={"=DEVSQ(4,8,12)"}
+  grid={{}}
+  expected={"32"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the sum of squared deviations from the mean."}
+  formula={"=DEVSQ({4,8,12})"}
+  grid={{}}
+  expected={"32"}
+/>
+
+<FunctionExample
+  title={"The sole squared deviation from the mean is zero."}
+  formula={"=DEVSQ(7)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the sum of squared deviations from the mean."}
+  formula={"=DEVSQ(4,1/0,12)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Sum of squared deviations from scalar values"}
+  formula={"=DEVSQ(2,4,6)"}
   grid={{}}
   expected={"8"}
 />
-</Tab>
 
-<Tab value="Sum of squared deviations from a range">
-<FunctionSandbox
-  title="Sum of squared deviations from a range"
-  formula={`=DEVSQ(A1:A4)`}
+<FunctionExample
+  title={"Sum of squared deviations from a range"}
+  formula={"=DEVSQ(A1:A4)"}
   grid={{"A1":"1","A2":"2","A3":"3","A4":"4"}}
   expected={"5"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
-- [KURT](/docs/reference/functions/stats/kurt)
-- [MEDIAN](/docs/reference/functions/stats/median)
-- [MODE.MULT](/docs/reference/functions/stats/mode-mult)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/devsq" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

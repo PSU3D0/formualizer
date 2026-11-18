@@ -1,13 +1,26 @@
 ---
 title: "PROPER"
-description: "PROPER: Capitalizes the first letter of each alphanumeric word."
+seoTitle: "PROPER function: formula syntax and examples"
+description: "Capitalizes the first letter of each alphanumeric word. =PROPER(text)"
 ---
 
-<FunctionPageSchema id="text/proper" />
-
-## Summary
-
 Capitalizes the first letter of each alphanumeric word.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PROPER(text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Word boundaries are reset by non-alphanumeric characters.
@@ -17,43 +30,59 @@ Capitalizes the first letter of each alphanumeric word.
 
 ## Examples
 
-<Tabs items={["Title case simple phrase", "Hyphen-separated words"]}>
-<Tab value="Title case simple phrase">
-<FunctionSandbox
-  title="Title case simple phrase"
-  formula={`=PROPER("hello world")`}
+<FunctionExample
+  title={"Apply the case conversion to two words with mixed capitalization."}
+  formula={"=PROPER(\"eAST team\")"}
+  grid={{}}
+  expected={"East Team"}
+/>
+
+<FunctionExample
+  title={"Convert text that also includes digits and punctuation."}
+  formula={"=PROPER(\"Q2-sales\")"}
+  grid={{}}
+  expected={"Q2-Sales"}
+/>
+
+<FunctionExample
+  title={"Case conversion of an empty string yields empty text."}
+  formula={"=PROPER(\"\")"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"An input error propagates before any text conversion."}
+  formula={"=PROPER(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Title case simple phrase"}
+  formula={"=PROPER(\"hello world\")"}
   grid={{}}
   expected={"Hello World"}
 />
-</Tab>
 
-<Tab value="Hyphen-separated words">
-<FunctionSandbox
-  title="Hyphen-separated words"
-  formula={`=PROPER("north-east REGION")`}
+<FunctionExample
+  title={"Hyphen-separated words"}
+  formula={"=PROPER(\"north-east REGION\")"}
   grid={{}}
   expected={"North-East Region"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [UPPER](/docs/reference/functions/text/upper)
 - [LOWER](/docs/reference/functions/text/lower)
 - [TRIM](/docs/reference/functions/text/trim)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
-- [CLEAN](/docs/reference/functions/text/clean)
 
 ## FAQ
 
 ### How are word boundaries determined?
 Any non-alphanumeric character starts a new word boundary for capitalization.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/proper" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/trim_case_concat.rs)

@@ -1,43 +1,82 @@
 ---
 title: "PV"
-description: "PV: Calculates present value from periodic cash flows at a fixed rate."
+seoTitle: "PV function: formula syntax and examples"
+description: "Calculates present value from periodic cash flows at a fixed rate. =PV(rate, nper, pmt, [fv], [type])"
 ---
 
-<FunctionPageSchema id="financial/pv" />
-
-## Summary
+Calculates present value from periodic cash flows at a fixed rate.
 
 Use this to discount a regular payment stream and optional terminal value back to time zero.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PV(rate, nper, pmt, [fv], [type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `nper` | number | Required | — |
+| `pmt` | number | Required | — |
+| `fv` | number | Optional | — |
+| `type` | number | Optional | — |
 
 ## Remarks
  - `rate` is the discount rate per period.
  - Cash-flow sign convention: inflows are positive and outflows are negative.
  - `type = 0` assumes payments at period end; `type != 0` assumes period start.
  - When `rate` is zero, present value is computed with simple arithmetic (no discounting).
+
+## Error cases
+
  - Returns argument-related errors if coercion fails or an input is an error value.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=PV(0.06/12, 360, -1798.65157545827)`}
+<FunctionExample
+  title={"Discount a series of two years of monthly payments."}
+  formula={"=PV(0.05/12,24,-250)"}
   grid={{}}
-  expected={"null"}
+  expected={"5698.47459848898"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=PV(0, 10, -500)`}
+<FunctionExample
+  title={"Discount beginning-of-month payments instead of end-of-month payments."}
+  formula={"=PV(0.05/12,24,-250,0,1)"}
   grid={{}}
-  expected={"null"}
+  expected={"5722.21824264935"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"With no interest the calculation reduces to undiscounted payments."}
+  formula={"=PV(0,24,-250)"}
+  grid={{}}
+  expected={"6000"}
+/>
+
+<FunctionExample
+  title={"The discount rate must be numeric."}
+  formula={"=PV(\"rate\",24,-250)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Recover the mortgage principal from its 360 monthly payments."}
+  formula={"=PV(0.06/12, 360, -1798.65157545827)"}
+  grid={{}}
+  expected={"300000"}
+/>
+
+<FunctionExample
+  title={"Value ten 500 payments at a zero discount rate."}
+  formula={"=PV(0, 10, -500)"}
+  grid={{}}
+  expected={"5000"}
+/>
 
 ## Related functions
 
@@ -45,16 +84,12 @@ Use this to discount a regular payment stream and optional terminal value back t
 - [FV](/docs/reference/functions/financial/fv)
 - [NPER](/docs/reference/functions/financial/nper)
 - [RATE](/docs/reference/functions/financial/rate)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 
 ## FAQ
 
 ### How does `type` change `PV`?
 `type=0` discounts end-of-period payments, while non-zero `type` treats payments as beginning-of-period (annuity due).
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/pv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

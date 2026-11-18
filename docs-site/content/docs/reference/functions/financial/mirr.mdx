@@ -1,61 +1,93 @@
 ---
 title: "MIRR"
-description: "MIRR: Calculates modified internal rate of return with separate finance and reinvest rates."
+seoTitle: "MIRR function: formula syntax and examples"
+description: "Calculates modified internal rate of return with separate finance and reinvest rates. =MIRR(values, finance_rate, reinvest_rate)"
 ---
 
-<FunctionPageSchema id="financial/mirr" />
-
-## Summary
+Calculates modified internal rate of return with separate finance and reinvest rates.
 
 Negative cash flows are discounted at `finance_rate` and positive cash flows are compounded at
  `reinvest_rate`, then combined into a single periodic return.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MIRR(values, finance_rate, reinvest_rate)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `values` | any | Required | — |
+| `finance_rate` | number | Required | — |
+| `reinvest_rate` | number | Required | — |
 
 ## Remarks
  - `finance_rate` and `reinvest_rate` are both rates per cash-flow period.
  - Cash-flow sign convention: at least one negative and one positive cash flow are required.
  - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+
+## Error cases
+
  - A callable value input returns `#CALC!`.
  - Returns `#NUM!` for insufficient cash flows, and `#DIV/0!` when computed positive/negative legs are invalid.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=MIRR({-10000,3000,4200,6800}, 0.1, 0.12)`}
+<FunctionExample
+  title={"Use separate borrowing and reinvestment rates for an investment."}
+  formula={"=MIRR({-100,40,50,30},0.05,0.07)"}
   grid={{}}
-  expected={"null"}
+  expected={"0.0894192119565331"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=MIRR({-120000,39000,30000,21000,37000,46000}, 0.1, 0.12)`}
+<FunctionExample
+  title={"Raise the reinvestment rate without changing the financing rate."}
+  formula={"=MIRR({-100,40,50,30},0.05,0.15)"}
   grid={{}}
-  expected={"null"}
+  expected={"0.119753347045174"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Equal cash flows over one interval give a zero modified return at zero rates."}
+  formula={"=MIRR({-100,100},0,0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The calculation needs an outflow as well as an inflow."}
+  formula={"=MIRR({100,40,50,30},0.05,0.07)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Calculate a modified return with 10% financing and 12% reinvestment."}
+  formula={"=MIRR({-10000,3000,4200,6800}, 0.1, 0.12)"}
+  grid={{}}
+  expected={"0.151471336646763"}
+/>
+
+<FunctionExample
+  title={"Calculate the modified return on a 120,000 outlay and five receipts."}
+  formula={"=MIRR({-120000,39000,30000,21000,37000,46000}, 0.1, 0.12)"}
+  grid={{}}
+  expected={"0.126094130365905"}
+/>
 
 ## Related functions
 
 - [IRR](/docs/reference/functions/financial/irr)
 - [NPV](/docs/reference/functions/financial/npv)
 - [XNPV](/docs/reference/functions/financial/xnpv)
-- [PDURATION](/docs/reference/functions/financial/pduration)
-- [RRI](/docs/reference/functions/financial/rri)
-- [SLN](/docs/reference/functions/financial/sln)
 
 ## FAQ
 
 ### Why does `MIRR` return `#DIV/0!` for some cash-flow sets?
 `MIRR` needs both a negative leg and a positive leg; if discounted negatives or compounded positives are invalid, it returns `#DIV/0!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/mirr" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

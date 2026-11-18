@@ -1,13 +1,22 @@
 ---
 title: "LEN"
-description: "LEN: Returns the number of characters in a text value."
+seoTitle: "LEN function: formula syntax and examples"
+description: "Returns the number of characters in a text value. =LEN(text)"
 ---
 
-<FunctionPageSchema id="text/len" />
-
-## Summary
-
 Returns the number of characters in a text value.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LEN(text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
 
 ## Remarks
  - Counts Unicode scalar characters, not bytes.
@@ -17,43 +26,59 @@ Returns the number of characters in a text value.
 
 ## Examples
 
-<Tabs items={["Basic text length", "Whitespace is counted"]}>
-<Tab value="Basic text length">
-<FunctionSandbox
-  title="Basic text length"
-  formula={`=LEN("hello")`}
+<FunctionExample
+  title={"Count the length of a label containing an internal space."}
+  formula={"=LEN(\"East 2024\")"}
+  grid={{}}
+  expected={"9"}
+/>
+
+<FunctionExample
+  title={"Measure text containing non-ASCII characters."}
+  formula={"=LEN(\"é界\")"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Empty text has a length of zero."}
+  formula={"=LEN(\"\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A division-by-zero input propagates."}
+  formula={"=LEN(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Basic text length"}
+  formula={"=LEN(\"hello\")"}
   grid={{}}
   expected={"5"}
 />
-</Tab>
 
-<Tab value="Whitespace is counted">
-<FunctionSandbox
-  title="Whitespace is counted"
-  formula={`=LEN("a b")`}
+<FunctionExample
+  title={"Whitespace is counted"}
+  formula={"=LEN(\"a b\")"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [LEFT](/docs/reference/functions/text/left)
 - [RIGHT](/docs/reference/functions/text/right)
 - [MID](/docs/reference/functions/text/mid)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
-- [CLEAN](/docs/reference/functions/text/clean)
 
 ## FAQ
 
 ### Does LEN ignore spaces?
 No. LEN counts spaces and other visible characters as part of the total length.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/len" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/len_left_right.rs)

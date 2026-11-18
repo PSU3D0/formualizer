@@ -1,0 +1,77 @@
+---
+title: "FINV"
+seoTitle: "FINV function: formula syntax and examples"
+description: "Returns the inverse of the right-tailed F probability (legacy name). =FINV(probability, deg_freedom1, deg_freedom2)"
+---
+
+Returns the inverse of the right-tailed F probability (legacy name).
+
+`FINV(probability, deg_freedom1, deg_freedom2)` is the `x` with
+ `FDIST(x, deg_freedom1, deg_freedom2) = probability`, the same as `F.INV.RT`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FINV(probability, deg_freedom1, deg_freedom2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `deg_freedom1` | number | Required | — |
+| `deg_freedom2` | number | Required | — |
+
+## How it works
+
+Maps to F.INV.RT with the same arguments. Finds the nonnegative F statistic that leaves a given right-tail probability, using numerator degrees of freedom before denominator degrees of freedom.
+
+## Remarks
+ - Both degrees of freedom are truncated to integers.
+
+## Error cases
+
+ - Returns `#NUM!` when `probability` is outside `[0, 1]` or either degrees of freedom is
+   `&lt; 1` or `&gt;= 10^10`.
+
+## Examples
+
+<FunctionExample
+  title={"Use the legacy inverse to find the upper F quartile."}
+  formula={"=FINV(0.25,5,10)"}
+  grid={{}}
+  expected={"1.58532325938462"}
+/>
+
+<FunctionExample
+  title={"Increase the right-tail probability while holding both degrees of freedom fixed."}
+  formula={"=FINV(0.75,5,10)"}
+  grid={{}}
+  expected={"0.529141685567821"}
+/>
+
+<FunctionExample
+  title={"Use one numerator and one denominator degree of freedom at right-tail probability 0.5."}
+  formula={"=FINV(0.5,1,1)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A probability above one is outside the function's domain."}
+  formula={"=FINV(1.1,5,10)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the F critical value with 1% of the area to its right and six and four degrees of freedom."}
+  formula={"=FINV(0.01,6,4)"}
+  grid={{}}
+  expected={"15.2068648611576"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

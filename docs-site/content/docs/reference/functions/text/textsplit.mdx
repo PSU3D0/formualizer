@@ -1,13 +1,29 @@
 ---
 title: "TEXTSPLIT"
-description: "TEXTSPLIT: Splits text into a dynamic 2D array by column and optional row delimiters."
+seoTitle: "TEXTSPLIT function: formula syntax and examples"
+description: "Splits text into a dynamic 2D array by column and optional row delimiters."
 ---
 
-<FunctionPageSchema id="text/textsplit" />
-
-## Summary
+Splits text into a dynamic 2D array by column and optional row delimiters.
 
 `TEXTSPLIT` supports multiple delimiters, optional case-insensitive matching, and output padding.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TEXTSPLIT(text, col_delimiter, [row_delimiter], [ignore_empty], [match_mode], [pad_with])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `col_delimiter` | any | Required | — |
+| `row_delimiter` | any | Optional | — |
+| `ignore_empty` | logical | Optional | `false` |
+| `match_mode` | number | Optional | `0` |
+| `pad_with` | any | Optional | `#N/A` |
 
 ## Remarks
  - Column delimiter is required; row delimiter is optional.
@@ -17,43 +33,59 @@ description: "TEXTSPLIT: Splits text into a dynamic 2D array by column and optio
 
 ## Examples
 
-<Tabs items={["Split CSV row", "Row and column split with padding"]}>
-<Tab value="Split CSV row">
-<FunctionSandbox
-  title="Split CSV row"
-  formula={`=TEXTSPLIT("A,B,C", ",")`}
+<FunctionExample
+  title={"Split one comma-separated row into columns."}
+  formula={"=TEXTSPLIT(\"East,West\",\",\")"}
   grid={{}}
-  expected={"{A,B,C}"}
+  expected={"{\"East\", \"West\"}"}
 />
-</Tab>
 
-<Tab value="Row and column split with padding">
-<FunctionSandbox
-  title="Row and column split with padding"
-  formula={`=TEXTSPLIT("A,B;C", ",", ";")`}
+<FunctionExample
+  title={"Split on either case of X, skip empty pieces, and pad the shorter final row with text."}
+  formula={"=TEXTSPLIT(\"EastX10;WestXX20;North\",\"x\",\";\",TRUE,1,\"missing\")"}
   grid={{}}
-  expected={"{A,B;C,#N/A}"}
+  expected={"{\"East\", \"10\"; \"West\", \"20\"; \"North\", \"missing\"}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"With no delimiter occurrence the result contains a single piece of text."}
+  formula={"=TEXTSPLIT(\"East\",\",\")"}
+  grid={{}}
+  expected={"East"}
+/>
+
+<FunctionExample
+  title={"An error in the delimiter argument prevents splitting."}
+  formula={"=TEXTSPLIT(\"East,West\",1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Split CSV row"}
+  formula={"=TEXTSPLIT(\"A,B,C\", \",\")"}
+  grid={{}}
+  expected={"{\"A\", \"B\", \"C\"}"}
+/>
+
+<FunctionExample
+  title={"Row and column split with padding"}
+  formula={"=TEXTSPLIT(\"A,B;C\", \",\", \";\")"}
+  grid={{}}
+  expected={"{\"A\", \"B\"; \"C\", #N/A}"}
+/>
 
 ## Related functions
 
 - [TEXTBEFORE](/docs/reference/functions/text/textbefore)
 - [TEXTAFTER](/docs/reference/functions/text/textafter)
 - [TEXTJOIN](/docs/reference/functions/text/textjoin)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
-- [EXACT](/docs/reference/functions/text/exact)
-- [FIXED](/docs/reference/functions/text/fixed)
 
 ## FAQ
 
 ### Is delimiter matching case-sensitive?
 Yes by default; set match_mode to 1 for case-insensitive delimiter matching.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/textsplit" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/array_text.rs)

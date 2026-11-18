@@ -1,58 +1,87 @@
 ---
 title: "MOD"
-description: "MOD: Returns the remainder after division, with the sign of the divisor."
+seoTitle: "MOD function: formula syntax and examples"
+description: "Returns the remainder after division, with the sign of the divisor. =MOD(number, divisor)"
 ---
-
-<FunctionPageSchema id="math/mod" />
-
-## Summary
 
 Returns the remainder after division, with the sign of the divisor.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MOD(number, divisor)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `divisor` | number | Required | — |
+
 ## Remarks
- - If divisor is `0`, returns `#DIV/0!`.
  - Result sign follows Excel-style MOD semantics (sign of divisor).
  - Errors in either argument are propagated.
 
+## Error cases
+
+ - If divisor is `0`, returns `#DIV/0!`.
+
 ## Examples
 
-<Tabs items={["Positive divisor", "Negative dividend"]}>
-<Tab value="Positive divisor">
-<FunctionSandbox
-  title="Positive divisor"
-  formula={`=MOD(10,3)`}
+<FunctionExample
+  title={"Divide two positive integers with a remainder."}
+  formula={"=MOD(17,5)"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Compare the result when the first number is negative."}
+  formula={"=MOD(-17,5)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"Divide integers with no remainder."}
+  formula={"=MOD(15,5)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A zero denominator makes the operation undefined."}
+  formula={"=MOD(17,0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Positive divisor"}
+  formula={"=MOD(10,3)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Negative dividend">
-<FunctionSandbox
-  title="Negative dividend"
-  formula={`=MOD(-3,2)`}
+<FunctionExample
+  title={"Negative dividend"}
+  formula={"=MOD(-3,2)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [QUOTIENT](/docs/reference/functions/math/quotient)
 - [INT](/docs/reference/functions/math/int)
 - [GCD](/docs/reference/functions/math/gcd)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
 
 ## FAQ
 
 ### Why can MOD return a positive value for a negative dividend?
 MOD follows the sign of the divisor, matching Excel's modulo semantics.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/mod" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

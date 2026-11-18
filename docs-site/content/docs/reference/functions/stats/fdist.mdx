@@ -1,0 +1,75 @@
+---
+title: "FDIST"
+seoTitle: "FDIST function: formula syntax and examples"
+description: "Returns the right-tailed F probability (legacy name). =FDIST(x, deg_freedom1, deg_freedom2)"
+---
+
+Returns the right-tailed F probability (legacy name).
+
+`FDIST(x, deg_freedom1, deg_freedom2)` is `P(F &gt; x)`, the same as `F.DIST.RT`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FDIST(x, deg_freedom1, deg_freedom2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom1` | number | Required | — |
+| `deg_freedom2` | number | Required | — |
+
+## How it works
+
+Maps to F.DIST.RT(x, degrees_freedom1, degrees_freedom2) with the same arguments. Finds the probability above x in a ratio of independent sample variances, with nonnegative x and two positive degrees of freedom.
+
+## Remarks
+ - Both degrees of freedom are truncated to integers.
+
+## Error cases
+
+ - Returns `#NUM!` when `x &lt; 0` or either degrees of freedom is `&lt; 1` or `&gt;= 10^10`.
+
+## Examples
+
+<FunctionExample
+  title={"Use the legacy name to find the probability above a variance ratio of two."}
+  formula={"=FDIST(2,5,10)"}
+  grid={{}}
+  expected={"0.164194950899739"}
+/>
+
+<FunctionExample
+  title={"Swap numerator and denominator degrees of freedom before evaluating the upper tail."}
+  formula={"=FDIST(2,10,5)"}
+  grid={{}}
+  expected={"0.229975119349899"}
+/>
+
+<FunctionExample
+  title={"A zero variance ratio leaves the full area in the right tail."}
+  formula={"=FDIST(0,5,10)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative F statistic is outside the support."}
+  formula={"=FDIST(-1,5,10)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the upper-tail probability above an F statistic of 14.2 with six and four degrees of freedom."}
+  formula={"=FDIST(14.2,6,4)"}
+  grid={{}}
+  expected={"0.011356126812524"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

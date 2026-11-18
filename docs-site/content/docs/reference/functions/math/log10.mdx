@@ -1,58 +1,79 @@
 ---
 title: "LOG10"
-description: "LOG10: Returns the base-10 logarithm of a positive number."
+seoTitle: "LOG10 function: formula syntax and examples"
+description: "Returns the base-10 logarithm of a positive number. =LOG10(number)"
 ---
-
-<FunctionPageSchema id="math/log10" />
-
-## Summary
 
 Returns the base-10 logarithm of a positive number.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LOG10(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
 ## Remarks
- - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
  - `LOG10(POWER(10,x))` returns `x` up to floating-point precision.
  - Input errors are propagated.
 
+## Error cases
+
+ - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
+
 ## Examples
 
-<Tabs items={["Power of ten to exponent", "Log base 10 of a decimal"]}>
-<Tab value="Power of ten to exponent">
-<FunctionSandbox
-  title="Power of ten to exponent"
-  formula={`=LOG10(1000)`}
+<FunctionExample
+  title={"Evaluate the logarithm of a positive number above one."}
+  formula={"=LOG10(100)"}
   grid={{}}
-  expected={"3"}
+  expected={"2"}
 />
-</Tab>
 
-<Tab value="Log base 10 of a decimal">
-<FunctionSandbox
-  title="Log base 10 of a decimal"
-  formula={`=LOG10(0.01)`}
+<FunctionExample
+  title={"A positive value below one gives a negative logarithm."}
+  formula={"=LOG10(0.01)"}
   grid={{}}
   expected={"-2"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The logarithm of one is zero."}
+  formula={"=LOG10(1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Zero is outside the real logarithm domain."}
+  formula={"=LOG10(0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Power of ten to exponent"}
+  formula={"=LOG10(1000)"}
+  grid={{}}
+  expected={"3"}
+/>
 
 ## Related functions
 
 - [LOG](/docs/reference/functions/math/log)
 - [LN](/docs/reference/functions/math/ln)
 - [EXP](/docs/reference/functions/math/exp)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
 
 ## FAQ
 
 ### When does LOG10 return #NUM!?
 It returns #NUM! for non-positive input values.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/log10" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

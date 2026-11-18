@@ -1,58 +1,83 @@
 ---
 title: "CONVERT"
-description: "Converts a numeric value from one supported unit to another."
+seoTitle: "CONVERT function: formula syntax and examples"
+description: "Converts a numeric value from one supported unit to another. =CONVERT(number, from_unit, to_unit)"
 ---
 
-<FunctionPageSchema id="engineering/convert" />
-
-## Summary
+Converts a numeric value from one supported unit to another.
 
 Supports a focused set of length, mass, and temperature units.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CONVERT(number, from_unit, to_unit)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
+| `from_unit` | any | Required | — |
+| `to_unit` | any | Required | — |
+
 ## Remarks
  - `number` is numerically coerced; unit arguments must be text.
- - Returns `#N/A` for unknown units or incompatible unit categories.
  - Temperature conversions support `C/cel`, `F/fah`, and `K/kel`.
+
+## Error cases
+
+ - Returns `#N/A` for unknown units or incompatible unit categories.
 
 ## Examples
 
-<Tabs items={["Length conversion", "Temperature conversion"]}>
-<Tab value="Length conversion">
-<FunctionSandbox
-  title="Length conversion"
-  formula={`=CONVERT(1,"km","m")`}
+<FunctionExample
+  title={"Convert kilometers to meters within the distance unit family."}
+  formula={"=CONVERT(2,\"km\",\"m\")"}
   grid={{}}
-  expected={"1000"}
+  expected={"2000"}
 />
-</Tab>
 
-<Tab value="Temperature conversion">
-<FunctionSandbox
-  title="Temperature conversion"
-  formula={`=CONVERT(32,"F","C")`}
+<FunctionExample
+  title={"Convert temperature units using an offset as well as a scale factor."}
+  formula={"=CONVERT(32,\"F\",\"C\")"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A linear distance conversion preserves zero."}
+  formula={"=CONVERT(0,\"m\",\"km\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Distance and time are incompatible unit families."}
+  formula={"=CONVERT(2,\"m\",\"s\")"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Length conversion"}
+  formula={"=CONVERT(1,\"km\",\"m\")"}
+  grid={{}}
+  expected={"1000"}
+/>
 
 ## Related functions
 
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 - [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [BESSELI](/docs/reference/functions/engineering/besseli)
-- [BESSELJ](/docs/reference/functions/engineering/besselj)
-- [BESSELK](/docs/reference/functions/engineering/besselk)
 
 ## FAQ
 
 ### When does `CONVERT` return `#N/A`?
 Unknown unit tokens, non-text unit arguments, or mixing incompatible categories (for example length to mass) return `#N/A`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/convert" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

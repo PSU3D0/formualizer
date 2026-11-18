@@ -1,14 +1,27 @@
 ---
 title: "NUMBERVALUE"
-description: "NUMBERVALUE: Converts locale-delimited text to a number."
+seoTitle: "NUMBERVALUE function: formula syntax and examples"
+description: "Converts locale-delimited text to a number. =NUMBERVALUE(text, [decimal_separator], [group_separator])"
 ---
 
-<FunctionPageSchema id="text/numbervalue" />
-
-## Summary
+Converts locale-delimited text to a number.
 
 Parses text using explicit decimal and group separators, independent of the
  workbook's invariant locale.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NUMBERVALUE(text, [decimal_separator], [group_separator])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `decimal_separator` | any | Optional | — |
+| `group_separator` | any | Optional | — |
 
 ## Remarks
  - The decimal separator defaults to `.`.
@@ -17,43 +30,52 @@ Parses text using explicit decimal and group separators, independent of the
 
 ## Examples
 
-<Tabs items={["Parse with explicit separators", "Parse percent suffix"]}>
-<Tab value="Parse with explicit separators">
-<FunctionSandbox
-  title="Parse with explicit separators"
-  formula={`=NUMBERVALUE("1.234,56",",",".")`}
+<FunctionExample
+  title={"Convert a decimal string using the default separators."}
+  formula={"=NUMBERVALUE(\"1234.56\")"}
   grid={{}}
   expected={"1234.56"}
 />
-</Tab>
 
-<Tab value="Parse percent suffix">
-<FunctionSandbox
-  title="Parse percent suffix"
-  formula={`=NUMBERVALUE("12.5%")`}
+<FunctionExample
+  title={"Supply a comma decimal separator and a dot group separator."}
+  formula={"=NUMBERVALUE(\"1.234,56\",\",\",\".\")"}
+  grid={{}}
+  expected={"1234.56"}
+/>
+
+<FunctionExample
+  title={"Convert the single digit zero."}
+  formula={"=NUMBERVALUE(\"0\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Nonnumeric text cannot be parsed as a number."}
+  formula={"=NUMBERVALUE(\"unknown\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Parse percent suffix"}
+  formula={"=NUMBERVALUE(\"12.5%\")"}
   grid={{}}
   expected={"0.125"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [VALUE](/docs/reference/functions/text/value)
 - [TEXT](/docs/reference/functions/text/text)
 - [DOLLAR](/docs/reference/functions/text/dollar)
-- [CONCAT](/docs/reference/functions/text/concat)
-- [CONCATENATE](/docs/reference/functions/text/concatenate)
-- [LEFT](/docs/reference/functions/text/left)
 
 ## FAQ
 
 ### Does NUMBERVALUE use the global locale?
 No. Decimal and group separators are passed explicitly as arguments.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/numbervalue" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/value_text.rs)

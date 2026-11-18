@@ -1,23 +1,64 @@
 ---
 title: "BETA.INV"
-description: "BETA.INV: Returns the inverse cumulative beta distribution, optionally scaled to custom bounds."
+seoTitle: "BETA.INV function: formula syntax and examples"
+description: "Returns the inverse cumulative beta distribution, optionally scaled to custom bounds. =BETA.INV(probability, alpha, beta, [a], [b])"
 ---
-
-<FunctionPageSchema id="stats/beta-inv" />
-
-## Summary
 
 Returns the inverse cumulative beta distribution, optionally scaled to custom bounds.
 
-## returns: 0.5
- =BETA.INV(0.5,2,2)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BETA.INV(probability, alpha, beta, [a], [b])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `alpha` | number | Required | — |
+| `beta` | number | Required | — |
+| `a` | number | Optional | — |
+| `b` | number | Optional | — |
+
+## How it works
+
+Solves the cumulative beta equation F(x) = probability for x in [A,B]. Both shapes must be positive and the probability must be in [0,1]. The two extreme probabilities give the endpoints.
 
 ## Examples
 
-<FunctionSandbox
-  title="Symmetric beta inverse at the median"
-  formula={`=BETA.INV(0.5,2,2)`}
+<FunctionExample
+  title={"Find the median of a beta distribution with shapes two and three."}
+  formula={"=BETA.INV(0.5,2,3)"}
+  grid={{}}
+  expected={"0.38572756813239"}
+/>
+
+<FunctionExample
+  title={"Find the same median on the rescaled interval from zero to ten."}
+  formula={"=BETA.INV(0.5,2,3,0,10)"}
+  grid={{}}
+  expected={"3.8572756813239"}
+/>
+
+<FunctionExample
+  title={"At cumulative probability one, return the upper endpoint of the default interval."}
+  formula={"=BETA.INV(1,2,3)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A probability above one is outside the distribution."}
+  formula={"=BETA.INV(1.1,2,3)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Symmetric beta inverse at the median"}
+  formula={"=BETA.INV(0.5,2,2)"}
   grid={{}}
   expected={"0.5"}
 />
@@ -27,17 +68,12 @@ Returns the inverse cumulative beta distribution, optionally scaled to custom bo
 - [BETA.DIST](/docs/reference/functions/stats/beta-dist)
 - [GAMMA.INV](/docs/reference/functions/stats/gamma-inv)
 - [NORM.INV](/docs/reference/functions/stats/norm-inv)
-- [BINOM.DIST.RANGE](/docs/reference/functions/stats/binom-dist-range)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [AVERAGEA](/docs/reference/functions/stats/averagea)
 
 ## FAQ
 
 ### When does BETA.INV return #NUM!?
 It returns #NUM! for non-positive alpha or beta, invalid bounds, or probabilities outside 0..1.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/beta-inv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,17 +1,33 @@
 ---
 title: "Z.TEST"
-description: "Z.TEST: Returns the one-tailed p-value of a z-test against hypothesized mean `x`."
+seoTitle: "Z.TEST function: formula syntax and examples"
+description: "Returns the one-tailed p-value of a z-test against hypothesized mean x. =Z.TEST(array, x, [sigma])"
 ---
 
-<FunctionPageSchema id="stats/z-test" />
-
-## Summary
+Returns the one-tailed p-value of a z-test against hypothesized mean `x`.
 
 `Z.TEST` evaluates whether the sample mean is significantly greater than the target value.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=Z.TEST(array, x, [sigma])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | number (range) | Required | — |
+| `x` | number | Required | — |
+| `sigma` | number | Optional | — |
 
 ## Remarks
  - Uses provided `sigma` when supplied; otherwise uses the sample standard deviation
    (`STDEV.S`), as Excel does.
+
+## Error cases
+
  - Returns `#NUM!` when `sigma &lt;= 0`.
  - Returns `#DIV/0!` when `sigma` is omitted and there are fewer than two values or the
    sample standard deviation is zero.
@@ -19,38 +35,48 @@ description: "Z.TEST: Returns the one-tailed p-value of a z-test against hypothe
 
 ## Examples
 
-<Tabs items={["Z-test with provided sigma", "Z-test with sigma estimated from sample"]}>
-<Tab value="Z-test with provided sigma">
-<FunctionSandbox
-  title="Z-test with provided sigma"
-  formula={`=Z.TEST({1,2,3,4,5},2,1)`}
+<FunctionExample
+  title={"Use the sample spread to find the one-tailed z-test probability."}
+  formula={"=Z.TEST({8,10,12,14,16},10)"}
   grid={{}}
-  expected={"0.012673659338734137"}
+  expected={"0.0786496035251426"}
 />
-</Tab>
 
-<Tab value="Z-test with sigma estimated from sample">
-<FunctionSandbox
-  title="Z-test with sigma estimated from sample"
-  formula={`=Z.TEST({1,2,3,4,5},2)`}
+<FunctionExample
+  title={"Supply the population standard deviation explicitly."}
+  formula={"=Z.TEST({8,10,12,14,16},10,3)"}
   grid={{}}
-  expected={"0.07864960352514257"}
+  expected={"0.0680185640570718"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Compare the sample with a hypothesized mean equal to its observed mean."}
+  formula={"=Z.TEST({8,10,12,14,16},12,3)"}
+  grid={{}}
+  expected={"0.5"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"A population standard deviation of zero cannot be used for the test."}
+  formula={"=Z.TEST({8,10,12,14,16},10,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-- [LARGE](/docs/reference/functions/stats/large)
-- [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
-- [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
-- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
-- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
-- [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
+<FunctionExample
+  title={"Z-test with provided sigma"}
+  formula={"=Z.TEST({1,2,3,4,5},2,1)"}
+  grid={{}}
+  expected={"0.0126736593387341"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Z-test with sigma estimated from sample"}
+  formula={"=Z.TEST({1,2,3,4,5},2)"}
+  grid={{}}
+  expected={"0.0786496035251426"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/z-test" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

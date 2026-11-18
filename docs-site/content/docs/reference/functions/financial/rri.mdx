@@ -1,31 +1,55 @@
 ---
 title: "RRI"
-description: "RRI(nper, pv, fv) — equivalent interest rate for growth of an investment. Returns (fv/pv)^(1/nper) - 1 (i.e. CAGR)."
+seoTitle: "RRI function: formula syntax and examples"
+description: "Find the constant growth rate that takes a starting value to a final value over a fixed number of periods."
 ---
-
-<FunctionPageSchema id="financial/rri" />
-
-## Summary
 
 RRI(nper, pv, fv) — equivalent interest rate for growth of an investment. Returns (fv/pv)^(1/nper) - 1 (i.e. CAGR).
 
-## Formula example
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
 
-```text
-=RRI(A1, B1)
-```
+## Syntax
 
-## Related functions
+`=RRI(nper, pv, fv)`
 
-- [MIRR](/docs/reference/functions/financial/mirr)
-- [PDURATION](/docs/reference/functions/financial/pduration)
-- [SLN](/docs/reference/functions/financial/sln)
-- [TBILLEQ](/docs/reference/functions/financial/tbilleq)
-- [TBILLPRICE](/docs/reference/functions/financial/tbillprice)
-- [TBILLYIELD](/docs/reference/functions/financial/tbillyield)
+## Arguments
 
-## Runtime metadata
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `nper` | number | Required | — |
+| `pv` | number | Required | — |
+| `fv` | number | Required | — |
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/rri" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Examples
+
+<FunctionExample
+  title={"Find the constant growth rate that takes 100 to 150 in five periods."}
+  formula={"=RRI(5,100,150)"}
+  grid={{}}
+  expected={"0.0844717711976986"}
+/>
+
+<FunctionExample
+  title={"Compare the equivalent rate over a longer investment horizon."}
+  formula={"=RRI(10,100,150)"}
+  grid={{}}
+  expected={"0.0413797439924106"}
+/>
+
+<FunctionExample
+  title={"Unchanged value over five periods gives a zero growth rate."}
+  formula={"=RRI(5,100,100)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A zero number of periods cannot define a compound growth rate."}
+  formula={"=RRI(0,100,150)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

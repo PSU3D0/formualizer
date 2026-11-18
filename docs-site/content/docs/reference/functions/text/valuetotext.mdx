@@ -1,13 +1,29 @@
 ---
 title: "VALUETOTEXT"
-description: "VALUETOTEXT: Converts a value to text representation."
+seoTitle: "VALUETOTEXT function: formula syntax and examples"
+description: "Converts a value to text representation. =VALUETOTEXT(value, [format])"
 ---
 
-<FunctionPageSchema id="text/valuetotext" />
-
-## Summary
+Converts a value to text representation.
 
 `VALUETOTEXT(value, [format])` supports concise (`0`) and strict (`1`) modes.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=VALUETOTEXT(value, [format])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+| `format` | number | Optional | `0` |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Concise mode (`0`) returns natural text for scalars.
@@ -17,43 +33,59 @@ description: "VALUETOTEXT: Converts a value to text representation."
 
 ## Examples
 
-<Tabs items={["Concise text conversion", "Strict quoting for text"]}>
-<Tab value="Concise text conversion">
-<FunctionSandbox
-  title="Concise text conversion"
-  formula={`=VALUETOTEXT(123)`}
+<FunctionExample
+  title={"Convert a number to its concise text form."}
+  formula={"=VALUETOTEXT(42)"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"Request strict output to see how a text value is represented."}
+  formula={"=VALUETOTEXT(\"Visit\",1)"}
+  grid={{}}
+  expected={"\"Visit\""}
+/>
+
+<FunctionExample
+  title={"Request the strict representation of empty text."}
+  formula={"=VALUETOTEXT(\"\",1)"}
+  grid={{}}
+  expected={"\"\""}
+/>
+
+<FunctionExample
+  title={"In concise mode an input error propagates as an error value."}
+  formula={"=VALUETOTEXT(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Concise text conversion"}
+  formula={"=VALUETOTEXT(123)"}
   grid={{}}
   expected={"123"}
 />
-</Tab>
 
-<Tab value="Strict quoting for text">
-<FunctionSandbox
-  title="Strict quoting for text"
-  formula={`=VALUETOTEXT("hello", 1)`}
+<FunctionExample
+  title={"Strict quoting for text"}
+  formula={"=VALUETOTEXT(\"hello\", 1)"}
   grid={{}}
   expected={"\"hello\""}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
 - [TEXT](/docs/reference/functions/text/text)
 - [VALUE](/docs/reference/functions/text/value)
-- [DOLLAR](/docs/reference/functions/text/dollar)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
 
 ## FAQ
 
 ### How are errors handled in concise vs strict mode?
 Concise mode returns the error, while strict mode converts the error to its text form.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/valuetotext" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/array_text.rs)

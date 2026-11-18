@@ -1,52 +1,87 @@
 ---
 title: "SORT"
-description: "Sorts an array by a selected row or column and returns a spilled result."
+seoTitle: "SORT function: formula syntax and examples"
+description: "Sorts an array by a selected row or column and returns a spilled result. =SORT(array, [sort_index], [sort_order], [by_col])"
 ---
 
-<FunctionPageSchema id="lookup/sort" />
-
-## Summary
+Sorts an array by a selected row or column and returns a spilled result.
 
 `SORT` can order rows (default) or columns.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SORT(array, [sort_index], [sort_order], [by_col])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | range (range) | Required | — |
+| `sort_index` | number | Optional | `1` |
+| `sort_order` | number | Optional | `1` |
+| `by_col` | logical | Optional | `false` |
 
 ## Remarks
  - Defaults: `sort_index=1`, `sort_order=1` (ascending), `by_col=FALSE`.
  - `sort_index` is 1-based in the active sort axis.
  - `sort_order &lt; 0` sorts descending; otherwise ascending.
- - Invalid sort indexes return `#VALUE!`.
  - Empty input returns an empty spill.
+
+## Error cases
+
+ - Invalid sort indexes return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Sort rows by second column", "Sort columns by first row descending"]}>
-<Tab value="Sort rows by second column">
-<FunctionSandbox
-  title="Sort rows by second column"
-  formula={`=SORT(A1:B3,2,1,FALSE)`}
-  grid={{"A1":"C","A2":"A","A3":"B","B1":"30","B2":"10","B3":"20"}}
-  expected={"[[\"A\",10],[\"B\",20],[\"C\",30]]"}
+<FunctionExample
+  title={"Sort a column in ascending order."}
+  formula={"=SORT({30;10;20})"}
+  grid={{}}
+  expected={"{10; 20; 30}"}
 />
-</Tab>
 
-<Tab value="Sort columns by first row descending">
-<FunctionSandbox
-  title="Sort columns by first row descending"
-  formula={`=SORT(A1:C2,1,-1,TRUE)`}
-  grid={{"A1":"1","A2":"A","B1":"3","B2":"C","C1":"2","C2":"B"}}
-  expected={"[[3,2,1],[\"C\",\"B\",\"A\"]]"}
+<FunctionExample
+  title={"Sort a two-column table descending by its first column."}
+  formula={"=SORT({30,\"Cy\";10,\"Ana\";20,\"Bo\"},1,-1)"}
+  grid={{}}
+  expected={"{30, \"Cy\"; 20, \"Bo\"; 10, \"Ana\"}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Sorting a one-element array leaves the element in place."}
+  formula={"=SORT({42})"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"A sort index outside the available columns cannot select a key."}
+  formula={"=SORT({30;10;20},2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Sort rows by second column"}
+  formula={"=SORT(A1:B3,2,1,FALSE)"}
+  grid={{"A1":"\"C\"","A2":"\"A\"","A3":"\"B\"","B1":"30","B2":"10","B3":"20"}}
+  expected={"{\"A\", 10; \"B\", 20; \"C\", 30}"}
+/>
+
+<FunctionExample
+  title={"Sort columns by first row descending"}
+  formula={"=SORT(A1:C2,1,-1,TRUE)"}
+  grid={{"A1":"1","A2":"\"A\"","B1":"3","B2":"\"C\"","C1":"2","C2":"\"B\""}}
+  expected={"{3, 2, 1; \"C\", \"B\", \"A\"}"}
+/>
 
 ## Related functions
 
 - [SORTBY](/docs/reference/functions/lookup/sortby)
 - [TAKE](/docs/reference/functions/lookup/take)
 - [DROP](/docs/reference/functions/lookup/drop)
-- [TOCOL](/docs/reference/functions/lookup/tocol)
-- [TOROW](/docs/reference/functions/lookup/torow)
-- [UNIQUE](/docs/reference/functions/lookup/unique)
 
 ## FAQ
 
@@ -56,8 +91,6 @@ SORT reorders columns instead of rows, and sort_index is interpreted as a row in
 ### What causes #VALUE! in SORT?
 If sort_index is outside the active axis (row or column axis based on by_col), SORT returns #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/sort" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

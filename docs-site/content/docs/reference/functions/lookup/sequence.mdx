@@ -1,51 +1,79 @@
 ---
 title: "SEQUENCE"
-description: "SEQUENCE: Generates a sequential numeric array with configurable size, start, and step."
+seoTitle: "SEQUENCE function: formula syntax and examples"
+description: "Generates a sequential numeric array with configurable size, start, and step. =SEQUENCE(rows, [columns], [start], [step])"
 ---
 
-<FunctionPageSchema id="lookup/sequence" />
-
-## Summary
+Generates a sequential numeric array with configurable size, start, and step.
 
 `SEQUENCE` fills values row-by-row and returns a dynamic spill.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SEQUENCE(rows, [columns], [start], [step])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rows` | number | Required | — |
+| `columns` | number | Optional | `1` |
+| `start` | number | Optional | `1` |
+| `step` | number | Optional | `1` |
+
 ## Remarks
  - Defaults: `columns=1`, `start=1`, `step=1`.
- - `rows` and `columns` must be positive; otherwise returns `#VALUE!`.
  - Values are emitted as integers when integral, otherwise as floating-point numbers.
  - Result spills to the requested dimensions.
 
+## Error cases
+
+ - `rows` and `columns` must be positive; otherwise returns `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["Simple vertical sequence", "2x3 sequence with custom start and step"]}>
-<Tab value="Simple vertical sequence">
-<FunctionSandbox
-  title="Simple vertical sequence"
-  formula={`=SEQUENCE(5)`}
+<FunctionExample
+  title={"Generate four consecutive numbers in one column."}
+  formula={"=SEQUENCE(4)"}
   grid={{}}
-  expected={"[[1],[2],[3],[4],[5]]"}
+  expected={"{1; 2; 3; 4}"}
 />
-</Tab>
 
-<Tab value="2x3 sequence with custom start and step">
-<FunctionSandbox
-  title="2x3 sequence with custom start and step"
-  formula={`=SEQUENCE(2,3,10,5)`}
+<FunctionExample
+  title={"Fill two rows and three columns, starting at ten and increasing by five."}
+  formula={"=SEQUENCE(2,3,10,5)"}
   grid={{}}
-  expected={"[[10,15,20],[25,30,35]]"}
+  expected={"{10, 15, 20; 25, 30, 35}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A single-cell sequence returns its starting value."}
+  formula={"=SEQUENCE(1,1,42,0)"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"A sequence with zero rows cannot produce an array."}
+  formula={"=SEQUENCE(0,2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Simple vertical sequence"}
+  formula={"=SEQUENCE(5)"}
+  grid={{}}
+  expected={"{1; 2; 3; 4; 5}"}
+/>
 
 ## Related functions
 
 - [RANDARRAY](/docs/reference/functions/lookup/randarray)
 - [TAKE](/docs/reference/functions/lookup/take)
 - [DROP](/docs/reference/functions/lookup/drop)
-- [SORT](/docs/reference/functions/lookup/sort)
-- [TOCOL](/docs/reference/functions/lookup/tocol)
-- [TOROW](/docs/reference/functions/lookup/torow)
 
 ## FAQ
 
@@ -55,8 +83,6 @@ rows and columns must be positive numbers; zero or negative sizes return #VALUE!
 ### Does SEQUENCE fill by rows or by columns first?
 SEQUENCE fills row-by-row across columns, then continues on the next row using the same step increment.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/sequence" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

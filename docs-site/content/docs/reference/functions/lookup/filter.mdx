@@ -1,52 +1,86 @@
 ---
 title: "FILTER"
-description: "Filters rows from an array using a Boolean include mask."
+seoTitle: "FILTER function: formula syntax and examples"
+description: "Filters rows from an array using a Boolean include mask. =FILTER(array, include, [if_empty])"
 ---
 
-<FunctionPageSchema id="lookup/filter" />
-
-## Summary
+Filters rows from an array using a Boolean include mask.
 
 `FILTER` returns only rows where the include condition evaluates to true.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FILTER(array, include, [if_empty])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | range (range) | Required | — |
+| `include` | range (range) | Required | — |
+| `if_empty` | any | Optional | — |
 
 ## Remarks
  - `include` must have the same row count as `array`, or a single row used as broadcast.
  - A row is kept if any include cell for that row is truthy.
  - If no rows match, `if_empty` is returned when supplied; otherwise `#CALC!`.
- - Dimension mismatches return `#VALUE!`.
  - Results spill as dynamic arrays.
+
+## Error cases
+
+ - Dimension mismatches return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Filter active records", "Return fallback when no rows match"]}>
-<Tab value="Filter active records">
-<FunctionSandbox
-  title="Filter active records"
-  formula={`=FILTER(A1:A3,B1:B3)`}
-  grid={{"A1":"Ana","A2":"Bo","A3":"Cy","B1":"true","B2":"false","B3":"true"}}
-  expected={"[[\"Ana\"],[\"Cy\"]]"}
+<FunctionExample
+  title={"Keep two rows according to a Boolean selector."}
+  formula={"=FILTER({10;20;30},{TRUE;FALSE;TRUE})"}
+  grid={{}}
+  expected={"{10; 30}"}
 />
-</Tab>
 
-<Tab value="Return fallback when no rows match">
-<FunctionSandbox
-  title="Return fallback when no rows match"
-  formula={`=FILTER(A1:A2,B1:B2,"No matches")`}
-  grid={{"A1":"10","A2":"20","B1":"false","B2":"false"}}
+<FunctionExample
+  title={"Supply a text fallback for an empty filtered result."}
+  formula={"=FILTER({10;20;30},{FALSE;FALSE;FALSE},\"No match\")"}
+  grid={{}}
+  expected={"No match"}
+/>
+
+<FunctionExample
+  title={"Filter the smallest nonempty array with one true condition."}
+  formula={"=FILTER({10},{TRUE})"}
+  grid={{}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"An empty result without a fallback returns an error."}
+  formula={"=FILTER({10;20;30},{FALSE;FALSE;FALSE})"}
+  grid={{}}
+  expected={"#CALC!"}
+/>
+
+<FunctionExample
+  title={"Filter active records"}
+  formula={"=FILTER(A1:A3,B1:B3)"}
+  grid={{"A1":"\"Ana\"","A2":"\"Bo\"","A3":"\"Cy\"","B1":"TRUE","B2":"FALSE","B3":"TRUE"}}
+  expected={"{\"Ana\"; \"Cy\"}"}
+/>
+
+<FunctionExample
+  title={"Return fallback when no rows match"}
+  formula={"=FILTER(A1:A2,B1:B2,\"No matches\")"}
+  grid={{"A1":"10","A2":"20","B1":"FALSE","B2":"FALSE"}}
   expected={"No matches"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
 - [UNIQUE](/docs/reference/functions/lookup/unique)
 - [SORT](/docs/reference/functions/lookup/sort)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
 
 ## FAQ
 
@@ -56,8 +90,6 @@ FILTER returns if_empty when provided; otherwise it returns #CALC! to signal an 
 ### How strict is include shape matching?
 include must match array row count or be a single broadcast row; incompatible dimensions return #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/filter" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

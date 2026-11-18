@@ -1,59 +1,79 @@
 ---
 title: "NOT"
-description: "NOT: Reverses the logical value of its argument."
+seoTitle: "NOT function: formula syntax and examples"
+description: "Reverses the logical value of its argument. =NOT(logical)"
 ---
 
-<FunctionPageSchema id="logical-ext/not" />
-
-## Summary
+Reverses the logical value of its argument.
 
 `NOT` converts the input to a logical value, then flips it.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NOT(logical)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `logical` | any | Required | — |
+
+## Return type
+
+Can return a logical value (TRUE or FALSE).
 
 ## Remarks
  - Numbers are coerced (`0` -&gt; TRUE after inversion, non-zero -&gt; FALSE after inversion).
  - Blank values are treated as FALSE, so `NOT(blank)` returns TRUE.
- - Text and other non-coercible values return `#VALUE!`.
  - Errors are propagated unchanged.
+
+## Error cases
+
+ - Text and other non-coercible values return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Invert boolean", "Invert numeric truthiness"]}>
-<Tab value="Invert boolean">
-<FunctionSandbox
-  title="Invert boolean"
-  formula={`=NOT(TRUE)`}
+<FunctionExample
+  title={"Invert a true logical value."}
+  formula={"=NOT(TRUE)"}
   grid={{}}
-  expected={"false"}
+  expected={"FALSE"}
 />
-</Tab>
 
-<Tab value="Invert numeric truthiness">
-<FunctionSandbox
-  title="Invert numeric truthiness"
-  formula={`=NOT(0)`}
+<FunctionExample
+  title={"Invert a false logical value."}
+  formula={"=NOT(FALSE)"}
   grid={{}}
-  expected={"true"}
+  expected={"TRUE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Test how a zero value is interpreted before negation."}
+  formula={"=NOT(0)"}
+  grid={{}}
+  expected={"TRUE"}
+/>
+
+<FunctionExample
+  title={"An error cannot be interpreted as a logical value."}
+  formula={"=NOT(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
 
 ## Related functions
 
 - [AND](/docs/reference/functions/logical/and)
 - [OR](/docs/reference/functions/logical/or)
 - [XOR](/docs/reference/functions/logical-ext/xor)
-- [IFERROR](/docs/reference/functions/logical-ext/iferror)
-- [IFNA](/docs/reference/functions/logical-ext/ifna)
-- [IFS](/docs/reference/functions/logical-ext/ifs)
 
 ## FAQ
 
 ### How does NOT treat blanks?
 Blank is treated as FALSE first, so NOT(blank) returns TRUE.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="logical-ext/not" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/logical_ext.rs)

@@ -1,59 +1,87 @@
 ---
 title: "REPT"
-description: "REPT: Repeats text a given number of times."
+seoTitle: "REPT function: formula syntax and examples"
+description: "Repeats text a given number of times. =REPT(text, number_times)"
 ---
 
-<FunctionPageSchema id="text/rept" />
-
-## Summary
+Repeats text a given number of times.
 
 Repeats a text string a specified number of times.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=REPT(text, number_times)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `number_times` | any | Required | — |
+
+## Return type
+
+Can return text.
+
 ## Remarks
  - Repeat count is truncated to an integer.
- - Negative counts return `#VALUE!`.
- - Output longer than 32,767 characters returns `#VALUE!`.
  - Non-text first argument is coerced to text.
+
+## Error cases
+
+ - Negative counts return `#VALUE!`, including fractions such as `-0.5`.
+ - Output longer than 32,767 characters returns `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Repeat text three times", "Negative count"]}>
-<Tab value="Repeat text three times">
-<FunctionSandbox
-  title="Repeat text three times"
-  formula={`=REPT("ab", 3)`}
+<FunctionExample
+  title={"Repeat a two-character string three times."}
+  formula={"=REPT(\"ab\",3)"}
   grid={{}}
   expected={"ababab"}
 />
-</Tab>
 
-<Tab value="Negative count">
-<FunctionSandbox
-  title="Negative count"
-  formula={`=REPT("x", -1)`}
+<FunctionExample
+  title={"Use a fractional count to see how it is reduced to an integer."}
+  formula={"=REPT(\"ab\",2.8)"}
+  grid={{}}
+  expected={"abab"}
+/>
+
+<FunctionExample
+  title={"Zero repetitions produce empty text."}
+  formula={"=REPT(\"ab\",0)"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"A negative repetition count is invalid."}
+  formula={"=REPT(\"ab\",-1)"}
   grid={{}}
   expected={"#VALUE!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Negative count"}
+  formula={"=REPT(\"x\", -1)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
 ## Related functions
 
 - [CONCAT](/docs/reference/functions/text/concat)
 - [TEXTJOIN](/docs/reference/functions/text/textjoin)
 - [SUBSTITUTE](/docs/reference/functions/text/substitute)
-- [EXACT](/docs/reference/functions/text/exact)
-- [TEXT](/docs/reference/functions/text/text)
-- [TEXTAFTER](/docs/reference/functions/text/textafter)
 
 ## FAQ
 
 ### Can REPT return very long strings?
 Only up to 32,767 characters; longer results return #VALUE! like Excel.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/rept" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/char_code_rept.rs)

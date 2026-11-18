@@ -1,59 +1,92 @@
 ---
 title: "RIGHT"
-description: "Returns the rightmost characters from a text value."
+seoTitle: "RIGHT function: formula syntax and examples"
+description: "Returns the rightmost characters from a text value. =RIGHT(text, [num_chars])"
 ---
-
-<FunctionPageSchema id="text/right" />
-
-## Summary
 
 Returns the rightmost characters from a text value.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=RIGHT(text, [num_chars])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `num_chars` | any | Optional | — |
+
+## Return type
+
+Can return text.
+
 ## Remarks
  - `num_chars` defaults to `1` when omitted.
- - Negative `num_chars` returns `#VALUE!`.
  - If `num_chars` exceeds length, the full text is returned.
  - Non-text values are coerced to text before slicing.
 
+## Error cases
+
+ - Negative `num_chars` returns `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["Take last three characters", "Default count is one"]}>
-<Tab value="Take last three characters">
-<FunctionSandbox
-  title="Take last three characters"
-  formula={`=RIGHT("engine", 3)`}
+<FunctionExample
+  title={"Extract four ASCII characters from the selected end of a label."}
+  formula={"=RIGHT(\"East-2024\",4)"}
+  grid={{}}
+  expected={"2024"}
+/>
+
+<FunctionExample
+  title={"Omit the count and use the default of one."}
+  formula={"=RIGHT(\"East-2024\")"}
+  grid={{}}
+  expected={"4"}
+/>
+
+<FunctionExample
+  title={"A count of zero yields empty text."}
+  formula={"=RIGHT(\"East-2024\",0)"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"A negative extraction count is invalid."}
+  formula={"=RIGHT(\"East-2024\",-1)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Take last three characters"}
+  formula={"=RIGHT(\"engine\", 3)"}
   grid={{}}
   expected={"ine"}
 />
-</Tab>
 
-<Tab value="Default count is one">
-<FunctionSandbox
-  title="Default count is one"
-  formula={`=RIGHT("abc")`}
+<FunctionExample
+  title={"Default count is one"}
+  formula={"=RIGHT(\"abc\")"}
   grid={{}}
   expected={"c"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [LEFT](/docs/reference/functions/text/left)
 - [MID](/docs/reference/functions/text/mid)
 - [LEN](/docs/reference/functions/text/len)
-- [CONCAT](/docs/reference/functions/text/concat)
-- [CONCATENATE](/docs/reference/functions/text/concatenate)
-- [LEFTB](/docs/reference/functions/text/leftb)
 
 ## FAQ
 
 ### If num_chars is larger than the text length, what is returned?
 RIGHT returns the full text when the requested count exceeds available characters.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/right" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/len_left_right.rs)

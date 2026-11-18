@@ -1,54 +1,85 @@
 ---
 title: "NEGBINOM.DIST"
-description: "NEGBINOM.DIST: Returns negative-binomial probabilities for failures observed before a target success count."
+seoTitle: "NEGBINOM.DIST function: formula syntax and examples"
+description: "Returns negative-binomial probabilities for failures observed before a target success count. =NEGBINOM.DIST(number_f, number_s, probability_s, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/negbinom-dist" />
-
-## Summary
+Returns negative-binomial probabilities for failures observed before a target success count.
 
 `NEGBINOM.DIST` supports exact-failure mode (PMF) and cumulative mode (CDF).
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NEGBINOM.DIST(number_f, number_s, probability_s, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number_f` | number | Required | — |
+| `number_s` | number | Required | — |
+| `probability_s` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+At f failures before the rth success, the probability is C(f+r−1,f) pʳ(1−p)ᶠ. The cumulative mode counts at most f failures. Valid inputs have f ≥ 0, r ≥ 1 and p in [0,1].
 
 ## Remarks
  - `number_f` is truncated and must be `&gt;= 0`.
  - `number_s` is truncated and must be `&gt;= 1`.
  - `probability_s` must satisfy `0 &lt; p &lt; 1`.
+
+## Error cases
+
  - Returns `#NUM!` when counts or probability are outside valid ranges.
 
 ## Examples
 
-<Tabs items={["Negative binomial PMF", "Negative binomial CDF"]}>
-<Tab value="Negative binomial PMF">
-<FunctionSandbox
-  title="Negative binomial PMF"
-  formula={`=NEGBINOM.DIST(2,1,0.5,FALSE)`}
+<FunctionExample
+  title={"Find the point probability for three failures before the fourth success."}
+  formula={"=NEGBINOM.DIST(3,4,0.5,FALSE)"}
+  grid={{}}
+  expected={"0.15625"}
+/>
+
+<FunctionExample
+  title={"Accumulate probabilities for no more than two failures before the fourth success."}
+  formula={"=NEGBINOM.DIST(2,4,0.5,TRUE)"}
+  grid={{}}
+  expected={"0.34375"}
+/>
+
+<FunctionExample
+  title={"Evaluate the probability of four successes without any failure."}
+  formula={"=NEGBINOM.DIST(0,4,0.5,FALSE)"}
+  grid={{}}
+  expected={"0.0625"}
+/>
+
+<FunctionExample
+  title={"The failure count cannot be negative."}
+  formula={"=NEGBINOM.DIST(-1,4,0.5,FALSE)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Negative binomial PMF"}
+  formula={"=NEGBINOM.DIST(2,1,0.5,FALSE)"}
   grid={{}}
   expected={"0.125"}
 />
-</Tab>
 
-<Tab value="Negative binomial CDF">
-<FunctionSandbox
-  title="Negative binomial CDF"
-  formula={`=NEGBINOM.DIST(2,1,0.5,TRUE)`}
+<FunctionExample
+  title={"Negative binomial CDF"}
+  formula={"=NEGBINOM.DIST(2,1,0.5,TRUE)"}
   grid={{}}
   expected={"0.875"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
-- [F.DIST](/docs/reference/functions/stats/f-dist)
-- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
-- [LOGNORM.DIST](/docs/reference/functions/stats/lognorm-dist)
-- [NORM.DIST](/docs/reference/functions/stats/norm-dist)
-- [T.TEST](/docs/reference/functions/stats/t-test)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/negbinom-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

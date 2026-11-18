@@ -1,60 +1,90 @@
 ---
 title: "NOMINAL"
-description: "Converts an effective annual rate into a nominal annual rate."
+seoTitle: "NOMINAL function: formula syntax and examples"
+description: "Converts an effective annual rate into a nominal annual rate. =NOMINAL(effect_rate, npery)"
 ---
 
-<FunctionPageSchema id="financial/nominal" />
-
-## Summary
+Converts an effective annual rate into a nominal annual rate.
 
 This is the inverse-style transformation of `EFFECT` for a chosen compounding frequency.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NOMINAL(effect_rate, npery)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `effect_rate` | number | Required | — |
+| `npery` | number | Required | — |
 
 ## Remarks
  - `effect_rate` is annual effective yield; `npery` is periods per year.
  - `npery` is truncated to an integer before computation.
  - Sign convention is not cash-flow based; this function converts annual rate representation.
- - Returns `#NUM!` when `effect_rate &lt;= 0` or `npery &lt; 1`.
  - Result formula: `npery * ((1 + effect_rate)^(1/npery) - 1)`.
+
+## Error cases
+
+ - Returns `#NUM!` when `effect_rate &lt;= 0` or `npery &lt; 1`.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=NOMINAL(0.12682503013196977, 12)`}
+<FunctionExample
+  title={"Recover the nominal annual rate behind a 6% effective yield with monthly compounding."}
+  formula={"=NOMINAL(0.06,12)"}
   grid={{}}
-  expected={"null"}
+  expected={"0.0584106067841166"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=NOMINAL(0.08243216, 4)`}
+<FunctionExample
+  title={"Recover the nominal annual rate behind a 6% effective yield with quarterly compounding."}
+  formula={"=NOMINAL(0.06,4)"}
   grid={{}}
-  expected={"null"}
+  expected={"0.0586953846746372"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"With one compounding period, the nominal rate is 6% to floating-point precision."}
+  formula={"=NOMINAL(0.06,1)"}
+  grid={{}}
+  expected={"0.0600000000000001"}
+/>
+
+<FunctionExample
+  title={"Zero compounding periods cannot determine an equivalent nominal rate."}
+  formula={"=NOMINAL(0.06,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Recover the monthly-compounded nominal rate from an effective annual yield of about 12.68%."}
+  formula={"=NOMINAL(0.12682503013196977, 12)"}
+  grid={{}}
+  expected={"0.12"}
+/>
+
+<FunctionExample
+  title={"Find the quarterly-compounded nominal rate for an effective annual yield of 8.3%."}
+  formula={"=NOMINAL(0.083, 4)"}
+  grid={{}}
+  expected={"0.080534983082126"}
+/>
 
 ## Related functions
 
 - [EFFECT](/docs/reference/functions/financial/effect)
 - [RATE](/docs/reference/functions/financial/rate)
-- [DOLLARDE](/docs/reference/functions/financial/dollarde)
-- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
-- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
-- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
 
 ## FAQ
 
 ### Is `NOMINAL` an exact inverse of `EFFECT`?
 It is the corresponding transformation for the same integer `npery`; both functions require positive rates and `npery &gt;= 1`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/nominal" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

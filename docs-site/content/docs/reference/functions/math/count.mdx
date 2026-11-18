@@ -1,14 +1,32 @@
 ---
 title: "COUNT"
-description: "Counts numeric values across scalars and ranges."
+seoTitle: "COUNT function: formula syntax and examples"
+description: "Counts numeric values across scalars and ranges. =COUNT(value1, [value2], ...)"
 ---
 
-<FunctionPageSchema id="math/count" />
-
-## Summary
+Counts numeric values across scalars and ranges.
 
 `COUNT` evaluates all arguments and counts how many are numeric values.
  Numbers, dates, and text representations of numbers (when supplied directly) are counted.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COUNT(value1, [value2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value1` | number (range) | Required | — |
+| `value2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Differences from Excel
+
+Formualizer accepts a call with no arguments and returns zero. Excel requires the first argument.
 
 ## Remarks
  - Text values inside ranges are ignored and not counted.
@@ -16,26 +34,40 @@ description: "Counts numeric values across scalars and ranges."
 
 ## Examples
 
-<Tabs items={["Counting mixed scalar inputs", "Counting in a range"]}>
-<Tab value="Counting mixed scalar inputs">
-<FunctionSandbox
-  title="Counting mixed scalar inputs"
-  formula={`=COUNT(1, "x", 2, 3)`}
+<FunctionExample
+  title={"Count numeric values in a range that also includes text."}
+  formula={"=COUNT(A1:A3)"}
+  grid={{"A1":"3","A2":"\"five\"","A3":"7"}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Add a literal numeric argument to the range count."}
+  formula={"=COUNT(A1:A3,12)"}
+  grid={{"A1":"3","A2":"\"five\"","A3":"7"}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"A nonnumeric text argument contributes zero to the count."}
+  formula={"=COUNT(\"x\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Counting mixed scalar inputs"}
+  formula={"=COUNT(1, \"x\", 2, 3)"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
 
-<Tab value="Counting in a range">
-<FunctionSandbox
-  title="Counting in a range"
-  formula={`=COUNT(A1:A3)`}
-  grid={{"A1":"10","A2":"foo","A3":"20"}}
+<FunctionExample
+  title={"Counting in a range"}
+  formula={"=COUNT(A1:A3)"}
+  grid={{"A1":"10","A2":"\"foo\"","A3":"20"}}
   expected={"2"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -43,8 +75,6 @@ description: "Counts numeric values across scalars and ranges."
 - [COUNTBLANK](/docs/reference/functions/math/countblank)
 - [COUNTIF](/docs/reference/functions/math/countif)
 - [COUNTIFS](/docs/reference/functions/math/countifs)
-- [SUM](/docs/reference/functions/math/sum)
-- [AVERAGE](/docs/reference/functions/math/average)
 
 ## FAQ
 
@@ -54,8 +84,6 @@ COUNT only counts numeric values; text cells in ranges are ignored.
 ### Can direct text like "12" be counted?
 Yes. Direct scalar arguments are coerced and counted when they parse as numbers.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/count" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/aggregate.rs)

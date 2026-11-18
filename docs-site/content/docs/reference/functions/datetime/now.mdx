@@ -1,13 +1,16 @@
 ---
 title: "NOW"
-description: "NOW: Returns the current date and time as a volatile datetime serial."
+seoTitle: "NOW function: formula syntax and examples"
+description: "Returns the current date and time as a volatile datetime serial. =NOW()"
 ---
 
-<FunctionPageSchema id="datetime/now" />
-
-## Summary
-
 Returns the current date and time as a volatile datetime serial.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NOW()`
 
 ## Remarks
  - `NOW` is volatile and may produce a different value at each recalculation.
@@ -16,26 +19,40 @@ Returns the current date and time as a volatile datetime serial.
 
 ## Examples
 
-<Tabs items={["NOW includes today's date", "NOW is at or after TODAY"]}>
-<Tab value="NOW includes today's date">
-<FunctionSandbox
-  title="NOW includes today's date"
-  formula={`=INT(NOW())=TODAY()`}
+<FunctionExample
+  title={"Read the current date and time as a spreadsheet serial."}
+  formula={"=NOW()"}
   grid={{}}
-  expected={"true"}
+  expected={"Date and time serial number"}
 />
-</Tab>
 
-<Tab value="NOW is at or after TODAY">
-<FunctionSandbox
-  title="NOW is at or after TODAY"
-  formula={`=NOW()>=TODAY()`}
+<FunctionExample
+  title={"Combine today's date with the fractional time returned by NOW."}
+  formula={"=TODAY()+MOD(NOW(),1)"}
   grid={{}}
-  expected={"true"}
+  expected={"Date and time"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Strip the fractional time and inspect the whole-day portion of the serial."}
+  formula={"=INT(NOW())"}
+  grid={{}}
+  expected={"Number"}
+/>
+
+<FunctionExample
+  title={"NOW includes today's date"}
+  formula={"=INT(NOW())=TODAY()"}
+  grid={{}}
+  expected={"Logical value"}
+/>
+
+<FunctionExample
+  title={"NOW is at or after TODAY"}
+  formula={"=NOW()>=TODAY()"}
+  grid={{}}
+  expected={"Logical value"}
+/>
 
 ## Related functions
 
@@ -43,16 +60,12 @@ Returns the current date and time as a volatile datetime serial.
 - [TIME](/docs/reference/functions/datetime/time)
 - [SECOND](/docs/reference/functions/datetime/second)
 - [DATE](/docs/reference/functions/datetime/date)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
 
 ## FAQ
 
 ### How do I isolate only the time portion from NOW?
 Use NOW()-INT(NOW()); the integer part is date serial and the fractional part is time-of-day.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/now" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/today_now.rs)

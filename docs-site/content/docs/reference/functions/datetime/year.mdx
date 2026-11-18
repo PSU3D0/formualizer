@@ -1,58 +1,92 @@
 ---
 title: "YEAR"
-description: "Extracts the calendar year from a date serial."
+seoTitle: "YEAR function: formula syntax and examples"
+description: "Extracts the calendar year from a date serial. =YEAR(serial_number)"
 ---
-
-<FunctionPageSchema id="datetime/year" />
-
-## Summary
 
 Extracts the calendar year from a date serial.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=YEAR(serial_number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `serial_number` | number | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Fractional time is ignored; only the integer date portion is used.
- - Input serials are interpreted with Excel 1900 date semantics.
+ - Input serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
  - Results are Gregorian calendar years.
 
 ## Examples
 
-<Tabs items={["Extract year from date serial", "Extract year from datetime serial"]}>
-<Tab value="Extract year from date serial">
-<FunctionSandbox
-  title="Extract year from date serial"
-  formula={`=YEAR(44927)`}
-  grid={{}}
-  expected={"2023"}
-/>
-</Tab>
-
-<Tab value="Extract year from datetime serial">
-<FunctionSandbox
-  title="Extract year from datetime serial"
-  formula={`=YEAR(45351.75)`}
+<FunctionExample
+  title={"Extract the date component from a leap-day date."}
+  formula={"=YEAR(DATE(2024,2,29))"}
   grid={{}}
   expected={"2024"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Read the date component from a serial that also contains a time fraction."}
+  formula={"=YEAR(DATE(2024,12,31)+0.75)"}
+  grid={{}}
+  expected={"2024"}
+/>
+
+<FunctionExample
+  title={"Read the component of the first day of the 1900 date system."}
+  formula={"=YEAR(1)"}
+  grid={{}}
+  expected={"1900"}
+/>
+
+<FunctionExample
+  title={"An unrecognized date string cannot be interpreted as a serial."}
+  formula={"=YEAR(\"not a date\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Extract year from date serial"}
+  formula={"=YEAR(44927)"}
+  grid={{}}
+  expected={"2023"}
+/>
+
+<FunctionExample
+  title={"Extract year from datetime serial"}
+  formula={"=YEAR(45351.75)"}
+  grid={{}}
+  expected={"2024"}
+/>
+
+<FunctionExample
+  title={"Extract year from date text"}
+  formula={"=YEAR(A1)"}
+  grid={{"A1":"\"10/26/1999\""}}
+  expected={"1999"}
+/>
 
 ## Related functions
 
 - [MONTH](/docs/reference/functions/datetime/month)
 - [DAY](/docs/reference/functions/datetime/day)
 - [DATE](/docs/reference/functions/datetime/date)
-- [HOUR](/docs/reference/functions/datetime/hour)
-- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
-- [MINUTE](/docs/reference/functions/datetime/minute)
 
 ## FAQ
 
 ### Does YEAR use the fractional time part of a serial?
 No. YEAR resolves the calendar date and ignores time-of-day fractions.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/year" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_parts.rs)

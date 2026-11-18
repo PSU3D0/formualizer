@@ -1,56 +1,91 @@
 ---
 title: "VLOOKUP"
-description: "VLOOKUP: Looks up a value in the first column of a table and returns a value from another column."
+seoTitle: "VLOOKUP function: formula syntax and examples"
+description: "Looks up a value in the first column of a table and returns a value from another column. =VLOOKUP(lookup_value, table_array, col_index_num, [range_lookup])"
 ---
 
-<FunctionPageSchema id="lookup/vlookup" />
-
-## Summary
+Looks up a value in the first column of a table and returns a value from another column.
 
 `VLOOKUP` searches vertically and returns the matching row's value from `col_index_num`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=VLOOKUP(lookup_value, table_array, col_index_num, [range_lookup])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `lookup_value` | any | Required | — |
+| `table_array` | any (range) | Required | — |
+| `col_index_num` | number | Required | — |
+| `range_lookup` | logical | Optional | `true` |
 
 ## Remarks
  - `col_index_num` is 1-based and must be within the table width.
  - `range_lookup` defaults to `TRUE`, matching Excel and LibreOffice.
  - When `range_lookup=TRUE`, approximate match logic is used against the first column.
  - In exact mode, a blank candidate never matches. A blank lookup value matches a real numeric zero, but not blank, text, or boolean candidates.
- - Approximate matching assumes the first column is sorted ascending. Unsorted data is detected and returns `#N/A` rather than a silently wrong row, matching LibreOffice Calc (#283).
  - Numeric `range_lookup` values use logical coercion: zero is exact and nonzero is approximate.
+ - A matched empty target cell is materialized as numeric `0`.
+
+## Error cases
+
+ - Approximate matching assumes the first column is sorted ascending. Unsorted data is detected and returns `#N/A` rather than a silently wrong row, matching LibreOffice Calc (#283).
  - If the lookup value is not found, returns `#N/A`.
  - If `col_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
- - A matched empty target cell is materialized as numeric `0`.
 
 ## Examples
 
-<Tabs items={["Exact match in a key/value table", "Approximate tier lookup"]}>
-<Tab value="Exact match in a key/value table">
-<FunctionSandbox
-  title="Exact match in a key/value table"
-  formula={`=VLOOKUP("SKU-2",A1:B2,2,FALSE)`}
-  grid={{"A1":"SKU-1","A2":"SKU-2","B1":"12.5","B2":"18"}}
+<FunctionExample
+  title={"Match a name in the first column and read the associated value."}
+  formula={"=VLOOKUP(\"Bo\",{\"Ana\",10;\"Bo\",20;\"Cy\",30},2,FALSE)"}
+  grid={{}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Use an approximate match on an ascending first column."}
+  formula={"=VLOOKUP(25,{10,\"Low\";20,\"Mid\";30,\"High\"},2,TRUE)"}
+  grid={{}}
+  expected={"Mid"}
+/>
+
+<FunctionExample
+  title={"Return the key from column one itself."}
+  formula={"=VLOOKUP(\"Ana\",{\"Ana\",10;\"Bo\",20},1,FALSE)"}
+  grid={{}}
+  expected={"Ana"}
+/>
+
+<FunctionExample
+  title={"A missing exact-match key has no result row."}
+  formula={"=VLOOKUP(\"Dee\",{\"Ana\",10;\"Bo\",20},2,FALSE)"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Exact match in a key/value table"}
+  formula={"=VLOOKUP(\"SKU-2\",A1:B2,2,FALSE)"}
+  grid={{"A1":"\"SKU-1\"","A2":"\"SKU-2\"","B1":"12.5","B2":"18"}}
   expected={"18"}
 />
-</Tab>
 
-<Tab value="Approximate tier lookup">
-<FunctionSandbox
-  title="Approximate tier lookup"
-  formula={`=VLOOKUP(3200,A1:B3,2,TRUE)`}
-  grid={{"A1":"0","A2":"1000","A3":"5000","B1":"Bronze","B2":"Silver","B3":"Gold"}}
+<FunctionExample
+  title={"Approximate tier lookup"}
+  formula={"=VLOOKUP(3200,A1:B3,2,TRUE)"}
+  grid={{"A1":"0","A2":"1000","A3":"5000","B1":"\"Bronze\"","B2":"\"Silver\"","B3":"\"Gold\""}}
   expected={"Silver"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [HLOOKUP](/docs/reference/functions/lookup/hlookup)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
 - [MATCH](/docs/reference/functions/lookup/match)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 
 ## FAQ
 
@@ -60,8 +95,6 @@ VLOOKUP defaults range_lookup to TRUE, so it performs approximate matching; pass
 ### What happens if col_index_num points outside the table?
 A numeric out-of-range column index returns #REF!, while a non-numeric col_index_num returns #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/vlookup" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/core.rs)

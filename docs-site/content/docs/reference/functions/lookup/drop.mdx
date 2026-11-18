@@ -1,13 +1,26 @@
 ---
 title: "DROP"
-description: "DROP: Removes rows and optional columns from the start or end of an array."
+seoTitle: "DROP function: formula syntax and examples"
+description: "Removes rows and optional columns from the start or end of an array. =DROP(array, rows, [columns])"
 ---
 
-<FunctionPageSchema id="lookup/drop" />
-
-## Summary
+Removes rows and optional columns from the start or end of an array.
 
 `DROP` is the complement of `TAKE` and returns the remaining spilled subset.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DROP(array, rows, [columns])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | range (range) | Required | — |
+| `rows` | number | Required | — |
+| `columns` | number | Optional | — |
 
 ## Remarks
  - Positive counts drop from the start; negative counts drop from the end.
@@ -17,35 +30,53 @@ description: "DROP: Removes rows and optional columns from the start or end of a
 
 ## Examples
 
-<Tabs items={["Drop header row", "Drop last column"]}>
-<Tab value="Drop header row">
-<FunctionSandbox
-  title="Drop header row"
-  formula={`=DROP(A1:A3,1)`}
-  grid={{"A1":"Month","A2":"Jan","A3":"Feb"}}
-  expected={"[[\"Jan\"],[\"Feb\"]]"}
+<FunctionExample
+  title={"Remove the first row from a rectangular array."}
+  formula={"=DROP({1,2;3,4;5,6},1)"}
+  grid={{}}
+  expected={"{3, 4; 5, 6}"}
 />
-</Tab>
 
-<Tab value="Drop last column">
-<FunctionSandbox
-  title="Drop last column"
-  formula={`=DROP(A1:C1,0,-1)`}
+<FunctionExample
+  title={"Remove the last row and the first column."}
+  formula={"=DROP({1,2;3,4;5,6},-1,1)"}
+  grid={{}}
+  expected={"{2; 4}"}
+/>
+
+<FunctionExample
+  title={"Reduce a two-by-two array to a single remaining cell."}
+  formula={"=DROP({1,2;3,4},1,1)"}
+  grid={{}}
+  expected={"4"}
+/>
+
+<FunctionExample
+  title={"The rows argument must give a numeric count."}
+  formula={"=DROP({1,2;3,4},\"two\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Drop header row"}
+  formula={"=DROP(A1:A3,1)"}
+  grid={{"A1":"\"Month\"","A2":"\"Jan\"","A3":"\"Feb\""}}
+  expected={"{\"Jan\"; \"Feb\"}"}
+/>
+
+<FunctionExample
+  title={"Drop last column"}
+  formula={"=DROP(A1:C1,0,-1)"}
   grid={{"A1":"10","B1":"20","C1":"30"}}
-  expected={"[[10,20]]"}
+  expected={"{10, 20}"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [TAKE](/docs/reference/functions/lookup/take)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [SORTBY](/docs/reference/functions/lookup/sortby)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
-- [FILTER](/docs/reference/functions/lookup/filter)
 
 ## FAQ
 
@@ -55,8 +86,6 @@ Negative counts drop from the end, so DROP(array,0,-1) removes the last column a
 ### What if DROP removes every row or column?
 The result is an empty spill rather than an error when all rows or all columns are removed.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/drop" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

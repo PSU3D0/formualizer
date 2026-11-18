@@ -1,58 +1,85 @@
 ---
 title: "HOUR"
-description: "Extracts the hour component (`0` to `23`) from a time or datetime serial."
+seoTitle: "HOUR function: formula syntax and examples"
+description: "Extracts the hour component (0 to 23) from a time or datetime serial. =HOUR(serial_number)"
 ---
-
-<FunctionPageSchema id="datetime/hour" />
-
-## Summary
 
 Extracts the hour component (`0` to `23`) from a time or datetime serial.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=HOUR(serial_number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `serial_number` | number | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - For values `&gt;= 1`, only the fractional time part is used.
  - For values `&lt; 1`, the value is treated directly as a time fraction.
  - Date-system choice does not affect hour extraction because only the fractional part is used.
 
 ## Examples
 
-<Tabs items={["Extract hour from noon", "Extract hour from datetime serial"]}>
-<Tab value="Extract hour from noon">
-<FunctionSandbox
-  title="Extract hour from noon"
-  formula={`=HOUR(0.5)`}
+<FunctionExample
+  title={"Extract the component from a time with nonzero hours, minutes and seconds."}
+  formula={"=HOUR(TIME(14,35,27))"}
+  grid={{}}
+  expected={"14"}
+/>
+
+<FunctionExample
+  title={"Read the time component from a serial that also includes a date."}
+  formula={"=HOUR(DATE(2024,2,29)+TIME(14,35,27))"}
+  grid={{}}
+  expected={"14"}
+/>
+
+<FunctionExample
+  title={"Read the component at midnight."}
+  formula={"=HOUR(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"An unrecognized time string cannot be converted to a serial."}
+  formula={"=HOUR(\"not a time\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Extract hour from noon"}
+  formula={"=HOUR(0.5)"}
   grid={{}}
   expected={"12"}
 />
-</Tab>
 
-<Tab value="Extract hour from datetime serial">
-<FunctionSandbox
-  title="Extract hour from datetime serial"
-  formula={`=HOUR(45351.75)`}
+<FunctionExample
+  title={"Extract hour from datetime serial"}
+  formula={"=HOUR(45351.75)"}
   grid={{}}
   expected={"18"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [MINUTE](/docs/reference/functions/datetime/minute)
 - [SECOND](/docs/reference/functions/datetime/second)
 - [TIME](/docs/reference/functions/datetime/time)
-- [DAY](/docs/reference/functions/datetime/day)
-- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
-- [MONTH](/docs/reference/functions/datetime/month)
 
 ## FAQ
 
 ### Why is HOUR unchanged across 1900 and 1904 date systems?
 HOUR reads only the fractional time component of a serial, so date-system epoch differences do not affect it.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/hour" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_parts.rs)

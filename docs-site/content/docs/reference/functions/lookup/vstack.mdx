@@ -1,62 +1,92 @@
 ---
 title: "VSTACK"
-description: "VSTACK: Concatenates arrays vertically into a single spilled array."
+seoTitle: "VSTACK function: formula syntax and examples"
+description: "Concatenates arrays vertically into a single spilled array. =VSTACK(array1, [array2], ...)"
 ---
 
-<FunctionPageSchema id="lookup/vstack" />
-
-## Summary
+Concatenates arrays vertically into a single spilled array.
 
 `VSTACK` appends rows from each argument top-to-bottom.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=VSTACK(array1, [array2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array1` | range or any (range) | Required | — |
+| `array2` | range or any (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
- - All non-empty range arguments must have the same column count.
+ - The output has the maximum input column count.
  - Scalar arguments are treated as 1x1 values.
- - Mismatched column counts return `#VALUE!`.
+ - Missing columns in narrower inputs are padded with `#N/A`.
  - Empty inputs are skipped; if all inputs are empty, result is an empty spill.
 
 ## Examples
 
-<Tabs items={["Join two 1-row ranges vertically", "Stack scalar values"]}>
-<Tab value="Join two 1-row ranges vertically">
-<FunctionSandbox
-  title="Join two 1-row ranges vertically"
-  formula={`=VSTACK(A1:B1,A2:B2)`}
-  grid={{"A1":"1","A2":"2","B1":"10","B2":"20"}}
-  expected={"[[1,10],[2,20]]"}
-/>
-</Tab>
-
-<Tab value="Stack scalar values">
-<FunctionSandbox
-  title="Stack scalar values"
-  formula={`=VSTACK(5,9)`}
+<FunctionExample
+  title={"Join two equally sized rectangular arrays."}
+  formula={"=VSTACK({1,2;3,4},{5,6;7,8})"}
   grid={{}}
-  expected={"[[5],[9]]"}
+  expected={"{1, 2; 3, 4; 5, 6; 7, 8}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Join three arrays in their argument order."}
+  formula={"=VSTACK({1,2},{3,4},{5,6})"}
+  grid={{}}
+  expected={"{1, 2; 3, 4; 5, 6}"}
+/>
+
+<FunctionExample
+  title={"Pass the smallest array as the only argument."}
+  formula={"=VSTACK({42})"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"A division-by-zero error is carried into the assembled output."}
+  formula={"=VSTACK(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Join two 1-row ranges vertically"}
+  formula={"=VSTACK(A1:B1,A2:B2)"}
+  grid={{"A1":"1","A2":"2","B1":"10","B2":"20"}}
+  expected={"{1, 10; 2, 20}"}
+/>
+
+<FunctionExample
+  title={"Stack scalar values"}
+  formula={"=VSTACK(5,9)"}
+  grid={{}}
+  expected={"{5; 9}"}
+/>
 
 ## Related functions
 
 - [HSTACK](/docs/reference/functions/lookup/hstack)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [DROP](/docs/reference/functions/lookup/drop)
-- [TOCOL](/docs/reference/functions/lookup/tocol)
-- [TOROW](/docs/reference/functions/lookup/torow)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 
 ## FAQ
 
-### When does VSTACK return #VALUE!?
-VSTACK requires matching column counts across non-empty range arguments; differing widths return #VALUE!.
+### How does VSTACK combine ranges of different widths?
+The output uses the widest input and pads narrower inputs with #N/A.
 
 ### What happens if all VSTACK inputs are empty ranges?
 Empty inputs are skipped, and if every argument is empty the function returns an empty spill.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/vstack" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/stack.rs)

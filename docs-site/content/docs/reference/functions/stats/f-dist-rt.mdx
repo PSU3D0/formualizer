@@ -1,25 +1,57 @@
 ---
 title: "F.DIST.RT"
-description: "F.DIST.RT: Returns the right-tailed F-distribution probability."
+seoTitle: "F.DIST.RT function: formula syntax and examples"
+description: "Returns the right-tailed F-distribution probability. =F.DIST.RT(x, deg_freedom1, deg_freedom2)"
 ---
-
-<FunctionPageSchema id="stats/f-dist-rt" />
-
-## Summary
 
 Returns the right-tailed F-distribution probability.
 
-## returns: 1
- =F.DIST.RT(0,5,10)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=F.DIST.RT(x, deg_freedom1, deg_freedom2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom1` | number | Required | — |
+| `deg_freedom2` | number | Required | — |
+
+## How it works
+
+Gives P((U/d₁)/(V/d₂) ≥ x) for independent chi-squared variates. Both degrees of freedom must be positive. Swapping them generally changes the tail at the same nonnegative x.
 
 ## Examples
 
-<FunctionSandbox
-  title="Zero leaves the entire right tail"
-  formula={`=F.DIST.RT(0,5,10)`}
+<FunctionExample
+  title={"Find the right-tail probability for a positive F statistic."}
+  formula={"=F.DIST.RT(2,5,10)"}
+  grid={{}}
+  expected={"0.164194950899739"}
+/>
+
+<FunctionExample
+  title={"Swap numerator and denominator degrees of freedom."}
+  formula={"=F.DIST.RT(2,10,5)"}
+  grid={{}}
+  expected={"0.229975119349898"}
+/>
+
+<FunctionExample
+  title={"At the lower endpoint the right tail covers the whole distribution."}
+  formula={"=F.DIST.RT(0,5,10)"}
   grid={{}}
   expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative F statistic is outside the support."}
+  formula={"=F.DIST.RT(-1,5,10)"}
+  grid={{}}
+  expected={"#NUM!"}
 />
 
 ## Related functions
@@ -27,17 +59,12 @@ Returns the right-tailed F-distribution probability.
 - [F.INV.RT](/docs/reference/functions/stats/f-inv-rt)
 - [F.TEST](/docs/reference/functions/stats/f-test)
 - [F.DIST](/docs/reference/functions/stats/f-dist)
-- [F.INV](/docs/reference/functions/stats/f-inv)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
 
 ## FAQ
 
 ### Which inputs return #NUM!?
 Negative x values or degrees of freedom below 1 return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/f-dist-rt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

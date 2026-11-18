@@ -1,13 +1,26 @@
 ---
 title: "T"
-description: "Returns text when input is text, otherwise returns empty text."
+seoTitle: "T function: formula syntax and examples"
+description: "Returns text when input is text, otherwise returns empty text. =T(value)"
 ---
 
-<FunctionPageSchema id="info/t" />
-
-## Summary
-
 Returns text when input is text, otherwise returns empty text.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=T(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
+## Return type
+
+Text
 
 ## Remarks
  - Text values pass through unchanged.
@@ -16,43 +29,59 @@ Returns text when input is text, otherwise returns empty text.
 
 ## Examples
 
-<Tabs items={["Text passthrough", "Number becomes empty text"]}>
-<Tab value="Text passthrough">
-<FunctionSandbox
-  title="Text passthrough"
-  formula={`=T("report")`}
+<FunctionExample
+  title={"Return a text value unchanged."}
+  formula={"=T(\"sample\")"}
   grid={{}}
-  expected={"report"}
+  expected={"sample"}
 />
-</Tab>
 
-<Tab value="Number becomes empty text">
-<FunctionSandbox
-  title="Number becomes empty text"
-  formula={`=T(99)`}
+<FunctionExample
+  title={"Return an empty string for a number."}
+  formula={"=T(123)"}
   grid={{}}
   expected={""}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Preserve an already empty string."}
+  formula={"=T(\"\")"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"Propagate the error instead of returning empty text."}
+  formula={"=T(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Text passthrough"}
+  formula={"=T(\"report\")"}
+  grid={{}}
+  expected={"report"}
+/>
+
+<FunctionExample
+  title={"Number becomes empty text"}
+  formula={"=T(99)"}
+  grid={{}}
+  expected={""}
+/>
 
 ## Related functions
 
 - [N](/docs/reference/functions/info/n)
 - [ISTEXT](/docs/reference/functions/info/istext)
 - [TYPE](/docs/reference/functions/info/type)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
 ### Does T hide non-text values?
 Yes. Non-text inputs become an empty string, but errors are still propagated.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/t" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

@@ -1,19 +1,57 @@
 ---
 title: "ISO.CEILING"
-description: "ISO.CEILING: Rounds a number up using ISO ceiling semantics."
+seoTitle: "ISO.CEILING function: formula syntax and examples"
+description: "Rounds a number up using ISO ceiling semantics. =ISO.CEILING(number, [significance])"
 ---
-
-<FunctionPageSchema id="math/iso-ceiling" />
-
-## Summary
 
 Rounds a number up using ISO ceiling semantics.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISO.CEILING(number, [significance])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `significance` | number | Optional | — |
+
 ## Examples
 
-<FunctionSandbox
-  title="ISO ceiling on a negative value"
-  formula={`=ISO.CEILING(-4.3)`}
+<FunctionExample
+  title={"Round a fractional number to a multiple of two."}
+  formula={"=ISO.CEILING(7.2,2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"Use the default significance."}
+  formula={"=ISO.CEILING(7.2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"A number already at a multiple of the significance stays at that multiple."}
+  formula={"=ISO.CEILING(8,2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"The number argument cannot be read from this text."}
+  formula={"=ISO.CEILING(\"invalid\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"ISO ceiling on a negative value"}
+  formula={"=ISO.CEILING(-4.3)"}
   grid={{}}
   expected={"-4"}
 />
@@ -21,19 +59,12 @@ Rounds a number up using ISO ceiling semantics.
 ## Related functions
 
 - [CEILING.PRECISE](/docs/reference/functions/math/ceiling-precise)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
-- [FLOOR](/docs/reference/functions/math/floor)
-- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
 
 ## FAQ
 
 ### How does ISO.CEILING differ from legacy CEILING?
 ISO.CEILING always uses a positive significance and rounds toward positive infinity.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/iso-ceiling" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

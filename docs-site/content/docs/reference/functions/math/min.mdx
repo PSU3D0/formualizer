@@ -1,13 +1,31 @@
 ---
 title: "MIN"
-description: "MIN: Returns the smallest numeric value from one or more arguments."
+seoTitle: "MIN function: formula syntax and examples"
+description: "Returns the smallest numeric value from one or more arguments. =MIN(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="math/min" />
-
-## Summary
+Returns the smallest numeric value from one or more arguments.
 
 `MIN` scans scalar values and ranges, considering only values that can be treated as numbers.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MIN(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Differences from Excel
+
+Unparseable text supplied directly, such as `"x"`, is ignored by Formualizer. Excel returns `#VALUE!`.
 
 ## Remarks
  - Errors in any scalar argument or range cell propagate immediately.
@@ -17,35 +35,47 @@ description: "MIN: Returns the smallest numeric value from one or more arguments
 
 ## Examples
 
-<Tabs items={["Minimum in a numeric range", "Coercible scalar text participates", "No numeric values returns zero"]}>
-<Tab value="Minimum in a numeric range">
-<FunctionSandbox
-  title="Minimum in a numeric range"
-  formula={`=MIN(A1:A3)`}
+<FunctionExample
+  title={"Find the smallest numeric value of 4, 8 and 12."}
+  formula={"=MIN(4,8,12)"}
+  grid={{}}
+  expected={"4"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the smallest numeric value."}
+  formula={"=MIN({4,8,12})"}
+  grid={{}}
+  expected={"4"}
+/>
+
+<FunctionExample
+  title={"The lone number is also the minimum."}
+  formula={"=MIN(7)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the smallest numeric value."}
+  formula={"=MIN(4,1/0,12)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Minimum in a numeric range"}
+  formula={"=MIN(A1:A3)"}
   grid={{"A1":"8","A2":"-2","A3":"5"}}
   expected={"-2"}
 />
-</Tab>
 
-<Tab value="Coercible scalar text participates">
-<FunctionSandbox
-  title="Coercible scalar text participates"
-  formula={`=MIN(10, "3", 7)`}
+<FunctionExample
+  title={"Coercible scalar text participates"}
+  formula={"=MIN(10, \"3\", 7)"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
-
-<Tab value="No numeric values returns zero">
-<FunctionSandbox
-  title="No numeric values returns zero"
-  formula={`=MIN("x")`}
-  grid={{}}
-  expected={"0"}
-/>
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -53,8 +83,6 @@ description: "MIN: Returns the smallest numeric value from one or more arguments
 - [SMALL](/docs/reference/functions/stats/small)
 - [LARGE](/docs/reference/functions/stats/large)
 - [MINIFS](/docs/reference/functions/stats/minifs)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [SUMSQ](/docs/reference/functions/math/sumsq)
 
 ## FAQ
 
@@ -64,8 +92,6 @@ If nothing numeric is found after coercion/scan, MIN falls back to 0.
 ### Do errors in referenced ranges get ignored?
 No. Any encountered range or scalar error is propagated.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/min" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/reduction.rs)

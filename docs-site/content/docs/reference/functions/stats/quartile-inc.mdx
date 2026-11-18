@@ -1,59 +1,90 @@
 ---
 title: "QUARTILE.INC"
-description: "QUARTILE.INC: Returns an inclusive quartile value for a data set."
+seoTitle: "QUARTILE.INC function: formula syntax and examples"
+description: "Returns an inclusive quartile value for a data set. =QUARTILE.INC(array, quart)"
 ---
 
-<FunctionPageSchema id="stats/quartile-inc" />
-
-## Summary
+Returns an inclusive quartile value for a data set.
 
 `QUARTILE.INC` maps quartile index `0..4` onto minimum, quartiles, median, and maximum.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=QUARTILE.INC(array, quart)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | number (range) | Required | — |
+| `quart` | number (range) | Required | — |
 
 ## Remarks
  - Valid quartile index values are `0`, `1`, `2`, `3`, and `4`.
  - Uses inclusive percentile logic for quartiles `1` through `3`.
- - Returns `#NUM!` for invalid quartile index values or empty numeric input.
  - Alias `QUARTILE` is supported.
+
+## Error cases
+
+ - Returns `#NUM!` for invalid quartile index values or empty numeric input.
 
 ## Examples
 
-<Tabs items={["First quartile from direct values", "Third quartile from a range"]}>
-<Tab value="First quartile from direct values">
-<FunctionSandbox
-  title="First quartile from direct values"
-  formula={`=QUARTILE.INC({1,2,3,4,5},1)`}
+<FunctionExample
+  title={"Find the first quartile of five ordered values."}
+  formula={"=QUARTILE.INC({10,20,30,40,50},1)"}
+  grid={{}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Find the corresponding upper quartile."}
+  formula={"=QUARTILE.INC({10,20,30,40,50},3)"}
+  grid={{}}
+  expected={"40"}
+/>
+
+<FunctionExample
+  title={"The second quartile is the median of this sample."}
+  formula={"=QUARTILE.INC({10,20,30,40,50},2)"}
+  grid={{}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"Quartile five is outside the supported range."}
+  formula={"=QUARTILE.INC({10,20,30,40,50},5)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"First quartile from direct values"}
+  formula={"=QUARTILE.INC({1,2,3,4,5},1)"}
   grid={{}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Third quartile from a range">
-<FunctionSandbox
-  title="Third quartile from a range"
-  formula={`=QUARTILE.INC(A1:A4,3)`}
+<FunctionExample
+  title={"Third quartile from a range"}
+  formula={"=QUARTILE.INC(A1:A4,3)"}
   grid={{"A1":"10","A2":"20","A3":"30","A4":"40"}}
   expected={"32.5"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
 - [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
 - [MEDIAN](/docs/reference/functions/stats/median)
-- [LARGE](/docs/reference/functions/stats/large)
-- [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
-- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
 
 ## FAQ
 
 ### Which quartile numbers are valid for QUARTILE.INC?
 Only 0 through 4 are valid; other quartile indices return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/quartile-inc" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,59 +1,111 @@
 ---
 title: "TEXT"
-description: "Formats a value as text using a format pattern."
+seoTitle: "TEXT function: formula syntax and examples"
+description: "Formats a value as text using a format pattern. =TEXT(value, format_text)"
 ---
 
-<FunctionPageSchema id="text/text" />
+Formats a value as text using a format pattern.
 
-## Summary
+Number, date and time formats are rendered like Excel (en-US).
 
-This implementation supports common numeric, percent, grouping, and basic date tokens.
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TEXT(value, format_text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+| `format_text` | any | Required | — |
 
 ## Remarks
  - Requires exactly two arguments: value and format text.
- - Numeric text is parsed before formatting; invalid numeric text returns `#VALUE!`.
+ - Numeric, date and time text is parsed before formatting. Text that is *clearly*
+   non-numeric (no digits) is returned unchanged (e.g. `=TEXT("abc","00")` -&gt; `"abc"`),
+   matching Excel. Other digit-bearing text (currency, fractions, or locale-ambiguous
+   values like `"1.234,56"`) still returns `#VALUE!` for now.
  - Error inputs are propagated unchanged.
- - Supported patterns are intentionally limited compared with full Excel formatting.
+ - Number formats support `0` and `#` placeholders, the decimal point, thousands
+   grouping, trailing-comma scaling, `%`, quoted, escaped or bare literal text, colour
+   tags and up to three `;` sections (positive, negative, zero). Digits are rounded half
+   away from zero on the 15-significant-digit value, as `ROUND` does.
+ - Excel's `#VALUE!` cases are reproduced: a result longer than 255 characters, and a
+   date, time or exponent letter (`b d e g h m n s y`) left unquoted beside a digit
+   placeholder, such as `=TEXT(5,"0 kg")`.
+ - Date and time codes: `d`, `dd`, `ddd`, `dddd`, `m` to `mmmmm`, `yy`, `yyyy`, `h`,
+   `hh`, `m`/`mm` as minutes (after `h` or before `s`), `s`, `ss`, `ss.00`, `AM/PM`,
+   `A/P` and elapsed `[h]`, `[m]`, `[s]`. The value is rounded to the shown seconds
+   precision before it is split, so `23:59:59.6` is the next day's `00:00:00`;
+   minutes are not rounded on their own (`h:mm` of `10:29:45` is `10:29`). A negative
+   value or one past 9999-12-31 is `#VALUE!`.
+ - Scientific, fraction, `?`, `*`, `_`, conditional codes, era years, the system date
+   tags, the fourth (text) section and a bare colour tag keep a simplified rendering.
 
 ## Examples
 
-<Tabs items={["Fixed decimal formatting", "Percent formatting"]}>
-<Tab value="Fixed decimal formatting">
-<FunctionSandbox
-  title="Fixed decimal formatting"
-  formula={`=TEXT(12.3, "0.00")`}
+<FunctionExample
+  title={"Format a fractional number with exactly two decimals."}
+  formula={"=TEXT(12.5,\"0.00\")"}
+  grid={{}}
+  expected={"12.50"}
+/>
+
+<FunctionExample
+  title={"Change the number format to a percentage."}
+  formula={"=TEXT(0.25,\"0%\")"}
+  grid={{}}
+  expected={"25%"}
+/>
+
+<FunctionExample
+  title={"Use the same decimal format at the zero boundary."}
+  formula={"=TEXT(0,\"0.00\")"}
+  grid={{}}
+  expected={"0.00"}
+/>
+
+<FunctionExample
+  title={"An input error propagates before formatting."}
+  formula={"=TEXT(1/0,\"0.00\")"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Fixed decimal formatting"}
+  formula={"=TEXT(12.3, \"0.00\")"}
   grid={{}}
   expected={"12.30"}
 />
-</Tab>
 
-<Tab value="Percent formatting">
-<FunctionSandbox
-  title="Percent formatting"
-  formula={`=TEXT(0.256, "0%")`}
+<FunctionExample
+  title={"Percent formatting"}
+  formula={"=TEXT(0.256, \"0%\")"}
   grid={{}}
   expected={"26%"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Weekday name"}
+  formula={"=TEXT(45306, \"dddd\")"}
+  grid={{}}
+  expected={"Monday"}
+/>
 
 ## Related functions
 
 - [VALUE](/docs/reference/functions/text/value)
 - [FIXED](/docs/reference/functions/text/fixed)
 - [DOLLAR](/docs/reference/functions/text/dollar)
-- [EXACT](/docs/reference/functions/text/exact)
-- [REPT](/docs/reference/functions/text/rept)
-- [TEXTAFTER](/docs/reference/functions/text/textafter)
 
 ## FAQ
 
 ### How complete is format_text support?
-Only a limited subset of Excel-style numeric/date tokens is supported in this implementation.
+Number formats built from 0, #, the decimal point, grouping, %, literals and sections follow Excel. Date and time codes follow Excel too. Scientific, fraction and conditional codes are simplified.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/text" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/value_text.rs)

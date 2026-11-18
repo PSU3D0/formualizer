@@ -1,59 +1,93 @@
 ---
 title: "MID"
-description: "MID: Returns a substring starting at a 1-based position."
+seoTitle: "MID function: formula syntax and examples"
+description: "Returns a substring starting at a 1-based position. =MID(text, start_num, num_chars)"
 ---
-
-<FunctionPageSchema id="text/mid" />
-
-## Summary
 
 Returns a substring starting at a 1-based position.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MID(text, start_num, num_chars)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `start_num` | any | Required | — |
+| `num_chars` | any | Required | — |
+
+## Return type
+
+Can return text.
+
 ## Remarks
- - `start_num` is 1-based; values below `1` return `#VALUE!`.
- - `num_chars` must be non-negative; negatives return `#VALUE!`.
  - If start is beyond the end of the text, returns an empty string.
  - Non-text inputs are coerced to text.
 
+## Error cases
+
+ - `start_num` is 1-based; values below `1` return `#VALUE!`.
+ - `num_chars` must be non-negative; negatives return `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["Extract middle segment", "Start past end returns empty"]}>
-<Tab value="Extract middle segment">
-<FunctionSandbox
-  title="Extract middle segment"
-  formula={`=MID("spreadsheet", 3, 5)`}
+<FunctionExample
+  title={"Extract the year from the middle of a label by position."}
+  formula={"=MID(\"East-2024\",6,4)"}
   grid={{}}
-  expected={"reads"}
+  expected={"2024"}
 />
-</Tab>
 
-<Tab value="Start past end returns empty">
-<FunctionSandbox
-  title="Start past end returns empty"
-  formula={`=MID("abc", 10, 2)`}
+<FunctionExample
+  title={"A requested count beyond the remaining text reaches only the end."}
+  formula={"=MID(\"East-2024\",6,20)"}
+  grid={{}}
+  expected={"2024"}
+/>
+
+<FunctionExample
+  title={"A zero count produces an empty substring."}
+  formula={"=MID(\"East-2024\",6,0)"}
   grid={{}}
   expected={""}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A start position of zero is invalid."}
+  formula={"=MID(\"East-2024\",0,4)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Extract middle segment"}
+  formula={"=MID(\"spreadsheet\", 3, 5)"}
+  grid={{}}
+  expected={"reads"}
+/>
+
+<FunctionExample
+  title={"Start past end returns empty"}
+  formula={"=MID(\"abc\", 10, 2)"}
+  grid={{}}
+  expected={""}
+/>
 
 ## Related functions
 
 - [LEFT](/docs/reference/functions/text/left)
 - [RIGHT](/docs/reference/functions/text/right)
 - [REPLACE](/docs/reference/functions/text/replace)
-- [MIDB](/docs/reference/functions/text/midb)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
 
 ## FAQ
 
 ### How does MID handle out-of-range start positions?
 If start_num is beyond the text length, MID returns an empty string.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/mid" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/mid_sub_replace.rs)

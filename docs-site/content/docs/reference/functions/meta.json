@@ -1,6 +1,7 @@
 {
   "pages": [
     "index",
+    "a-z",
     "database",
     "datetime",
     "engineering",

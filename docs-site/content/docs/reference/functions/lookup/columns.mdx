@@ -1,13 +1,24 @@
 ---
 title: "COLUMNS"
-description: "Returns the number of columns in a reference or array."
+seoTitle: "COLUMNS function: formula syntax and examples"
+description: "Returns the number of columns in a reference or array. =COLUMNS(array)"
 ---
 
-<FunctionPageSchema id="lookup/columns" />
-
-## Summary
+Returns the number of columns in a reference or array.
 
 `COLUMNS` reports width, not data density.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COLUMNS(array)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | any (range) | Required | — |
 
 ## Remarks
  - For a single cell reference, returns `1`.
@@ -17,35 +28,46 @@ description: "Returns the number of columns in a reference or array."
 
 ## Examples
 
-<Tabs items={["Count columns in a rectangular range", "Count columns in a full row reference"]}>
-<Tab value="Count columns in a rectangular range">
-<FunctionSandbox
-  title="Count columns in a rectangular range"
-  formula={`=COLUMNS(B2:D10)`}
+<FunctionExample
+  title={"Count the corresponding dimension of a rectangular array."}
+  formula={"=COLUMNS({1,2,3;4,5,6})"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
 
-<Tab value="Count columns in a full row reference">
-<FunctionSandbox
-  title="Count columns in a full row reference"
-  formula={`=COLUMNS(1:1)`}
+<FunctionExample
+  title={"Count the dimension when the array has one column and three rows."}
+  formula={"=COLUMNS({1;2;3})"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The smallest array has one row and one column."}
+  formula={"=COLUMNS({42})"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Count columns in a rectangular range"}
+  formula={"=COLUMNS(B2:D10)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"Count columns in a full row reference"}
+  formula={"=COLUMNS(1:1)"}
   grid={{}}
   expected={"16384"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [COLUMN](/docs/reference/functions/lookup/column)
 - [ROWS](/docs/reference/functions/lookup/rows)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [TRANSPOSE](/docs/reference/functions/lookup/transpose)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
-- [HLOOKUP](/docs/reference/functions/lookup/hlookup)
 
 ## FAQ
 
@@ -55,8 +77,6 @@ No. COLUMNS returns the width of the referenced array/range, including blank cel
 ### What does COLUMNS return for a full-row reference like 1:1?
 It returns the sheet column limit, 16384.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/columns" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/reference_info.rs)

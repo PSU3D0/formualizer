@@ -1,44 +1,83 @@
 ---
 title: "PMT"
-description: "PMT: Calculates the constant payment amount for a fixed-rate annuity or loan."
+seoTitle: "PMT function: formula syntax and examples"
+description: "Calculates the constant payment amount for a fixed-rate annuity or loan. =PMT(rate, nper, pv, [fv], [type])"
 ---
 
-<FunctionPageSchema id="financial/pmt" />
-
-## Summary
+Calculates the constant payment amount for a fixed-rate annuity or loan.
 
 Use this to solve for periodic payment size when rate, term, and present/future value
  targets are known.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PMT(rate, nper, pv, [fv], [type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `nper` | number | Required | — |
+| `pv` | number | Required | — |
+| `fv` | number | Optional | — |
+| `type` | number | Optional | — |
 
 ## Remarks
  - `rate` is the interest rate per payment period (for example, annual rate / 12 for monthly payments).
  - Cash-flow sign convention: cash paid out is negative and cash received is positive.
  - `type = 0` means end-of-period payments; `type != 0` means beginning-of-period payments.
- - Returns `#NUM!` when `nper` is zero.
  - Propagates argument conversion and underlying value errors.
+
+## Error cases
+
+ - Returns `#NUM!` when `nper` is zero.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=PMT(0.06/12, 360, 300000)`}
+<FunctionExample
+  title={"Calculate the end-of-month payment for a two-year loan."}
+  formula={"=PMT(0.05/12,24,5000)"}
   grid={{}}
-  expected={"null"}
+  expected={"-219.356948670343"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=PMT(0.05/4, 20, -10000, 0, 1)`}
+<FunctionExample
+  title={"Calculate the payment when it is due at the start of each month."}
+  formula={"=PMT(0.05/12,24,5000,0,1)"}
   grid={{}}
-  expected={"null"}
+  expected={"-218.446753862582"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"At zero interest the principal is divided evenly between payments."}
+  formula={"=PMT(0,24,4800)"}
+  grid={{}}
+  expected={"-200"}
+/>
+
+<FunctionExample
+  title={"A zero-length schedule cannot amortize a nonzero principal."}
+  formula={"=PMT(0.05/12,0,5000)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Calculate the monthly payment on a 300,000 30-year mortgage at 6% annual interest."}
+  formula={"=PMT(0.06/12, 360, 300000)"}
+  grid={{}}
+  expected={"-1798.65157545827"}
+/>
+
+<FunctionExample
+  title={"Find the deposit due at the start of each quarter to offset a 10,000 opening outlay."}
+  formula={"=PMT(0.05/4, 20, -10000, 0, 1)"}
+  grid={{}}
+  expected={"561.189033400539"}
+/>
 
 ## Related functions
 
@@ -46,16 +85,12 @@ Use this to solve for periodic payment size when rate, term, and present/future 
 - [FV](/docs/reference/functions/financial/fv)
 - [NPER](/docs/reference/functions/financial/nper)
 - [RATE](/docs/reference/functions/financial/rate)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 
 ## FAQ
 
 ### Why is `PMT` usually negative for a loan?
 TVM sign convention treats cash you pay as negative; with positive `pv`, payment outputs are typically negative.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/pmt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

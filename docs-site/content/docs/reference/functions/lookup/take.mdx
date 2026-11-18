@@ -1,51 +1,85 @@
 ---
 title: "TAKE"
-description: "TAKE: Returns a subset from the start or end of rows and optional columns."
+seoTitle: "TAKE function: formula syntax and examples"
+description: "Returns a subset from the start or end of rows and optional columns. =TAKE(array, rows, [columns])"
 ---
 
-<FunctionPageSchema id="lookup/take" />
-
-## Summary
+Returns a subset from the start or end of rows and optional columns.
 
 `TAKE` extracts leading or trailing portions of an array based on signed counts.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TAKE(array, rows, [columns])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | range (range) | Required | — |
+| `rows` | number | Required | — |
+| `columns` | number | Optional | — |
 
 ## Remarks
  - Positive counts take from the start; negative counts take from the end.
  - `rows` is required; `columns` is optional.
- - Absolute counts larger than the source dimension return `#VALUE!`.
  - Empty selections return an empty spill.
+
+## Error cases
+
+ - Absolute counts larger than the source dimension return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Take top two rows", "Take last row and last two columns"]}>
-<Tab value="Take top two rows">
-<FunctionSandbox
-  title="Take top two rows"
-  formula={`=TAKE(A1:A3,2)`}
+<FunctionExample
+  title={"Return the first two rows of a three-row array."}
+  formula={"=TAKE({1,2;3,4;5,6},2)"}
+  grid={{}}
+  expected={"{1, 2; 3, 4}"}
+/>
+
+<FunctionExample
+  title={"Return the last two rows and the last column."}
+  formula={"=TAKE({1,2;3,4;5,6},-2,-1)"}
+  grid={{}}
+  expected={"{4; 6}"}
+/>
+
+<FunctionExample
+  title={"Take one row and one column to return a single cell."}
+  formula={"=TAKE({1,2;3,4},1,1)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The rows argument must give a numeric count."}
+  formula={"=TAKE({1,2;3,4},\"two\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Take top two rows"}
+  formula={"=TAKE(A1:A3,2)"}
   grid={{"A1":"10","A2":"20","A3":"30"}}
-  expected={"[[10],[20]]"}
+  expected={"{10; 20}"}
 />
-</Tab>
 
-<Tab value="Take last row and last two columns">
-<FunctionSandbox
-  title="Take last row and last two columns"
-  formula={`=TAKE(A1:C2,-1,-2)`}
+<FunctionExample
+  title={"Take last row and last two columns"}
+  formula={"=TAKE(A1:C2,-1,-2)"}
   grid={{"A1":"1","A2":"4","B1":"2","B2":"5","C1":"3","C2":"6"}}
-  expected={"[[5,6]]"}
+  expected={"{5, 6}"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [DROP](/docs/reference/functions/lookup/drop)
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [SORTBY](/docs/reference/functions/lookup/sortby)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
-- [FILTER](/docs/reference/functions/lookup/filter)
 
 ## FAQ
 
@@ -55,8 +89,6 @@ Negative counts take from the end of the array, so TAKE(...,-1) returns the last
 ### When does TAKE return #VALUE!?
 If the absolute requested row or column count exceeds source dimensions, TAKE returns #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/take" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

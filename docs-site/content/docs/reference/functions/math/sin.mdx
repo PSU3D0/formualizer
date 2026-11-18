@@ -1,13 +1,26 @@
 ---
 title: "SIN"
-description: "Returns the sine of an angle in radians."
+seoTitle: "SIN function: formula syntax and examples"
+description: "Returns the sine of an angle in radians. =SIN(number)"
 ---
 
-<FunctionPageSchema id="math/sin" />
-
-## Summary
-
 Returns the sine of an angle in radians.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SIN(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Sine is the vertical coordinate on the unit circle at angle x. The angle is in radians and can be any real number.
 
 ## Remarks
  - Input is interpreted as radians, not degrees.
@@ -15,43 +28,59 @@ Returns the sine of an angle in radians.
 
 ## Examples
 
-<Tabs items={["Sine of PI/2", "Sine from a cell value"]}>
-<Tab value="Sine of PI/2">
-<FunctionSandbox
-  title="Sine of PI/2"
-  formula={`=SIN(PI()/2)`}
+<FunctionExample
+  title={"Read the unit-circle height at half a radian."}
+  formula={"=SIN(0.5)"}
+  grid={{}}
+  expected={"0.479425538604203"}
+/>
+
+<FunctionExample
+  title={"Reflect the angle across the horizontal axis to reverse the height."}
+  formula={"=SIN(-0.5)"}
+  grid={{}}
+  expected={"-0.479425538604203"}
+/>
+
+<FunctionExample
+  title={"At zero radians, the unit-circle height is zero."}
+  formula={"=SIN(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the sine."}
+  formula={"=SIN(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Sine of PI/2"}
+  formula={"=SIN(PI()/2)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Sine from a cell value">
-<FunctionSandbox
-  title="Sine from a cell value"
-  formula={`=SIN(A1)`}
+<FunctionExample
+  title={"Sine from a cell value"}
+  formula={"=SIN(A1)"}
   grid={{"A1":"0"}}
   expected={"0"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [COS](/docs/reference/functions/math/cos)
 - [TAN](/docs/reference/functions/math/tan)
 - [RADIANS](/docs/reference/functions/math/radians)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### Does SIN expect degrees or radians?
 SIN expects radians; convert degree inputs first with RADIANS.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sin" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

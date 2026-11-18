@@ -1,58 +1,81 @@
 ---
 title: "HEX2DEC"
-description: "HEX2DEC: Converts a hexadecimal text value to decimal."
+seoTitle: "HEX2DEC function: formula syntax and examples"
+description: "Converts a hexadecimal text value to decimal. =HEX2DEC(number)"
 ---
 
-<FunctionPageSchema id="engineering/hex2dec" />
-
-## Summary
+Converts a hexadecimal text value to decimal.
 
 Supports up to 10 hex digits, including signed two's-complement values.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=HEX2DEC(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
 
 ## Remarks
  - Input is coerced to text and must contain only hexadecimal characters.
  - 10-digit values beginning with `8`-`F` are interpreted as signed 40-bit numbers.
+
+## Error cases
+
  - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
 
 ## Examples
 
-<Tabs items={["Convert a positive hex value", "Interpret signed 40-bit hex"]}>
-<Tab value="Convert a positive hex value">
-<FunctionSandbox
-  title="Convert a positive hex value"
-  formula={`=HEX2DEC("FF")`}
+<FunctionExample
+  title={"Convert hexadecimal digits into a decimal number."}
+  formula={"=HEX2DEC(\"2A\")"}
   grid={{}}
-  expected={"255"}
+  expected={"42"}
 />
-</Tab>
 
-<Tab value="Interpret signed 40-bit hex">
-<FunctionSandbox
-  title="Interpret signed 40-bit hex"
-  formula={`=HEX2DEC("FFFFFFFFFF")`}
+<FunctionExample
+  title={"Read a signed ten-digit hexadecimal value."}
+  formula={"=HEX2DEC(\"FFFFFFFFFF\")"}
   grid={{}}
   expected={"-1"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Convert the base-sixteen representation of zero."}
+  formula={"=HEX2DEC(\"0\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The character G is not a hexadecimal digit."}
+  formula={"=HEX2DEC(\"G\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert a positive hex value"}
+  formula={"=HEX2DEC(\"FF\")"}
+  grid={{}}
+  expected={"255"}
+/>
 
 ## Related functions
 
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 - [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
 - [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### When is a 10-digit hex input treated as negative in `HEX2DEC`?
 If the first digit is `8` through `F`, it is decoded as signed 40-bit two's-complement.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/hex2dec" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

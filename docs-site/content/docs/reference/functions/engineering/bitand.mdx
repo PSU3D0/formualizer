@@ -1,58 +1,89 @@
 ---
 title: "BITAND"
-description: "BITAND: Returns the bitwise AND of two non-negative integers."
+seoTitle: "BITAND function: formula syntax and examples"
+description: "Returns the bitwise AND of two non-negative integers. =BITAND(number1, number2)"
 ---
 
-<FunctionPageSchema id="engineering/bitand" />
-
-## Summary
+Returns the bitwise AND of two non-negative integers.
 
 Combines matching bits from both inputs and keeps only bits set in both numbers.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BITAND(number1, number2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number | Required | — |
+| `number2` | number | Required | — |
+
 ## Remarks
  - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
- - Returns `#NUM!` for negative values, fractional values, or values outside the supported range.
  - Propagates input errors.
+
+## Error cases
+
+ - Returns `#NUM!` for negative values, fractional values, or values outside the supported range.
 
 ## Examples
 
-<Tabs items={["Mask selected bits", "Check least-significant bit"]}>
-<Tab value="Mask selected bits">
-<FunctionSandbox
-  title="Mask selected bits"
-  formula={`=BITAND(13,10)`}
+<FunctionExample
+  title={"Combine two integers whose binary representations partly overlap."}
+  formula={"=BITAND(12,10)"}
   grid={{}}
   expected={"8"}
 />
-</Tab>
 
-<Tab value="Check least-significant bit">
-<FunctionSandbox
-  title="Check least-significant bit"
-  formula={`=BITAND(7,1)`}
+<FunctionExample
+  title={"Compare the result when both operands have identical bits."}
+  formula={"=BITAND(12,12)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Apply the bit operation to two zero operands."}
+  formula={"=BITAND(0,0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Negative operands are outside the supported integer domain."}
+  formula={"=BITAND(-1,10)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Mask selected bits"}
+  formula={"=BITAND(13,10)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"Check least-significant bit"}
+  formula={"=BITAND(7,1)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [BITOR](/docs/reference/functions/engineering/bitor)
 - [BITXOR](/docs/reference/functions/engineering/bitxor)
 - [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
-- [BESSELI](/docs/reference/functions/engineering/besseli)
-- [BESSELJ](/docs/reference/functions/engineering/besselj)
 
 ## FAQ
 
 ### When does `BITAND` return `#NUM!`?
 Inputs must be whole numbers in `[0, 2^48)`; negatives, fractions, and out-of-range values return `#NUM!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/bitand" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

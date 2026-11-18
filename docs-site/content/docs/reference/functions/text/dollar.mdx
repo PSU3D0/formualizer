@@ -1,13 +1,27 @@
 ---
 title: "DOLLAR"
-description: "DOLLAR: Formats a number as currency text."
+seoTitle: "DOLLAR function: formula syntax and examples"
+description: "Formats a number as currency text. =DOLLAR(number, [decimals])"
 ---
 
-<FunctionPageSchema id="text/dollar" />
-
-## Summary
-
 Formats a number as currency text.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DOLLAR(number, [decimals])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `decimals` | number | Optional | `2` |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Default decimal places is `2` when omitted.
@@ -17,43 +31,59 @@ Formats a number as currency text.
 
 ## Examples
 
-<Tabs items={["Default currency formatting", "Negative value with zero decimals"]}>
-<Tab value="Default currency formatting">
-<FunctionSandbox
-  title="Default currency formatting"
-  formula={`=DOLLAR(1234.5)`}
+<FunctionExample
+  title={"Format a positive amount using the default number of decimal places."}
+  formula={"=DOLLAR(1234.567)"}
+  grid={{}}
+  expected={"$1,234.57"}
+/>
+
+<FunctionExample
+  title={"Format a negative amount with one decimal digit."}
+  formula={"=DOLLAR(-1234.567,1)"}
+  grid={{}}
+  expected={"($1,234.6)"}
+/>
+
+<FunctionExample
+  title={"Format zero with no decimal digits."}
+  formula={"=DOLLAR(0,0)"}
+  grid={{}}
+  expected={"$0"}
+/>
+
+<FunctionExample
+  title={"The amount cannot be read from nonnumeric text."}
+  formula={"=DOLLAR(\"amount\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Default currency formatting"}
+  formula={"=DOLLAR(1234.5)"}
   grid={{}}
   expected={"$1,234.50"}
 />
-</Tab>
 
-<Tab value="Negative value with zero decimals">
-<FunctionSandbox
-  title="Negative value with zero decimals"
-  formula={`=DOLLAR(-999.4, 0)`}
+<FunctionExample
+  title={"Negative value with zero decimals"}
+  formula={"=DOLLAR(-999.4, 0)"}
   grid={{}}
   expected={"($999)"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [FIXED](/docs/reference/functions/text/fixed)
 - [TEXT](/docs/reference/functions/text/text)
 - [VALUE](/docs/reference/functions/text/value)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
-- [VALUETOTEXT](/docs/reference/functions/text/valuetotext)
-- [ASC](/docs/reference/functions/text/asc)
 
 ## FAQ
 
 ### How are negative numbers displayed?
 Negative results are formatted in parentheses, for example ($1,234.00).
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/dollar" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/extended.rs)

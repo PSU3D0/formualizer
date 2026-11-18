@@ -1,59 +1,88 @@
 ---
 title: "VALUE"
-description: "Converts text that represents a number into a numeric value."
+seoTitle: "VALUE function: formula syntax and examples"
+description: "Converts text that represents a number into a numeric value. =VALUE(text)"
 ---
-
-<FunctionPageSchema id="text/value" />
-
-## Summary
 
 Converts text that represents a number into a numeric value.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=VALUE(text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+
 ## Remarks
  - Parsing uses locale-aware invariant number parsing from the function context.
- - Non-numeric text returns `#VALUE!`.
+ - Date and time text becomes its serial (`VALUE("12/31/00")` is 36891; two-digit years 00-29 are 2000-2029, 30-99 are 1930-1999).
  - Booleans and numbers are first coerced to text, then parsed.
  - Errors are propagated unchanged.
 
+## Error cases
+
+ - Other non-numeric text, and `NaN`/`inf` spellings, return `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["Parse decimal text", "Invalid numeric text"]}>
-<Tab value="Parse decimal text">
-<FunctionSandbox
-  title="Parse decimal text"
-  formula={`=VALUE("12.5")`}
+<FunctionExample
+  title={"Convert decimal text into a number."}
+  formula={"=VALUE(\"1234.56\")"}
   grid={{}}
-  expected={"12.5"}
+  expected={"1234.56"}
 />
-</Tab>
 
-<Tab value="Invalid numeric text">
-<FunctionSandbox
-  title="Invalid numeric text"
-  formula={`=VALUE("abc")`}
+<FunctionExample
+  title={"Convert a percent string to its numeric fraction."}
+  formula={"=VALUE(\"25%\")"}
+  grid={{}}
+  expected={"0.25"}
+/>
+
+<FunctionExample
+  title={"Convert the text representation of zero."}
+  formula={"=VALUE(\"0\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"An unrecognized numeric string returns an error."}
+  formula={"=VALUE(\"unknown\")"}
   grid={{}}
   expected={"#VALUE!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Parse decimal text"}
+  formula={"=VALUE(\"12.5\")"}
+  grid={{}}
+  expected={"12.5"}
+/>
+
+<FunctionExample
+  title={"Invalid numeric text"}
+  formula={"=VALUE(\"abc\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
 ## Related functions
 
 - [TEXT](/docs/reference/functions/text/text)
 - [N](/docs/reference/functions/info/n)
 - [ISNUMBER](/docs/reference/functions/info/isnumber)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
-- [CLEAN](/docs/reference/functions/text/clean)
 
 ## FAQ
 
 ### Does VALUE coerce arbitrary text like TRUE/FALSE?
-VALUE parses numeric text only; non-numeric strings return #VALUE!.
+VALUE parses numeric, date and time text only; other strings return #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/value" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/value_text.rs)

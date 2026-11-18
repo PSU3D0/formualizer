@@ -1,41 +1,81 @@
 ---
 title: "IMEXP"
-description: "IMEXP: Returns the complex exponential of a complex number."
+seoTitle: "IMEXP function: formula syntax and examples"
+description: "Returns the complex exponential of a complex number. =IMEXP(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imexp" />
-
-## Summary
+Returns the complex exponential of a complex number.
 
 Computes `e^(a+bi)` and returns the result as complex text.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMEXP(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## Return type
+
+Can return text.
+
+## How it works
+
+For a + bi, the exponential is exp(a) times cos(b) + i sin(b). It exists for every complex input.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
 
 ## Remarks
  - Input is coerced to complex-number text before parsing.
  - Uses Euler's identity for the imaginary component.
+
+## Error cases
+
  - Invalid complex text returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Exponential of zero", "Exponential of a real value"]}>
-<Tab value="Exponential of zero">
-<FunctionSandbox
-  title="Exponential of zero"
-  formula={`=IMEXP("0")`}
+<FunctionExample
+  title={"Scale a rotation of four radians by exp(3)."}
+  formula={"=IMEXP(\"3+4i\")"}
+  grid={{}}
+  expected={"-13.1287830814622-15.200784463068i"}
+/>
+
+<FunctionExample
+  title={"Reverse the rotation while leaving its magnitude unchanged."}
+  formula={"=IMEXP(\"3-4j\")"}
+  grid={{}}
+  expected={"-13.1287830814622+15.200784463068j"}
+/>
+
+<FunctionExample
+  title={"At real one the result reduces to the constant e."}
+  formula={"=IMEXP(\"1\")"}
+  grid={{}}
+  expected={"2.71828182845905"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to exponentiate."}
+  formula={"=IMEXP(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Exponential of zero"}
+  formula={"=IMEXP(\"0\")"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
-
-<Tab value="Exponential of a real value">
-<FunctionSandbox
-  title="Exponential of a real value"
-  formula={`=IMEXP("1")`}
-  grid={{}}
-  expected={"2.718281828459045"}
-/>
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -43,16 +83,12 @@ Computes `e^(a+bi)` and returns the result as complex text.
 - [IMPOWER](/docs/reference/functions/engineering/impower)
 - [IMSIN](/docs/reference/functions/engineering/imsin)
 - [IMCOS](/docs/reference/functions/engineering/imcos)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 
 ## FAQ
 
 ### Does `IMEXP` return text or a numeric complex type?
 It returns a canonical complex text string, consistent with other `IM*` functions.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imexp" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

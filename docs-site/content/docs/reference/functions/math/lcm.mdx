@@ -1,13 +1,29 @@
 ---
 title: "LCM"
-description: "LCM: Returns the least common multiple of one or more integers."
+seoTitle: "LCM function: formula syntax and examples"
+description: "Returns the least common multiple of one or two integers. =LCM(number1, [number2])"
 ---
 
-<FunctionPageSchema id="math/lcm" />
-
-## Summary
+Returns the least common multiple of one or two integers.
 
 `LCM` truncates fractional arguments toward zero and combines values iteratively.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LCM(number1, [number2])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number | Required | — |
+| `number2` | number | Optional | — |
+
+## Differences from Excel
+
+Formualizer accepts at most two arguments. Excel accepts up to 255.
 
 ## Remarks
  - Inputs must be non-negative and within the supported Excel-compatible range.
@@ -16,44 +32,60 @@ description: "LCM: Returns the least common multiple of one or more integers."
 
 ## Examples
 
-<Tabs items={["Least common multiple for two integers", "Fractional values are truncated", "Negative values return numeric error"]}>
-<Tab value="Least common multiple for two integers">
-<FunctionSandbox
-  title="Least common multiple for two integers"
-  formula={`=LCM(4, 6)`}
+<FunctionExample
+  title={"Compute the result for two positive integers with common factors."}
+  formula={"=LCM(18,24)"}
   grid={{}}
-  expected={"12"}
+  expected={"72"}
 />
-</Tab>
 
-<Tab value="Fractional values are truncated">
-<FunctionSandbox
-  title="Fractional values are truncated"
-  formula={`=LCM(6.8, 8.2)`}
+<FunctionExample
+  title={"Use fractional inputs to see the effect of truncation."}
+  formula={"=LCM(18.7,24.2)"}
   grid={{}}
-  expected={"24"}
+  expected={"72"}
 />
-</Tab>
 
-<Tab value="Negative values return numeric error">
-<FunctionSandbox
-  title="Negative values return numeric error"
-  formula={`=LCM(-3, 6)`}
+<FunctionExample
+  title={"Include a zero as one of the operands."}
+  formula={"=LCM(0,24)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A negative operand falls outside the supported domain."}
+  formula={"=LCM(-18,24)"}
   grid={{}}
   expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Least common multiple for two integers"}
+  formula={"=LCM(4, 6)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Fractional values are truncated"}
+  formula={"=LCM(6.8, 8.2)"}
+  grid={{}}
+  expected={"24"}
+/>
+
+<FunctionExample
+  title={"Negative values return numeric error"}
+  formula={"=LCM(-3, 6)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
 ## Related functions
 
 - [GCD](/docs/reference/functions/math/gcd)
 - [MOD](/docs/reference/functions/math/mod)
 - [MROUND](/docs/reference/functions/math/mround)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 
 ## FAQ
 
@@ -63,8 +95,6 @@ LCM is defined as 0 if any truncated input is 0 in this implementation.
 ### Are fractional inputs accepted?
 Yes, but they are truncated toward zero before the LCM calculation.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/lcm" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/combinatorics.rs)

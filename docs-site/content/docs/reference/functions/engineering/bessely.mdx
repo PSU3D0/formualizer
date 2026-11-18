@@ -1,59 +1,92 @@
 ---
 title: "BESSELY"
-description: "BESSELY: Returns the Bessel function Yn(x)."
+seoTitle: "BESSELY function: formula syntax and examples"
+description: "Returns the Bessel function Yn(x). =BESSELY(x, n)"
 ---
 
-<FunctionPageSchema id="engineering/bessely" />
-
-## Summary
+Returns the Bessel function Yn(x).
 
 Computes the Bessel function of the second kind for a positive real value `x`
  and a non-negative integer order `n`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BESSELY(x, n)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | any | Required | — |
+| `n` | any | Required | — |
+
 ## Remarks
  - Arguments are supplied as `BESSELY(x, n)`.
- - Negative orders and invalid domains return `#NUM!`.
  - Results are approximate floating-point values.
+
+## Error cases
+
+ - Recurrence work above order 1,000,000 returns `#NUM!`; existing constant-time
+   special-value and huge-argument paths are handled first.
+ - Negative orders and invalid domains return `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Third-order Bessel Y", "Large-input Bessel Y"]}>
-<Tab value="Third-order Bessel Y">
-<FunctionSandbox
-  title="Third-order Bessel Y"
-  formula={`=BESSELY(0.5,3)`}
+<FunctionExample
+  title={"Evaluate the Bessel function at x = 2 and order one."}
+  formula={"=BESSELY(2,1)"}
   grid={{}}
-  expected={"-42.059494304723884"}
+  expected={"-0.107032431540938"}
 />
-</Tab>
 
-<Tab value="Large-input Bessel Y">
-<FunctionSandbox
-  title="Large-input Bessel Y"
-  formula={`=BESSELY(35,3)`}
+<FunctionExample
+  title={"Keep x fixed and compare the result at order two."}
+  formula={"=BESSELY(2,2)"}
   grid={{}}
-  expected={"-0.13191405300596323"}
+  expected={"-0.617408104190683"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Evaluate the order-zero function near the positive edge of its domain."}
+  formula={"=BESSELY(0.1,0)"}
+  grid={{}}
+  expected={"-1.53423865135037"}
+/>
+
+<FunctionExample
+  title={"The function is undefined at zero."}
+  formula={"=BESSELY(0,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Third-order Bessel Y"}
+  formula={"=BESSELY(0.5,3)"}
+  grid={{}}
+  expected={"-42.0594943047239"}
+/>
+
+<FunctionExample
+  title={"Large-input Bessel Y"}
+  formula={"=BESSELY(35,3)"}
+  grid={{}}
+  expected={"-0.131914053005963"}
+/>
 
 ## Related functions
 
 - [BESSELI](/docs/reference/functions/engineering/besseli)
 - [BESSELJ](/docs/reference/functions/engineering/besselj)
 - [BESSELK](/docs/reference/functions/engineering/besselk)
-- [IMDIV](/docs/reference/functions/engineering/imdiv)
-- [IMPOWER](/docs/reference/functions/engineering/impower)
-- [IMSUB](/docs/reference/functions/engineering/imsub)
 
 ## FAQ
 
 ### Is BESSELY defined at zero?
 No. Singular or otherwise invalid inputs return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/bessely" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

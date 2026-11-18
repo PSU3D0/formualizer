@@ -1,58 +1,99 @@
 ---
 title: "IMSIN"
-description: "IMSIN: Returns the sine of a complex number."
+seoTitle: "IMSIN function: formula syntax and examples"
+description: "Returns the sine of a complex number. =IMSIN(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imsin" />
-
-## Summary
+Returns the sine of a complex number.
 
 Evaluates complex sine and returns the result as complex text.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMSIN(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## Return type
+
+Can return text.
+
+## How it works
+
+The complex sine is (exp(iz) − exp(−iz)) / (2i). It is defined for every complex input.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
 
 ## Remarks
  - Input is coerced to complex-number text before parsing.
  - Uses hyperbolic components for the imaginary part.
+
+## Error cases
+
  - Invalid complex text returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Sine of zero", "Sine on imaginary axis"]}>
-<Tab value="Sine of zero">
-<FunctionSandbox
-  title="Sine of zero"
-  formula={`=IMSIN("0")`}
+<FunctionExample
+  title={"Compute the complex sine at real angle three with imaginary component four."}
+  formula={"=IMSIN(\"3+4i\")"}
+  grid={{}}
+  expected={"3.85373803791938-27.0168132580039i"}
+/>
+
+<FunctionExample
+  title={"Keep the real angle and reverse the imaginary component of the sine."}
+  formula={"=IMSIN(\"3-4j\")"}
+  grid={{}}
+  expected={"3.85373803791938+27.0168132580039j"}
+/>
+
+<FunctionExample
+  title={"With a real angle of one radian the imaginary part vanishes."}
+  formula={"=IMSIN(\"1\")"}
+  grid={{}}
+  expected={"0.841470984807897"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to take the complex sine."}
+  formula={"=IMSIN(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Sine of zero"}
+  formula={"=IMSIN(\"0\")"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Sine on imaginary axis">
-<FunctionSandbox
-  title="Sine on imaginary axis"
-  formula={`=IMSIN("i")`}
+<FunctionExample
+  title={"Sine on imaginary axis"}
+  formula={"=IMSIN(\"i\")"}
   grid={{}}
-  expected={"1.1752011936438014i"}
+  expected={"1.1752011936438i"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [IMCOS](/docs/reference/functions/engineering/imcos)
 - [IMEXP](/docs/reference/functions/engineering/imexp)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
-- [ERFC.PRECISE](/docs/reference/functions/engineering/erfc-precise)
 
 ## FAQ
 
 ### Why can `IMSIN` return non-zero imaginary output for real-looking formulas?
 For complex inputs `a+bi`, sine uses hyperbolic terms (`cosh`, `sinh`), so imaginary components are expected.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imsin" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

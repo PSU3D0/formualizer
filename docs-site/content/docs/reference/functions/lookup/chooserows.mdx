@@ -1,52 +1,88 @@
 ---
 title: "CHOOSEROWS"
-description: "CHOOSEROWS: Returns selected rows from an array or range."
+seoTitle: "CHOOSEROWS function: formula syntax and examples"
+description: "Returns selected rows from an array or range. =CHOOSEROWS(array, row_num1, [row_num2], ...)"
 ---
 
-<FunctionPageSchema id="lookup/chooserows" />
-
-## Summary
+Returns selected rows from an array or range.
 
 `CHOOSEROWS` builds a new spilled array containing only the requested rows, in the
  order provided.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CHOOSEROWS(array, row_num1, [row_num2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | range or any (range) | Required | — |
+| `row_num1` | number | Required | — |
+| `row_num2` | value | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 2.
+
 ## Remarks
  - Row indexes are 1-based; negative indexes count from the end (`-1` is last row).
  - Repeated indexes are allowed and duplicate rows in the output.
- - Index `0` or out-of-bounds indexes return `#VALUE!`.
  - The result spills as an array unless it collapses to a single cell.
+
+## Error cases
+
+ - Index `0` or out-of-bounds indexes return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Pick first and last rows", "Duplicate a row in output"]}>
-<Tab value="Pick first and last rows">
-<FunctionSandbox
-  title="Pick first and last rows"
-  formula={`=CHOOSEROWS(A1:A3,1,-1)`}
-  grid={{"A1":"Jan","A2":"Feb","A3":"Mar"}}
-  expected={"[[\"Jan\"],[\"Mar\"]]"}
+<FunctionExample
+  title={"Select the middle row from a three-row array."}
+  formula={"=CHOOSEROWS({1,2;3,4;5,6},2)"}
+  grid={{}}
+  expected={"{3, 4}"}
 />
-</Tab>
 
-<Tab value="Duplicate a row in output">
-<FunctionSandbox
-  title="Duplicate a row in output"
-  formula={`=CHOOSEROWS(A1:A2,2,2)`}
+<FunctionExample
+  title={"Use a negative index to select the last row before the first."}
+  formula={"=CHOOSEROWS({1,2;3,4;5,6},-1,1)"}
+  grid={{}}
+  expected={"{5, 6; 1, 2}"}
+/>
+
+<FunctionExample
+  title={"A one-cell array has a first row."}
+  formula={"=CHOOSEROWS({7},1)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A row index outside the array cannot be selected."}
+  formula={"=CHOOSEROWS({1,2;3,4;5,6},4)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Pick first and last rows"}
+  formula={"=CHOOSEROWS(A1:A3,1,-1)"}
+  grid={{"A1":"\"Jan\"","A2":"\"Feb\"","A3":"\"Mar\""}}
+  expected={"{\"Jan\"; \"Mar\"}"}
+/>
+
+<FunctionExample
+  title={"Duplicate a row in output"}
+  formula={"=CHOOSEROWS(A1:A2,2,2)"}
   grid={{"A1":"5","A2":"9"}}
-  expected={"[[9],[9]]"}
+  expected={"{9; 9}"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 - [TAKE](/docs/reference/functions/lookup/take)
 - [DROP](/docs/reference/functions/lookup/drop)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
-- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
-- [FILTER](/docs/reference/functions/lookup/filter)
 
 ## FAQ
 
@@ -56,8 +92,6 @@ Yes. CHOOSEROWS returns rows in the exact order of the supplied indexes, and rep
 ### When does CHOOSEROWS return #VALUE!?
 It returns #VALUE! for index 0 and for row indexes outside the source height after applying negative-index conversion.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/chooserows" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/choose.rs)

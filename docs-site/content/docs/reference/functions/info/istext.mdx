@@ -1,13 +1,26 @@
 ---
 title: "ISTEXT"
-description: "ISTEXT: Returns TRUE when the value is text."
+seoTitle: "ISTEXT function: formula syntax and examples"
+description: "Returns TRUE when the value is text. =ISTEXT(value)"
 ---
 
-<FunctionPageSchema id="info/istext" />
-
-## Summary
-
 Returns TRUE when the value is text.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISTEXT(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
+## Return type
+
+Logical (TRUE or FALSE)
 
 ## Remarks
  - Only text literals return TRUE.
@@ -16,43 +29,52 @@ Returns TRUE when the value is text.
 
 ## Examples
 
-<Tabs items={["Detect text", "Number is not text"]}>
-<Tab value="Detect text">
-<FunctionSandbox
-  title="Detect text"
-  formula={`=ISTEXT("alpha")`}
+<FunctionExample
+  title={"Test how the predicate classifies a logical value."}
+  formula={"=ISTEXT(TRUE)"}
   grid={{}}
-  expected={"true"}
+  expected={"FALSE"}
 />
-</Tab>
 
-<Tab value="Number is not text">
-<FunctionSandbox
-  title="Number is not text"
-  formula={`=ISTEXT(100)`}
+<FunctionExample
+  title={"Test numeric-looking text without converting it to a number."}
+  formula={"=ISTEXT(\"123\")"}
   grid={{}}
-  expected={"false"}
+  expected={"TRUE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Test an empty string, which still has a text type."}
+  formula={"=ISTEXT(\"\")"}
+  grid={{}}
+  expected={"TRUE"}
+/>
+
+<FunctionExample
+  title={"Detect text"}
+  formula={"=ISTEXT(\"alpha\")"}
+  grid={{}}
+  expected={"TRUE"}
+/>
+
+<FunctionExample
+  title={"Number is not text"}
+  formula={"=ISTEXT(100)"}
+  grid={{}}
+  expected={"FALSE"}
+/>
 
 ## Related functions
 
 - [T](/docs/reference/functions/info/t)
 - [TYPE](/docs/reference/functions/info/type)
 - [ISNUMBER](/docs/reference/functions/info/isnumber)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
 ### Is an empty string treated as text?
 Yes. An empty string literal is still text, so ISTEXT("") returns TRUE.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/istext" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

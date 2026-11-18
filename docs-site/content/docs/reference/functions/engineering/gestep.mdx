@@ -1,13 +1,25 @@
 ---
 title: "GESTEP"
-description: "GESTEP: Returns `1` when a number is greater than or equal to a step value."
+seoTitle: "GESTEP function: formula syntax and examples"
+description: "Returns 1 when a number is greater than or equal to a step value. =GESTEP(number, [step])"
 ---
 
-<FunctionPageSchema id="engineering/gestep" />
-
-## Summary
+Returns `1` when a number is greater than or equal to a step value.
 
 Returns `0` when the number is below the step.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GESTEP(number, [step])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `step` | number | Optional | — |
 
 ## Remarks
  - If `step` is omitted, it defaults to `0`.
@@ -16,43 +28,57 @@ Returns `0` when the number is below the step.
 
 ## Examples
 
-<Tabs items={["Value meets threshold", "Default threshold of zero"]}>
-<Tab value="Value meets threshold">
-<FunctionSandbox
-  title="Value meets threshold"
-  formula={`=GESTEP(5,3)`}
+<FunctionExample
+  title={"Test whether a number reaches a lower threshold."}
+  formula={"=GESTEP(4,3)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Default threshold of zero">
-<FunctionSandbox
-  title="Default threshold of zero"
-  formula={`=GESTEP(-2)`}
+<FunctionExample
+  title={"Test equality at the inclusive threshold."}
+  formula={"=GESTEP(3,3)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Omit the threshold to test against zero."}
+  formula={"=GESTEP(0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A nonnumeric value cannot be tested against a threshold."}
+  formula={"=GESTEP(\"invalid\",3)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Value meets threshold"}
+  formula={"=GESTEP(5,3)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Default threshold of zero"}
+  formula={"=GESTEP(-2)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [DELTA](/docs/reference/functions/engineering/delta)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
-- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
-- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
 
 ## FAQ
 
 ### What default threshold does `GESTEP` use?
 If omitted, `step` defaults to `0`, so the function returns `1` for non-negative inputs.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/gestep" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

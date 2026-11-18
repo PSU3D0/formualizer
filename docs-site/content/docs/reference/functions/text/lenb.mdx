@@ -1,19 +1,66 @@
 ---
 title: "LENB"
-description: "LENB: Returns text length using non-DBCS byte-compatible semantics."
+seoTitle: "LENB function: formula syntax and examples"
+description: "Returns a numeric value for the character count in a non-DBCS locale. =LENB(text)"
 ---
 
-<FunctionPageSchema id="text/lenb" />
-
-## Summary
+Returns a numeric value for the character count in a non-DBCS locale.
 
 In Formualizer's invariant locale, LENB delegates to LEN.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LENB(text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+
+## Return type
+
+Number
+
+## How it works
+
+Delegates to LEN. Sums one for each Unicode scalar character in Formualizer’s invariant locale. The result can differ from a byte count in a double-byte Excel locale.
+
 ## Examples
 
-<FunctionSandbox
-  title="Length of text"
-  formula={`=LENB("abc")`}
+<FunctionExample
+  title={"Count the four letters, one space and four digits in the label."}
+  formula={"=LENB(\"East 2024\")"}
+  grid={{}}
+  expected={"9"}
+/>
+
+<FunctionExample
+  title={"The two Unicode characters contribute one each in Formualizer."}
+  formula={"=LENB(\"é界\")"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Empty text has zero character positions."}
+  formula={"=LENB(\"\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The input error propagates before any characters can be counted."}
+  formula={"=LENB(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Length of text"}
+  formula={"=LENB(\"abc\")"}
   grid={{}}
   expected={"3"}
 />
@@ -23,17 +70,12 @@ In Formualizer's invariant locale, LENB delegates to LEN.
 - [LEN](/docs/reference/functions/text/len)
 - [LEFTB](/docs/reference/functions/text/leftb)
 - [RIGHTB](/docs/reference/functions/text/rightb)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
-- [CLEAN](/docs/reference/functions/text/clean)
 
 ## FAQ
 
 ### Does LENB count UTF-8 bytes?
 No. In the invariant locale it matches LEN.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/lenb" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/byte.rs)

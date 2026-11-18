@@ -1,58 +1,101 @@
 ---
 title: "IMPOWER"
-description: "IMPOWER: Raises a complex number to a real power."
+seoTitle: "IMPOWER function: formula syntax and examples"
+description: "Raises a complex number to a real power. =IMPOWER(inumber, number)"
 ---
 
-<FunctionPageSchema id="engineering/impower" />
-
-## Summary
+Raises a complex number to a real power.
 
 Uses polar form and returns the principal-value result as complex text.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMPOWER(inumber, number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+| `number` | any | Required | — |
+
+## Return type
+
+Can return text.
+
+## How it works
+
+For nonzero z and real p, the principal power is exp(p ln(z)), using the principal complex logarithm. Zero to a negative power is undefined.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
+
 ## Remarks
  - `inumber` is coerced to complex-number text; `n` is numerically coerced.
+
+## Error cases
+
  - Returns `#NUM!` for undefined zero-power cases such as `0^0` or `0^-1`.
  - Invalid complex text returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Square a complex value", "Negative real exponent"]}>
-<Tab value="Square a complex value">
-<FunctionSandbox
-  title="Square a complex value"
-  formula={`=IMPOWER("1+i",2)`}
+<FunctionExample
+  title={"Square a complex number with nonzero real and imaginary parts."}
+  formula={"=IMPOWER(\"3+4i\",2)"}
+  grid={{}}
+  expected={"-7+24i"}
+/>
+
+<FunctionExample
+  title={"A negative exponent asks for the reciprocal."}
+  formula={"=IMPOWER(\"3+4j\",-1)"}
+  grid={{}}
+  expected={"0.12-0.16j"}
+/>
+
+<FunctionExample
+  title={"A nonzero complex base raised to zero gives the multiplicative identity."}
+  formula={"=IMPOWER(\"3+4i\",0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The base must be a valid complex value."}
+  formula={"=IMPOWER(\"invalid\",2)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Square a complex value"}
+  formula={"=IMPOWER(\"1+i\",2)"}
   grid={{}}
   expected={"2i"}
 />
-</Tab>
 
-<Tab value="Negative real exponent">
-<FunctionSandbox
-  title="Negative real exponent"
-  formula={`=IMPOWER("2",-1)`}
+<FunctionExample
+  title={"Negative real exponent"}
+  formula={"=IMPOWER(\"2\",-1)"}
   grid={{}}
   expected={"0.5"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [IMSQRT](/docs/reference/functions/engineering/imsqrt)
 - [IMEXP](/docs/reference/functions/engineering/imexp)
 - [IMLN](/docs/reference/functions/engineering/imln)
-- [BESSELI](/docs/reference/functions/engineering/besseli)
-- [BESSELJ](/docs/reference/functions/engineering/besselj)
-- [BESSELK](/docs/reference/functions/engineering/besselk)
 
 ## FAQ
 
 ### How does `IMPOWER` handle zero base with non-positive exponent?
 `0^0` and `0` raised to a negative exponent are treated as undefined and return `#NUM!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/impower" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

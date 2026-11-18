@@ -1,39 +1,67 @@
 ---
 title: "ACOTH"
-description: "ACOTH: Returns the inverse hyperbolic cotangent of a number."
+seoTitle: "ACOTH function: formula syntax and examples"
+description: "Returns the inverse hyperbolic cotangent of a number. =ACOTH(number)"
 ---
-
-<FunctionPageSchema id="math/acoth" />
-
-## Summary
 
 Returns the inverse hyperbolic cotangent of a number.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ACOTH(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Inverts hyperbolic cotangent. The real expression ln((x + 1) / (x − 1)) / 2 requires |x| &gt; 1.
+
 ## Examples
 
-<FunctionSandbox
-  title="Inverse hyperbolic cotangent"
-  formula={`=ACOTH(2)`}
+<FunctionExample
+  title={"Evaluate the inverse hyperbolic cotangent in its positive domain."}
+  formula={"=ACOTH(2)"}
   grid={{}}
-  expected={"0.5493061443340548"}
+  expected={"0.549306144334055"}
+/>
+
+<FunctionExample
+  title={"Evaluate the inverse hyperbolic cotangent in its negative domain."}
+  formula={"=ACOTH(-2)"}
+  grid={{}}
+  expected={"-0.549306144334055"}
+/>
+
+<FunctionExample
+  title={"Approach the positive edge of the domain from above."}
+  formula={"=ACOTH(1.01)"}
+  grid={{}}
+  expected={"2.65165245402954"}
+/>
+
+<FunctionExample
+  title={"A value between negative one and one is outside the real domain."}
+  formula={"=ACOTH(0.5)"}
+  grid={{}}
+  expected={"#NUM!"}
 />
 
 ## Related functions
 
 - [ATANH](/docs/reference/functions/math/atanh)
 - [ACOT](/docs/reference/functions/math/acot)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ASIN](/docs/reference/functions/math/asin)
-- [ASINH](/docs/reference/functions/math/asinh)
-- [ATAN](/docs/reference/functions/math/atan)
 
 ## FAQ
 
 ### When does ACOTH return #NUM!?
 ACOTH requires |x| &gt; 1, so inputs between -1 and 1 inclusive return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/acoth" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

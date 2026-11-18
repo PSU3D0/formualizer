@@ -1,13 +1,22 @@
 ---
 title: "ABS"
-description: "Returns the absolute value of a number."
+seoTitle: "ABS function: formula syntax and examples"
+description: "Returns the absolute value of a number. =ABS(number)"
 ---
 
-<FunctionPageSchema id="math/abs" />
-
-## Summary
-
 Returns the absolute value of a number.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ABS(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
 
 ## Remarks
  - Negative numbers are returned as positive values.
@@ -16,43 +25,59 @@ Returns the absolute value of a number.
 
 ## Examples
 
-<Tabs items={["Absolute value of a negative number", "Absolute value from a cell reference"]}>
-<Tab value="Absolute value of a negative number">
-<FunctionSandbox
-  title="Absolute value of a negative number"
-  formula={`=ABS(-12.5)`}
+<FunctionExample
+  title={"Evaluate a negative number with a fractional part."}
+  formula={"=ABS(-4.7)"}
+  grid={{}}
+  expected={"4.7"}
+/>
+
+<FunctionExample
+  title={"Compare the result on the positive side of zero."}
+  formula={"=ABS(4.7)"}
+  grid={{}}
+  expected={"4.7"}
+/>
+
+<FunctionExample
+  title={"Evaluate the function at the zero boundary."}
+  formula={"=ABS(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A nonnumeric text value cannot be used as the number."}
+  formula={"=ABS(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Absolute value of a negative number"}
+  formula={"=ABS(-12.5)"}
   grid={{}}
   expected={"12.5"}
 />
-</Tab>
 
-<Tab value="Absolute value from a cell reference">
-<FunctionSandbox
-  title="Absolute value from a cell reference"
-  formula={`=ABS(A1)`}
+<FunctionExample
+  title={"Absolute value from a cell reference"}
+  formula={"=ABS(A1)"}
   grid={{"A1":"-42"}}
   expected={"42"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SIGN](/docs/reference/functions/math/sign)
 - [INT](/docs/reference/functions/math/int)
 - [MOD](/docs/reference/functions/math/mod)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### How does ABS handle errors or non-numeric text?
 Input errors propagate, and non-coercible text returns a coercion error.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/abs" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

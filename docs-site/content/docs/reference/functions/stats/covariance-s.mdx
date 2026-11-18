@@ -1,54 +1,79 @@
 ---
 title: "COVARIANCE.S"
-description: "COVARIANCE.S: Returns sample covariance for two paired numeric data sets."
+seoTitle: "COVARIANCE.S function: formula syntax and examples"
+description: "Returns sample covariance for two paired numeric data sets. =COVARIANCE.S(array1, array2)"
 ---
 
-<FunctionPageSchema id="stats/covariance-s" />
-
-## Summary
+Returns sample covariance for two paired numeric data sets.
 
 `COVARIANCE.S` measures joint variability using `n - 1` in the denominator.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COVARIANCE.S(array1, array2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array1` | number (range) | Required | — |
+| `array2` | number (range) | Required | — |
 
 ## Remarks
  - Arrays must contain paired numeric values with matching lengths.
  - Requires at least two paired points.
- - Returns `#DIV/0!` when fewer than two numeric pairs are available.
  - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
+
+## Error cases
+
+ - Returns `#DIV/0!` when fewer than two numeric pairs are available.
 
 ## Examples
 
-<Tabs items={["Positive sample covariance", "Negative sample covariance"]}>
-<Tab value="Positive sample covariance">
-<FunctionSandbox
-  title="Positive sample covariance"
-  formula={`=COVARIANCE.S({1,3,5},{2,4,6})`}
+<FunctionExample
+  title={"Evaluate matched observations in two equally sized arrays."}
+  formula={"=COVARIANCE.S({1,2,3,4},{1,4,5,7})"}
+  grid={{}}
+  expected={"3.16666666666667"}
+/>
+
+<FunctionExample
+  title={"Reverse the second series to compare opposite movement."}
+  formula={"=COVARIANCE.S({1,2,3,4},{7,5,4,1})"}
+  grid={{}}
+  expected={"-3.16666666666667"}
+/>
+
+<FunctionExample
+  title={"Use two observations that follow a perfect positive linear pattern."}
+  formula={"=COVARIANCE.S({1,2},{2,4})"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Each observation needs a partner in the other array."}
+  formula={"=COVARIANCE.S({1,2,3,4},{1,4,5})"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Positive sample covariance"}
+  formula={"=COVARIANCE.S({1,3,5},{2,4,6})"}
   grid={{}}
   expected={"4"}
 />
-</Tab>
 
-<Tab value="Negative sample covariance">
-<FunctionSandbox
-  title="Negative sample covariance"
-  formula={`=COVARIANCE.S({1,2,3},{3,2,1})`}
+<FunctionExample
+  title={"Negative sample covariance"}
+  formula={"=COVARIANCE.S({1,2,3},{3,2,1})"}
   grid={{}}
   expected={"-1"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
-- [CORREL](/docs/reference/functions/stats/correl)
-- [INTERCEPT](/docs/reference/functions/stats/intercept)
-- [PEARSON](/docs/reference/functions/stats/pearson)
-- [RSQ](/docs/reference/functions/stats/rsq)
-- [SLOPE](/docs/reference/functions/stats/slope)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/covariance-s" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

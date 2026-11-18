@@ -1,60 +1,91 @@
 ---
 title: "BESSELI"
-description: "BESSELI: Returns the modified Bessel function In(x)."
+seoTitle: "BESSELI function: formula syntax and examples"
+description: "Returns the modified Bessel function In(x). =BESSELI(x, n)"
 ---
 
-<FunctionPageSchema id="engineering/besseli" />
-
-## Summary
+Returns the modified Bessel function In(x).
 
 Computes the modified Bessel function of the first kind for a real value `x`
  and a non-negative integer order `n`. The order is truncated toward zero,
  matching spreadsheet behavior.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BESSELI(x, n)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | any | Required | — |
+| `n` | any | Required | — |
+
 ## Remarks
  - Arguments are supplied as `BESSELI(x, n)`.
  - `n` must truncate to a non-negative integer order.
+
+## Error cases
+
  - Invalid domains or non-finite results return `#NUM!`.
 
 ## Examples
 
-<Tabs items={["First-order modified Bessel I", "Order is truncated"]}>
-<Tab value="First-order modified Bessel I">
-<FunctionSandbox
-  title="First-order modified Bessel I"
-  formula={`=BESSELI(0.5,1)`}
+<FunctionExample
+  title={"Evaluate the Bessel function at x = 2 and order one."}
+  formula={"=BESSELI(2,1)"}
   grid={{}}
-  expected={"0.2578943053908963"}
+  expected={"1.59063685726331"}
 />
-</Tab>
 
-<Tab value="Order is truncated">
-<FunctionSandbox
-  title="Order is truncated"
-  formula={`=BESSELI(0.5,1.9)`}
+<FunctionExample
+  title={"Keep x fixed and compare the result at order two."}
+  formula={"=BESSELI(2,2)"}
   grid={{}}
-  expected={"0.2578943053908963"}
+  expected={"0.688948449197763"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Evaluate the order-zero function at the origin."}
+  formula={"=BESSELI(0,0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative order is outside the supported domain."}
+  formula={"=BESSELI(2,-1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"First-order modified Bessel I"}
+  formula={"=BESSELI(0.5,1)"}
+  grid={{}}
+  expected={"0.257894303289036"}
+/>
+
+<FunctionExample
+  title={"Order is truncated"}
+  formula={"=BESSELI(0.5,1.9)"}
+  grid={{}}
+  expected={"0.257894303289036"}
+/>
 
 ## Related functions
 
 - [BESSELJ](/docs/reference/functions/engineering/besselj)
 - [BESSELK](/docs/reference/functions/engineering/besselk)
 - [BESSELY](/docs/reference/functions/engineering/bessely)
-- [IMDIV](/docs/reference/functions/engineering/imdiv)
-- [IMPOWER](/docs/reference/functions/engineering/impower)
-- [IMSUB](/docs/reference/functions/engineering/imsub)
 
 ## FAQ
 
 ### What happens to fractional order values?
 The order argument is truncated toward zero before evaluation.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/besseli" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

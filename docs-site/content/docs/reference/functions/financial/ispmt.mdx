@@ -1,14 +1,28 @@
 ---
 title: "ISPMT"
-description: "ISPMT: Returns the interest paid on the outstanding principal for a specific period of an investment with even principal payments. Calculates interest paid in a per…"
+seoTitle: "ISPMT function: formula syntax and examples"
+description: "Returns the interest paid on the outstanding principal for a specific period of an investment with even principal payments. Calculates interest paid in a… ISPMT"
 ---
 
-<FunctionPageSchema id="financial/ispmt" />
-
-## Summary
+Returns the interest paid on the outstanding principal for a specific period of an investment with even principal payments. Calculates interest paid in a period for a loan repa…
 
 Unlike `IPMT`, `ISPMT` assumes the principal is repaid in equal installments
  so the interest portion decreases linearly over the life of the loan.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISPMT(rate, per, nper, pv)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `per` | number | Required | — |
+| `nper` | number | Required | — |
+| `pv` | number | Required | — |
 
 ## Remarks
  - `rate` is the interest rate per period.
@@ -17,15 +31,46 @@ Unlike `IPMT`, `ISPMT` assumes the principal is repaid in equal installments
  - `pv` is the present value (principal).
  - Formula: `pv * rate * (per / nper - 1)`.
  - The result is typically negative for a positive loan principal, representing interest paid.
+
+## Error cases
+
  - Returns `#NUM!` when `nper` is zero.
 
 ## Examples
 
-<FunctionSandbox
-  title="Interest in the first period"
-  formula={`=ISPMT(0.005, 1, 24, 100000)`}
+<FunctionExample
+  title={"Compute interest for the period indexed by two under the even-principal schedule."}
+  formula={"=ISPMT(0.06,2,6,1200)"}
   grid={{}}
-  expected={"-479.1666666666667"}
+  expected={"-48"}
+/>
+
+<FunctionExample
+  title={"Compare the interest later in the same schedule."}
+  formula={"=ISPMT(0.06,4,6,1200)"}
+  grid={{}}
+  expected={"-24"}
+/>
+
+<FunctionExample
+  title={"An interest rate of zero yields zero interest."}
+  formula={"=ISPMT(0,2,6,1200)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A zero number of periods leaves the calculation without a denominator."}
+  formula={"=ISPMT(0.06,2,0,1200)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Interest in the first period"}
+  formula={"=ISPMT(0.005, 1, 24, 100000)"}
+  grid={{}}
+  expected={"-479.166666666667"}
 />
 
 ## Related functions
@@ -33,17 +78,12 @@ Unlike `IPMT`, `ISPMT` assumes the principal is repaid in equal installments
 - [IPMT](/docs/reference/functions/financial/ipmt)
 - [PPMT](/docs/reference/functions/financial/ppmt)
 - [PMT](/docs/reference/functions/financial/pmt)
-- [SYD](/docs/reference/functions/financial/syd)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
-- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
 
 ## FAQ
 
 ### How is ISPMT different from IPMT?
 ISPMT assumes equal principal repayment, so interest declines linearly instead of following an annuity schedule.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/ispmt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

@@ -1,54 +1,89 @@
 ---
 title: "CHISQ.DIST"
-description: "CHISQ.DIST: Returns the chi-square probability for `x` with the specified degrees of freedom."
+seoTitle: "CHISQ.DIST function: formula syntax and examples"
+description: "Returns the chi-square probability for x with the specified degrees of freedom. =CHISQ.DIST(x, deg_freedom, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/chisq-dist" />
-
-## Summary
+Returns the chi-square probability for `x` with the specified degrees of freedom.
 
 Use `CHISQ.DIST` in cumulative mode for left-tail probability or density mode for the PDF.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CHISQ.DIST(x, deg_freedom, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+The chi-squared distribution with ν degrees of freedom is a gamma distribution with shape ν/2 and scale 2. Use a nonnegative statistic and positive degrees of freedom. The cumulative flag selects probability from zero through x or the density at x.
 
 ## Remarks
  - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
  - Requires `x &gt;= 0` and `deg_freedom &gt;= 1`.
- - Returns `#NUM!` for negative `x` or invalid degrees of freedom.
  - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Error cases
+
+ - Returns `#NUM!` for negative `x` or invalid degrees of freedom.
 
 ## Examples
 
-<Tabs items={["Chi-square CDF at zero", "Chi-square PDF example"]}>
-<Tab value="Chi-square CDF at zero">
-<FunctionSandbox
-  title="Chi-square CDF at zero"
-  formula={`=CHISQ.DIST(0,4,TRUE)`}
+<FunctionExample
+  title={"Evaluate cumulative probability up to a chi-square statistic of four."}
+  formula={"=CHISQ.DIST(4,3,TRUE)"}
+  grid={{}}
+  expected={"0.738535870050889"}
+/>
+
+<FunctionExample
+  title={"Evaluate density at the same statistic."}
+  formula={"=CHISQ.DIST(4,3,FALSE)"}
+  grid={{}}
+  expected={"0.107981933026376"}
+/>
+
+<FunctionExample
+  title={"Evaluate at the lower boundary of the distribution."}
+  formula={"=CHISQ.DIST(0,3,TRUE)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Chi-square PDF example">
-<FunctionSandbox
-  title="Chi-square PDF example"
-  formula={`=CHISQ.DIST(2,2,FALSE)`}
+<FunctionExample
+  title={"A negative statistic is outside the chi-square domain."}
+  formula={"=CHISQ.DIST(-1,3,TRUE)"}
   grid={{}}
-  expected={"0.18393972058572117"}
+  expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Chi-square CDF at zero"}
+  formula={"=CHISQ.DIST(0,4,TRUE)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Chi-square PDF example"}
+  formula={"=CHISQ.DIST(2,2,FALSE)"}
+  grid={{}}
+  expected={"0.183939720585721"}
+/>
 
 ## Related functions
 
 - [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
 - [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
-- [CHISQ.INV.RT](/docs/reference/functions/stats/chisq-inv-rt)
-- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/chisq-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

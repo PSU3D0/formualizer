@@ -1,58 +1,86 @@
 ---
 title: "EDATE"
-description: "EDATE: Returns the serial date offset by a whole number of months from a start date."
+seoTitle: "EDATE function: formula syntax and examples"
+description: "Returns the serial date offset by a whole number of months from a start date. =EDATE(start_date, months)"
 ---
-
-<FunctionPageSchema id="datetime/edate" />
-
-## Summary
 
 Returns the serial date offset by a whole number of months from a start date.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=EDATE(start_date, months)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `start_date` | number | Required | — |
+| `months` | number | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - `months` is truncated to an integer before calculation.
  - If the target month has fewer days, the day is clamped to that month's last valid day.
- - Serials are interpreted and emitted with Excel 1900 date mapping (not workbook-specific `1904` mode).
+ - Serials are interpreted and emitted with the workbook's date system (Excel 1900 or Excel 1904).
 
 ## Examples
 
-<Tabs items={["Add months to first-of-month date", "Clamp month-end overflow"]}>
-<Tab value="Add months to first-of-month date">
-<FunctionSandbox
-  title="Add months to first-of-month date"
-  formula={`=EDATE(44927, 3)`}
-  grid={{}}
-  expected={"45017"}
-/>
-</Tab>
-
-<Tab value="Clamp month-end overflow">
-<FunctionSandbox
-  title="Clamp month-end overflow"
-  formula={`=EDATE(45322, 1)`}
+<FunctionExample
+  title={"Move forward one month from January 31 into leap-year February."}
+  formula={"=EDATE(DATE(2024,1,31),1)"}
   grid={{}}
   expected={"45351"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Use a negative month offset to go backward."}
+  formula={"=EDATE(DATE(2024,3,15),-1)"}
+  grid={{}}
+  expected={"45337"}
+/>
+
+<FunctionExample
+  title={"Apply a zero-month offset in the middle of February."}
+  formula={"=EDATE(DATE(2024,2,15),0)"}
+  grid={{}}
+  expected={"45337"}
+/>
+
+<FunctionExample
+  title={"The month offset must be numeric."}
+  formula={"=EDATE(DATE(2024,2,15),\"one\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Add months to first-of-month date"}
+  formula={"=EDATE(44927, 3)"}
+  grid={{}}
+  expected={"45017"}
+/>
+
+<FunctionExample
+  title={"Clamp month-end overflow"}
+  formula={"=EDATE(45322, 1)"}
+  grid={{}}
+  expected={"45351"}
+/>
 
 ## Related functions
 
 - [EOMONTH](/docs/reference/functions/datetime/eomonth)
 - [DATE](/docs/reference/functions/datetime/date)
 - [YEARFRAC](/docs/reference/functions/datetime/yearfrac)
-- [DAYS](/docs/reference/functions/datetime/days)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [DAY](/docs/reference/functions/datetime/day)
 
 ## FAQ
 
 ### What happens when the start day does not exist in the target month?
 EDATE clamps to the last valid day of the target month (for example Jan 31 + 1 month becomes Feb month-end).
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/edate" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/edate_eomonth.rs)

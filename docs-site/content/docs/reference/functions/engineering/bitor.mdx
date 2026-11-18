@@ -1,58 +1,89 @@
 ---
 title: "BITOR"
-description: "BITOR: Returns the bitwise OR of two non-negative integers."
+seoTitle: "BITOR function: formula syntax and examples"
+description: "Returns the bitwise OR of two non-negative integers. =BITOR(number1, number2)"
 ---
 
-<FunctionPageSchema id="engineering/bitor" />
-
-## Summary
+Returns the bitwise OR of two non-negative integers.
 
 Combines matching bits from both inputs and keeps bits set in either number.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BITOR(number1, number2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number | Required | — |
+| `number2` | number | Required | — |
+
 ## Remarks
  - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
- - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
  - Propagates input errors.
+
+## Error cases
+
+ - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
 
 ## Examples
 
-<Tabs items={["Merge bit flags", "Set an additional bit"]}>
-<Tab value="Merge bit flags">
-<FunctionSandbox
-  title="Merge bit flags"
-  formula={`=BITOR(13,10)`}
+<FunctionExample
+  title={"Combine two integers whose binary representations partly overlap."}
+  formula={"=BITOR(12,10)"}
+  grid={{}}
+  expected={"14"}
+/>
+
+<FunctionExample
+  title={"Compare the result when both operands have identical bits."}
+  formula={"=BITOR(12,12)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Apply the bit operation to two zero operands."}
+  formula={"=BITOR(0,0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Negative operands are outside the supported integer domain."}
+  formula={"=BITOR(-1,10)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Merge bit flags"}
+  formula={"=BITOR(13,10)"}
   grid={{}}
   expected={"15"}
 />
-</Tab>
 
-<Tab value="Set an additional bit">
-<FunctionSandbox
-  title="Set an additional bit"
-  formula={`=BITOR(8,1)`}
+<FunctionExample
+  title={"Set an additional bit"}
+  formula={"=BITOR(8,1)"}
   grid={{}}
   expected={"9"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [BITAND](/docs/reference/functions/engineering/bitand)
 - [BITXOR](/docs/reference/functions/engineering/bitxor)
 - [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
-- [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BESSELI](/docs/reference/functions/engineering/besseli)
-- [BESSELJ](/docs/reference/functions/engineering/besselj)
 
 ## FAQ
 
 ### Does `BITOR` accept decimal-looking values like `3.0`?
 Yes if they coerce to whole integers; non-integer values still return `#NUM!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/bitor" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

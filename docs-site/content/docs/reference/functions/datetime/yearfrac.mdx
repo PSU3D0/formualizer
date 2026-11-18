@@ -1,59 +1,97 @@
 ---
 title: "YEARFRAC"
-description: "YEARFRAC: Returns the fraction of a year between two dates for a selected day-count basis."
+seoTitle: "YEARFRAC function: formula syntax and examples"
+description: "Returns the fraction of a year between two dates for a selected day-count basis. =YEARFRAC(start_date, end_date, [basis])"
 ---
-
-<FunctionPageSchema id="datetime/yearfrac" />
-
-## Summary
 
 Returns the fraction of a year between two dates for a selected day-count basis.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=YEARFRAC(start_date, end_date, [basis])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `start_date` | number | Required | — |
+| `end_date` | number | Required | — |
+| `basis` | number | Optional | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Supported `basis` values: `0` (US 30/360), `1` (actual/actual), `2` (actual/360), `3` (actual/365), `4` (European 30/360).
- - If `start_date &gt; end_date`, the result is negative.
+ - The dates are ordered first, so swapping them gives the same positive result.
+ - Basis `0` follows Excel's US 30/360 month-end rules, which differ from `DAYS360`'s:
+   an end day of 31 becomes 30 only when the start day is 30 or 31, and February
+   month-ends are adjusted on the start date (on both dates when both are the last day
+   of February).
+ - Basis `1` divides by 366 or 365 for periods up to a year (366 when the period is in a
+   leap year or covers February 29) and by the average year length otherwise.
+ - Serial dates are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
+
+## Error cases
+
  - Invalid `basis` values return `#NUM!`.
- - Serial dates are interpreted with the Excel 1900 mapping rather than workbook `1900`/`1904` context.
 
 ## Examples
 
-<Tabs items={["Actual/360 convention", "Actual/365 convention"]}>
-<Tab value="Actual/360 convention">
-<FunctionSandbox
-  title="Actual/360 convention"
-  formula={`=YEARFRAC(44197, 44378, 2)`}
+<FunctionExample
+  title={"Measure half a calendar year using the default financial convention."}
+  formula={"=YEARFRAC(DATE(2024,1,1),DATE(2024,7,1))"}
   grid={{}}
-  expected={"0.5027777778"}
+  expected={"0.5"}
 />
-</Tab>
 
-<Tab value="Actual/365 convention">
-<FunctionSandbox
-  title="Actual/365 convention"
-  formula={`=YEARFRAC(44197, 44378, 3)`}
+<FunctionExample
+  title={"Use actual elapsed days and a 365-day denominator."}
+  formula={"=YEARFRAC(DATE(2024,1,1),DATE(2024,7,1),3)"}
   grid={{}}
-  expected={"0.495890411"}
+  expected={"0.498630136986301"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Identical dates have a year fraction of zero."}
+  formula={"=YEARFRAC(45000,45000)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Basis 99 is outside the supported day-count conventions."}
+  formula={"=YEARFRAC(45000,45100,99)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Actual/360 convention"}
+  formula={"=YEARFRAC(44197, 44378, 2)"}
+  grid={{}}
+  expected={"0.502777777777778"}
+/>
+
+<FunctionExample
+  title={"Actual/365 convention"}
+  formula={"=YEARFRAC(44197, 44378, 3)"}
+  grid={{}}
+  expected={"0.495890410958904"}
+/>
 
 ## Related functions
 
 - [DAYS360](/docs/reference/functions/datetime/days360)
 - [DAYS](/docs/reference/functions/datetime/days)
 - [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
-- [NETWORKDAYS.INTL](/docs/reference/functions/datetime/networkdays-intl)
-- [WORKDAY](/docs/reference/functions/datetime/workday)
 
 ## FAQ
 
 ### How does the basis argument change YEARFRAC?
 Basis selects the day-count convention (actual or 30/360 variants), so the same dates can yield different fractions.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/yearfrac" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_parts.rs)

@@ -95,6 +95,9 @@ jobs:
       - name: Check TypeScript
         run: pnpm types:check
 
+      - name: Check browser package against the function examples
+        run: pnpm check:wasm-examples
+
       - name: Build static export
         run: pnpm build
 

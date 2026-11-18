@@ -1,52 +1,97 @@
 ---
 title: "GROUPBY"
-description: "GROUPBY: Groups rows by key fields and returns aggregated values as a spilled table."
+seoTitle: "GROUPBY function: formula syntax and examples"
+description: "Summarize rows by shared keys and spill the group totals into a table."
 ---
 
-<FunctionPageSchema id="lookup/groupby" />
-
-## Summary
+Groups rows by key fields and returns aggregated values as a spilled table.
 
 `GROUPBY` summarizes one or more value columns using a selected aggregation function.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GROUPBY(row_fields, values, function, [field_headers], [total_depth], [sort_order], [filter_array], [field_relationship])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `row_fields` | range (range) | Required | — |
+| `values` | range (range) | Required | — |
+| `function` | any | Required | — |
+| `field_headers` | number | Optional | `1` |
+| `total_depth` | number | Optional | `0` |
+| `sort_order` | number | Optional | `0` |
+| `filter_array` | value | Optional | — |
+| `field_relationship` | value | Optional | — |
+
+## Differences from Excel
+
+Formualizer accepts a text aggregation name. Excel’s aggregation function argument is unsupported. A filter array also returns `#VALUE!` in Formualizer. Formualizer defaults `total_depth` to 0 (no totals). Excel automatically adds a grand total and, where possible, subtotals.
 
 ## Remarks
  - `row_fields` and `values` must have the same row count.
  - Aggregation can be supplied as text (for example `"SUM"`) or numeric code.
- - Optional controls: `field_headers`, `total_depth`, `sort_order`.
- - Invalid aggregation names/codes return `#VALUE!`.
+ - Use `field_headers`, `total_depth`, and `sort_order` to control the result layout.
  - Output is dynamic-array shaped and may include generated headers or totals.
+
+## Error cases
+
+ - Unlike Excel's filter mode, a supplied `filter_array` returns `#VALUE!` in Formualizer.
+ - A supplied `field_relationship` with multiple row fields also returns `#VALUE!`.
+ - Invalid aggregation names/codes return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Sum sales by region", "Average with grand total"]}>
-<Tab value="Sum sales by region">
-<FunctionSandbox
-  title="Sum sales by region"
-  formula={`=GROUPBY(A1:A4,B1:B4,"SUM",3,0,1)`}
-  grid={{"A1":"Region","A2":"East","A3":"West","A4":"East","B1":"Sales","B2":"100","B3":"80","B4":"50"}}
-  expected={"[[\"Region\",\"Sales\"],[\"East\",150],[\"West\",80]]"}
+<FunctionExample
+  title={"Sum each region's sales from columns that include headers."}
+  formula={"=GROUPBY({\"Region\";\"East\";\"East\";\"West\"},{\"Sales\";10;20;8},\"SUM\")"}
+  grid={{}}
+  expected={"{\"East\", 30; \"West\", 8}"}
 />
-</Tab>
 
-<Tab value="Average with grand total">
-<FunctionSandbox
-  title="Average with grand total"
-  formula={`=GROUPBY(A1:A4,B1:B4,"AVERAGE",3,1,1)`}
-  grid={{"A1":"Team","A2":"A","A3":"A","A4":"B","B1":"Score","B2":"90","B3":"70","B4":"80"}}
-  expected={"Grouped table with team averages plus grand total row"}
+<FunctionExample
+  title={"Average each region, omit totals and sort labels in descending order."}
+  formula={"=GROUPBY({\"East\";\"East\";\"West\"},{10;20;8},\"AVERAGE\",0,0,-1,,0)"}
+  grid={{}}
+  expected={"{\"West\", 8; \"East\", 15}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Group a single observation into one result row."}
+  formula={"=GROUPBY({\"East\"},{10},\"SUM\",0,0)"}
+  grid={{}}
+  expected={"{\"East\", 10}"}
+/>
+
+<FunctionExample
+  title={"Every group label must have a corresponding value."}
+  formula={"=GROUPBY({\"East\";\"West\"},{10},\"SUM\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Sum sales by region"}
+  formula={"=GROUPBY(A1:A4,B1:B4,\"SUM\",3,0,1)"}
+  grid={{"A1":"\"Region\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Sales\"","B2":"100","B3":"80","B4":"50"}}
+  expected={"{\"Region\", \"Sales\"; \"East\", 150; \"West\", 80}"}
+/>
+
+<FunctionExample
+  title={"Average with grand total"}
+  formula={"=GROUPBY(A1:A4,B1:B4,\"AVERAGE\",3,1,1)"}
+  grid={{"A1":"\"Team\"","A2":"\"A\"","A3":"\"A\"","A4":"\"B\"","B1":"\"Score\"","B2":"90","B3":"70","B4":"80"}}
+  expected={"{\"Team\", \"Score\"; \"A\", 80; \"B\", 80; \"Grand Total\", 80}"}
+/>
 
 ## Related functions
 
 - [PIVOTBY](/docs/reference/functions/lookup/pivotby)
 - [SORTBY](/docs/reference/functions/lookup/sortby)
 - [UNIQUE](/docs/reference/functions/lookup/unique)
-- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 
 ## FAQ
 
@@ -56,8 +101,6 @@ row_fields and values must have the same number of rows; mismatched heights retu
 ### Can the aggregation function be numeric instead of text?
 Yes. GROUPBY accepts either function names (like "SUM") or numeric function codes, and invalid entries return #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/groupby" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

@@ -1,58 +1,86 @@
 ---
 title: "EOMONTH"
-description: "EOMONTH: Returns the serial for the last day of the month at a month offset from a start date."
+seoTitle: "EOMONTH function: formula syntax and examples"
+description: "Returns the serial for the last day of the month at a month offset from a start date. =EOMONTH(start_date, months)"
 ---
-
-<FunctionPageSchema id="datetime/eomonth" />
-
-## Summary
 
 Returns the serial for the last day of the month at a month offset from a start date.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=EOMONTH(start_date, months)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `start_date` | number | Required | — |
+| `months` | number | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - `months` is truncated to an integer before offset calculation.
  - The returned date is always the month-end date for the target month.
- - Serials are interpreted and returned using Excel 1900 mapping rather than workbook `1904` mode.
+ - Serials are interpreted and returned using the workbook's date system (Excel 1900 or Excel 1904).
 
 ## Examples
 
-<Tabs items={["Get end of current month", "Get end of month two months ahead"]}>
-<Tab value="Get end of current month">
-<FunctionSandbox
-  title="Get end of current month"
-  formula={`=EOMONTH(44927, 0)`}
+<FunctionExample
+  title={"Move forward one month from January 31 into leap-year February."}
+  formula={"=EOMONTH(DATE(2024,1,31),1)"}
+  grid={{}}
+  expected={"45351"}
+/>
+
+<FunctionExample
+  title={"Use a negative month offset to go backward."}
+  formula={"=EOMONTH(DATE(2024,3,15),-1)"}
+  grid={{}}
+  expected={"45351"}
+/>
+
+<FunctionExample
+  title={"Apply a zero-month offset in the middle of February."}
+  formula={"=EOMONTH(DATE(2024,2,15),0)"}
+  grid={{}}
+  expected={"45351"}
+/>
+
+<FunctionExample
+  title={"The month offset must be numeric."}
+  formula={"=EOMONTH(DATE(2024,2,15),\"one\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Get end of current month"}
+  formula={"=EOMONTH(44927, 0)"}
   grid={{}}
   expected={"44957"}
 />
-</Tab>
 
-<Tab value="Get end of month two months ahead">
-<FunctionSandbox
-  title="Get end of month two months ahead"
-  formula={`=EOMONTH(45322, 2)`}
+<FunctionExample
+  title={"Get end of month two months ahead"}
+  formula={"=EOMONTH(45322, 2)"}
   grid={{}}
   expected={"45382"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [EDATE](/docs/reference/functions/datetime/edate)
 - [DATE](/docs/reference/functions/datetime/date)
 - [DAY](/docs/reference/functions/datetime/day)
-- [DAYS](/docs/reference/functions/datetime/days)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [DAYS360](/docs/reference/functions/datetime/days360)
 
 ## FAQ
 
 ### Does EOMONTH always return a month-end date?
 Yes. Regardless of the start day, EOMONTH returns the final calendar day of the target month after offset.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/eomonth" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/edate_eomonth.rs)

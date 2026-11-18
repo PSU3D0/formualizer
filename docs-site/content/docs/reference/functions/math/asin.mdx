@@ -1,58 +1,85 @@
 ---
 title: "ASIN"
-description: "ASIN: Returns the angle in radians whose sine is the input value."
+seoTitle: "ASIN function: formula syntax and examples"
+description: "Returns the angle in radians whose sine is the input value. =ASIN(number)"
 ---
 
-<FunctionPageSchema id="math/asin" />
-
-## Summary
+Returns the angle in radians whose sine is the input value.
 
 Use `ASIN` to recover an angle from a normalized ratio.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ASIN(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Inverts sine on the interval from −π/2 to π/2. A real result exists only for inputs from −1 through 1 inclusive.
 
 ## Remarks
  - Domain: input must be between `-1` and `1`, inclusive.
  - Radians: output is in the range `[-PI()/2, PI()/2]`.
+
+## Error cases
+
  - Errors: returns `#NUM!` when the input is outside the valid domain.
 
 ## Examples
 
-<Tabs items={["Arcsine of one half", "Lower boundary"]}>
-<Tab value="Arcsine of one half">
-<FunctionSandbox
-  title="Arcsine of one half"
-  formula={`=ASIN(0.5)`}
+<FunctionExample
+  title={"Find the angle with unit-circle height one half."}
+  formula={"=ASIN(0.5)"}
   grid={{}}
-  expected={"0.5235987755982989"}
+  expected={"0.523598775598299"}
 />
-</Tab>
 
-<Tab value="Lower boundary">
-<FunctionSandbox
-  title="Lower boundary"
-  formula={`=ASIN(-1)`}
+<FunctionExample
+  title={"A negative height of one half gives the opposite principal angle."}
+  formula={"=ASIN(-0.5)"}
   grid={{}}
-  expected={"-1.5707963267948966"}
+  expected={"-0.523598775598299"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The principal inverse sine of zero is zero."}
+  formula={"=ASIN(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the inverse sine."}
+  formula={"=ASIN(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Lower boundary"}
+  formula={"=ASIN(-1)"}
+  grid={{}}
+  expected={"-1.5707963267949"}
+/>
 
 ## Related functions
 
 - [SIN](/docs/reference/functions/math/sin)
 - [ACOS](/docs/reference/functions/math/acos)
 - [ATAN](/docs/reference/functions/math/atan)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
-- [ASINH](/docs/reference/functions/math/asinh)
 
 ## FAQ
 
 ### When does ASIN return #NUM!?
 ASIN returns #NUM! when the input is outside the closed interval [-1, 1].
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/asin" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

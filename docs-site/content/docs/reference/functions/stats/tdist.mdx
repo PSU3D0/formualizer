@@ -1,0 +1,76 @@
+---
+title: "TDIST"
+seoTitle: "TDIST function: formula syntax and examples"
+description: "Returns the right-tailed or two-tailed Student's t probability (legacy name). =TDIST(x, deg_freedom, tails)"
+---
+
+Returns the right-tailed or two-tailed Student's t probability (legacy name).
+
+`TDIST(x, deg_freedom, 1)` is `P(T &gt; x)` (`T.DIST.RT`) and
+ `TDIST(x, deg_freedom, 2)` is `P(|T| &gt; x)` (`T.DIST.2T`).
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TDIST(x, deg_freedom, tails)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+| `tails` | number | Required | — |
+
+## How it works
+
+A tails argument of 1 maps to T.DIST.RT(x, degrees_freedom). A value of 2 maps to T.DIST.2T(x, degrees_freedom). The legacy argument x must be nonnegative and degrees of freedom positive.
+
+## Remarks
+ - `deg_freedom` and `tails` are truncated to integers.
+
+## Error cases
+
+ - Returns `#NUM!` when `x &lt; 0`, `deg_freedom &lt; 1`, or `tails` is not 1 or 2.
+
+## Examples
+
+<FunctionExample
+  title={"Evaluate one upper tail of the Student t distribution."}
+  formula={"=TDIST(2,10,1)"}
+  grid={{}}
+  expected={"0.0366940173853702"}
+/>
+
+<FunctionExample
+  title={"Evaluate both tails at the same statistic."}
+  formula={"=TDIST(2,10,2)"}
+  grid={{}}
+  expected={"0.0733880347707404"}
+/>
+
+<FunctionExample
+  title={"At the distribution center the two tails cover the full probability."}
+  formula={"=TDIST(0,10,2)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The number of tails must be one or two."}
+  formula={"=TDIST(2,10,3)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Two-tailed probability"}
+  formula={"=TDIST(1.959999998,60,2)"}
+  grid={{}}
+  expected={"0.0546449299759204"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

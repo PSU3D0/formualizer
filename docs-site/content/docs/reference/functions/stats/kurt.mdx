@@ -1,55 +1,82 @@
 ---
 title: "KURT"
-description: "Returns the sample excess kurtosis of a numeric distribution."
+seoTitle: "KURT function: formula syntax and examples"
+description: "Returns the sample excess kurtosis of a numeric distribution. =KURT(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="stats/kurt" />
-
-## Summary
+Returns the sample excess kurtosis of a numeric distribution.
 
 `KURT` indicates tail heaviness relative to a normal distribution after Excel-style sample
  correction.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=KURT(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
  - Requires at least four numeric values.
- - Returns `#DIV/0!` when there are fewer than four numbers or zero sample standard deviation.
  - Positive values suggest heavier tails; negative values suggest lighter tails.
  - Non-numeric values in ranges are ignored by statistical-collection rules.
 
+## Error cases
+
+ - Returns `#DIV/0!` when there are fewer than four numbers or zero sample standard deviation.
+
 ## Examples
 
-<Tabs items={["Uniformly spaced values", "Heavier-tail sample"]}>
-<Tab value="Uniformly spaced values">
-<FunctionSandbox
-  title="Uniformly spaced values"
-  formula={`=KURT({1,2,3,4})`}
+<FunctionExample
+  title={"Compute sample kurtosis with five observations."}
+  formula={"=KURT(1,2,4,6,8)"}
+  grid={{}}
+  expected={"-1.54372397382511"}
+/>
+
+<FunctionExample
+  title={"Supply all observations as one array."}
+  formula={"=KURT({1,2,4,6,8})"}
+  grid={{}}
+  expected={"-1.54372397382511"}
+/>
+
+<FunctionExample
+  title={"Evaluate with the minimum sample size of four."}
+  formula={"=KURT(1,2,4,6)"}
+  grid={{}}
+  expected={"-1.69951163458776"}
+/>
+
+<FunctionExample
+  title={"Three observations do not suffice for this statistic."}
+  formula={"=KURT(1,2,4)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Uniformly spaced values"}
+  formula={"=KURT({1,2,3,4})"}
   grid={{}}
   expected={"-1.2"}
 />
-</Tab>
 
-<Tab value="Heavier-tail sample">
-<FunctionSandbox
-  title="Heavier-tail sample"
-  formula={`=KURT({1,1,1,2,10,10,10,10})`}
+<FunctionExample
+  title={"Heavier-tail sample"}
+  formula={"=KURT({1,1,1,2,10,10,10,10})"}
   grid={{}}
-  expected={"-2.3069755007920767"}
+  expected={"-2.76373062260412"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
-- [MEDIAN](/docs/reference/functions/stats/median)
-- [MODE.MULT](/docs/reference/functions/stats/mode-mult)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/kurt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

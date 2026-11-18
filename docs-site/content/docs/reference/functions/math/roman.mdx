@@ -1,59 +1,84 @@
 ---
 title: "ROMAN"
-description: "Converts an Arabic number to a Roman numeral string."
+seoTitle: "ROMAN function: formula syntax and examples"
+description: "Converts an Arabic number to a Roman numeral string. =ROMAN(number, [form])"
 ---
 
-<FunctionPageSchema id="math/roman" />
-
-## Summary
-
 Converts an Arabic number to a Roman numeral string.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ROMAN(number, [form])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `form` | number | Optional | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Accepts integer values in the range `0..=3999`.
  - `0` returns an empty string.
  - Optional `form` controls output compactness (`0` classic through `4` simplified).
+
+## Error cases
+
  - Out-of-range values return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Classic Roman numeral", "Another conversion"]}>
-<Tab value="Classic Roman numeral">
-<FunctionSandbox
-  title="Classic Roman numeral"
-  formula={`=ROMAN(1999)`}
+<FunctionExample
+  title={"Convert a decimal integer to the default Roman numeral form."}
+  formula={"=ROMAN(1999)"}
   grid={{}}
   expected={"MCMXCIX"}
 />
-</Tab>
 
-<Tab value="Another conversion">
-<FunctionSandbox
-  title="Another conversion"
-  formula={`=ROMAN(44)`}
+<FunctionExample
+  title={"Choose the shortest supported form."}
+  formula={"=ROMAN(1999,4)"}
+  grid={{}}
+  expected={"MIM"}
+/>
+
+<FunctionExample
+  title={"Convert the smallest positive integer."}
+  formula={"=ROMAN(1)"}
+  grid={{}}
+  expected={"I"}
+/>
+
+<FunctionExample
+  title={"The input exceeds the supported upper bound."}
+  formula={"=ROMAN(4000)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Another conversion"}
+  formula={"=ROMAN(44)"}
   grid={{}}
   expected={"XLIV"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [ARABIC](/docs/reference/functions/math/arabic)
 - [TEXT](/docs/reference/functions/text/text)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
-- [CEILING.PRECISE](/docs/reference/functions/math/ceiling-precise)
 
 ## FAQ
 
 ### What input range does ROMAN support?
 ROMAN accepts truncated integers from 0 through 3999; outside that range it returns #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/roman" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

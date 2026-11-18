@@ -1,58 +1,93 @@
 ---
 title: "CEILING"
-description: "CEILING: Rounds a number up to the nearest multiple of a significance."
+seoTitle: "CEILING function: formula syntax and examples"
+description: "Rounds a number up to the nearest multiple of a significance. =CEILING(number, significance)"
 ---
 
-<FunctionPageSchema id="math/ceiling" />
+Rounds a number up to the nearest multiple of a significance.
 
-## Summary
+This implementation defaults significance to `1`.
 
-This implementation defaults significance to `1` and normalizes negative significance to positive.
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CEILING(number, significance)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `significance` | number | Required | — |
+
+## Differences from Excel
+
+Formualizer defaults the significance to 1 if it is omitted. Excel requires it.
 
 ## Remarks
  - If `significance` is omitted, `1` is used.
+ - When both arguments are negative, rounds away from zero; positive significance rounds toward positive infinity.
+
+## Error cases
+
  - `significance = 0` returns `#DIV/0!`.
- - Negative significance is treated as its absolute value in this fallback behavior.
 
 ## Examples
 
-<Tabs items={["Round up to the nearest multiple", "Round a negative number toward positive infinity"]}>
-<Tab value="Round up to the nearest multiple">
-<FunctionSandbox
-  title="Round up to the nearest multiple"
-  formula={`=CEILING(5.1,2)`}
+<FunctionExample
+  title={"Round a fractional number to a multiple of two."}
+  formula={"=CEILING(7.2,2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"Use a five-unit rounding interval."}
+  formula={"=CEILING(7.2,5)"}
+  grid={{}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"A number already at a multiple of the significance stays at that multiple."}
+  formula={"=CEILING(8,2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"The number argument cannot be read from this text."}
+  formula={"=CEILING(\"invalid\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Round up to the nearest multiple"}
+  formula={"=CEILING(5.1,2)"}
   grid={{}}
   expected={"6"}
 />
-</Tab>
 
-<Tab value="Round a negative number toward positive infinity">
-<FunctionSandbox
-  title="Round a negative number toward positive infinity"
-  formula={`=CEILING(-5.1,2)`}
+<FunctionExample
+  title={"Round a negative number toward positive infinity"}
+  formula={"=CEILING(-5.1,2)"}
   grid={{}}
   expected={"-4"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 - [FLOOR](/docs/reference/functions/math/floor)
 - [ROUNDUP](/docs/reference/functions/math/roundup)
-- [CEILING.PRECISE](/docs/reference/functions/math/ceiling-precise)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [FLOOR.MATH](/docs/reference/functions/math/floor-math)
 
 ## FAQ
 
 ### What happens if CEILING significance is 0?
 It returns #DIV/0! because a zero multiple is invalid.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/ceiling" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

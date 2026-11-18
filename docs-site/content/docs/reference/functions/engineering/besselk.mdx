@@ -1,59 +1,90 @@
 ---
 title: "BESSELK"
-description: "BESSELK: Returns the modified Bessel function Kn(x)."
+seoTitle: "BESSELK function: formula syntax and examples"
+description: "Returns the modified Bessel function Kn(x). =BESSELK(x, n)"
 ---
 
-<FunctionPageSchema id="engineering/besselk" />
-
-## Summary
+Returns the modified Bessel function Kn(x).
 
 Computes the modified Bessel function of the second kind for a positive real
  value `x` and a non-negative integer order `n`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BESSELK(x, n)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | any | Required | — |
+| `n` | any | Required | — |
+
 ## Remarks
  - Arguments are supplied as `BESSELK(x, n)`.
  - `x` must be positive and `n` must truncate to a non-negative integer.
+
+## Error cases
+
  - Invalid domains or non-finite results return `#NUM!`.
 
 ## Examples
 
-<Tabs items={["First-order modified Bessel K", "Zero-order modified Bessel K"]}>
-<Tab value="First-order modified Bessel K">
-<FunctionSandbox
-  title="First-order modified Bessel K"
-  formula={`=BESSELK(0.5,1)`}
+<FunctionExample
+  title={"Evaluate the Bessel function at x = 2 and order one."}
+  formula={"=BESSELK(2,1)"}
   grid={{}}
-  expected={"1.656441120003301"}
+  expected={"0.13986588"}
 />
-</Tab>
 
-<Tab value="Zero-order modified Bessel K">
-<FunctionSandbox
-  title="Zero-order modified Bessel K"
-  formula={`=BESSELK(0.5,0)`}
+<FunctionExample
+  title={"Keep x fixed and compare the result at order two."}
+  formula={"=BESSELK(2,2)"}
   grid={{}}
-  expected={"0.9244190712276659"}
+  expected={"0.25375976"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Evaluate the order-zero function near the positive edge of its domain."}
+  formula={"=BESSELK(0.1,0)"}
+  grid={{}}
+  expected={"2.42706902485802"}
+/>
+
+<FunctionExample
+  title={"The function is undefined at zero."}
+  formula={"=BESSELK(0,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"First-order modified Bessel K"}
+  formula={"=BESSELK(0.5,1)"}
+  grid={{}}
+  expected={"1.65644112801108"}
+/>
+
+<FunctionExample
+  title={"Zero-order modified Bessel K"}
+  formula={"=BESSELK(0.5,0)"}
+  grid={{}}
+  expected={"0.924419035021323"}
+/>
 
 ## Related functions
 
 - [BESSELI](/docs/reference/functions/engineering/besseli)
 - [BESSELJ](/docs/reference/functions/engineering/besselj)
 - [BESSELY](/docs/reference/functions/engineering/bessely)
-- [IMDIV](/docs/reference/functions/engineering/imdiv)
-- [IMPOWER](/docs/reference/functions/engineering/impower)
-- [IMSUB](/docs/reference/functions/engineering/imsub)
 
 ## FAQ
 
 ### Why can BESSELK return #NUM!?
 BESSELK is undefined for non-positive x values and negative orders.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/besselk" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

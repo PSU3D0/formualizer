@@ -1,25 +1,56 @@
 ---
 title: "T.DIST.RT"
-description: "T.DIST.RT: Returns the right-tailed Student's t-distribution probability."
+seoTitle: "T.DIST.RT function: formula syntax and examples"
+description: "Returns the right-tailed Student's t-distribution probability. =T.DIST.RT(x, deg_freedom)"
 ---
-
-<FunctionPageSchema id="stats/t-dist-rt" />
-
-## Summary
 
 Returns the right-tailed Student's t-distribution probability.
 
-## returns: 0.5
- =T.DIST.RT(0,10)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=T.DIST.RT(x, deg_freedom)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+
+## How it works
+
+For nonnegative x, returns P(T ≥ x) for a Student t variate with positive degrees of freedom. At x = 0 the right tail is half the probability.
 
 ## Examples
 
-<FunctionSandbox
-  title="Zero lies at the midpoint of the t distribution"
-  formula={`=T.DIST.RT(0,10)`}
+<FunctionExample
+  title={"Find the probability above 2 for a t variate with ten degrees of freedom."}
+  formula={"=T.DIST.RT(2,10)"}
+  grid={{}}
+  expected={"0.0366940173853701"}
+/>
+
+<FunctionExample
+  title={"Use thirty degrees of freedom for the same upper cutoff."}
+  formula={"=T.DIST.RT(2,30)"}
+  grid={{}}
+  expected={"0.0273125224814916"}
+/>
+
+<FunctionExample
+  title={"By symmetry, one half of the probability lies above zero."}
+  formula={"=T.DIST.RT(0,10)"}
   grid={{}}
   expected={"0.5"}
+/>
+
+<FunctionExample
+  title={"Degrees of freedom must be positive."}
+  formula={"=T.DIST.RT(2,0)"}
+  grid={{}}
+  expected={"#NUM!"}
 />
 
 ## Related functions
@@ -27,17 +58,12 @@ Returns the right-tailed Student's t-distribution probability.
 - [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
 - [T.INV](/docs/reference/functions/stats/t-inv)
 - [T.INV.2T](/docs/reference/functions/stats/t-inv-2t)
-- [T.DIST](/docs/reference/functions/stats/t-dist)
-- [T.TEST](/docs/reference/functions/stats/t-test)
-- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
 
 ## FAQ
 
 ### When does T.DIST.RT return #NUM!?
 It returns #NUM! when the degrees of freedom are less than 1.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/t-dist-rt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

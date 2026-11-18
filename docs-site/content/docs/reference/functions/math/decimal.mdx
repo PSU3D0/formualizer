@@ -1,39 +1,63 @@
 ---
 title: "DECIMAL"
-description: "Converts text in a given radix back to a decimal number."
+seoTitle: "DECIMAL function: formula syntax and examples"
+description: "Converts text in a given radix back to a decimal number. =DECIMAL(text, radix)"
 ---
-
-<FunctionPageSchema id="math/decimal" />
-
-## Summary
 
 Converts text in a given radix back to a decimal number.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DECIMAL(text, radix)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `radix` | number | Required | — |
+
 ## Examples
 
-<FunctionSandbox
-  title="Convert hexadecimal to decimal"
-  formula={`=DECIMAL("1F",16)`}
+<FunctionExample
+  title={"Convert a hexadecimal string to a decimal value."}
+  formula={"=DECIMAL(\"1F\",16)"}
   grid={{}}
   expected={"31"}
+/>
+
+<FunctionExample
+  title={"Parse the same kind of text in base two."}
+  formula={"=DECIMAL(\"10101\",2)"}
+  grid={{}}
+  expected={"21"}
+/>
+
+<FunctionExample
+  title={"A zero digit represents a value of zero at the minimum radix."}
+  formula={"=DECIMAL(\"0\",2)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The digit 2 cannot appear in a binary number."}
+  formula={"=DECIMAL(\"2\",2)"}
+  grid={{}}
+  expected={"#NUM!"}
 />
 
 ## Related functions
 
 - [BASE](/docs/reference/functions/math/base)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
-- [MOD](/docs/reference/functions/math/mod)
-- [MROUND](/docs/reference/functions/math/mround)
 
 ## FAQ
 
 ### Is DECIMAL case-sensitive for alphabetic digits?
 No. Inputs like "ff" and "FF" both work for hexadecimal conversions.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/decimal" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

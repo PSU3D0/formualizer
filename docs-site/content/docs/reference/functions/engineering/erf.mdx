@@ -1,13 +1,25 @@
 ---
 title: "ERF"
-description: "ERF: Returns the Gaussian error function over one bound or between two bounds."
+seoTitle: "ERF function: formula syntax and examples"
+description: "Returns the Gaussian error function over one bound or between two bounds. =ERF(lower_limit, [upper_limit])"
 ---
 
-<FunctionPageSchema id="engineering/erf" />
-
-## Summary
+Returns the Gaussian error function over one bound or between two bounds.
 
 With one argument it returns `erf(x)`; with two it returns `erf(upper) - erf(lower)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ERF(lower_limit, [upper_limit])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `lower_limit` | number | Required | — |
+| `upper_limit` | number | Optional | — |
 
 ## Remarks
  - Inputs are numerically coerced.
@@ -16,43 +28,51 @@ With one argument it returns `erf(x)`; with two it returns `erf(upper) - erf(low
 
 ## Examples
 
-<Tabs items={["Single-bound ERF", "Interval ERF"]}>
-<Tab value="Single-bound ERF">
-<FunctionSandbox
-  title="Single-bound ERF"
-  formula={`=ERF(1)`}
+<FunctionExample
+  title={"Evaluate the error function from zero to the supplied limit."}
+  formula={"=ERF(1)"}
   grid={{}}
-  expected={"0.8427007929497149"}
+  expected={"0.842700792949715"}
 />
-</Tab>
 
-<Tab value="Interval ERF">
-<FunctionSandbox
-  title="Interval ERF"
-  formula={`=ERF(0,1)`}
+<FunctionExample
+  title={"Evaluate the error function over an interval with a nonzero lower limit."}
+  formula={"=ERF(0.5,1)"}
   grid={{}}
-  expected={"0.8427007929497149"}
+  expected={"0.322200915136668"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Evaluate the error function at zero."}
+  formula={"=ERF(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The limit must be numeric."}
+  formula={"=ERF(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Interval ERF"}
+  formula={"=ERF(0,1)"}
+  grid={{}}
+  expected={"0.842700792949715"}
+/>
 
 ## Related functions
 
 - [ERFC](/docs/reference/functions/engineering/erfc)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
-- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 
 ## FAQ
 
 ### How does two-argument `ERF` work?
 `ERF(lower, upper)` returns `erf(upper) - erf(lower)`, i.e., an interval difference rather than a single-bound value.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/erf" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

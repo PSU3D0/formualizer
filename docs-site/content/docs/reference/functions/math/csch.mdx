@@ -1,58 +1,92 @@
 ---
 title: "CSCH"
-description: "CSCH: Returns the hyperbolic cosecant of a number, defined as `1 / SINH(x)`."
+seoTitle: "CSCH function: formula syntax and examples"
+description: "Returns the hyperbolic cosecant of a number, defined as 1 / SINH(x). =CSCH(number)"
 ---
 
-<FunctionPageSchema id="math/csch" />
-
-## Summary
+Returns the hyperbolic cosecant of a number, defined as `1 / SINH(x)`.
 
 `CSCH` is the reciprocal of `SINH` where defined.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CSCH(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Hyperbolic cosecant is 1 / sinh(x). Its only real pole is at zero.
 
 ## Remarks
  - Domain: valid for all real numbers except `0`.
  - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+
+## Error cases
+
  - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
 
 ## Examples
 
-<Tabs items={["Hyperbolic cosecant at one", "Division by zero at origin"]}>
-<Tab value="Hyperbolic cosecant at one">
-<FunctionSandbox
-  title="Hyperbolic cosecant at one"
-  formula={`=CSCH(1)`}
+<FunctionExample
+  title={"Invert the hyperbolic sine of one half."}
+  formula={"=CSCH(0.5)"}
   grid={{}}
-  expected={"0.8509181282393216"}
+  expected={"1.91903475133494"}
 />
-</Tab>
 
-<Tab value="Division by zero at origin">
-<FunctionSandbox
-  title="Division by zero at origin"
-  formula={`=CSCH(0)`}
+<FunctionExample
+  title={"Negating a real input to sinh negates its reciprocal too."}
+  formula={"=CSCH(-0.5)"}
+  grid={{}}
+  expected={"-1.91903475133494"}
+/>
+
+<FunctionExample
+  title={"Near zero, sinh grows approximately linearly and its reciprocal is large."}
+  formula={"=CSCH(0.01)"}
+  grid={{}}
+  expected={"99.9983333527776"}
+/>
+
+<FunctionExample
+  title={"Nonnumeric text cannot be used as the input."}
+  formula={"=CSCH(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Hyperbolic cosecant at one"}
+  formula={"=CSCH(1)"}
+  grid={{}}
+  expected={"0.850918128239322"}
+/>
+
+<FunctionExample
+  title={"Division by zero at origin"}
+  formula={"=CSCH(0)"}
   grid={{}}
   expected={"#DIV/0!"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SINH](/docs/reference/functions/math/sinh)
 - [COTH](/docs/reference/functions/math/coth)
 - [SECH](/docs/reference/functions/math/sech)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### When does CSCH return #DIV/0!?
 CSCH returns #DIV/0! when SINH(x) is zero, which occurs at x = 0.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/csch" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

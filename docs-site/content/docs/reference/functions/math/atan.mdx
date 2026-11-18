@@ -1,58 +1,92 @@
 ---
 title: "ATAN"
-description: "ATAN: Returns the angle in radians whose tangent is the input value."
+seoTitle: "ATAN function: formula syntax and examples"
+description: "Returns the angle in radians whose tangent is the input value. =ATAN(number)"
 ---
 
-<FunctionPageSchema id="math/atan" />
-
-## Summary
+Returns the angle in radians whose tangent is the input value.
 
 `ATAN` is useful for recovering a slope angle from a ratio.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ATAN(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Inverts tangent on the open interval from −π/2 to π/2. Every finite real input has an angle in that interval.
 
 ## Remarks
  - Domain: accepts any real number.
  - Radians: output is in the range `(-PI()/2, PI()/2)`.
+
+## Error cases
+
  - Errors: no function-specific domain errors are produced.
 
 ## Examples
 
-<Tabs items={["Arctangent of one", "Negative slope angle"]}>
-<Tab value="Arctangent of one">
-<FunctionSandbox
-  title="Arctangent of one"
-  formula={`=ATAN(1)`}
+<FunctionExample
+  title={"Convert a slope of one half to its principal angle."}
+  formula={"=ATAN(0.5)"}
   grid={{}}
-  expected={"0.7853981633974483"}
+  expected={"0.463647609000806"}
 />
-</Tab>
 
-<Tab value="Negative slope angle">
-<FunctionSandbox
-  title="Negative slope angle"
-  formula={`=ATAN(-1)`}
+<FunctionExample
+  title={"A slope of negative one half gives an angle below the horizontal."}
+  formula={"=ATAN(-0.5)"}
   grid={{}}
-  expected={"-0.7853981633974483"}
+  expected={"-0.463647609000806"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Zero slope gives a zero angle."}
+  formula={"=ATAN(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the inverse tangent."}
+  formula={"=ATAN(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Arctangent of one"}
+  formula={"=ATAN(1)"}
+  grid={{}}
+  expected={"0.785398163397448"}
+/>
+
+<FunctionExample
+  title={"Negative slope angle"}
+  formula={"=ATAN(-1)"}
+  grid={{}}
+  expected={"-0.785398163397448"}
+/>
 
 ## Related functions
 
 - [TAN](/docs/reference/functions/math/tan)
 - [ATAN2](/docs/reference/functions/math/atan2)
 - [ACOT](/docs/reference/functions/math/acot)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOTH](/docs/reference/functions/math/acoth)
-- [ASIN](/docs/reference/functions/math/asin)
 
 ## FAQ
 
 ### Does ATAN ever return #NUM! for large values?
 No. ATAN accepts any real input and asymptotically approaches +/-PI()/2.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/atan" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

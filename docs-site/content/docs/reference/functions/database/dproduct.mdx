@@ -1,58 +1,92 @@
 ---
 title: "DPRODUCT"
-description: "DPRODUCT: Multiplies values in a database field for records that satisfy criteria."
+seoTitle: "DPRODUCT function: formula syntax and examples"
+description: "Multiplies values in a database field for records that satisfy criteria. =DPRODUCT(database, field, criteria)"
 ---
 
-<FunctionPageSchema id="database/dproduct" />
-
-## Summary
+Multiplies values in a database field for records that satisfy criteria.
 
 `DPRODUCT` filters the database first, then returns the product of numeric values in `field`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DPRODUCT(database, field, criteria)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `database` | any | Required | — |
+| `field` | any | Required | — |
+| `criteria` | any | Required | — |
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - Criteria rows are evaluated as OR alternatives; criteria columns in one row are AND constraints.
- - `field` resolves via case-insensitive header text or 1-based column index; unresolved field references return `#VALUE!`.
  - If no numeric values match, this implementation returns `0`.
+
+## Error cases
+
+ - `field` resolves via case-insensitive header text or 1-based column index; unresolved field references return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Product of units in North or South", "Product of units for East or West by index field"]}>
-<Tab value="Product of units in North or South">
-<FunctionSandbox
-  title="Product of units in North or South"
-  formula={`=DPRODUCT(A1:E7, "Units", G1:G3)`}
-  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Region","G2":"North","G3":"South"}}
+<FunctionExample
+  title={"Multiply the values in the Score column for the two East records."}
+  formula={"=DPRODUCT(A1:B4,\"Score\",D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
+  expected={"80"}
+/>
+
+<FunctionExample
+  title={"Use field number 2 to get the same product for East."}
+  formula={"=DPRODUCT(A1:B4,2,D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
+  expected={"80"}
+/>
+
+<FunctionExample
+  title={"With the West filter, only the score of 3 contributes to the product."}
+  formula={"=IFERROR(DPRODUCT(A1:B4,\"Score\",E1:E2),\"Insufficient data\")"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","E1":"\"Team\"","E2":"\"West\""}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"The missing field header prevents calculating the product for East."}
+  formula={"=DPRODUCT(A1:B4,\"Missing\",D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Product of units in North or South"}
+  formula={"=DPRODUCT(A1:E7, \"Units\", G1:G3)"}
+  grid={{"A1":"\"Region\"","A2":"\"West\"","A3":"\"East\"","A4":"\"North\"","A5":"\"West\"","A6":"\"South\"","A7":"\"East\"","B1":"\"Salesperson\"","B2":"\"Diaz\"","B3":"\"Patel\"","B4":"\"Kim\"","B5":"\"Ramos\"","B6":"\"Lee\"","B7":"\"Noor\"","C1":"\"Product\"","C2":"\"Widget\"","C3":"\"Gadget\"","C4":"\"Widget\"","C5":"\"Service\"","C6":"\"Gadget\"","C7":"\"Widget\"","D1":"\"Units\"","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"\"Revenue\"","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"\"Region\"","G2":"\"North\"","G3":"\"South\""}}
   expected={"486"}
 />
-</Tab>
 
-<Tab value="Product of units for East or West by index field">
-<FunctionSandbox
-  title="Product of units for East or West by index field"
-  formula={`=DPRODUCT(A1:E7, 4, G1:G3)`}
-  grid={{"A1":"Region","A2":"West","A3":"East","A4":"North","A5":"West","A6":"South","A7":"East","B1":"Salesperson","B2":"Diaz","B3":"Patel","B4":"Kim","B5":"Ramos","B6":"Lee","B7":"Noor","C1":"Product","C2":"Widget","C3":"Gadget","C4":"Widget","C5":"Service","C6":"Gadget","C7":"Widget","D1":"Units","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"Revenue","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"Region","G2":"East","G3":"West"}}
+<FunctionExample
+  title={"Product of units for East or West by index field"}
+  formula={"=DPRODUCT(A1:E7, 4, G1:G3)"}
+  grid={{"A1":"\"Region\"","A2":"\"West\"","A3":"\"East\"","A4":"\"North\"","A5":"\"West\"","A6":"\"South\"","A7":"\"East\"","B1":"\"Salesperson\"","B2":"\"Diaz\"","B3":"\"Patel\"","B4":"\"Kim\"","B5":"\"Ramos\"","B6":"\"Lee\"","B7":"\"Noor\"","C1":"\"Product\"","C2":"\"Widget\"","C3":"\"Gadget\"","C4":"\"Widget\"","C5":"\"Service\"","C6":"\"Gadget\"","C7":"\"Widget\"","D1":"\"Units\"","D2":"24","D3":"31","D4":"18","D5":"12","D6":"27","D7":"22","E1":"\"Revenue\"","E2":"126000","E3":"142500","E4":"87000","E5":"46000","E6":"119000","E7":"101000","G1":"\"Region\"","G2":"\"East\"","G3":"\"West\""}}
   expected={"196416"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [DSUM](/docs/reference/functions/database/dsum)
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [PRODUCT](/docs/reference/functions/stats/product)
-- [DAVERAGE](/docs/reference/functions/database/daverage)
-- [DCOUNTA](/docs/reference/functions/database/dcounta)
-- [DGET](/docs/reference/functions/database/dget)
 
 ## FAQ
 
 ### What result does DPRODUCT return if no numeric records match?
 This implementation returns 0 when no numeric field values remain after criteria filtering.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="database/dproduct" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/database.rs)
