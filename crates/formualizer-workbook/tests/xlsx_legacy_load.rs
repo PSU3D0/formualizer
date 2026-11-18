@@ -178,6 +178,49 @@ fn saved_array_children_are_outputs_and_do_not_block_recalculation() {
 }
 
 #[test]
+fn volatile_array_children_saved_as_empty_formulas_are_outputs() {
+    // Excel saves the other cells of a volatile array formula as `<f ca="1"/>`.
+    for backend in backends() {
+        for deferred in [false, true] {
+            let rows = "<row r=\"1\"><c r=\"A1\"><v>10</v></c></row><row r=\"2\"><c r=\"A2\"><v>20</v></c></row><row r=\"3\"><c r=\"A3\"><v>30</v></c></row><row r=\"4\"><c r=\"A4\"><f t=\"array\" aca=\"1\" ref=\"A4:C4\" ca=\"1\">-TRANSPOSE(OFFSET(A1,0,0,3,1))</f><v>999</v></c><c r=\"B4\"><f ca=\"1\"/><v>999</v></c><c r=\"C4\"><f ca=\"1\"/><v>999</v></c></row>";
+            let mut wb = load(package(rows, false), backend, deferred);
+            wb.evaluate_all().unwrap();
+            assert_eq!(wb.get_value("Probe", 4, 1), Some(number(-10.0)));
+            assert_eq!(wb.get_value("Probe", 4, 2), Some(number(-20.0)));
+            assert_eq!(wb.get_value("Probe", 4, 3), Some(number(-30.0)));
+        }
+    }
+}
+
+#[test]
+fn empty_ordinary_formulas_keep_their_cached_value_under_every_parse_policy() {
+    use formualizer_eval::engine::FormulaParsePolicy;
+    for policy in [
+        FormulaParsePolicy::Strict,
+        FormulaParsePolicy::CoerceToError,
+        FormulaParsePolicy::KeepCachedValue,
+        FormulaParsePolicy::AsText,
+    ] {
+        for formula in ["<f/>", "<f> </f>", "<f t=\"normal\"/>"] {
+            let rows = format!("<row r=\"1\"><c r=\"A1\">{formula}<v>7</v></c></row>");
+            let mut config = WorkbookConfig::ephemeral();
+            config.eval.formula_parse_policy = policy;
+            let mut wb = load_config(package(&rows, false), 0, config);
+            wb.evaluate_all().unwrap();
+            assert_eq!(
+                wb.get_value("Probe", 1, 1),
+                Some(number(7.0)),
+                "{policy:?} {formula}"
+            );
+            assert!(
+                wb.engine().formula_parse_diagnostics().is_empty(),
+                "{policy:?} {formula}"
+            );
+        }
+    }
+}
+
+#[test]
 fn shared_formulas_intersect_without_a_calc_chain() {
     for backend in backends() {
         for deferred in [false, true] {
