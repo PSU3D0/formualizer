@@ -1755,3 +1755,503 @@ mod sort_key_tests {
         }
     }
 }
+
+/* ───────────── Excel's approximate-match search (LOOKUP) ───────────── */
+
+/// A value as Excel's approximate-match search compares it. Only keys of the
+/// same kind compare, and exactly: a number never matches numeric text, a
+/// boolean or a blank cell, and text is never parsed as a number.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum LookupKey {
+    /// A number, date, time or duration, as its serial number.
+    Number(f64),
+    /// Text, folded with `to_lowercase` (Excel ignores case).
+    Text(String),
+    /// A boolean, `FALSE < TRUE`.
+    Boolean(bool),
+}
+
+impl LookupKey {
+    const KINDS: usize = 3;
+
+    /// The key of a lookup value: a blank lookup value is the number 0. An
+    /// error, an array or a pending value has none.
+    pub(crate) fn for_lookup_value(value: &LiteralValue, date_system: DateSystem) -> Option<Self> {
+        match value {
+            LiteralValue::Empty => Some(Self::Number(0.0)),
+            other => Self::for_cell(other, date_system),
+        }
+    }
+
+    /// The key of a searched cell. A blank cell, an error, an array or a
+    /// pending value has none: the search never compares it.
+    pub(crate) fn for_cell(value: &LiteralValue, date_system: DateSystem) -> Option<Self> {
+        match value {
+            LiteralValue::Boolean(b) => Some(Self::Boolean(*b)),
+            LiteralValue::Text(s) => Some(Self::Text(s.to_lowercase())),
+            LiteralValue::Empty
+            | LiteralValue::Error(_)
+            | LiteralValue::Array(_)
+            | LiteralValue::Pending => None,
+            other => other
+                .as_serial_number_for(date_system)
+                .filter(|n| !n.is_nan())
+                .map(Self::Number),
+        }
+    }
+
+    fn kind(&self) -> usize {
+        match self {
+            Self::Number(_) => 0,
+            Self::Text(_) => 1,
+            Self::Boolean(_) => 2,
+        }
+    }
+
+    /// `self` against `other`, or `None` for keys of different kinds.
+    fn compare(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Number(a), Self::Number(b)) => a.partial_cmp(b),
+            (Self::Text(a), Self::Text(b)) => Some(a.cmp(b)),
+            (Self::Boolean(a), Self::Boolean(b)) => Some(a.cmp(b)),
+            _ => None,
+        }
+    }
+}
+
+/// A position in the tables of [`SearchCells`]. A searched vector is one row
+/// or one column of a sheet, or of an array no larger, so it fits.
+fn table_position(i: usize) -> u32 {
+    u32::try_from(i).unwrap_or(u32::MAX)
+}
+
+/// The cells one approximate-match search runs over, keyed once. The search
+/// of [`excel_approximate_search`] steps forward over the cells it cannot
+/// compare and scans the run of equal values it hits: both are linear, so
+/// the two tables that make them O(1) are built on first need and kept for
+/// the next search of the same vector (an array of lookup values).
+pub(crate) struct SearchCells {
+    keys: Vec<Option<LookupKey>>,
+    len: usize,
+    /// Per key kind, the first position at or after `i` holding a key of
+    /// that kind (`keys.len()` when none).
+    next_comparable: [std::cell::OnceCell<Vec<u32>>; LookupKey::KINDS],
+    /// The last position of the run of equal keys starting at `i`.
+    run_end: std::cell::OnceCell<Vec<u32>>,
+}
+
+impl SearchCells {
+    /// The cells `values`, followed by blank cells up to `len` (the trimmed
+    /// tail of a whole-column reference). `len` is never less than
+    /// `values.len()`.
+    pub(crate) fn new<'v>(
+        values: impl IntoIterator<Item = &'v LiteralValue>,
+        len: usize,
+        date_system: DateSystem,
+    ) -> Self {
+        let keys: Vec<_> = values
+            .into_iter()
+            .map(|v| LookupKey::for_cell(v, date_system))
+            .collect();
+        Self {
+            len: len.max(keys.len()),
+            keys,
+            next_comparable: Default::default(),
+            run_end: Default::default(),
+        }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
+    }
+
+    /// The cell at `i` against `needle`, or `None` when it cannot compare.
+    fn compare(&self, i: usize, needle: &LookupKey) -> Option<std::cmp::Ordering> {
+        self.keys.get(i)?.as_ref()?.compare(needle)
+    }
+
+    fn next_comparable(&self, kind: usize) -> &[u32] {
+        self.next_comparable[kind].get_or_init(|| {
+            let n = self.keys.len();
+            let mut next = vec![table_position(n); n + 1];
+            for i in (0..n).rev() {
+                next[i] = match &self.keys[i] {
+                    Some(key) if key.kind() == kind => table_position(i),
+                    _ => next[i + 1],
+                };
+            }
+            next
+        })
+    }
+
+    fn run_end(&self) -> &[u32] {
+        self.run_end.get_or_init(|| {
+            let n = self.keys.len();
+            let mut end = vec![0u32; n];
+            for i in (0..n).rev() {
+                let continues = i + 1 < n
+                    && matches!(
+                        (&self.keys[i], &self.keys[i + 1]),
+                        (Some(a), Some(b)) if a.compare(b) == Some(std::cmp::Ordering::Equal)
+                    );
+                end[i] = if continues {
+                    end[i + 1]
+                } else {
+                    table_position(i)
+                };
+            }
+            end
+        })
+    }
+
+    /// The first position after `mid` and before `hi` whose cell compares
+    /// with `needle`, and how it compares.
+    fn first_comparable_after(
+        &self,
+        mid: usize,
+        hi: usize,
+        needle: &LookupKey,
+    ) -> Option<(usize, std::cmp::Ordering)> {
+        let start = mid + 1;
+        if start >= self.keys.len() {
+            return None;
+        }
+        let next = self.next_comparable(needle.kind())[start] as usize;
+        if next >= hi {
+            return None;
+        }
+        Some((next, self.compare(next, needle)?))
+    }
+
+    /// The last position before `hi` of the run of cells equal to the cell
+    /// at `mid`, which equals the needle.
+    fn end_of_equal_run(&self, mid: usize, hi: usize) -> usize {
+        (self.run_end()[mid] as usize).min(hi - 1)
+    }
+}
+
+/// Excel's approximate-match search (largest value <= needle), as LOOKUP,
+/// VLOOKUP(..,TRUE) and MATCH(..,1) run it in Excel. No sort check. Cells
+/// from `values.len()` up to `len` are blank (the trimmed tail of a
+/// whole-column reference). Returns a 0-based position, or None (#N/A).
+///
+/// Microsoft does not document it; this is Apache POI's reconstruction
+/// (`LookupUtils.performBinarySearch`), without its exception for a step
+/// forward that reaches the last cell before `hi`, which Excel contradicts.
+/// `lo` and `hi` are exclusive bounds, and the midpoint is the lower one. A
+/// cell the search cannot compare (blank, error, another type) sends it
+/// forward to the first one it can before `hi`; when there is none, the
+/// range ends before the midpoint. A cell equal to the needle ends the search
+/// at the end of its run of equal cells.
+pub(crate) fn excel_approximate_search(cells: &SearchCells, needle: &LookupKey) -> Option<usize> {
+    use std::cmp::Ordering;
+
+    let (mut lo, mut hi) = (-1isize, cells.len() as isize);
+    loop {
+        if hi - lo < 2 {
+            return usize::try_from(lo).ok();
+        }
+        let mut mid = lo + (hi - lo) / 2;
+        let ord = match cells.compare(mid as usize, needle) {
+            Some(ord) => ord,
+            None => match cells.first_comparable_after(mid as usize, hi as usize, needle) {
+                None => {
+                    hi = mid;
+                    continue;
+                }
+                Some((next, ord)) => {
+                    mid = next as isize;
+                    ord
+                }
+            },
+        };
+        match ord {
+            Ordering::Less => lo = mid,
+            Ordering::Greater => hi = mid,
+            Ordering::Equal => return Some(cells.end_of_equal_run(mid as usize, hi as usize)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod excel_search_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use std::cmp::Ordering;
+
+    /// The search as the plan writes it, with linear steps and scans: the
+    /// reference the indexed search must agree with.
+    fn plain_search(cells: &SearchCells, needle: &LookupKey) -> Option<usize> {
+        let compare = |i: isize| cells.compare(i as usize, needle);
+        let (mut lo, mut hi) = (-1isize, cells.len() as isize);
+        loop {
+            if hi - lo < 2 {
+                return usize::try_from(lo).ok();
+            }
+            let mut mid = lo + (hi - lo) / 2;
+            let ord = match compare(mid) {
+                Some(ord) => ord,
+                None => match ((mid + 1)..hi).find_map(|i| compare(i).map(|o| (i, o))) {
+                    None => {
+                        hi = mid;
+                        continue;
+                    }
+                    Some((next, ord)) => {
+                        mid = next;
+                        ord
+                    }
+                },
+            };
+            match ord {
+                Ordering::Less => lo = mid,
+                Ordering::Greater => hi = mid,
+                Ordering::Equal => {
+                    let mut end = mid;
+                    while end + 1 < hi && compare(end + 1) == Some(Ordering::Equal) {
+                        end += 1;
+                    }
+                    return Some(end as usize);
+                }
+            }
+        }
+    }
+
+    fn e() -> LiteralValue {
+        LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div))
+    }
+    const B: LiteralValue = LiteralValue::Empty;
+
+    fn n(v: f64) -> LiteralValue {
+        LiteralValue::Number(v)
+    }
+    fn t(s: &str) -> LiteralValue {
+        LiteralValue::Text(s.into())
+    }
+    fn nums(vs: &[f64]) -> Vec<LiteralValue> {
+        vs.iter().copied().map(n).collect()
+    }
+    /// Numbers, `_` for a blank cell and `#` for an error: `"3,1,_,#,3"`.
+    fn cells(spec: &str) -> Vec<LiteralValue> {
+        spec.split(',')
+            .map(|c| match c {
+                "_" => B,
+                "#" => e(),
+                num => n(num.parse().unwrap()),
+            })
+            .collect()
+    }
+
+    /// The 1-based position Excel's search returns, 0 for #N/A.
+    fn search(values: &[LiteralValue], len: usize, needle: &LiteralValue) -> usize {
+        let cells = SearchCells::new(values, len, DateSystem::Excel1900);
+        let key = LookupKey::for_lookup_value(needle, DateSystem::Excel1900).unwrap();
+        let found = excel_approximate_search(&cells, &key);
+        assert_eq!(found, plain_search(&cells, &key), "indexed vs plain");
+        found.map_or(0, |i| i + 1)
+    }
+
+    fn search_all(values: &[LiteralValue], needle: &LiteralValue) -> usize {
+        search(values, values.len(), needle)
+    }
+
+    /// The 17 published Excel results of the plan's "Evidence" section.
+    #[test]
+    fn published_excel_results() {
+        let t5: Vec<f64> = std::iter::repeat_n(33.0, 10)
+            .chain([8., 33., 33., 6., 33., 33., 4., 33., 33., 33., 33.])
+            .collect();
+        let tab6: Vec<f64> = [33., 33., 33., 33., 10., 33., 33., 33., 5., 33., 100.]
+            .into_iter()
+            .chain(std::iter::repeat_n(33.0, 9))
+            .chain([22.])
+            .collect();
+        let mrexcel: Vec<LiteralValue> = ["w", "x", "y", "z", "zz", "Ω", "ΩΩ"]
+            .iter()
+            .map(|s| t(s))
+            .chain(std::iter::repeat_n(B, 4))
+            .chain(["w", "x", "y", "z", "zz", "Ω", "ΩΩ"].iter().map(|s| t(s)))
+            .collect();
+        let mut z_errors: Vec<LiteralValue> = std::iter::repeat_with(e).take(18).collect();
+        z_errors[3] = n(1.0);
+        z_errors[14] = n(1.0);
+
+        let cases: Vec<(&str, Vec<LiteralValue>, LiteralValue, usize)> = vec![
+            ("issue {1,#DIV/0!,1}", cells("1,#,1"), n(2.), 3),
+            ("issue {1,#,#,1,1}", cells("1,#,#,1,1"), n(2.), 5),
+            ("issue control", nums(&[1., 1., 1.]), n(2.), 3),
+            (
+                "POI tab1",
+                nums(&[33., 33., 33., 100., 33., 33., 33., 33., 33., 33.]),
+                n(33.),
+                10,
+            ),
+            (
+                "POI tab2",
+                nums(&[33., 33., 33., 33., 100., 33., 33., 33., 33., 33.]),
+                n(33.),
+                4,
+            ),
+            (
+                "POI tab3",
+                nums(&[33., 33., 33., 33., 33., 33., 5., 33., 100., 33.]),
+                n(33.),
+                6,
+            ),
+            (
+                "POI tab4",
+                nums(&[32., 32., 32., 31., 100., 32., 32., 32., 32., 32.]),
+                n(33.),
+                4,
+            ),
+            ("POI tab5 (33)", nums(&t5), n(33.), 16),
+            ("POI tab5 (10)", nums(&t5), n(10.), 11),
+            ("POI tab6", nums(&tab6), n(33.), 8),
+            (
+                "MS Q&A 7 values",
+                nums(&[1., 1., 1., 1., 1., 0., 1.]),
+                n(1.),
+                5,
+            ),
+            (
+                "MS Q&A 15 values, -1",
+                nums(&[1., 1., 1., 1., 1., 0., 1., -1., 1., 1., 1., 1., 1., 0., 1.]),
+                n(1.),
+                13,
+            ),
+            (
+                "MS Q&A 15 values, 2",
+                nums(&[1., 1., 1., 1., 1., 0., 1., 2., 1., 1., 1., 1., 1., 0., 1.]),
+                n(1.),
+                5,
+            ),
+            ("MrExcel z", mrexcel.clone(), t("z"), 15),
+            ("MrExcel Omega", mrexcel, t("Ω"), 17),
+            ("MATCH(9.99E+307,1/(..=\"z\"))", z_errors, n(9.99e307), 15),
+            (
+                "MAP-994",
+                vec![t("MAP-994"), t("MAP-10977"), t("MAP-320")],
+                t("MAP-994"),
+                3,
+            ),
+        ];
+        for (name, values, needle, excel) in cases {
+            assert_eq!(search_all(&values, &needle), excel, "{name}");
+        }
+    }
+
+    /// The expectations of the five unit tests of the textbook search that
+    /// LOOKUP ran before.
+    #[test]
+    fn sorted_data() {
+        let v = nums(&[10., 20., 30.]);
+        assert_eq!(search_all(&[], &n(1.)), 0);
+        assert_eq!(search_all(&v, &n(5.)), 0);
+        assert_eq!(search_all(&v, &n(20.)), 2);
+        assert_eq!(search_all(&v, &n(25.)), 2);
+        assert_eq!(search_all(&v, &n(100.)), 3);
+    }
+
+    /// Excel's step rule (probe cases 8, 9, 17–19 and R1–R4): a step forward
+    /// that reaches a larger cell ends the range before that cell, the last
+    /// one before `hi` included.
+    #[test]
+    fn step_rule() {
+        assert_eq!(search_all(&cells("3,1,_,3,1"), &n(2.)), 2);
+        assert_eq!(search_all(&cells("3,1,_,_,3"), &n(2.)), 2);
+        assert_eq!(search_all(&cells("3,1,_,_,_,_,3"), &n(2.)), 0);
+        assert_eq!(search_all(&cells("_,2,1,_,#,_,3"), &n(2.)), 3);
+        assert_eq!(search_all(&cells("1,2,1,_,_,_,3"), &n(2.)), 3);
+        assert_eq!(search_all(&cells("3,2,#,#,3"), &n(2.)), 2);
+        assert_eq!(search_all(&cells("5,#,#,#,1"), &n(2.)), 5);
+        assert_eq!(search_all(&cells("1,#,#,2,2,5"), &n(2.)), 5);
+        assert_eq!(search_all(&cells("9,8,7,6,5"), &n(7.)), 3);
+    }
+
+    /// The type table: only keys of the needle's kind compare, exactly.
+    #[test]
+    fn keys_of_another_kind_never_compare() {
+        use LiteralValue::{Boolean, Int};
+        let ds = DateSystem::Excel1900;
+        let key = |v: &LiteralValue| LookupKey::for_cell(v, ds);
+        assert_eq!(key(&Int(2)), Some(LookupKey::Number(2.0)));
+        assert_eq!(
+            key(&LiteralValue::Date(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()
+            )),
+            Some(LookupKey::Number(45293.0))
+        );
+        assert_eq!(key(&t("AbC")), Some(LookupKey::Text("abc".into())));
+        assert_eq!(key(&t("2")), Some(LookupKey::Text("2".into())));
+        assert_eq!(key(&Boolean(true)), Some(LookupKey::Boolean(true)));
+        assert_eq!(key(&B), None);
+        assert_eq!(key(&e()), None);
+        assert_eq!(key(&LiteralValue::Pending), None);
+        assert_eq!(key(&LiteralValue::Array(vec![vec![n(1.)]])), None);
+        assert_eq!(
+            LookupKey::for_lookup_value(&B, ds),
+            Some(LookupKey::Number(0.0))
+        );
+        assert_eq!(LookupKey::for_lookup_value(&e(), ds), None);
+
+        // Probe cases 10–14 and 22–29.
+        assert_eq!(search_all(&[n(1.), t("2"), n(3.)], &n(2.)), 1);
+        assert_eq!(search_all(&[n(1.), Boolean(true), n(3.)], &n(2.)), 1);
+        assert_eq!(search_all(&[Boolean(true)], &n(1.)), 0);
+        let mixed = [n(1.), t("a"), n(2.), t("b"), n(3.)];
+        assert_eq!(search_all(&mixed, &n(2.)), 3);
+        assert_eq!(
+            search_all(&[Boolean(false), Boolean(true)], &Boolean(true)),
+            2
+        );
+        assert_eq!(search_all(&[t("A"), t("B"), t("C")], &t("b")), 2);
+        assert_eq!(search_all(&[t("A"), t("a")], &t("a")), 2);
+        assert_eq!(search_all(&nums(&[-1., 0., 1.]), &B), 2);
+        assert_eq!(search_all(&nums(&[1., 2., 3.]), &t("2")), 0);
+        assert_eq!(search_all(&[t("1"), t("10"), t("2")], &t("2")), 3);
+        assert_eq!(search_all(&nums(&[1., 2., 3.]), &Boolean(true)), 0);
+        assert_eq!(search_all(&[n(0.1 + 0.2)], &n(0.3)), 0);
+        assert_eq!(search_all(&nums(&[0., 1e-13]), &n(0.)), 1);
+        assert_eq!(search_all(&nums(&[-0.0]), &n(0.)), 1);
+        assert_eq!(search_all(&[t(""), t("a")], &t("")), 1);
+        assert_eq!(search_all(&[t(""), t("a")], &B), 0);
+        assert_eq!(search_all(&[B, n(1.)], &n(5.)), 2);
+    }
+
+    /// `T1:T6` against `T:T` (probe cases 20a–20c): the blank tail of a
+    /// whole column moves the probes.
+    #[test]
+    fn declared_length_moves_the_probes() {
+        let v = nums(&[5., 6., 9., 1., 8., 4.]);
+        assert_eq!(search(&v, 6, &n(1.)), 0);
+        assert_eq!(search(&v, 100, &n(1.)), 0);
+        assert_eq!(search(&v, 1_048_576, &n(1.)), 4);
+    }
+
+    fn cell() -> impl Strategy<Value = LiteralValue> {
+        prop_oneof![
+            (0i64..4).prop_map(|i| LiteralValue::Number(i as f64)),
+            (0usize..3).prop_map(|i| LiteralValue::Text(["a", "B", "b"][i].into())),
+            any::<bool>().prop_map(LiteralValue::Boolean),
+            Just(LiteralValue::Empty),
+            Just(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))),
+        ]
+    }
+
+    proptest! {
+        /// The indexed search equals the plain loop.
+        #[test]
+        fn indexed_search_equals_the_plain_loop(
+            values in proptest::collection::vec(cell(), 0..40),
+            tail in 0usize..20,
+            needle in cell(),
+        ) {
+            let cells = SearchCells::new(&values, values.len() + tail, DateSystem::Excel1900);
+            if let Some(key) = LookupKey::for_lookup_value(&needle, DateSystem::Excel1900) {
+                prop_assert_eq!(
+                    excel_approximate_search(&cells, &key),
+                    plain_search(&cells, &key)
+                );
+            }
+        }
+    }
+}
