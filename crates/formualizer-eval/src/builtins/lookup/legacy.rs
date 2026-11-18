@@ -1,18 +1,22 @@
 //! Legacy LOOKUP function (vector and array forms).
 //!
-//! Excel's classic `LOOKUP` always performs approximate matching (largest value
-//! less-than-or-equal to the lookup value) against data that must be sorted in
-//! ascending order.  Two calling conventions exist:
+//! Excel's classic `LOOKUP` always performs approximate matching (the
+//! largest value less than or equal to the lookup value) with Excel's own
+//! binary search, which never checks the sort order (see
+//! `lookup_utils::excel_approximate_search`). Two calling conventions exist:
 //!
 //! **Vector form** – `LOOKUP(lookup_value, lookup_vector, [result_vector])`
-//!   Searches `lookup_vector` (a single row or column) and returns the
-//!   corresponding element from `result_vector`.  If `result_vector` is
-//!   omitted the match is returned from `lookup_vector` itself.
+//!   Searches `lookup_vector` and returns the element at the same position
+//!   of `result_vector`. If `result_vector` is omitted the match is returned
+//!   from `lookup_vector` itself.
 //!
 //! **Array form** – `LOOKUP(lookup_value, array)`
-//!   When given a 2-D array with no result vector:
 //!   * If width > height  → search the first *row*, return from the last *row*.
 //!   * Otherwise          → search the first *column*, return from the last *column*.
+//!
+//! Both forms decide on the shape the reference declares (`V:X` is taller
+//! than wide), and a 2-D lookup vector in the vector form is searched like
+//! the array form.
 
 use super::lookup_utils::{
     LookupKey, SearchCells, excel_approximate_search, lookup_result_footprint, reference_extent,
@@ -26,19 +30,37 @@ use formualizer_parse::parser::ReferenceType;
 
 /// Searches for a value and returns a corresponding value from another range.
 ///
-/// `LOOKUP` always performs approximate matching against ascending-sorted data.
+/// `LOOKUP` always performs approximate matching: it returns the largest value
+/// less than or equal to the lookup value, found with Excel's binary search.
 ///
 /// # Remarks
 /// - **Vector form** `LOOKUP(value, lookup_vec, result_vec)`: searches `lookup_vec`,
-///   returns corresponding position from `result_vec`.
+///   returns the element at the same position of `result_vec`.
 /// - **Array form** `LOOKUP(value, array)`: if width > height searches first row
 ///   and returns from last row; otherwise searches first column and returns from
-///   last column.
-/// - Data must be sorted ascending; unsorted data may return incorrect results
-///   (Excel does not guarantee #N/A for unsorted LOOKUP, but results are
-///   undefined).
-/// - Returns `#N/A` when the lookup value is smaller than every value in the
-///   search range.
+///   last column. A 2-D lookup vector in the vector form is searched the same way.
+/// - The sort order is never checked. On sorted data the answer is the largest
+///   value not above the lookup value; on unsorted data it is wherever Excel's
+///   search leads (lower midpoint, end of the run of equal values it first
+///   hits), and formualizer gives the same answer: `LOOKUP(1,{1,1,1,1,1,0,1})`
+///   is the 5th value.
+/// - Errors, blank cells and values of another type than the lookup value are
+///   stepped over, never compared: `=LOOKUP(2,1/(A1:E1<>""),A1:E1)` returns the
+///   last non-blank value of the row. A number never matches numeric text or a
+///   boolean (`LOOKUP(2,{1,"2",3})` is 1), texts compare as texts ignoring
+///   case, and numbers compare exactly. A blank lookup value is 0.
+/// - A whole-column reference is searched over all its rows, as in Excel,
+///   which matters on unsorted data only.
+/// - When the lookup vector and the result are both cell or range references
+///   written in the formula, a result range shorter than the lookup vector is
+///   read past its end, along its row or column (a one-cell result to the
+///   right), as in Excel. When either is an array, a computed value, a
+///   reference returned by a function (`INDIRECT`, `IF`, `CHOOSE`, …), a
+///   defined name or a `LET` variable, the result is not read past its end
+///   (blank, shown as 0), where Excel reads further. A result array that is
+///   too short, and a 2-D result, give `#N/A`.
+/// - Returns `#N/A` when no value of the lookup value's type is less than or
+///   equal to it, and the lookup value itself when it is an error.
 ///
 /// # Examples
 /// ```excel
@@ -70,6 +92,16 @@ use formualizer_parse::parser::ReferenceType;
 /// expected: 3
 /// ```
 ///
+/// ```yaml,sandbox
+/// title: "Last non-blank value of a row"
+/// grid:
+///   A1: 5
+///   D1: 7
+///   E1: 9
+/// formula: '=LOOKUP(2,1/(A1:E1<>""),A1:E1)'
+/// expected: 9
+/// ```
+///
 /// ```yaml,docs
 /// related:
 ///   - VLOOKUP
@@ -79,7 +111,9 @@ use formualizer_parse::parser::ReferenceType;
 ///   - q: "Does LOOKUP support exact matching?"
 ///     a: "No. LOOKUP always performs approximate matching (largest <= lookup value)."
 ///   - q: "What happens with unsorted data?"
-///     a: "Results are undefined. Unlike MATCH, LOOKUP does not guarantee #N/A for unsorted ranges."
+///     a: "LOOKUP never checks the sort order and returns the position Excel's binary search reaches, as Excel does. Unlike MATCH and VLOOKUP, which return #N/A on unsorted data, it never refuses to search."
+///   - q: "How does LOOKUP treat errors and other types in the lookup vector?"
+///     a: "It steps over them: only values of the lookup value's type are compared. That is why =LOOKUP(2,1/(A1:E1<>\"\"),A1:E1) returns the last non-blank value: the blanks become #DIV/0! errors and 2 is larger than every 1."
 /// ```
 /// [formualizer-docgen:schema:start]
 /// Name: LOOKUP

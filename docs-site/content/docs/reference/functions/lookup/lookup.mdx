@@ -7,23 +7,41 @@ description: "LOOKUP: Searches for a value and returns a corresponding value fro
 
 ## Summary
 
-`LOOKUP` always performs approximate matching against ascending-sorted data.
+`LOOKUP` always performs approximate matching: it returns the largest value
+ less than or equal to the lookup value, found with Excel's binary search.
 
 ## Remarks
  - **Vector form** `LOOKUP(value, lookup_vec, result_vec)`: searches `lookup_vec`,
-   returns corresponding position from `result_vec`.
+   returns the element at the same position of `result_vec`.
  - **Array form** `LOOKUP(value, array)`: if width &gt; height searches first row
    and returns from last row; otherwise searches first column and returns from
-   last column.
- - Data must be sorted ascending; unsorted data may return incorrect results
-   (Excel does not guarantee #N/A for unsorted LOOKUP, but results are
-   undefined).
- - Returns `#N/A` when the lookup value is smaller than every value in the
-   search range.
+   last column. A 2-D lookup vector in the vector form is searched the same way.
+ - The sort order is never checked. On sorted data the answer is the largest
+   value not above the lookup value; on unsorted data it is wherever Excel's
+   search leads (lower midpoint, end of the run of equal values it first
+   hits), and formualizer gives the same answer: `LOOKUP(1,{1,1,1,1,1,0,1})`
+   is the 5th value.
+ - Errors, blank cells and values of another type than the lookup value are
+   stepped over, never compared: `=LOOKUP(2,1/(A1:E1&lt;&gt;""),A1:E1)` returns the
+   last non-blank value of the row. A number never matches numeric text or a
+   boolean (`LOOKUP(2,{1,"2",3})` is 1), texts compare as texts ignoring
+   case, and numbers compare exactly. A blank lookup value is 0.
+ - A whole-column reference is searched over all its rows, as in Excel,
+   which matters on unsorted data only.
+ - When the lookup vector and the result are both cell or range references
+   written in the formula, a result range shorter than the lookup vector is
+   read past its end, along its row or column (a one-cell result to the
+   right), as in Excel. When either is an array, a computed value, a
+   reference returned by a function (`INDIRECT`, `IF`, `CHOOSE`, …), a
+   defined name or a `LET` variable, the result is not read past its end
+   (blank, shown as 0), where Excel reads further. A result array that is
+   too short, and a 2-D result, give `#N/A`.
+ - Returns `#N/A` when no value of the lookup value's type is less than or
+   equal to it, and the lookup value itself when it is an error.
 
 ## Examples
 
-<Tabs items={["Vector form exact hit", "Vector form approximate"]}>
+<Tabs items={["Vector form exact hit", "Vector form approximate", "Last non-blank value of a row"]}>
 <Tab value="Vector form exact hit">
 <FunctionSandbox
   title="Vector form exact hit"
@@ -39,6 +57,15 @@ description: "LOOKUP: Searches for a value and returns a corresponding value fro
   formula={`=LOOKUP(3.5,A1:A5)`}
   grid={{"A1":"1","A2":"2","A3":"3","A4":"4","A5":"5"}}
   expected={"3"}
+/>
+</Tab>
+
+<Tab value="Last non-blank value of a row">
+<FunctionSandbox
+  title="Last non-blank value of a row"
+  formula={`=LOOKUP(2,1/(A1:E1<>""),A1:E1)`}
+  grid={{"A1":"5","D1":"7","E1":"9"}}
+  expected={"9"}
 />
 </Tab>
 
@@ -59,7 +86,10 @@ description: "LOOKUP: Searches for a value and returns a corresponding value fro
 No. LOOKUP always performs approximate matching (largest &lt;= lookup value).
 
 ### What happens with unsorted data?
-Results are undefined. Unlike MATCH, LOOKUP does not guarantee #N/A for unsorted ranges.
+LOOKUP never checks the sort order and returns the position Excel's binary search reaches, as Excel does. Unlike MATCH and VLOOKUP, which return #N/A on unsorted data, it never refuses to search.
+
+### How does LOOKUP treat errors and other types in the lookup vector?
+It steps over them: only values of the lookup value's type are compared. That is why =LOOKUP(2,1/(A1:E1&lt;&gt;""),A1:E1) returns the last non-blank value: the blanks become #DIV/0! errors and 2 is larger than every 1.
 
 ## Runtime metadata
 
