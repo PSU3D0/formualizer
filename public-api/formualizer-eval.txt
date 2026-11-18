@@ -7752,6 +7752,7 @@ pub const formualizer_eval::function::FnCaps::NUMERIC_ONLY: Self
 pub const formualizer_eval::function::FnCaps::PARALLEL_ARGS: Self
 pub const formualizer_eval::function::FnCaps::PARALLEL_CHUNKS: Self
 pub const formualizer_eval::function::FnCaps::PURE: Self
+pub const formualizer_eval::function::FnCaps::READS_PAST_RESULT: Self
 pub const formualizer_eval::function::FnCaps::REDUCTION: Self
 pub const formualizer_eval::function::FnCaps::RETURNS_REFERENCE: Self
 pub const formualizer_eval::function::FnCaps::SHORT_CIRCUIT: Self

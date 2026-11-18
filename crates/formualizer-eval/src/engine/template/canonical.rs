@@ -310,32 +310,73 @@ pub(crate) enum CanonicalRejectKind {
     UnsupportedReference,
     FunctionContractUnsupported,
     ContextDependentFunction,
+    LookupResultFootprint,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum CanonicalRejectReason {
-    InvalidPlacementAnchor { row: u32, col: u32 },
-    DynamicReferenceFunction { name: String },
-    UnknownOrCustomFunction { name: String },
-    LocalEnvironmentFunction { name: String },
+    InvalidPlacementAnchor {
+        row: u32,
+        col: u32,
+    },
+    DynamicReferenceFunction {
+        name: String,
+    },
+    UnknownOrCustomFunction {
+        name: String,
+    },
+    LocalEnvironmentFunction {
+        name: String,
+    },
     ParserVolatileFlag,
-    VolatileFunction { name: String },
-    ReferenceReturningFunction { name: String },
-    ArrayOrSpillFunction { name: String },
+    VolatileFunction {
+        name: String,
+    },
+    ReferenceReturningFunction {
+        name: String,
+    },
+    ArrayOrSpillFunction {
+        name: String,
+    },
     ArrayLiteral,
-    SpillReference { original: String },
+    SpillReference {
+        original: String,
+    },
     SpillResultRegionOperator,
     ImplicitIntersectionOperator,
     CallExpression,
-    StructuredReference { diagnostic: String },
-    StructuredReferenceCurrentRow { diagnostic: String },
-    ThreeDReference { diagnostic: String },
-    ExternalReference { diagnostic: String },
-    OpenRangeReference { original: String },
-    WholeAxisReference { original: String },
-    UnsupportedReference { diagnostic: String },
-    FunctionContractUnsupported { name: String },
-    ContextDependentFunction { name: String },
+    StructuredReference {
+        diagnostic: String,
+    },
+    StructuredReferenceCurrentRow {
+        diagnostic: String,
+    },
+    ThreeDReference {
+        diagnostic: String,
+    },
+    ExternalReference {
+        diagnostic: String,
+    },
+    OpenRangeReference {
+        original: String,
+    },
+    WholeAxisReference {
+        original: String,
+    },
+    UnsupportedReference {
+        diagnostic: String,
+    },
+    FunctionContractUnsupported {
+        name: String,
+    },
+    ContextDependentFunction {
+        name: String,
+    },
+    /// A LOOKUP whose result footprint cannot be shifted from its anchor
+    /// (`lookup_footprint_blocks_sharing`): each cell keeps its own.
+    LookupResultFootprint {
+        name: String,
+    },
 }
 
 impl CanonicalRejectReason {
@@ -394,6 +435,9 @@ impl CanonicalRejectReason {
             }
             CanonicalRejectReason::ContextDependentFunction { .. } => {
                 CanonicalRejectKind::ContextDependentFunction
+            }
+            CanonicalRejectReason::LookupResultFootprint { .. } => {
+                CanonicalRejectKind::LookupResultFootprint
             }
         }
     }
@@ -729,6 +773,18 @@ impl Canonicalizer<'_> {
                     args.len(),
                 );
                 self.classify_function(&id);
+                if let Some((lookup, result)) = crate::engine::refs::tree_lookup_references(
+                    name,
+                    args,
+                    crate::builtins::lookup::lookup_utils::no_footprint_suppressions(),
+                ) && crate::builtins::lookup::lookup_utils::lookup_footprint_blocks_sharing(
+                    lookup, result,
+                ) {
+                    self.labels
+                        .reject(CanonicalRejectReason::LookupResultFootprint {
+                            name: id.canonical_name.clone(),
+                        });
+                }
                 self.labels.flag(CanonicalTemplateFlag::FunctionCall);
                 let canonical_args = args
                     .iter()
@@ -1673,6 +1729,10 @@ fn write_reject_reason_key(reason: &CanonicalRejectReason, out: &mut String) {
         }
         CanonicalRejectReason::ContextDependentFunction { name } => {
             out.push_str("context_dependent_function:");
+            write_string_key(name, out);
+        }
+        CanonicalRejectReason::LookupResultFootprint { name } => {
+            out.push_str("lookup_result_footprint:");
             write_string_key(name, out);
         }
     }

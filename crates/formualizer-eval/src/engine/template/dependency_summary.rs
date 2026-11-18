@@ -189,7 +189,8 @@ impl SummaryAnalyzer {
             | CanonicalRejectReason::WholeAxisReference { .. }
             | CanonicalRejectReason::UnsupportedReference { .. } => return,
             CanonicalRejectReason::FunctionContractUnsupported { name }
-            | CanonicalRejectReason::ContextDependentFunction { name } => {
+            | CanonicalRejectReason::ContextDependentFunction { name }
+            | CanonicalRejectReason::LookupResultFootprint { name } => {
                 DependencyRejectReason::FunctionUnsupported { name: name.clone() }
             }
         };

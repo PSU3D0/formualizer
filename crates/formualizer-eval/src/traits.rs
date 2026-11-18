@@ -374,6 +374,12 @@ struct ArgumentCaches<'b> {
     cached_reference_or_value:
         std::cell::OnceCell<Result<crate::function::FunctionResolution<'b>, ExcelError>>,
     cached_resolved: std::cell::OnceCell<Result<ResolvedArgument<'b>, ExcelError>>,
+    /// Whether the call this argument belongs to may read its result past
+    /// its end (`lookup_utils::call_reads_past_result` on the call's written
+    /// name), set by the interpreter where it dispatches the call. Kept with
+    /// the cold caches so that the handle stays inline-sized: only the
+    /// arguments of such a call (LOOKUP) allocate them up front.
+    call_reads_past_result: bool,
 }
 
 impl<'a, 'b> ArgumentHandle<'a, 'b> {
@@ -407,6 +413,29 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             caches: std::cell::OnceCell::new(),
             cached_value: std::cell::OnceCell::new(),
         }
+    }
+
+    /// Mark the call this argument belongs to as one that may read its result
+    /// past its end (see `call_reads_past_result` on the field).
+    pub(crate) fn with_call_reads_past_result(self, reads: bool) -> Self {
+        if reads {
+            let _ = self.caches.set(Box::new(ArgumentCaches {
+                call_reads_past_result: true,
+                ..ArgumentCaches::default()
+            }));
+        }
+        self
+    }
+
+    /// Whether the call this argument belongs to may read its result past
+    /// its end: its written name resolves to LOOKUP globally and the engine
+    /// does not suppress its footprint, so the dependency graph registered
+    /// one. False when the interpreter did not dispatch the call (a direct
+    /// `dispatch` in a unit test).
+    pub(crate) fn call_reads_past_result(&self) -> bool {
+        self.caches
+            .get()
+            .is_some_and(|caches| caches.call_reads_past_result)
     }
 
     /// Workbook date system in force for the evaluation this argument belongs to.
@@ -455,6 +484,45 @@ impl<'a, 'b> ArgumentHandle<'a, 'b> {
             return None;
         }
         self.as_reference_or_eval().ok()
+    }
+
+    /// The reference this argument is written as when it is a cell or a
+    /// range reference, with the family offset the interpreter applies, as
+    /// the reference walkers of `engine::refs` read it. Unlike
+    /// [`Self::bare_reference`], a defined name or a LET/LAMBDA local is
+    /// never resolved: `None` for them and for anything computed.
+    pub(crate) fn written_cell_or_range(&self) -> Option<ReferenceType> {
+        let written = match &self.expr {
+            ArgumentExpr::Ast(node) => match &node.node_type {
+                ASTNodeType::Reference {
+                    reference:
+                        reference @ (ReferenceType::Cell { .. } | ReferenceType::Range { .. }),
+                    ..
+                } => reference.clone(),
+                _ => return None,
+            },
+            ArgumentExpr::Arena {
+                id,
+                data_store,
+                sheet_registry,
+            } => {
+                let crate::engine::arena::AstNodeData::Reference { ref_type, .. } =
+                    data_store.get_node(*id)?
+                else {
+                    return None;
+                };
+                let compact = data_store.compact_ref(*ref_type);
+                if !matches!(
+                    compact,
+                    crate::engine::arena::CompactRefType::Cell { .. }
+                        | crate::engine::arena::CompactRefType::Range { .. }
+                ) {
+                    return None;
+                }
+                data_store.reconstruct_reference_type_for_eval(compact, sheet_registry)
+            }
+        };
+        self.interp.reference_for_current_offset(&written).ok()
     }
 
     /// Inspect an actual registered function reference in a higher-order value
@@ -2117,6 +2185,15 @@ pub trait FunctionProvider: Send + Sync {
     #[doc(hidden)]
     fn planning_semantic_revision(&self) -> Option<u64> {
         None
+    }
+
+    /// Whether calls written as `name` must not read a LOOKUP result past
+    /// its end: the engine's suppressed footprint names (a workbook-local
+    /// override of LOOKUP), so that the interpreter and the dependency graph
+    /// agree (`lookup_utils::call_reads_past_result`).
+    #[doc(hidden)]
+    fn lookup_footprint_suppressed(&self, _name: &str) -> bool {
+        false
     }
 
     #[doc(hidden)]

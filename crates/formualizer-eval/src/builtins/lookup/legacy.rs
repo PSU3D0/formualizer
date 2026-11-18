@@ -14,7 +14,9 @@
 //!   * If width > height  → search the first *row*, return from the last *row*.
 //!   * Otherwise          → search the first *column*, return from the last *column*.
 
-use super::lookup_utils::{LookupKey, SearchCells, excel_approximate_search, reference_extent};
+use super::lookup_utils::{
+    LookupKey, SearchCells, excel_approximate_search, lookup_result_footprint, reference_extent,
+};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
@@ -108,7 +110,7 @@ impl Function for LookupFn {
     fn min_args(&self) -> usize {
         2
     }
-    func_caps!(PURE, LOOKUP);
+    func_caps!(PURE, LOOKUP, READS_PAST_RESULT);
     fn arg_schema(&self) -> &'static [ArgSchema] {
         use once_cell::sync::Lazy;
         static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
@@ -235,8 +237,15 @@ impl LookupVector {
 /// The result vector of the vector form, read as Excel reads it.
 enum ResultVector {
     /// A reference with one row (one cell included) or one column: its cells
-    /// from its first one along that axis. A cell past the data is blank.
-    Reference(Vec<LiteralValue>),
+    /// from its first one along that axis. A cell past its data is blank;
+    /// past its end, Excel reads further along the same axis, which LOOKUP
+    /// does inside the footprint the dependency graph registered for the
+    /// formula ([`lookup_result_footprint`]), and blank elsewhere.
+    Reference {
+        values: Vec<LiteralValue>,
+        along_row: bool,
+        footprint: Option<ReferenceType>,
+    },
     /// An array (a constant or a computed result) with one row or one
     /// column: `#N/A` past its end.
     Array(Vec<LiteralValue>),
@@ -246,13 +255,14 @@ enum ResultVector {
 
 impl ResultVector {
     fn read<'b>(
-        arg: &ArgumentHandle<'_, 'b>,
+        args: &[ArgumentHandle<'_, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<Self, ExcelError> {
-        let read = materialise_range(arg, ctx)?;
+        let read = materialise_range(&args[2], ctx)?;
         let (rows, cols) = read.declared_shape();
         let is_reference = read.reference.is_some();
-        let values = if rows == 1 {
+        let along_row = rows == 1;
+        let values = if along_row {
             read.data.into_iter().next().unwrap_or_default()
         } else if cols == 1 {
             read.data
@@ -262,25 +272,58 @@ impl ResultVector {
         } else {
             return Ok(Self::TwoDimensional);
         };
-        Ok(if is_reference {
-            Self::Reference(values)
-        } else {
-            Self::Array(values)
+        if !is_reference {
+            return Ok(Self::Array(values));
+        }
+        // Only where the dependency graph registered the footprint: the call's
+        // written name passes `call_reads_past_result` (an alias or override
+        // the graph cannot see reads blank past the end, never stale).
+        let footprint = args[2]
+            .call_reads_past_result()
+            .then(|| {
+                args[1]
+                    .written_cell_or_range()
+                    .zip(args[2].written_cell_or_range())
+            })
+            .flatten()
+            .and_then(|(lookup, result)| lookup_result_footprint(&lookup, &result));
+        Ok(Self::Reference {
+            values,
+            along_row,
+            footprint,
         })
     }
 
-    fn at(&self, pos: usize) -> LiteralValue {
-        match self {
-            Self::Reference(values) => {
-                materialise_empty(values.get(pos).cloned().unwrap_or(LiteralValue::Empty))
-            }
+    fn at<'b>(
+        &self,
+        pos: usize,
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<LiteralValue, ExcelError> {
+        Ok(match self {
+            Self::Reference {
+                values,
+                along_row,
+                footprint,
+            } => materialise_empty(match (values.get(pos), footprint) {
+                (Some(value), _) => value.clone(),
+                (None, Some(footprint)) => {
+                    let view = ctx.resolve_range_view(footprint, ctx.current_sheet())?;
+                    let (rows, cols) = view.dims();
+                    match along_row {
+                        true if pos < cols => view.get_cell(0, pos),
+                        false if pos < rows => view.get_cell(pos, 0),
+                        _ => LiteralValue::Empty,
+                    }
+                }
+                (None, None) => LiteralValue::Empty,
+            }),
             Self::Array(values) => values
                 .get(pos)
                 .cloned()
                 .map(materialise_empty)
                 .unwrap_or_else(na),
             Self::TwoDimensional => na(),
-        }
+        })
     }
 }
 
@@ -321,10 +364,10 @@ impl LookupFn {
         if args.len() >= 3 {
             let result = vectors
                 .result
-                .get_or_insert_with(|| ResultVector::read(&args[2], ctx))
+                .get_or_insert_with(|| ResultVector::read(args, ctx))
                 .as_ref()
                 .map_err(Clone::clone)?;
-            Ok(CalcValue::Scalar(result.at(pos)))
+            Ok(CalcValue::Scalar(result.at(pos, ctx)?))
         } else {
             Ok(CalcValue::Scalar(materialise_empty(lookup.result_at(pos))))
         }

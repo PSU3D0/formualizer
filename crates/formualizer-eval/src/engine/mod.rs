@@ -486,7 +486,8 @@ pub mod fp8_parity_test_support {
                     CanonicalLabels::REJECT_UNSUPPORTED_REFERENCE
                 }
                 CanonicalRejectReason::FunctionContractUnsupported { .. }
-                | CanonicalRejectReason::ContextDependentFunction { .. } => {
+                | CanonicalRejectReason::ContextDependentFunction { .. }
+                | CanonicalRejectReason::LookupResultFootprint { .. } => {
                     CanonicalLabels::REJECT_UNKNOWN_OR_CUSTOM_FUNCTION
                 }
             };
@@ -514,6 +515,7 @@ impl<R: EvaluationContext> Engine<R> {
     /// See [Engine::is_poisoned] for the permanent poison refusal contract.
     pub fn begin_bulk_ingest(&mut self) -> ingest_builder::BulkIngestBuilder<'_> {
         self.assert_not_poisoned();
+        self.refresh_lookup_footprint_suppressions();
         ingest_builder::BulkIngestBuilder::new(&mut self.graph)
     }
 
@@ -547,6 +549,7 @@ impl<R: EvaluationContext> Engine<R> {
         self.assert_not_poisoned();
         let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
         if self.config.formula_compression
+            && !crate::engine::refs::tree_formula_blocks_lookup_sharing(ast)
             && let Some(family) = self.graph.group_formula_member(grouper, row0, col0, ast)
         {
             let record = FormulaIngestRecord::member(row, col, family.template, family.anchor);
@@ -608,6 +611,17 @@ impl<R: EvaluationContext> Engine<R> {
         ast_id: AstNodeId,
     ) {
         self.assert_not_poisoned();
+        // A LOOKUP whose footprint cannot be shifted from this cell is never
+        // a family template: neither an adjacent formula nor relocated text
+        // (`stage_relocated_text`, which takes its families from here) joins
+        // it, so each cell keeps its own footprint.
+        if crate::engine::refs::arena_formula_blocks_lookup_sharing(
+            self.graph.data_store(),
+            self.graph.sheet_reg(),
+            ast_id,
+        ) {
+            return;
+        }
         let (row0, col0) = (row.saturating_sub(1), col.saturating_sub(1));
         grouper.note(
             row0,

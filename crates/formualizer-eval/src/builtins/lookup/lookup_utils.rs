@@ -1670,6 +1670,192 @@ pub(crate) fn excel_approximate_search(cells: &SearchCells, needle: &LookupKey) 
     }
 }
 
+/* ───────────── LOOKUP's result read past its end ───────────── */
+
+/// The cells LOOKUP may read from its result reference: from the first cell
+/// of `result` up to the length LOOKUP searches in `lookup`, rightward for a
+/// one-row result (one cell included), downward for a one-column result,
+/// clipped at the sheet edge. None when `result` is long enough or 2-D.
+/// Both arguments are cell or range references written in the formula.
+///
+/// Excel reads a result range shorter than the lookup vector past its end
+/// (`=LOOKUP(3,K20:K22,L20:L21)` reads `L22`). The dependency graph knows
+/// only the references a formula names, so the reference walkers of
+/// `engine::refs` give this footprint as one more reference of the formula,
+/// and LOOKUP reads past the end of its result only inside it.
+pub(crate) fn lookup_result_footprint(
+    lookup: &ReferenceType,
+    result: &ReferenceType,
+) -> Option<ReferenceType> {
+    let (lookup_rows, lookup_cols) = written_extent(lookup)?;
+    let (result_rows, result_cols) = written_extent(result)?;
+    // The length LOOKUP searches: along the first row of a lookup vector
+    // wider than tall, down its first column otherwise.
+    let searched = if lookup_cols > lookup_rows {
+        lookup_cols
+    } else {
+        lookup_rows
+    };
+    let (sheet, row, col, row_abs, col_abs, end_row_abs, end_col_abs) = match result {
+        ReferenceType::Cell {
+            sheet,
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } => (sheet, *row, *col, *row_abs, *col_abs, *row_abs, *col_abs),
+        ReferenceType::Range {
+            sheet,
+            start_row,
+            start_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+            ..
+        } => (
+            sheet,
+            start_row.unwrap_or(1),
+            start_col.unwrap_or(1),
+            *start_row_abs,
+            *start_col_abs,
+            *end_row_abs,
+            *end_col_abs,
+        ),
+        _ => return None,
+    };
+    let reach = |start: u32, limit: i64| -> u32 {
+        let end = (i64::from(start) + searched as i64 - 1).min(limit);
+        u32::try_from(end).unwrap_or(start)
+    };
+    let (end_row, end_col) = if result_rows == 1 && result_cols < searched {
+        (row, reach(col, GENERATED_ARRAY_MAX_COLS))
+    } else if result_cols == 1 && result_rows > 1 && result_rows < searched {
+        (reach(row, GENERATED_ARRAY_MAX_ROWS), col)
+    } else {
+        return None;
+    };
+    Some(ReferenceType::Range {
+        sheet: sheet.clone(),
+        start_row: Some(row),
+        start_col: Some(col),
+        end_row: Some(end_row),
+        end_col: Some(end_col),
+        start_row_abs: row_abs,
+        start_col_abs: col_abs,
+        end_row_abs,
+        end_col_abs,
+    })
+}
+
+/// The extent of a cell or range reference written in a formula, or None.
+fn written_extent(reference: &ReferenceType) -> Option<(usize, usize)> {
+    match reference {
+        ReferenceType::Cell { .. } | ReferenceType::Range { .. } => reference_extent(reference),
+        _ => None,
+    }
+}
+
+/// Whether a LOOKUP call with these written lookup and result references
+/// must keep its formula out of every path that shares one dependency set
+/// across the cells of a family (load-time grouping, the formula plane, the
+/// authority's relocatable templates). A footprint cannot always be shifted
+/// from the anchor: fill `=LOOKUP(99,K$20:K22,P20)` down one row and
+/// `P20:R20` becomes `P21:S21`, longer, not just lower. So the formula is
+/// evaluated cell by cell, with its own footprint, when it has a footprint
+/// at its own cell, or when an argument has mixed `$` flags along an axis
+/// (its length changes from cell to cell). A LOOKUP whose result is long
+/// enough and whose ranges are fully absolute or fully relative is shared.
+pub(crate) fn lookup_footprint_blocks_sharing(
+    lookup: &ReferenceType,
+    result: &ReferenceType,
+) -> bool {
+    let mixed = |reference: &ReferenceType| match reference {
+        ReferenceType::Range {
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+            ..
+        } => start_row_abs != end_row_abs || start_col_abs != end_col_abs,
+        _ => false,
+    };
+    lookup_result_footprint(lookup, result).is_some() || mixed(lookup) || mixed(result)
+}
+
+/// Whether the function the formula calls as `name` reads its result past
+/// its end ([`FnCaps::READS_PAST_RESULT`], LOOKUP's), resolved through the
+/// global registry, which also resolves Excel prefixes (`_xlfn.`) and
+/// aliases. A custom function registered in its place globally does not
+/// have the capability. See [`call_reads_past_result`] for the provider.
+///
+/// [`FnCaps::READS_PAST_RESULT`]: crate::function::FnCaps::READS_PAST_RESULT
+pub(crate) fn reads_past_result(name: &str) -> bool {
+    crate::function_registry::get("", name).is_some_and(|function| {
+        crate::external_callbacks::metadata(
+            function.as_ref(),
+            crate::function::FnCaps::empty,
+            || function.caps(),
+        )
+        .contains(crate::function::FnCaps::READS_PAST_RESULT)
+    })
+}
+
+/// Normalized names whose calls get no LOOKUP footprint (the engine's
+/// `DependencyGraph::lookup_footprint_suppressed`).
+pub(crate) type FootprintSuppressions = rustc_hash::FxHashSet<String>;
+
+/// No suppressed name: global resolution alone, for walkers with no engine.
+pub(crate) fn no_footprint_suppressions() -> &'static FootprintSuppressions {
+    static EMPTY: std::sync::LazyLock<FootprintSuppressions> =
+        std::sync::LazyLock::new(FootprintSuppressions::default);
+    &EMPTY
+}
+
+/// Whether a call written as `name` has a LOOKUP footprint, and so whether
+/// LOOKUP reads past its result's end for it: one predicate for the
+/// reference walkers and the interpreter, so that the footprint dependency
+/// exists exactly when the builtin reads past the end.
+///
+/// The walkers cannot reach the workbook's function provider, which
+/// evaluation resolves names through, so this asks the global registry
+/// ([`reads_past_result`]) and the names the engine found its provider
+/// resolving otherwise (`suppressed`, a workbook-local override of LOOKUP).
+/// Both differences fail safe: a provider-local alias of LOOKUP (a name the
+/// global registry does not know) gets no footprint and reads blank past
+/// its end, never a stale value; an override gets no footprint and never
+/// runs the builtin. When the answer changes for a name (an override
+/// registered or removed, a global alias of LOOKUP registered later), the
+/// engine rebuilds the dependencies of the formulas calling it
+/// (`DependencyGraph::refresh_lookup_footprint_suppressions`), so formulas
+/// ingested earlier follow too. Volatility and dynamic-dependency detection
+/// (`is_ast_volatile`, `is_ast_dynamic`) still resolve through the global
+/// registry alone.
+pub(crate) fn call_reads_past_result(name: &str, suppressed: &FootprintSuppressions) -> bool {
+    call_reads_past_result_unless(name, |name| footprint_suppressed(name, suppressed))
+}
+
+/// [`call_reads_past_result`] with the suppressed names asked through
+/// `suppressed`, as the interpreter does through its context. A spelling
+/// with several Excel prefixes (`_xlfn._xlws.LOOKUP`) never reads past its
+/// result's end: the engine finds the spellings its provider resolves
+/// otherwise among the registry's names and their single-prefix spellings,
+/// so it could not tell whether such a spelling is overridden.
+pub(crate) fn call_reads_past_result_unless(
+    name: &str,
+    suppressed: impl FnOnce(&str) -> bool,
+) -> bool {
+    !crate::function_registry::has_compound_excel_prefix(name)
+        && !suppressed(name)
+        && reads_past_result(name)
+}
+
+/// Whether `suppressed` names the call written as `name`.
+pub(crate) fn footprint_suppressed(name: &str, suppressed: &FootprintSuppressions) -> bool {
+    !suppressed.is_empty()
+        && suppressed.contains(&crate::function_registry::normalized_function_name(name))
+}
+
 #[cfg(test)]
 mod excel_search_tests {
     use super::*;
@@ -1950,5 +2136,82 @@ mod excel_search_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod footprint_tests {
+    use super::*;
+    use formualizer_parse::parser::{ASTNodeType, parse};
+
+    /// The reference written as `text` (`=` excluded).
+    fn r(text: &str) -> ReferenceType {
+        match parse(format!("={text}")).unwrap().node_type {
+            ASTNodeType::Reference { reference, .. } => reference,
+            other => panic!("{text} is not a reference: {other:?}"),
+        }
+    }
+
+    fn footprint(lookup: &str, result: &str) -> Option<String> {
+        lookup_result_footprint(&r(lookup), &r(result)).map(|f| f.to_string())
+    }
+
+    /// The table of the plan.
+    #[test]
+    fn footprint_covers_the_whole_result_up_to_the_searched_length() {
+        assert_eq!(footprint("K20:K22", "L20:L21").as_deref(), Some("L20:L22"));
+        assert_eq!(footprint("K20:K22", "P20").as_deref(), Some("P20:R20"));
+        assert_eq!(footprint("A:A", "B1:B10").as_deref(), Some("B1:B1048576"));
+        assert_eq!(
+            footprint("Keys!K20:K22", "Values!L20:L21").as_deref(),
+            Some("Values!L20:L22")
+        );
+        assert_eq!(footprint("K20:K22", "L20:L22"), None);
+        assert_eq!(footprint("K20:K22", "MyName"), None);
+        // A row result for a column lookup, a short result not at the top,
+        // a row lookup with a one-cell result, a 2-D result, a whole column.
+        assert_eq!(footprint("G20:G22", "H24:I24").as_deref(), Some("H24:J24"));
+        assert_eq!(footprint("G20:G22", "P21:P22").as_deref(), Some("P21:P23"));
+        assert_eq!(footprint("G30:I30", "P30").as_deref(), Some("P30:R30"));
+        assert_eq!(footprint("G20:G22", "H20:I21"), None);
+        assert_eq!(footprint("A:A", "B:B"), None);
+        // A 2-D lookup vector searches its first column when tall.
+        assert_eq!(footprint("K26:L28", "M26").as_deref(), Some("M26:O26"));
+        assert_eq!(footprint("K20", "L20"), None);
+    }
+
+    #[test]
+    fn footprint_stops_at_the_sheet_edge() {
+        assert_eq!(footprint("A:A", "XFC1").as_deref(), Some("XFC1:XFD1"));
+        assert_eq!(footprint("A1:A10", "XFA5").as_deref(), Some("XFA5:XFD5"));
+        assert_eq!(
+            footprint("A1:A10", "B1048570:B1048571").as_deref(),
+            Some("B1048570:B1048576")
+        );
+    }
+
+    #[test]
+    fn footprint_keeps_the_result_flags() {
+        let f = lookup_result_footprint(&r("$K$20:$K$22"), &r("$L$20:$L$21")).unwrap();
+        assert_eq!(f.to_string(), "$L$20:$L$22");
+        let f = lookup_result_footprint(&r("K20:K22"), &r("$P$20")).unwrap();
+        assert_eq!(f.to_string(), "$P$20:$R$20");
+    }
+
+    #[test]
+    fn mixed_bounds_or_a_footprint_block_sharing() {
+        let blocks = |l: &str, res: &str| lookup_footprint_blocks_sharing(&r(l), &r(res));
+        // Long-enough results, fully relative or fully absolute: shared.
+        assert!(!blocks("K20:K22", "L20:L22"));
+        assert!(!blocks("$K$20:$K$22", "$L$20:$L$22"));
+        assert!(!blocks("$K20:$K22", "L20:L22"));
+        assert!(!blocks("A:A", "B:B"));
+        // A footprint at the cell itself.
+        assert!(blocks("K20:K22", "L20:L21"));
+        assert!(blocks("$K$20:$K$22", "$P$20"));
+        // Mixed flags along an axis of either argument.
+        assert!(blocks("K$20:K22", "L20:L22"));
+        assert!(blocks("$K20:K22", "L20:L22"));
+        assert!(blocks("K20:K22", "L20:L$22"));
     }
 }

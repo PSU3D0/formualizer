@@ -676,6 +676,18 @@ impl<'a> Interpreter<'a> {
             .map(|function| ResolvedFunction::owned(name, function))
     }
 
+    /// Whether the call of `fun` written as `name` may read its result past
+    /// its end: `fun` has `READS_PAST_RESULT` and the name passes the
+    /// predicate the reference walkers use for its footprint
+    /// (`lookup_utils::call_reads_past_result`), so the dependency exists.
+    fn call_reads_past_result(&self, fun: &dyn crate::function::Function, name: &str) -> bool {
+        crate::external_callbacks::metadata(fun, crate::function::FnCaps::empty, || fun.caps())
+            .contains(crate::function::FnCaps::READS_PAST_RESULT)
+            && crate::builtins::lookup::lookup_utils::call_reads_past_result_unless(name, |name| {
+                self.context.lookup_footprint_suppressed(name)
+            })
+    }
+
     pub(crate) fn ast_function_capabilities(&self, name: &str) -> Option<crate::function::FnCaps> {
         if let Some(table) = self.resolved_functions
             && let Some(caps) = table.ast_functions.get(name)
@@ -1664,11 +1676,14 @@ impl<'a> Interpreter<'a> {
                 })?;
 
                 if let Some(fun) = function {
+                    let reads_past_result =
+                        self.call_reads_past_result(&*fun, data_store.resolve_ast_string(*name_id));
                     let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
                         .iter()
                         .copied()
                         .map(|arg_id| {
                             ArgumentHandle::new_arena(arg_id, self, data_store, sheet_registry)
+                                .with_call_reads_past_result(reads_past_result)
                         })
                         .collect();
 
@@ -2223,8 +2238,13 @@ impl<'a> Interpreter<'a> {
         args: &[ASTNode],
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         if let Some(fun) = self.ast_function(name) {
-            let handles: smallvec::SmallVec<[ArgumentHandle; 4]> =
-                args.iter().map(|n| ArgumentHandle::new(n, self)).collect();
+            let reads_past_result = self.call_reads_past_result(&*fun, name);
+            let handles: smallvec::SmallVec<[ArgumentHandle; 4]> = args
+                .iter()
+                .map(|n| {
+                    ArgumentHandle::new(n, self).with_call_reads_past_result(reads_past_result)
+                })
+                .collect();
             // Use the function's built-in dispatch method with a narrow FunctionContext
             let fctx = DefaultFunctionContext::new_with_sheet(
                 self.context,

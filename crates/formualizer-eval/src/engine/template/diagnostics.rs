@@ -81,6 +81,7 @@ fn reject_kind_label(kind: CanonicalRejectKind) -> &'static str {
         CanonicalRejectKind::UnknownOrCustomFunction => "unknown_or_custom_function",
         CanonicalRejectKind::FunctionContractUnsupported => "function_contract_unsupported",
         CanonicalRejectKind::ContextDependentFunction => "context_dependent_function",
+        CanonicalRejectKind::LookupResultFootprint => "lookup_result_footprint",
         CanonicalRejectKind::LocalEnvironment => "local_environment",
         CanonicalRejectKind::VolatileFunction => "volatile_function",
         CanonicalRejectKind::ReferenceReturningFunction => "reference_returning_function",
@@ -115,6 +116,9 @@ fn reject_reason_label(reason: &CanonicalRejectReason) -> String {
         }
         CanonicalRejectReason::ContextDependentFunction { name } => {
             format!("context_dependent_function:{name}")
+        }
+        CanonicalRejectReason::LookupResultFootprint { name } => {
+            format!("lookup_result_footprint:{name}")
         }
         CanonicalRejectReason::LocalEnvironmentFunction { name } => {
             format!("local_environment_function:{name}")

@@ -79,6 +79,7 @@ impl DependencyGraph {
                 &mut probe,
                 |p| p.graph.data_store(),
                 |p| p.graph.sheet_reg(),
+                |p| p.graph.lookup_footprint_suppressions(),
                 visit,
             );
             if probe.hit {

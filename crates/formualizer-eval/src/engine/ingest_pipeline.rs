@@ -6,6 +6,7 @@
 //! vertices. Graph materialization remains in the existing graph code.
 
 use crate::SheetId;
+use crate::builtins::lookup::lookup_utils::{FootprintSuppressions, no_footprint_suppressions};
 use crate::engine::arena::{
     AstNodeData, AstNodeId, AstNodeMetadata, CanonicalLabels, CompactRefType, DataStore, SheetKey,
     StringId, ValueRef,
@@ -148,6 +149,9 @@ pub(crate) struct IngestPipeline<'a> {
     /// `PreparationPolicy::BestEffort`: a missing sheet or table becomes a
     /// pending symbol link instead of a preparation error.
     unbound_pending: bool,
+    /// The graph's suppressed LOOKUP footprint names
+    /// (`call_reads_past_result`).
+    footprint_suppressions: &'a FootprintSuppressions,
 }
 
 impl<'a> IngestPipeline<'a> {
@@ -173,6 +177,7 @@ impl<'a> IngestPipeline<'a> {
             memo_enabled: true,
             arena_formulas_seen: false,
             unbound_pending: false,
+            footprint_suppressions: no_footprint_suppressions(),
         }
     }
 
@@ -186,6 +191,14 @@ impl<'a> IngestPipeline<'a> {
             placement,
             self.function_semantics_enabled,
         )
+    }
+
+    pub(crate) fn with_footprint_suppressions(
+        mut self,
+        footprint_suppressions: &'a FootprintSuppressions,
+    ) -> Self {
+        self.footprint_suppressions = footprint_suppressions;
+        self
     }
 
     pub(crate) fn with_unbound_pending(mut self, on: bool) -> Self {
@@ -403,6 +416,16 @@ impl<'a> IngestPipeline<'a> {
             &mut memo.refs,
         );
         if !eligible {
+            return None;
+        }
+        // A specialization replays the written references of the traced
+        // placement only: a LOOKUP footprint that cannot be shifted from it
+        // (`lookup_footprint_blocks_sharing`) takes the per-cell path.
+        if crate::engine::refs::arena_formula_blocks_lookup_sharing(
+            self.data_store,
+            self.sheet_registry,
+            id,
+        ) {
             return None;
         }
         memo.revalidate(validity);
@@ -759,7 +782,13 @@ impl<'a> IngestPipeline<'a> {
             plan,
             trace,
         };
-        crate::engine::refs::visit_tree_references(ast, &mut context, local_binding_style, consume)
+        crate::engine::refs::visit_tree_references(
+            ast,
+            &mut context,
+            local_binding_style,
+            |context| context.pipeline.footprint_suppressions,
+            consume,
+        )
     }
 
     fn collect_reference(
@@ -837,7 +866,9 @@ impl<'a> IngestPipeline<'a> {
                 // This ingest policy intentionally remains independent from the
                 // dependency planner's historical default limit of 16.
                 let area = range.saturating_area().expect("finite area");
+                // A LOOKUP footprint is always one range dependency.
                 if self.policy.expand_small_ranges
+                    && !range.footprint
                     && area <= self.policy.range_expansion_limit as u64
                 {
                     let sheet_id = match self

@@ -4,6 +4,9 @@
 //! source order and leaves graph/planner policy (range expansion, resolution,
 //! placeholder creation, and error mapping) at the call site.
 
+use crate::builtins::lookup::lookup_utils::{
+    FootprintSuppressions, call_reads_past_result, no_footprint_suppressions,
+};
 use crate::engine::arena::{AstNodeData, AstNodeId, DataStore};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::{ExcelError, ExcelErrorKind};
@@ -82,6 +85,14 @@ pub(crate) struct RangeReference<'a> {
     pub(crate) start_col_abs: bool,
     pub(crate) end_row_abs: bool,
     pub(crate) end_col_abs: bool,
+    /// A LOOKUP footprint the walkers add after the call's arguments
+    /// (`lookup_result_footprint`), not a reference the formula writes. It
+    /// is always one range dependency, never expanded into cells however
+    /// small: an insertion inside a range reaches its readers through
+    /// `authority_structural_band_readers`, an insertion between cell
+    /// dependencies reaches nobody, and a footprint has no written text the
+    /// edit would rewrite.
+    pub(crate) footprint: bool,
 }
 
 impl RangeReference<'_> {
@@ -157,6 +168,7 @@ pub(crate) fn classify(reference: &ReferenceType) -> SemanticReference<'_> {
                 start_col_abs: *start_col_abs,
                 end_row_abs: *end_row_abs,
                 end_col_abs: *end_col_abs,
+                footprint: false,
             };
             if range.finite_bounds().is_some() {
                 SemanticReference::FiniteRange(range)
@@ -173,6 +185,20 @@ pub(crate) fn classify(reference: &ReferenceType) -> SemanticReference<'_> {
     }
 }
 
+/// [`classify`] for a LOOKUP footprint, always a finite range: marked as
+/// one ([`RangeReference::footprint`]). Its `original` is the walker's own
+/// copy, so the ingest shape memo, which keys a visit by the address of a
+/// written reference, invalidates its trace for the formula.
+fn classify_footprint(reference: &ReferenceType) -> SemanticReference<'_> {
+    match classify(reference) {
+        SemanticReference::FiniteRange(range) => SemanticReference::FiniteRange(RangeReference {
+            footprint: true,
+            ..range
+        }),
+        other => other,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum LocalBindingStyle {
     #[default]
@@ -181,16 +207,22 @@ pub(crate) enum LocalBindingStyle {
     LambdaParameters,
 }
 
+/// Every reference of `ast`, in source order, then for each LOOKUP call its
+/// footprint (`lookup_result_footprint`) unless `footprint_suppressions`
+/// names the call (see `call_reads_past_result`).
 pub(crate) fn visit_tree_references<C>(
     ast: &ASTNode,
     context: &mut C,
     local_binding_style: fn(&C, &str, usize) -> LocalBindingStyle,
+    footprint_suppressions: fn(&C) -> &FootprintSuppressions,
     visitor: fn(&mut C, SemanticReference<'_>) -> Result<(), ExcelError>,
 ) -> Result<(), ExcelError> {
     enum Frame<'a> {
         Node(&'a ASTNode),
         AddBinding(&'a str),
         ExitScope,
+        /// A LOOKUP footprint, visited after the call's arguments.
+        Footprint(ReferenceType),
     }
 
     let mut local_scopes: Vec<FxHashSet<String>> = Vec::new();
@@ -205,6 +237,10 @@ pub(crate) fn visit_tree_references<C>(
             }
             Frame::ExitScope => {
                 local_scopes.pop();
+                continue;
+            }
+            Frame::Footprint(reference) => {
+                visitor(context, classify_footprint(&reference))?;
                 continue;
             }
             Frame::Node(ast) => ast,
@@ -264,6 +300,11 @@ pub(crate) fn visit_tree_references<C>(
                         }
                     }
                     _ => {
+                        if let Some(footprint) =
+                            tree_lookup_footprint(name, args, footprint_suppressions(context))
+                        {
+                            stack.push(Frame::Footprint(footprint));
+                        }
                         for arg in args.iter().rev() {
                             stack.push(Frame::Node(arg));
                         }
@@ -287,11 +328,13 @@ pub(crate) fn visit_tree_references<C>(
     Ok(())
 }
 
+/// [`visit_tree_references`] on the arena.
 pub(crate) fn visit_arena_references<C>(
     ast_id: AstNodeId,
     context: &mut C,
     data_store: fn(&C) -> &DataStore,
     sheet_registry: fn(&C) -> &SheetRegistry,
+    footprint_suppressions: fn(&C) -> &FootprintSuppressions,
     visitor: fn(&mut C, SemanticReference<'_>) -> Result<(), ExcelError>,
 ) -> Result<(), ExcelError> {
     let node = data_store(context)
@@ -307,14 +350,33 @@ pub(crate) fn visit_arena_references<C>(
             );
             visitor(context, classify(&reference))
         }
-        AstNodeData::UnaryOp { expr_id, .. } => {
-            visit_arena_references(expr_id, context, data_store, sheet_registry, visitor)
-        }
+        AstNodeData::UnaryOp { expr_id, .. } => visit_arena_references(
+            expr_id,
+            context,
+            data_store,
+            sheet_registry,
+            footprint_suppressions,
+            visitor,
+        ),
         AstNodeData::BinaryOp {
             left_id, right_id, ..
         } => {
-            visit_arena_references(left_id, context, data_store, sheet_registry, visitor)?;
-            visit_arena_references(right_id, context, data_store, sheet_registry, visitor)
+            visit_arena_references(
+                left_id,
+                context,
+                data_store,
+                sheet_registry,
+                footprint_suppressions,
+                visitor,
+            )?;
+            visit_arena_references(
+                right_id,
+                context,
+                data_store,
+                sheet_registry,
+                footprint_suppressions,
+                visitor,
+            )
         }
         AstNodeData::Function { .. } => {
             let arg_count = data_store(context).get_args(ast_id).map_or(0, <[_]>::len);
@@ -322,7 +384,23 @@ pub(crate) fn visit_arena_references<C>(
                 let child = data_store(context)
                     .get_args(ast_id)
                     .expect("args disappeared")[index];
-                visit_arena_references(child, context, data_store, sheet_registry, visitor)?;
+                visit_arena_references(
+                    child,
+                    context,
+                    data_store,
+                    sheet_registry,
+                    footprint_suppressions,
+                    visitor,
+                )?;
+            }
+            if let Some((footprint, _)) = arena_lookup_footprint(
+                data_store(context),
+                sheet_registry(context),
+                ast_id,
+                false,
+                footprint_suppressions(context),
+            ) {
+                visitor(context, classify_footprint(&footprint))?;
             }
             Ok(())
         }
@@ -335,7 +413,14 @@ pub(crate) fn visit_arena_references<C>(
                     .get_array_elems(ast_id)
                     .expect("array elements disappeared")
                     .2[index];
-                visit_arena_references(child, context, data_store, sheet_registry, visitor)?;
+                visit_arena_references(
+                    child,
+                    context,
+                    data_store,
+                    sheet_registry,
+                    footprint_suppressions,
+                    visitor,
+                )?;
             }
             Ok(())
         }
@@ -353,83 +438,285 @@ pub(crate) fn visit_arena_references_keyed<C>(
     context: &mut C,
     data_store: fn(&C) -> &DataStore,
     sheet_registry: fn(&C) -> &SheetRegistry,
+    footprint_suppressions: fn(&C) -> &FootprintSuppressions,
     visitor: fn(&mut C, SemanticReference<'_>, Option<u16>) -> Result<(), ExcelError>,
 ) -> Result<(), ExcelError> {
-    use crate::engine::arena::{CompactRefType, SheetKey};
-    let mut stack = vec![ast_id];
-    while let Some(id) = stack.pop() {
+    enum Item {
+        Node(AstNodeId),
+        /// A LOOKUP footprint and the sheet id of its result, visited after
+        /// the call's arguments.
+        Footprint(ReferenceType, Option<u16>),
+    }
+    let mut stack = vec![Item::Node(ast_id)];
+    while let Some(item) = stack.pop() {
+        let id = match item {
+            Item::Node(id) => id,
+            Item::Footprint(reference, key) => {
+                visitor(context, classify_footprint(&reference), key)?;
+                continue;
+            }
+        };
         let store = data_store(context);
         let node = store.get_node(id).ok_or_else(missing_ast_error)?;
         match node {
             AstNodeData::Reference { ref_type, .. } => {
-                let (compact, key) = match *store.compact_ref(*ref_type) {
-                    CompactRefType::Cell {
-                        sheet: Some(SheetKey::Id(sid)),
-                        row,
-                        col,
-                        row_abs,
-                        col_abs,
-                    } => (
-                        CompactRefType::Cell {
-                            sheet: None,
-                            row,
-                            col,
-                            row_abs,
-                            col_abs,
-                        },
-                        Some(sid),
-                    ),
-                    CompactRefType::Range {
-                        sheet: Some(SheetKey::Id(sid)),
-                        start_row,
-                        start_col,
-                        end_row,
-                        end_col,
-                        start_row_abs,
-                        start_col_abs,
-                        end_row_abs,
-                        end_col_abs,
-                    } => (
-                        CompactRefType::Range {
-                            sheet: None,
-                            start_row,
-                            start_col,
-                            end_row,
-                            end_col,
-                            start_row_abs,
-                            start_col_abs,
-                            end_row_abs,
-                            end_col_abs,
-                        },
-                        Some(sid),
-                    ),
-                    other => (other, None),
-                };
+                let (compact, key) = without_sheet_id(*store.compact_ref(*ref_type));
                 let reference =
                     store.reconstruct_reference_type_for_eval(&compact, sheet_registry(context));
                 visitor(context, classify(&reference), key)?;
             }
-            AstNodeData::UnaryOp { expr_id, .. } => stack.push(*expr_id),
+            AstNodeData::UnaryOp { expr_id, .. } => stack.push(Item::Node(*expr_id)),
             AstNodeData::BinaryOp {
                 left_id, right_id, ..
             } => {
-                stack.push(*right_id);
-                stack.push(*left_id);
+                stack.push(Item::Node(*right_id));
+                stack.push(Item::Node(*left_id));
             }
             AstNodeData::Function { .. } => {
+                if let Some((footprint, key)) = arena_lookup_footprint(
+                    store,
+                    sheet_registry(context),
+                    id,
+                    true,
+                    footprint_suppressions(context),
+                ) {
+                    stack.push(Item::Footprint(footprint, key));
+                }
                 if let Some(args) = store.get_args(id) {
-                    stack.extend(args.iter().rev().copied());
+                    stack.extend(args.iter().rev().map(|&arg| Item::Node(arg)));
                 }
             }
             AstNodeData::Array { .. } => {
                 if let Some((_, _, elems)) = store.get_array_elems(id) {
-                    stack.extend(elems.iter().rev().copied());
+                    stack.extend(elems.iter().rev().map(|&elem| Item::Node(elem)));
                 }
             }
             AstNodeData::Literal(_) | AstNodeData::Omitted => {}
         }
     }
     Ok(())
+}
+
+/// A cell or range stored with a sheet id, without it, and the id: the form
+/// [`visit_arena_references_keyed`] gives its visitor. Any other reference
+/// is unchanged, with no id.
+fn without_sheet_id(
+    compact: crate::engine::arena::CompactRefType,
+) -> (crate::engine::arena::CompactRefType, Option<u16>) {
+    use crate::engine::arena::{CompactRefType, SheetKey};
+    match compact {
+        CompactRefType::Cell {
+            sheet: Some(SheetKey::Id(sid)),
+            row,
+            col,
+            row_abs,
+            col_abs,
+        } => (
+            CompactRefType::Cell {
+                sheet: None,
+                row,
+                col,
+                row_abs,
+                col_abs,
+            },
+            Some(sid),
+        ),
+        CompactRefType::Range {
+            sheet: Some(SheetKey::Id(sid)),
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            start_row_abs,
+            start_col_abs,
+            end_row_abs,
+            end_col_abs,
+        } => (
+            CompactRefType::Range {
+                sheet: None,
+                start_row,
+                start_col,
+                end_row,
+                end_col,
+                start_row_abs,
+                start_col_abs,
+                end_row_abs,
+                end_col_abs,
+            },
+            Some(sid),
+        ),
+        other => (other, None),
+    }
+}
+
+/* ───────────── LOOKUP's result footprint (see `lookup_result_footprint`) ───────────── */
+
+/// The lookup and result arguments of a call that reads its result past its
+/// end (`call_reads_past_result` with `suppressed`): three arguments, the
+/// second and third written as cell or range references. Never a name or a
+/// LET local.
+pub(crate) fn tree_lookup_references<'a>(
+    name: &str,
+    args: &'a [ASTNode],
+    suppressed: &FootprintSuppressions,
+) -> Option<(&'a ReferenceType, &'a ReferenceType)> {
+    let written = |arg: &'a ASTNode| match &arg.node_type {
+        ASTNodeType::Reference {
+            reference: reference @ (ReferenceType::Cell { .. } | ReferenceType::Range { .. }),
+            ..
+        } => Some(reference),
+        _ => None,
+    };
+    let [_, lookup, result] = args else {
+        return None;
+    };
+    let references = (written(lookup)?, written(result)?);
+    call_reads_past_result(name, suppressed).then_some(references)
+}
+
+/// The footprint the call `name(args)` adds to its formula's references.
+pub(crate) fn tree_lookup_footprint(
+    name: &str,
+    args: &[ASTNode],
+    suppressed: &FootprintSuppressions,
+) -> Option<ReferenceType> {
+    let (lookup, result) = tree_lookup_references(name, args, suppressed)?;
+    crate::builtins::lookup::lookup_utils::lookup_result_footprint(lookup, result)
+}
+
+/// [`tree_lookup_references`] on the arena: the call at `id`, its arguments
+/// reconstructed; with `keyed`, the result's sheet id split off as
+/// [`visit_arena_references_keyed`] does.
+fn arena_lookup_references(
+    store: &DataStore,
+    sheet_registry: &SheetRegistry,
+    id: AstNodeId,
+    keyed: bool,
+    suppressed: &FootprintSuppressions,
+) -> Option<(ReferenceType, ReferenceType, Option<u16>)> {
+    use crate::engine::arena::CompactRefType;
+    let AstNodeData::Function { name_id, .. } = store.get_node(id)? else {
+        return None;
+    };
+    let [_, lookup, result] = store.get_args(id)? else {
+        return None;
+    };
+    let written = |arg: AstNodeId| -> Option<CompactRefType> {
+        let AstNodeData::Reference { ref_type, .. } = store.get_node(arg)? else {
+            return None;
+        };
+        let compact = *store.compact_ref(*ref_type);
+        matches!(
+            compact,
+            CompactRefType::Cell { .. } | CompactRefType::Range { .. }
+        )
+        .then_some(compact)
+    };
+    let (lookup, result) = (written(*lookup)?, written(*result)?);
+    if !call_reads_past_result(store.resolve_ast_string(*name_id), suppressed) {
+        return None;
+    }
+    let (result, key) = if keyed {
+        without_sheet_id(result)
+    } else {
+        (result, None)
+    };
+    Some((
+        store.reconstruct_reference_type_for_eval(&lookup, sheet_registry),
+        store.reconstruct_reference_type_for_eval(&result, sheet_registry),
+        key,
+    ))
+}
+
+/// The footprint the call at `id` adds to its formula's references, and the
+/// sheet id split off its result when `keyed`.
+pub(crate) fn arena_lookup_footprint(
+    store: &DataStore,
+    sheet_registry: &SheetRegistry,
+    id: AstNodeId,
+    keyed: bool,
+    suppressed: &FootprintSuppressions,
+) -> Option<(ReferenceType, Option<u16>)> {
+    let (lookup, result, key) =
+        arena_lookup_references(store, sheet_registry, id, keyed, suppressed)?;
+    crate::builtins::lookup::lookup_utils::lookup_result_footprint(&lookup, &result)
+        .map(|footprint| (footprint, key))
+}
+
+/// Whether a call of the formula `ast` keeps it out of family sharing
+/// (`lookup_footprint_blocks_sharing`). Resolved through the global registry
+/// alone, with no suppressed name: it blocks every call that can have a
+/// footprint, whatever the engine's provider, and blocking only costs
+/// sharing.
+pub(crate) fn tree_formula_blocks_lookup_sharing(ast: &ASTNode) -> bool {
+    use crate::builtins::lookup::lookup_utils::lookup_footprint_blocks_sharing;
+    let mut stack = vec![ast];
+    while let Some(node) = stack.pop() {
+        match &node.node_type {
+            ASTNodeType::Function { name, args } => {
+                if let Some((lookup, result)) =
+                    tree_lookup_references(name, args, no_footprint_suppressions())
+                    && lookup_footprint_blocks_sharing(lookup, result)
+                {
+                    return true;
+                }
+                stack.extend(args);
+            }
+            ASTNodeType::BinaryOp { left, right, .. } => {
+                stack.push(left);
+                stack.push(right);
+            }
+            ASTNodeType::UnaryOp { expr, .. } => stack.push(expr),
+            ASTNodeType::Call { callee, args } => {
+                stack.push(callee);
+                stack.extend(args);
+            }
+            ASTNodeType::Array(rows) => stack.extend(rows.iter().flatten()),
+            ASTNodeType::Reference { .. } | ASTNodeType::Literal(_) | ASTNodeType::Omitted => {}
+        }
+    }
+    false
+}
+
+/// [`tree_formula_blocks_lookup_sharing`] on the arena formula at `ast`.
+pub(crate) fn arena_formula_blocks_lookup_sharing(
+    store: &DataStore,
+    sheet_registry: &SheetRegistry,
+    ast: AstNodeId,
+) -> bool {
+    use crate::builtins::lookup::lookup_utils::lookup_footprint_blocks_sharing;
+    let mut stack = vec![ast];
+    while let Some(id) = stack.pop() {
+        match store.get_node(id) {
+            Some(AstNodeData::Function { .. }) => {
+                if let Some((lookup, result, _)) = arena_lookup_references(
+                    store,
+                    sheet_registry,
+                    id,
+                    false,
+                    no_footprint_suppressions(),
+                ) && lookup_footprint_blocks_sharing(&lookup, &result)
+                {
+                    return true;
+                }
+                stack.extend(store.get_args(id).into_iter().flatten());
+            }
+            Some(AstNodeData::UnaryOp { expr_id, .. }) => stack.push(*expr_id),
+            Some(AstNodeData::BinaryOp {
+                left_id, right_id, ..
+            }) => {
+                stack.push(*left_id);
+                stack.push(*right_id);
+            }
+            Some(AstNodeData::Array { .. }) => {
+                if let Some((_, _, elems)) = store.get_array_elems(id) {
+                    stack.extend(elems);
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn missing_ast_error() -> ExcelError {
@@ -484,7 +771,14 @@ mod tests {
         )
         .unwrap();
         let mut seen = Seen::default();
-        visit_tree_references(&ast, &mut seen, no_bindings, record).unwrap();
+        visit_tree_references(
+            &ast,
+            &mut seen,
+            no_bindings,
+            |_| no_footprint_suppressions(),
+            record,
+        )
+        .unwrap();
 
         assert_eq!(seen.0.len(), 10);
         assert!(seen.0[0].starts_with("cell:Current:1:1:false:true"));
@@ -517,7 +811,14 @@ mod tests {
         fn none(_: &Option<(bool, Option<u64>)>, _: &str, _: usize) -> LocalBindingStyle {
             LocalBindingStyle::None
         }
-        visit_tree_references(&ast, &mut observed, none, capture).unwrap();
+        visit_tree_references(
+            &ast,
+            &mut observed,
+            none,
+            |_| no_footprint_suppressions(),
+            capture,
+        )
+        .unwrap();
         assert_eq!(observed, Some((true, Some(1))));
     }
 
@@ -544,7 +845,14 @@ mod tests {
         ] {
             let ast = parse(formula).unwrap();
             let mut observed = None;
-            visit_tree_references(&ast, &mut observed, none, capture).unwrap();
+            visit_tree_references(
+                &ast,
+                &mut observed,
+                none,
+                |_| no_footprint_suppressions(),
+                capture,
+            )
+            .unwrap();
             assert_eq!(observed, Some(expected), "{formula}");
         }
     }

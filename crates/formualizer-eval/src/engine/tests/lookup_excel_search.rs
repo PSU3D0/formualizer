@@ -4,8 +4,9 @@
 //! `lookup-586-probe2_computed.xlsx`, sheet `Probe2`), on the same grid, with
 //! the value Excel cached. Left out: cases 37 and 38 (Excel's text order, a
 //! follow-up), 6m, 20m and 20v (MATCH and VLOOKUP, which keep their `#N/A` on
-//! unsorted data, #283), and the cases that read a result reference past its
-//! end (33, R5–R7, R12, R13), which come with that reading.
+//! unsorted data, #283). The dependency of the cells read past the end of a
+//! result reference (cases 33, R5–R7, R12, R13) is tested in
+//! `lookup_result_extension.rs`.
 
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
@@ -220,6 +221,7 @@ const PROBE: &[(&str, &str, Excel)] = &[
         Excel::Error(ExcelErrorKind::Div),
     ),
     ("32", "=LOOKUP(3,K20:K22,L20)", Number(0.)),
+    ("33", "=LOOKUP(3,K20:K22,L20:L21)", Number(30.)),
     ("34", "=LOOKUP(3,{1,2,3},{10,20})", NA),
     ("35", "=LOOKUP(2,K20:K22,L24:N24)", Number(200.)),
     ("36", "=LOOKUP(2,K26:L28,M26:M28)", Number(20.)),
@@ -300,10 +302,15 @@ const PROBE2: &[(&str, &str, Excel)] = &[
     ("R2", "=LOOKUP(2,I1:I7,J1:J7)", Number(3.)),
     ("R3", "=LOOKUP(2,K1:K7,L1:L7)", Number(3.)),
     ("R4", "=LOOKUP(2,M1:M5,N1:N5)", Number(2.)),
+    ("R5", "=LOOKUP(3,G20:G22,P20)", Number(130.)),
+    ("R6", "=LOOKUP(3,G30:I30,P30)", Number(140.)),
+    ("R7", "=LOOKUP(3,G20:G22,H24:I24)", Number(300.)),
     ("R8", "=LOOKUP(3,G20:G22,H20:H21*1)", NA),
     ("R9", "=LOOKUP(2,G20:G22,H20:I22)", NA),
     ("R10", "=LOOKUP(5,G40:I41,G20:G22)", Number(3.)),
     ("R11", "=LOOKUP(2,G44:H45,I44:I45)", Number(20.)),
+    ("R12", "=LOOKUP(3,G20:G22,H21)", Number(0.)),
+    ("R13", "=LOOKUP(2,G20:G22,P21:P22)", Number(22.)),
 ];
 
 fn matches_excel(got: &LiteralValue, want: Excel) -> bool {

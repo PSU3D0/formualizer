@@ -162,8 +162,9 @@ fn collect_ast_reference(
             if range.is_reversed() {
                 return Ok(());
             }
-            if range.saturating_area().unwrap_or(u64::MAX)
-                <= context.graph.range_expansion_limit() as u64
+            if !range.footprint
+                && range.saturating_area().unwrap_or(u64::MAX)
+                    <= context.graph.range_expansion_limit() as u64
             {
                 let (start_row, start_col, end_row, end_col) = range
                     .finite_bounds()
@@ -242,6 +243,7 @@ fn ast_shape(graph: &DependencyGraph, formula: VertexId) -> AstShapeContext<'_> 
         &ast,
         &mut context,
         no_local_bindings,
+        |context| context.graph.lookup_footprint_suppressions(),
         collect_ast_reference,
     )
     .expect("retained formula reference collection must succeed");
