@@ -8927,7 +8927,7 @@
     "shortSummary": "Searches for a value and returns a corresponding value from another range.",
     "signature": "=LOOKUP(lookup_value, lookup_vector_or_array, [result_vector])",
     "typeName": "LookupFn",
-    "uniqueShare": 0.7811158798283262,
+    "uniqueShare": 0.8930817610062893,
     "variadic": false
   },
   "lookup/match": {
