@@ -22,7 +22,9 @@
 //! - PERFORMANCE: streaming FILTER without full materialization; UNIQUE using smallvec for tiny sets.
 
 use super::super::utils::collapse_if_scalar;
-use super::lookup_utils::{PreparedLookupMatcher, SortKey, cmp_for_lookup, value_to_f64_lenient};
+use super::lookup_utils::{
+    PreparedLookupMatcher, SortKey, cmp_for_lookup, reference_extent, value_to_f64_lenient,
+};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
 use crate::engine::lookup_index_cache::LookupAxis;
 use crate::function::Function; // FnCaps imported via macro
@@ -33,9 +35,7 @@ use std::collections::HashMap;
 
 // Generated-array allocation guard: shared with other materializing builtins;
 // the cap rationale lives next to the definition in `builtins::utils`.
-use super::super::utils::{
-    GENERATED_ARRAY_MAX_COLS, GENERATED_ARRAY_MAX_ROWS, generated_array_too_large,
-};
+use super::super::utils::generated_array_too_large;
 
 /// The `(rows, cols)` an XLOOKUP array argument declares.
 ///
@@ -47,27 +47,10 @@ use super::super::utils::{
 /// extent is read from the reference itself. Anything else (a computed array,
 /// a reference-returning function, a defined name) is measured by its view.
 fn declared_shape(handle: &ArgumentHandle<'_, '_>, view: (usize, usize)) -> (usize, usize) {
-    use formualizer_parse::parser::ReferenceType;
-
-    let span = |start: Option<u32>, end: Option<u32>, limit: i64| -> usize {
-        let start = i64::from(start.unwrap_or(1));
-        let end = end.map_or(limit, i64::from);
-        (end - start + 1).max(0) as usize
-    };
-    match handle.bare_reference() {
-        Some(ReferenceType::Cell { .. }) => (1, 1),
-        Some(ReferenceType::Range {
-            start_row,
-            start_col,
-            end_row,
-            end_col,
-            ..
-        }) => (
-            span(start_row, end_row, GENERATED_ARRAY_MAX_ROWS),
-            span(start_col, end_col, GENERATED_ARRAY_MAX_COLS),
-        ),
-        _ => view,
-    }
+    handle
+        .bare_reference()
+        .and_then(|reference| reference_extent(&reference))
+        .unwrap_or(view)
 }
 
 /* ───────────────────────── helpers ───────────────────────── */
