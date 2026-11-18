@@ -14,37 +14,13 @@
 //!   * If width > height  → search the first *row*, return from the last *row*.
 //!   * Otherwise          → search the first *column*, return from the last *column*.
 
-use super::lookup_utils::cmp_for_lookup;
+use super::lookup_utils::{LookupKey, SearchCells, excel_approximate_search, reference_extent};
 use crate::args::{ArgSchema, CoercionPolicy, ShapeKind};
-use crate::engine::DateSystem;
 use crate::function::Function;
 use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use formualizer_common::{ArgKind, ExcelError, ExcelErrorKind, LiteralValue};
 use formualizer_macros::func_caps;
-
-/// Binary-search style approximate match (largest value <= needle) for
-/// ascending-sorted data.  Mirrors the helper in `core.rs` but is kept local
-/// to avoid coupling the legacy path to core internals.
-fn approx_match_ascending(
-    slice: &[LiteralValue],
-    needle: &LiteralValue,
-    date_system: DateSystem,
-) -> Option<usize> {
-    if slice.is_empty() {
-        return None;
-    }
-    let mut lo: usize = 0;
-    let mut hi: usize = slice.len();
-    while lo < hi {
-        let mid = (lo + hi) / 2;
-        match cmp_for_lookup(&slice[mid], needle, date_system) {
-            Some(c) if c > 0 => hi = mid,
-            Some(_) => lo = mid + 1,
-            None => hi = mid,
-        }
-    }
-    if lo == 0 { None } else { Some(lo - 1) }
-}
+use formualizer_parse::parser::ReferenceType;
 
 /// Searches for a value and returns a corresponding value from another range.
 ///
@@ -203,42 +179,108 @@ impl Function for LookupFn {
 /// The lookup vector or array of one `LOOKUP` call and what it searches.
 struct LookupVector {
     data: Vec<Vec<LiteralValue>>,
+    /// The declared shape: a reference's own extent, not its trimmed view.
     rows: usize,
     cols: usize,
-    search: Vec<LiteralValue>,
+    cells: SearchCells,
     is_row_search: bool,
 }
 
 impl LookupVector {
+    /// Both forms search the same way, on the declared shape: along the
+    /// first row when it is wider than tall, down the first column otherwise
+    /// (a single row or column is the vector form's usual case), over the
+    /// declared length.
     fn read<'b>(
         arg: &ArgumentHandle<'_, 'b>,
-        has_result_vector: bool,
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<Self, ExcelError> {
-        let data = materialise_range(arg, ctx)?;
-        let (rows, cols) = dims(&data);
-
-        // Determine search orientation and build the search slice.
-        let (search, is_row_search) = if has_result_vector {
-            // Vector form: lookup_data must be 1-D
-            flatten_1d(&data, rows, cols)
-        } else if rows == 1 && cols == 1 {
-            // Single cell – trivially a column search
-            (vec![data[0][0].clone()], false)
-        } else if cols > rows {
-            // Array form: wider than tall → search first row
-            (data[0].clone(), true)
+        let read = materialise_range(arg, ctx)?;
+        let (rows, cols) = read.declared_shape();
+        let is_row_search = cols > rows;
+        let cells = if is_row_search {
+            SearchCells::new(
+                read.data.first().into_iter().flatten(),
+                cols,
+                ctx.date_system(),
+            )
         } else {
-            // Array form: tall or square → search first column
-            (data.iter().map(|r| r[0].clone()).collect::<Vec<_>>(), false)
+            SearchCells::new(
+                read.data.iter().filter_map(|r| r.first()),
+                rows,
+                ctx.date_system(),
+            )
         };
         Ok(Self {
-            data,
+            data: read.data,
             rows,
             cols,
-            search,
+            cells,
             is_row_search,
         })
+    }
+
+    /// The array form's result: the matched position in the last row of a
+    /// row search, or in the last column of a column search.
+    fn result_at(&self, pos: usize) -> LiteralValue {
+        let (row, col) = if self.is_row_search {
+            (self.rows.saturating_sub(1), pos)
+        } else {
+            (pos, self.cols.saturating_sub(1))
+        };
+        cell_or_blank(&self.data, row, col)
+    }
+}
+
+/// The result vector of the vector form, read as Excel reads it.
+enum ResultVector {
+    /// A reference with one row (one cell included) or one column: its cells
+    /// from its first one along that axis. A cell past the data is blank.
+    Reference(Vec<LiteralValue>),
+    /// An array (a constant or a computed result) with one row or one
+    /// column: `#N/A` past its end.
+    Array(Vec<LiteralValue>),
+    /// A reference or an array with several rows and columns: `#N/A`.
+    TwoDimensional,
+}
+
+impl ResultVector {
+    fn read<'b>(
+        arg: &ArgumentHandle<'_, 'b>,
+        ctx: &dyn FunctionContext<'b>,
+    ) -> Result<Self, ExcelError> {
+        let read = materialise_range(arg, ctx)?;
+        let (rows, cols) = read.declared_shape();
+        let is_reference = read.reference.is_some();
+        let values = if rows == 1 {
+            read.data.into_iter().next().unwrap_or_default()
+        } else if cols == 1 {
+            read.data
+                .into_iter()
+                .filter_map(|r| r.into_iter().next())
+                .collect()
+        } else {
+            return Ok(Self::TwoDimensional);
+        };
+        Ok(if is_reference {
+            Self::Reference(values)
+        } else {
+            Self::Array(values)
+        })
+    }
+
+    fn at(&self, pos: usize) -> LiteralValue {
+        match self {
+            Self::Reference(values) => {
+                materialise_empty(values.get(pos).cloned().unwrap_or(LiteralValue::Empty))
+            }
+            Self::Array(values) => values
+                .get(pos)
+                .cloned()
+                .map(materialise_empty)
+                .unwrap_or_else(na),
+            Self::TwoDimensional => na(),
+        }
     }
 }
 
@@ -248,7 +290,7 @@ impl LookupVector {
 #[derive(Default)]
 struct LookupVectors {
     lookup: Option<Result<LookupVector, ExcelError>>,
-    result: Option<Result<Vec<LiteralValue>, ExcelError>>,
+    result: Option<Result<ResultVector, ExcelError>>,
 }
 
 impl LookupFn {
@@ -262,66 +304,29 @@ impl LookupFn {
         if let LiteralValue::Error(e) = lookup_value {
             return Ok(CalcValue::Scalar(LiteralValue::Error(e)));
         }
-
-        let has_result_vector = args.len() >= 3;
+        let Some(needle) = LookupKey::for_lookup_value(&lookup_value, ctx.date_system()) else {
+            return Ok(CalcValue::Scalar(na()));
+        };
 
         let lookup = vectors
             .lookup
-            .get_or_insert_with(|| LookupVector::read(&args[1], has_result_vector, ctx))
+            .get_or_insert_with(|| LookupVector::read(&args[1], ctx))
             .as_ref()
             .map_err(Clone::clone)?;
 
-        // Approximate match – largest <= needle
-        let match_idx = approx_match_ascending(&lookup.search, &lookup_value, ctx.date_system());
-        let match_idx = match match_idx {
-            Some(i) => i,
-            None => {
-                return Ok(CalcValue::Scalar(LiteralValue::Error(ExcelError::new(
-                    ExcelErrorKind::Na,
-                ))));
-            }
+        let Some(pos) = excel_approximate_search(&lookup.cells, &needle) else {
+            return Ok(CalcValue::Scalar(na()));
         };
 
-        // --- Retrieve result ---
-        if has_result_vector {
-            let result_vec = vectors
+        if args.len() >= 3 {
+            let result = vectors
                 .result
-                .get_or_insert_with(|| {
-                    let result_data = materialise_range(&args[2], ctx)?;
-                    let (r_rows, r_cols) = dims(&result_data);
-                    Ok(flatten_1d_vec(&result_data, r_rows, r_cols))
-                })
+                .get_or_insert_with(|| ResultVector::read(&args[2], ctx))
                 .as_ref()
                 .map_err(Clone::clone)?;
-            let val = result_vec
-                .get(match_idx)
-                .cloned()
-                .unwrap_or(LiteralValue::Empty);
-            Ok(CalcValue::Scalar(materialise_empty(val)))
-        } else if lookup.rows == 1 && lookup.cols == 1 {
-            Ok(CalcValue::Scalar(materialise_empty(
-                lookup.data[0][0].clone(),
-            )))
-        } else if lookup.is_row_search {
-            // Return from last row at matched column
-            let last_row = lookup.rows - 1;
-            let val = lookup
-                .data
-                .get(last_row)
-                .and_then(|r| r.get(match_idx))
-                .cloned()
-                .unwrap_or(LiteralValue::Empty);
-            Ok(CalcValue::Scalar(materialise_empty(val)))
+            Ok(CalcValue::Scalar(result.at(pos)))
         } else {
-            // Return from last column at matched row
-            let last_col = lookup.cols - 1;
-            let val = lookup
-                .data
-                .get(match_idx)
-                .and_then(|r| r.get(last_col))
-                .cloned()
-                .unwrap_or(LiteralValue::Empty);
-            Ok(CalcValue::Scalar(materialise_empty(val)))
+            Ok(CalcValue::Scalar(materialise_empty(lookup.result_at(pos))))
         }
     }
 }
@@ -330,11 +335,29 @@ impl LookupFn {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// A range argument read into a 2-D grid, with the reference it resolved to.
+struct Materialised {
+    data: Vec<Vec<LiteralValue>>,
+    reference: Option<ReferenceType>,
+}
+
+impl Materialised {
+    /// The shape the argument declares: the extent of its reference (a whole
+    /// column spans every row, though its view is trimmed to the used rows),
+    /// or the shape of its data for an array, a defined name or a table.
+    fn declared_shape(&self) -> (usize, usize) {
+        self.reference
+            .as_ref()
+            .and_then(reference_extent)
+            .unwrap_or_else(|| dims(&self.data))
+    }
+}
+
 /// Materialise a range argument into a 2-D Vec grid.
 fn materialise_range<'a, 'b>(
     arg: &ArgumentHandle<'a, 'b>,
     ctx: &dyn FunctionContext<'b>,
-) -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
+) -> Result<Materialised, ExcelError> {
     if let Ok(r) = arg.as_reference_or_eval() {
         let current_sheet = ctx.current_sheet();
         let rv = ctx.resolve_range_view(&r, current_sheet)?;
@@ -349,13 +372,19 @@ fn materialise_range<'a, 'b>(
             data.push(owned);
             Ok(())
         })?;
-        Ok(data)
+        Ok(Materialised {
+            data,
+            reference: Some(r),
+        })
     } else {
-        let v = arg.value()?.into_literal();
-        match v {
-            LiteralValue::Array(rows) => Ok(rows),
-            other => Ok(vec![vec![other]]),
-        }
+        let data = match arg.value()?.into_literal() {
+            LiteralValue::Array(rows) => rows,
+            other => vec![vec![other]],
+        };
+        Ok(Materialised {
+            data,
+            reference: None,
+        })
     }
 }
 
@@ -365,23 +394,17 @@ fn dims(data: &[Vec<LiteralValue>]) -> (usize, usize) {
     (rows, cols)
 }
 
-/// Flatten a 2-D grid into a 1-D vector.  If only one row → use it; if only
-/// one column → extract first element of each row; otherwise flatten row-major.
-fn flatten_1d(data: &[Vec<LiteralValue>], rows: usize, cols: usize) -> (Vec<LiteralValue>, bool) {
-    if rows == 1 {
-        (data[0].clone(), true)
-    } else if cols == 1 {
-        (data.iter().map(|r| r[0].clone()).collect(), false)
-    } else {
-        // Multi-dimensional – flatten row-major (uncommon for LOOKUP but
-        // required for robustness).
-        (data.iter().flat_map(|r| r.iter().cloned()).collect(), false)
-    }
+/// The cell at `(row, col)` of a grid, blank past its data (the trimmed tail
+/// of a whole-column view, or an empty view).
+fn cell_or_blank(data: &[Vec<LiteralValue>], row: usize, col: usize) -> LiteralValue {
+    data.get(row)
+        .and_then(|r| r.get(col))
+        .cloned()
+        .unwrap_or(LiteralValue::Empty)
 }
 
-/// Like `flatten_1d` but returns just the vec (for result vector).
-fn flatten_1d_vec(data: &[Vec<LiteralValue>], rows: usize, cols: usize) -> Vec<LiteralValue> {
-    flatten_1d(data, rows, cols).0
+fn na() -> LiteralValue {
+    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na))
 }
 
 /// Excel materialises empty lookup results as 0.
@@ -406,68 +429,6 @@ mod tests {
 
     fn lit(v: LiteralValue) -> ASTNode {
         ASTNode::new(ASTNodeType::Literal(v), None)
-    }
-
-    // -- approx_match_ascending unit tests --------------------------------
-
-    #[test]
-    fn approx_empty_slice() {
-        assert_eq!(
-            approx_match_ascending(&[], &LiteralValue::Int(1), DateSystem::Excel1900),
-            None
-        );
-    }
-
-    #[test]
-    fn approx_below_minimum() {
-        let vals = vec![
-            LiteralValue::Int(10),
-            LiteralValue::Int(20),
-            LiteralValue::Int(30),
-        ];
-        assert_eq!(
-            approx_match_ascending(&vals, &LiteralValue::Int(5), DateSystem::Excel1900),
-            None
-        );
-    }
-
-    #[test]
-    fn approx_exact_hit() {
-        let vals = vec![
-            LiteralValue::Int(10),
-            LiteralValue::Int(20),
-            LiteralValue::Int(30),
-        ];
-        assert_eq!(
-            approx_match_ascending(&vals, &LiteralValue::Int(20), DateSystem::Excel1900),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn approx_between_values() {
-        let vals = vec![
-            LiteralValue::Int(10),
-            LiteralValue::Int(20),
-            LiteralValue::Int(30),
-        ];
-        assert_eq!(
-            approx_match_ascending(&vals, &LiteralValue::Int(25), DateSystem::Excel1900),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn approx_above_max() {
-        let vals = vec![
-            LiteralValue::Int(10),
-            LiteralValue::Int(20),
-            LiteralValue::Int(30),
-        ];
-        assert_eq!(
-            approx_match_ascending(&vals, &LiteralValue::Int(100), DateSystem::Excel1900),
-            Some(2)
-        );
     }
 
     // -- LOOKUP vector form (cell references) -----------------------------

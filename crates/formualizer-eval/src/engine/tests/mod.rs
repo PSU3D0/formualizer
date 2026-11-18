@@ -206,6 +206,7 @@ mod invariant_calls;
 mod let_lambda;
 mod lookup_array_lookup_value;
 mod lookup_blank_results;
+mod lookup_excel_search;
 mod npv_variadic;
 mod offset_dynamic;
 mod offset_index_numeric_arguments;
