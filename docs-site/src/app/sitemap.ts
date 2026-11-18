@@ -1,50 +1,42 @@
-import type { MetadataRoute } from 'next';
-import { source } from '@/lib/source';
-import { siteUrl } from '@/lib/env';
+import type { MetadataRoute } from "next";
+import {
+  docsLastModified,
+  sourceLastModified,
+  staticRouteSources,
+} from "@/lib/content-dates";
+import { siteUrl } from "@/lib/env";
+import { isNoindex, source } from "@/lib/source";
 
-// Required for `output: 'export'` — emit sitemap.xml as a static file at build.
-export const dynamic = 'force-static';
+export const dynamic = "force-static";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const base = siteUrl.replace(/\/$/, '');
+  const base = siteUrl.replace(/\/$/, "");
 
-  const staticRoutes: MetadataRoute.Sitemap = [
-    {
-      url: `${base}/`,
-      changeFrequency: 'weekly',
-      priority: 1,
-    },
-    {
-      url: `${base}/docs`,
-      changeFrequency: 'daily',
-      priority: 0.95,
-    },
-    {
-      url: `${base}/formula-parser`,
-      changeFrequency: 'weekly',
-      priority: 0.9,
-    },
-    {
-      url: `${base}/evaluate-excel-formulas-python`,
-      changeFrequency: 'weekly',
-      priority: 0.9,
-    },
-    {
-      url: `${base}/spreadsheet-engine-for-ai-agents`,
-      changeFrequency: 'weekly',
-      priority: 0.9,
-    },
-  ];
+  const staticRoutes: MetadataRoute.Sitemap = Object.entries(
+    staticRouteSources,
+  ).map(([path, files]) => ({
+    url: `${base}${path}`,
+    lastModified: sourceLastModified(files),
+    changeFrequency: "weekly",
+    priority: path === "/" ? 1 : 0.9,
+  }));
 
   const docsRoutes: MetadataRoute.Sitemap = source
     .getPages()
-    // /docs is already in staticRoutes; the docs root page would duplicate it
-    .filter((page) => page.url !== '/docs')
+    .filter((page) => !isNoindex(page))
     .map((page) => ({
       url: `${base}${page.url}`,
-      changeFrequency: 'weekly',
-      priority: page.url.includes('/reference/functions/') ? 0.75 : 0.8,
+      lastModified: docsLastModified(page.path),
+      changeFrequency: page.url === "/docs" ? "daily" : "weekly",
+      priority:
+        page.url === "/docs"
+          ? 0.95
+          : page.url.includes("/reference/functions/")
+            ? 0.75
+            : 0.8,
     }));
 
-  return [...staticRoutes, ...docsRoutes];
+  return [...staticRoutes, ...docsRoutes].sort((a, b) =>
+    a.url.localeCompare(b.url, "en"),
+  );
 }

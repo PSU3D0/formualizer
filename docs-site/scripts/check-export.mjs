@@ -62,8 +62,89 @@ async function main() {
     ...(await walk(join(out, "docs"), ".mdx")),
     join(out, "llms-full.txt"),
   ]) {
-    if ((await readFile(file, "utf8")).includes("<include")) {
+    const content = await readFile(file, "utf8");
+    if (content.includes("<include")) {
       fail(`unexpanded <include> in ${file.slice(root.length + 1)}`);
+    }
+    if (content.includes("<FunctionExample ")) {
+      fail(`unexpanded <FunctionExample> in ${file.slice(root.length + 1)}`);
+    }
+  }
+
+  const sitemap = await readFile(join(out, "sitemap.xml"), "utf8");
+  const routes = [...sitemap.matchAll(/<url>([\s\S]*?)<\/url>/g)];
+  if (routes.length === 0) fail("sitemap contains no URLs");
+  for (const [, route] of routes) {
+    if (!/<lastmod>\d{4}-\d{2}-\d{2}<\/lastmod>/.test(route)) {
+      fail(
+        `sitemap missing a source date for ${route.match(/<loc>(.*?)<\/loc>/)?.[1]}`,
+      );
+    }
+  }
+
+  const functionPages = JSON.parse(
+    await readFile(join(root, "src/generated/functions-meta.json"), "utf8"),
+  );
+  const dateManifest = JSON.parse(
+    await readFile(join(root, "src/generated/content-dates.json"), "utf8"),
+  );
+  const sitemapDates = new Map(
+    routes.map(([, route]) => [
+      route.match(/<loc>(.*?)<\/loc>/)?.[1],
+      route.match(/<lastmod>(.*?)<\/lastmod>/)?.[1],
+    ]),
+  );
+  const { version, unreleasedChanges } = JSON.parse(
+    await readFile(join(root, "src/generated/reference-engine.json"), "utf8"),
+  );
+  const compatibility = JSON.parse(
+    await readFile(
+      join(root, "src/generated/example-editor-compatibility.json"),
+      "utf8",
+    ),
+  );
+  const engineLabel =
+    version + (unreleasedChanges ? " plus unreleased changes" : "");
+  for (const [id, meta] of Object.entries(functionPages)) {
+    const path = `/docs/reference/functions/${id}`;
+    const html = await readFile(join(out, `${path}.html`), "utf8");
+    const date = dateManifest[`docs-site/content${path}.mdx`]?.date;
+    if (!date || !html.includes(`"dateModified":"${date}"`)) {
+      fail(`function page has the wrong dateModified for ${path}`);
+    }
+    const robots = html.match(/<meta name="robots" content="([^"]*)"\/?>/)?.[1];
+    const sitemapDate = sitemapDates.get(`${site}${path}`);
+    if (
+      meta.noindex
+        ? robots !== "noindex, follow" || sitemapDate
+        : robots?.includes("noindex") || sitemapDate !== date
+    ) {
+      fail(`unexpected robots or sitemap entry for ${path}`);
+    }
+    if (
+      !html.includes(
+        `The Formualizer engine in this repository at ${engineLabel} computes the example results.`,
+      )
+    ) {
+      fail(`missing reference engine version for ${path}`);
+    }
+    const examples = html.split("<section data-function-example=").slice(1);
+    const editors = examples.filter((example) =>
+      example.split("</section>")[0].includes("data-example-editor"),
+    );
+    const excluded = compatibility.mismatches.filter(
+      ({ name }) => name === meta.name,
+    );
+    if (
+      editors.length !== examples.length - excluded.length ||
+      editors.some(
+        (editor) =>
+          !editor.includes(
+            `published Formualizer ${compatibility.version} package`,
+          ),
+      )
+    ) {
+      fail(`unexpected browser editor availability or version for ${path}`);
     }
   }
 
@@ -107,7 +188,7 @@ async function main() {
     process.exit(1);
   }
   console.log(
-    `[check-export] ok: ${pages.length} Recalc CLI pages, includes expanded, llms.txt curated, skill and edge files copied`,
+    `[check-export] ok: ${pages.length} Recalc CLI pages, Markdown expanded, ${routes.length} sitemap dates, ${Object.keys(functionPages).length} function robots and dates, llms.txt curated, skill and edge files copied`,
   );
 }
 
