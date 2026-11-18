@@ -36,6 +36,8 @@ fn coerce_to_int(arg: &ArgumentHandle) -> Result<i32, ExcelError> {
 /// Returns the serial date offset by a whole number of months from a start date.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - `months` is truncated to an integer before calculation.
 /// - If the target month has fewer days, the day is clamped to that month's last valid day.
 /// - Serials are interpreted and emitted with the workbook's date system (Excel 1900 or Excel 1904).
@@ -72,7 +74,7 @@ pub struct EdateFn;
 /// Max args: 2
 /// Variadic: false
 /// Signature: EDATE(arg1: number@scalar, arg2: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for EdateFn {
@@ -90,8 +92,8 @@ impl Function for EdateFn {
         use std::sync::LazyLock;
         static TWO: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                // start_date serial (numeric lenient)
-                ArgSchema::number_lenient_scalar(),
+                // start_date: a serial, a date, or date text
+                ArgSchema::date_serial_scalar(),
                 // months offset (numeric lenient)
                 ArgSchema::number_lenient_scalar(),
             ]
@@ -133,6 +135,8 @@ impl Function for EdateFn {
 /// Returns the serial for the last day of the month at a month offset from a start date.
 ///
 /// # Remarks
+/// - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+///   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
 /// - `months` is truncated to an integer before offset calculation.
 /// - The returned date is always the month-end date for the target month.
 /// - Serials are interpreted and returned using the workbook's date system (Excel 1900 or Excel 1904).
@@ -169,7 +173,7 @@ pub struct EomonthFn;
 /// Max args: 2
 /// Variadic: false
 /// Signature: EOMONTH(arg1: number@scalar, arg2: number@scalar)
-/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
+/// Arg schema: arg1{kinds=number,required=true,shape=scalar,by_ref=false,coercion=DateTimeSerial,max=None,repeating=None,default=false}; arg2{kinds=number,required=true,shape=scalar,by_ref=false,coercion=NumberLenientText,max=None,repeating=None,default=false}
 /// Caps: PURE
 /// [formualizer-docgen:schema:end]
 impl Function for EomonthFn {
@@ -187,7 +191,7 @@ impl Function for EomonthFn {
         use std::sync::LazyLock;
         static TWO: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
-                ArgSchema::number_lenient_scalar(),
+                ArgSchema::date_serial_scalar(),
                 ArgSchema::number_lenient_scalar(),
             ]
         });

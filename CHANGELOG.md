@@ -7,9 +7,11 @@ All notable changes to Formualizer will be documented in this file.
 ### Added
 
 - `SINGLE`, which Excel writes for `@` as `_xlfn.SINGLE`, now evaluates as implicit intersection instead of `#NAME?` (#565).
+- `ArgSchema::date_serial_scalar()`: a scalar argument that reads date and time text as a serial (`CoercionPolicy::DateTimeSerial`), as Excel's date functions do. (#576)
 
 ### Breaking changes and upgrading
 
+- `args::parse_criteria` turns a date value (`LiteralValue::Date`) into its serial, `Eq(Number)`, instead of `Eq(Date)`, so the predicate also matches numeric text such as `"36459"`, as a number criterion does. Its serials are in the Excel 1900 system; the engine parses criteria in the workbook's own system. (#576)
 - **Text criteria match the same cells on every path.** `COUNTIF`'s criteria mask folds case by Unicode simple case folding (`ος` = `οσ`, `s` = `ſ`) and its `?` is one character; the scalar criteria matcher compared plain lowercase and matched `?` against one byte. The matcher now folds and counts characters as the mask does, so values change for non-ASCII text in `COUNTIFS`/`SUMIFS`/`AVERAGEIFS` with a 1x1 criteria range, `MAXIFS`/`MINIFS`, the database functions, and wildcard criteria over a column that also holds numbers, booleans or blanks: `COUNTIFS(A1,"ΟΣ")` over `οσ` is now 1, and `COUNTIF(A1:A2,"caf?")` over `café` and `7` is now 1.
 
 ### Excel compatibility
@@ -20,6 +22,11 @@ All notable changes to Formualizer will be documented in this file.
 
 - A chain of self-based `OFFSET` periods (`C1 = OFFSET(C1,0,-1)*2`, …) with a dynamic reader of every period (`=SUM(OFFSET(C1,0,0,1,1))`) no longer fails with "dynamic dependency evaluation did not converge after 5 replans" from seven periods on. Under `CycleDetection::Runtime` each self-based `OFFSET` is a one-member SCC; its members stayed dirty until the end of the pass, so every reader evaluated after them in the same pass was taken for stale, the pass stopped at the barrier and the request advanced one period per replan. Cycle-unit members are now committed together when the unit finishes.
 - `_` and `%` in a text criterion are literal in family execution, as they already were elsewhere. A filled-down `=COUNTIF($A$1:$A$40,C1)` with `a_c` or `50%` in column C counted `abc` or `50x` too, because the family kernel passed the criterion to Arrow `ilike` unescaped.
+- Arithmetic reads ISO date text with a lowercase `t`: `="1999-10-26t00:00"+0` is 36459, as it already was with an uppercase `T` and as in Google Sheets. (#576)
+- Date functions read date text. `=YEAR(A1)` with A1 holding the text `10/26/1999` returned `#VALUE!`; it now returns 1999, as Excel does, and `A1` stays text. This covers the date arguments of DAY, MONTH, YEAR, HOUR, MINUTE, SECOND, WEEKDAY, WEEKNUM, ISOWEEKNUM, EDATE, EOMONTH, DATEDIF, DAYS, DAYS360, YEARFRAC, NETWORKDAYS(.INTL) and WORKDAY(.INTL). ISO text with a `T` (`1999-10-26T00:00`, in either case) is a date, as in Google Sheets and arithmetic, and a date before 1900 gives `#NUM!`, as in Sheets; Excel returns `#VALUE!` for both. (#576)
+- NETWORKDAYS(.INTL) and WORKDAY(.INTL) count date text in their holiday lists: `=NETWORKDAYS(A1,A2,A2)` with A1:A2 holding the text `10/26/1999` and `10/27/1999` is 1, as in Excel. Other text is still skipped. (#576)
+- An equality criterion that is a date or a number counts text cells holding that date. `=COUNTIF(A1:A3,"10/26/1999")`, `=COUNTIF(A1:A3,36459)` and `=COUNTIF(A1:A3,"36459")` counted a number cell 36459 but not a text cell `'10/26/1999` or `'1999-10-26`; they now count both, as Excel does. SUMIF(S), COUNTIFS, AVERAGEIF(S), MAXIFS/MINIFS and the D-functions follow, and time text counts too: a `0` or blank criterion cell matches `'0:00`. As in Excel, `<>` and ordering criteria (`">1/1/1999"`) do not read date text, so `"<>10/26/1999"` still counts the text cell. (#576)
+- Criteria read dates in the workbook's date system. In a 1904 workbook, `=COUNTIF(A1,"10/26/1999")` over a date cell for that day was 0, because the criterion's date text was read as a 1900 serial; it is now 1, and so is the same count over the date text `'10/26/1999`. A date criterion operand with a lowercase ISO `t` (`"1999-10-26t00:00"`) is now a date, as it already was with an uppercase `T`. (#576)
 - `@` on a LET local or LAMBDA parameter (`=LET(x,7,@x)`, `=LET(rng,A1:A10,@rng)`) uses the local, as `SINGLE` does, instead of giving `#NAME?` or the value of a workbook name with the same spelling (#580).
 
 ## [0.14.0] - 2026-11-08

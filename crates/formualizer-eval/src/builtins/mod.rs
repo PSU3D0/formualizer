@@ -13,6 +13,7 @@ pub(crate) mod reference_fns;
 pub(crate) mod stats; // Phase 6 statistical basics + extended stats
 pub(crate) mod text; // Phase 2 core text functions
 pub(crate) mod utils;
+#[cfg(test)]
 pub(crate) use utils::criteria_match;
 
 #[cfg(test)]
