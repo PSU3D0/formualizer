@@ -88,10 +88,9 @@ export default function HomePage() {
 
   return (
     <>
-    <script
-      type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
-    />
+    <script type="application/ld+json">
+      {JSON.stringify(jsonLd).replace(/</g, "\\u003c")}
+    </script>
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-10 px-6 py-10 md:py-14 max-[430px]:gap-8 max-[430px]:pt-0">
       <section className="relative overflow-hidden rounded-3xl border bg-fd-card max-[430px]:-mx-6 max-[430px]:rounded-none max-[430px]:border-x-0">
         <Image
@@ -132,6 +131,12 @@ export default function HomePage() {
                 className="rounded-full border bg-fd-background/85 px-4 py-2 text-sm font-medium hover:bg-fd-background"
               >
                 Browse Functions
+              </Link>
+              <Link
+                href="/docs/reference/functions/a-z"
+                className="rounded-full border bg-fd-background/85 px-4 py-2 text-sm font-medium hover:bg-fd-background"
+              >
+                Functions A–Z
               </Link>
               <span className="relative inline-flex">
                 <span className="pointer-events-none absolute inset-0 rounded-full border border-amber-400/70 animate-pulse" />
