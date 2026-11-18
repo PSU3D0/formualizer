@@ -27,6 +27,7 @@ All notable changes to Formualizer will be documented in this file.
 - NETWORKDAYS(.INTL) and WORKDAY(.INTL) count date text in their holiday lists: `=NETWORKDAYS(A1,A2,A2)` with A1:A2 holding the text `10/26/1999` and `10/27/1999` is 1, as in Excel. Other text is still skipped. (#576)
 - An equality criterion that is a date or a number counts text cells holding that date. `=COUNTIF(A1:A3,"10/26/1999")`, `=COUNTIF(A1:A3,36459)` and `=COUNTIF(A1:A3,"36459")` counted a number cell 36459 but not a text cell `'10/26/1999` or `'1999-10-26`; they now count both, as Excel does. SUMIF(S), COUNTIFS, AVERAGEIF(S), MAXIFS/MINIFS and the D-functions follow, and time text counts too: a `0` or blank criterion cell matches `'0:00`. As in Excel, `<>` and ordering criteria (`">1/1/1999"`) do not read date text, so `"<>10/26/1999"` still counts the text cell. (#576)
 - Criteria read dates in the workbook's date system. In a 1904 workbook, `=COUNTIF(A1,"10/26/1999")` over a date cell for that day was 0, because the criterion's date text was read as a 1900 serial; it is now 1, and so is the same count over the date text `'10/26/1999`. A date criterion operand with a lowercase ISO `t` (`"1999-10-26t00:00"`) is now a date, as it already was with an uppercase `T`. (#576)
+- `@` on a LET local or LAMBDA parameter (`=LET(x,7,@x)`, `=LET(rng,A1:A10,@rng)`) uses the local, as `SINGLE` does, instead of giving `#NAME?` or the value of a workbook name with the same spelling (#580).
 
 ## [0.14.0] - 2026-11-08
 
