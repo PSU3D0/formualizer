@@ -1,9 +1,38 @@
 //! Shared helpers for lookup-family functions (MATCH, VLOOKUP, HLOOKUP, XLOOKUP)
 //! Provides unified coercion, comparison and approximate-mode selection logic.
 
+use crate::builtins::utils::{GENERATED_ARRAY_MAX_COLS, GENERATED_ARRAY_MAX_ROWS};
 use crate::engine::{DateSystem, range_view::RangeView};
 use arrow_array::Array;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
+use formualizer_parse::parser::ReferenceType;
+
+/// The `(rows, cols)` a cell or range reference declares: an open row bound
+/// reaches row 1 or row 1,048,576, an open column bound column 1 or column
+/// 16,384. A view is trimmed to the used region along an open axis, so this
+/// is the extent of the reference, not of its data. Any other reference (a
+/// defined name, a table) has none.
+pub(crate) fn reference_extent(reference: &ReferenceType) -> Option<(usize, usize)> {
+    let span = |start: Option<u32>, end: Option<u32>, limit: i64| -> usize {
+        let start = i64::from(start.unwrap_or(1));
+        let end = end.map_or(limit, i64::from);
+        (end - start + 1).max(0) as usize
+    };
+    match reference {
+        ReferenceType::Cell { .. } => Some((1, 1)),
+        ReferenceType::Range {
+            start_row,
+            start_col,
+            end_row,
+            end_col,
+            ..
+        } => Some((
+            span(*start_row, *end_row, GENERATED_ARRAY_MAX_ROWS),
+            span(*start_col, *end_col, GENERATED_ARRAY_MAX_COLS),
+        )),
+        _ => None,
+    }
+}
 
 /// A lookup whose lookup value is an array (or a multi-cell range): one
 /// lookup per element, as in Excel, giving an array of the same shape. An
