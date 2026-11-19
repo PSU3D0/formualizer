@@ -184,7 +184,8 @@ fn collect_graph_reference(
 
             // Graph ingest's configured default is 64. This policy intentionally
             // remains independent from dependency planning's historical 16.
-            if area <= context.graph.config.range_expansion_limit as u64 {
+            // A LOOKUP footprint is always one range dependency.
+            if !range.footprint && area <= context.graph.config.range_expansion_limit as u64 {
                 let sheet_id = match range.sheet.name() {
                     Some(name) => match context.graph.resolve_existing_sheet_id(name) {
                         Ok(id) => id,
@@ -344,6 +345,7 @@ impl DependencyGraph {
             &mut context,
             graph_data_store,
             graph_sheet_registry,
+            |c| c.graph.lookup_footprint_suppressions(),
             collect_graph_reference,
         )?;
 
@@ -395,6 +397,7 @@ impl DependencyGraph {
             ast,
             &mut context,
             graph_no_local_bindings,
+            |c| c.graph.lookup_footprint_suppressions(),
             collect_graph_reference,
         )?;
 

@@ -1,4 +1,5 @@
 use crate::SheetId;
+use crate::builtins::lookup::lookup_utils::{FootprintSuppressions, no_footprint_suppressions};
 use crate::engine::arena::{AstNodeId, DataStore};
 use crate::engine::sheet_registry::SheetRegistry;
 use formualizer_common::Coord as AbsCoord;
@@ -69,6 +70,7 @@ type EnsureVertexPoolIndex<'a> = dyn FnMut(&mut DependencyPlan, (SheetId, AbsCoo
 
 struct PlanReferenceContext<'a> {
     sheet_reg: &'a mut SheetRegistry,
+    footprint_suppressions: &'a FootprintSuppressions,
     data_store: Option<&'a DataStore>,
     current_sheet: SheetId,
     policy: &'a CollectPolicy,
@@ -88,6 +90,12 @@ fn no_local_bindings(
     _: usize,
 ) -> crate::engine::refs::LocalBindingStyle {
     crate::engine::refs::LocalBindingStyle::None
+}
+
+fn plan_footprint_suppressions<'context>(
+    context: &'context PlanReferenceContext<'_>,
+) -> &'context FootprintSuppressions {
+    context.footprint_suppressions
 }
 
 fn plan_data_store<'context>(context: &'context PlanReferenceContext<'_>) -> &'context DataStore {
@@ -139,7 +147,9 @@ fn collect_plan_reference(
 
             // Planning's caller-owned policy (historically 16 in the standard
             // planning setup) intentionally differs from graph ingest's default 64.
+            // A LOOKUP footprint is always one range dependency.
             if context.policy.expand_small_ranges
+                && !range.footprint
                 && area <= context.policy.range_expansion_limit as u64
             {
                 let row_abs = range.start_row_abs && range.end_row_abs;
@@ -241,6 +251,27 @@ pub fn build_dependency_plan<'a, I>(
 where
     I: Iterator<Item = (&'a str, u32, u32, &'a formualizer_parse::parser::ASTNode)>,
 {
+    build_dependency_plan_with(
+        sheet_reg,
+        formulas,
+        policy,
+        volatile_flags,
+        no_footprint_suppressions(),
+    )
+}
+
+/// [`build_dependency_plan`] with the engine's suppressed LOOKUP footprint
+/// names (`call_reads_past_result`).
+pub(crate) fn build_dependency_plan_with<'a, I>(
+    sheet_reg: &mut SheetRegistry,
+    formulas: I,
+    policy: &CollectPolicy,
+    volatile_flags: Option<&[bool]>,
+    footprint_suppressions: &FootprintSuppressions,
+) -> Result<DependencyPlan, ExcelError>
+where
+    I: Iterator<Item = (&'a str, u32, u32, &'a formualizer_parse::parser::ASTNode)>,
+{
     let mut plan = DependencyPlan::default();
 
     // Global cell pool: packed absolute cell -> index.
@@ -293,6 +324,7 @@ where
         {
             let mut context = PlanReferenceContext {
                 sheet_reg,
+                footprint_suppressions,
                 data_store: None,
                 current_sheet: sheet_id,
                 policy,
@@ -309,6 +341,7 @@ where
                 ast,
                 &mut context,
                 no_local_bindings,
+                plan_footprint_suppressions,
                 collect_plan_reference,
             )?;
         }
@@ -330,6 +363,29 @@ pub fn build_dependency_plan_mixed<'a, I>(
     formulas: I,
     policy: &CollectPolicy,
     volatile_flags: Option<&[bool]>,
+) -> Result<DependencyPlan, ExcelError>
+where
+    I: Iterator<Item = (&'a str, u32, u32, DependencyPlanAst<'a>)>,
+{
+    build_dependency_plan_mixed_with(
+        sheet_reg,
+        data_store,
+        formulas,
+        policy,
+        volatile_flags,
+        no_footprint_suppressions(),
+    )
+}
+
+/// [`build_dependency_plan_mixed`] with the engine's suppressed LOOKUP
+/// footprint names (`call_reads_past_result`).
+pub(crate) fn build_dependency_plan_mixed_with<'a, I>(
+    sheet_reg: &mut SheetRegistry,
+    data_store: &DataStore,
+    formulas: I,
+    policy: &CollectPolicy,
+    volatile_flags: Option<&[bool]>,
+    footprint_suppressions: &FootprintSuppressions,
 ) -> Result<DependencyPlan, ExcelError>
 where
     I: Iterator<Item = (&'a str, u32, u32, DependencyPlanAst<'a>)>,
@@ -379,6 +435,7 @@ where
         {
             let mut context = PlanReferenceContext {
                 sheet_reg,
+                footprint_suppressions,
                 data_store: Some(data_store),
                 current_sheet: sheet_id,
                 policy,
@@ -396,6 +453,7 @@ where
                     ast,
                     &mut context,
                     no_local_bindings,
+                    plan_footprint_suppressions,
                     collect_plan_reference,
                 )?,
                 DependencyPlanAst::Arena(ast_id) => crate::engine::refs::visit_arena_references(
@@ -403,6 +461,7 @@ where
                     &mut context,
                     plan_data_store,
                     plan_sheet_registry,
+                    plan_footprint_suppressions,
                     collect_plan_reference,
                 )?,
             }

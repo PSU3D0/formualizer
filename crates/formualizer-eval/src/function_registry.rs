@@ -1249,6 +1249,109 @@ pub(crate) fn operation_reporting_contract(
     }
 }
 
+/// The names (empty namespace, normalized, aliases included) the global
+/// registry resolves to a function with every capability of `caps`, cached
+/// per registry semantic epoch.
+pub(crate) fn names_with_caps(caps: FnCaps) -> Arc<[String]> {
+    type Cache = std::sync::Mutex<HashMap<u32, (u64, Arc<[String]>)>>;
+    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let epoch = semantic_epoch_lock_free();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((seen, names)) = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&caps.bits())
+        && *seen == epoch
+    {
+        return Arc::clone(names);
+    }
+    let names: Arc<[String]> = scan_names_with_caps(caps).into();
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(caps.bits(), (epoch, Arc::clone(&names)));
+    names
+}
+
+/// [`names_with_caps`] without the cache. The functions' `caps()` run
+/// outside the registry lock.
+fn scan_names_with_caps(caps: FnCaps) -> Vec<String> {
+    let candidates: Vec<(String, Arc<dyn Function>)> = {
+        let state = REGISTRY
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let registered = state
+            .registrations
+            .iter()
+            .map(|(key, entry)| (key, &entry.function));
+        let aliased = state.aliases.iter().filter_map(|(key, alias)| {
+            state
+                .registrations
+                .get(&alias.target)
+                .map(|entry| (key, &entry.function))
+        });
+        registered
+            .chain(aliased)
+            .filter(|((ns, _), _)| ns.is_empty())
+            .map(|((_, name), function)| (name.clone(), Arc::clone(function)))
+            .collect()
+    };
+    let mut names: Vec<String> = candidates
+        .into_iter()
+        .filter(|(_, function)| {
+            crate::external_callbacks::metadata(function.as_ref(), FnCaps::empty, || {
+                function.caps()
+            })
+            .contains(caps)
+        })
+        .map(|(name, _)| name)
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
+/// The normalized spelling of a function name with its Excel prefixes
+/// (`_XLFN.`, …) stripped.
+pub(crate) fn base_function_name(name: &str) -> String {
+    let normalized = norm(name);
+    let mut base = normalized.as_str();
+    while let Some(rest) = EXCEL_PREFIXES
+        .iter()
+        .find_map(|prefix| base.strip_prefix(prefix))
+    {
+        base = rest;
+    }
+    base.to_string()
+}
+
+/// Whether a name starts with two Excel prefixes or more
+/// (`_xlfn._xlws.LOOKUP`).
+pub(crate) fn has_compound_excel_prefix(name: &str) -> bool {
+    let normalized = norm(name);
+    EXCEL_PREFIXES
+        .iter()
+        .find_map(|prefix| normalized.strip_prefix(prefix))
+        .is_some_and(has_excel_prefix)
+}
+
+/// Whether a normalized name starts with an Excel prefix (`_XLFN.`, …).
+pub(crate) fn has_excel_prefix(name: &str) -> bool {
+    EXCEL_PREFIXES.iter().any(|prefix| name.starts_with(prefix))
+}
+
+/// The spellings of `name` with each Excel prefix (`_xlfn.`, …) in front.
+pub(crate) fn excel_prefixed_spellings(name: &str) -> impl Iterator<Item = String> + '_ {
+    EXCEL_PREFIXES
+        .iter()
+        .map(move |prefix| format!("{prefix}{name}"))
+}
+
+/// The registry's normalized spelling of a function name.
+pub(crate) fn normalized_function_name(name: &str) -> String {
+    norm(name)
+}
+
 pub fn resolve(ns: &str, name: &str) -> Option<ResolvedFunction> {
     resolve_entry(ns, name).map(to_resolved)
 }

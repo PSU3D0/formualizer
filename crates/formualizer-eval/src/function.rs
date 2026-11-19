@@ -127,6 +127,11 @@ bitflags::bitflags! {
     const LOCAL_ENVIRONMENT = 0b0001_0000_0000_0000_0000;
     /// Function can produce a multi-cell dynamic-array result.
     const MAY_SPILL = 0b0010_0000_0000_0000_0000;
+    /// Function reads its result argument past the end the formula writes
+    /// (LOOKUP with a result range shorter than its lookup vector, as in
+    /// Excel). The dependency graph adds the cells it may read as one more
+    /// reference of the formula.
+    const READS_PAST_RESULT = 0b0100_0000_0000_0000_0000;
     }
 }
 

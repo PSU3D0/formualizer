@@ -1301,6 +1301,7 @@ pub struct Engine<R> {
 /// `Engine` edit methods and does not create changelog boundaries or implement rollback.
 impl<R: EvaluationContext> Engine<R> {
     pub(crate) fn ingest_pipeline(&mut self) -> crate::engine::ingest_pipeline::IngestPipeline<'_> {
+        self.refresh_lookup_footprint_suppressions();
         self.graph.ingest_pipeline(&self.resolver)
     }
 }
@@ -3365,6 +3366,7 @@ where
         engine.config.write_formula_overlay_enabled = true;
         let default_sheet = engine.graph.default_sheet_name().to_string();
         engine.ensure_arrow_sheet(&default_sheet);
+        engine.refresh_lookup_footprint_suppressions();
         engine
     }
 
@@ -3554,6 +3556,7 @@ where
         engine.config.write_formula_overlay_enabled = true;
         let default_sheet = engine.graph.default_sheet_name().to_string();
         engine.ensure_arrow_sheet(&default_sheet);
+        engine.refresh_lookup_footprint_suppressions();
         engine
     }
 
@@ -5863,6 +5866,8 @@ where
         // 1) Roll back the dependency graph.
         self.graph
             .authority_set_replay(crate::engine::authority::history::Replay::Undo);
+        self.graph
+            .refresh_lookup_footprint_suppressions(&self.resolver);
         let rolled_back = (|| {
             let mut editor = crate::engine::VertexEditor::new(&mut self.graph);
             let mut compound_stack: Vec<usize> = Vec::new();
@@ -5933,6 +5938,8 @@ where
             .map_err(crate::engine::EditorError::Excel)?;
 
         {
+            self.graph
+                .refresh_lookup_footprint_suppressions(&self.resolver);
             let mut editor = crate::engine::VertexEditor::with_logger(&mut self.graph, log);
             editor.define_name(name, definition, scope)?;
         }
@@ -5955,6 +5962,8 @@ where
             .validate_existing_name(name, scope)
             .map_err(crate::engine::EditorError::Excel)?;
         {
+            self.graph
+                .refresh_lookup_footprint_suppressions(&self.resolver);
             let mut editor = crate::engine::VertexEditor::with_logger(&mut self.graph, log);
             editor.update_name(name, definition, scope)?;
         }
@@ -5976,6 +5985,8 @@ where
             .validate_existing_name(name, scope)
             .map_err(crate::engine::EditorError::Excel)?;
         {
+            self.graph
+                .refresh_lookup_footprint_suppressions(&self.resolver);
             let mut editor = crate::engine::VertexEditor::with_logger(&mut self.graph, log);
             editor.delete_name(name, scope)?;
         }
@@ -6012,6 +6023,10 @@ where
         capture: &mut MutationCapture,
         f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
     ) -> Result<T, crate::engine::EditorError> {
+        // The editor writes formulas through the graph's own ingest, which
+        // cannot ask this engine's provider: bring the suppressed LOOKUP
+        // footprint names up to date with it first.
+        self.refresh_lookup_footprint_suppressions();
         let invalidation_baseline = self.invalidation_baseline();
         let start_len = capture.len();
         let lazy_start = capture.lazy_len();
@@ -7727,6 +7742,7 @@ where
         ),
         ExcelError,
     > {
+        self.refresh_lookup_footprint_suppressions();
         let formula_count = batch.formulas.len() as u64;
         let sheet_id = self.graph.sheet_id_mut(&batch.sheet_name);
         let mut planned = Vec::with_capacity(batch.formulas.len());
@@ -11841,6 +11857,12 @@ where
         Some(mask)
     }
 
+    /// See `DependencyGraph::refresh_lookup_footprint_suppressions`.
+    pub(crate) fn refresh_lookup_footprint_suppressions(&mut self) {
+        self.graph
+            .refresh_lookup_footprint_suppressions(&self.resolver);
+    }
+
     fn observe_function_semantic_epoch(&mut self) -> Result<bool, ExcelError> {
         let changes =
             crate::function_registry::semantic_changes_since(self.function_semantic_epoch_seen);
@@ -11848,8 +11870,14 @@ where
         let provider_revision = self.resolver.planning_semantic_revision();
         let provider_changed = provider_revision != self.function_provider_revision_seen;
         if !global_changed && !provider_changed {
+            // A provider without a revision can change what it resolves
+            // without saying so: the refresh compares what it resolves.
+            if provider_revision.is_none() {
+                self.refresh_lookup_footprint_suppressions();
+            }
             return Ok(false);
         }
+        self.refresh_lookup_footprint_suppressions();
 
         let changed = !changes.keys.is_empty();
         if global_changed && changed || provider_changed {
@@ -19642,6 +19670,13 @@ where
         name: &str,
     ) -> Option<std::sync::Arc<dyn crate::function::Function>> {
         self.resolver.get_function_for_planning(prefix, name)
+    }
+
+    fn lookup_footprint_suppressed(&self, name: &str) -> bool {
+        crate::builtins::lookup::lookup_utils::footprint_suppressed(
+            name,
+            self.graph.lookup_footprint_suppressions(),
+        )
     }
 }
 

@@ -468,6 +468,20 @@ pub struct DependencyGraph {
     dep_edge_total: usize,
     /// Formulas with `VertexStore::reads_range` set.
     range_reader_count: usize,
+    /// Normalized function names the global registry resolves to a function
+    /// that reads its result past its end (LOOKUP) but the engine's provider
+    /// resolves to another function (a workbook-local override). Calls so
+    /// named get no LOOKUP footprint, and the interpreter tells LOOKUP not to
+    /// read past its result's end for them (`call_reads_past_result`).
+    lookup_footprint_suppressed: crate::builtins::lookup::lookup_utils::FootprintSuppressions,
+    /// The base names (Excel prefixes stripped) the global registry resolved
+    /// to such a function at the last refresh: with the suppressed names,
+    /// what `call_reads_past_result` answers from. `None` before the first.
+    lookup_footprint_bases: Option<std::collections::BTreeSet<String>>,
+    /// The (registry semantic epoch, provider revision) the suppressions were
+    /// last refreshed for; `None` before the first refresh, or after one for
+    /// a provider without a revision.
+    lookup_footprint_suppressions_seen: Option<(u64, u64)>,
     /// Old (lower-cased) name -> sheet, for sheets renamed away from it:
     /// name formulas that still spell it keep their edges (see
     /// `rename_sheet`).
@@ -780,11 +794,12 @@ impl DependencyGraph {
     where
         I: IntoIterator<Item = (&'a str, u32, u32, &'a formualizer_parse::parser::ASTNode)>,
     {
-        crate::engine::plan::build_dependency_plan(
+        crate::engine::plan::build_dependency_plan_with(
             &mut self.sheet_reg,
             items.into_iter(),
             policy,
             volatile,
+            &self.lookup_footprint_suppressed,
         )
     }
 
@@ -804,12 +819,13 @@ impl DependencyGraph {
             ),
         >,
     {
-        crate::engine::plan::build_dependency_plan_mixed(
+        crate::engine::plan::build_dependency_plan_mixed_with(
             &mut self.sheet_reg,
             &self.data_store,
             items.into_iter(),
             policy,
             volatile,
+            &self.lookup_footprint_suppressed,
         )
     }
 
@@ -1955,6 +1971,9 @@ impl DependencyGraph {
             edges: CsrMutableEdges::new(),
             dep_edge_total: 0,
             range_reader_count: 0,
+            lookup_footprint_suppressed: Default::default(),
+            lookup_footprint_bases: None,
+            lookup_footprint_suppressions_seen: None,
             renamed_sheet_aliases: FxHashMap::default(),
             data_store: DataStore::new(),
             vertex_values: FxHashMap::default(),
@@ -2186,6 +2205,7 @@ impl DependencyGraph {
             source_scalars,
             source_tables,
             config,
+            lookup_footprint_suppressed,
             ..
         } = self;
 
@@ -2288,6 +2308,7 @@ impl DependencyGraph {
             policy,
         )
         .with_unbound_pending(unbound_pending)
+        .with_footprint_suppressions(lookup_footprint_suppressed)
     }
 
     /// Converts a `CellRef` to a fully qualified A1-style string (e.g., "SheetName!A1").
@@ -4298,6 +4319,188 @@ impl DependencyGraph {
             self.store.set_reads_range(vertex, true);
             self.range_reader_count += 1;
         }
+    }
+
+    /// Bring the inputs of `lookup_utils::call_reads_past_result` up to date
+    /// with `provider`, the engine's own (never a stand-in): the base names
+    /// the global registry resolves to a function that reads its result past
+    /// its end, and the spellings `provider` resolves otherwise (a
+    /// workbook-local override), whose calls get no footprint. The reference
+    /// walkers cannot ask the provider, so they read these, and so does the
+    /// interpreter. When either changes (an override registered or removed,
+    /// a global alias of LOOKUP registered later), the formulas calling an
+    /// affected name get their dependencies rebuilt, so that a footprint
+    /// exists exactly when LOOKUP reads past its result's end. Skipped while
+    /// the registry epoch and the provider's revision are unchanged.
+    pub(crate) fn refresh_lookup_footprint_suppressions(
+        &mut self,
+        provider: &dyn crate::traits::FunctionProvider,
+    ) {
+        use crate::function::FnCaps;
+        use crate::function_registry::{
+            base_function_name, excel_prefixed_spellings, has_excel_prefix, names_with_caps,
+            normalized_function_name,
+        };
+        let seen = provider.planning_semantic_revision().map(|revision| {
+            (
+                crate::function_registry::semantic_epoch_lock_free(),
+                revision,
+            )
+        });
+        if seen.is_some() && seen == self.lookup_footprint_suppressions_seen {
+            return;
+        }
+        let names = names_with_caps(FnCaps::READS_PAST_RESULT);
+        let mut suppressed =
+            crate::builtins::lookup::lookup_utils::FootprintSuppressions::default();
+        for name in names.iter() {
+            let spellings = std::iter::once(name.clone()).chain(
+                (!has_excel_prefix(name))
+                    .then(|| excel_prefixed_spellings(name))
+                    .into_iter()
+                    .flatten(),
+            );
+            for spelling in spellings {
+                let local = provider.function_capabilities("", &spelling);
+                if !local.is_some_and(|caps| caps.contains(FnCaps::READS_PAST_RESULT)) {
+                    suppressed.insert(normalized_function_name(&spelling));
+                }
+            }
+        }
+        let bases: std::collections::BTreeSet<String> =
+            names.iter().map(|name| base_function_name(name)).collect();
+        let mut affected: FxHashSet<String> = FxHashSet::default();
+        if let Some(old_bases) = &self.lookup_footprint_bases {
+            affected.extend(old_bases.symmetric_difference(&bases).cloned());
+            affected.extend(
+                self.lookup_footprint_suppressed
+                    .symmetric_difference(&suppressed)
+                    .map(|name| base_function_name(name)),
+            );
+        }
+        self.lookup_footprint_suppressed = suppressed;
+        self.lookup_footprint_bases = Some(bases);
+        self.lookup_footprint_suppressions_seen = seen;
+        if !affected.is_empty() {
+            self.rebuild_formulas_calling(&affected);
+        }
+    }
+
+    /// Rebuild the dependencies of every formula, and of every
+    /// formula-valued name, that calls a function whose base name (Excel
+    /// prefixes stripped) is in `names`. A virtual family member is
+    /// materialized and a family member gets its own AST first: its family
+    /// shared one dependency shape, which a footprint may not have.
+    fn rebuild_formulas_calling(&mut self, names: &FxHashSet<String>) {
+        fn calls_arena(ds: &DataStore, root: AstNodeId, names: &FxHashSet<String>) -> bool {
+            use crate::engine::arena::AstNodeData;
+            let mut stack = vec![root];
+            while let Some(id) = stack.pop() {
+                match ds.get_node(id) {
+                    Some(AstNodeData::Function { name_id, .. }) => {
+                        let name = crate::function_registry::base_function_name(
+                            ds.resolve_ast_string(*name_id),
+                        );
+                        if names.contains(&name) {
+                            return true;
+                        }
+                        stack.extend(ds.get_args(id).into_iter().flatten());
+                    }
+                    Some(AstNodeData::UnaryOp { expr_id, .. }) => stack.push(*expr_id),
+                    Some(AstNodeData::BinaryOp {
+                        left_id, right_id, ..
+                    }) => {
+                        stack.push(*left_id);
+                        stack.push(*right_id);
+                    }
+                    Some(AstNodeData::Array { .. }) => {
+                        if let Some((_, _, elems)) = ds.get_array_elems(id) {
+                            stack.extend(elems);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            false
+        }
+        fn calls_tree(ast: &ASTNode, names: &FxHashSet<String>) -> bool {
+            use formualizer_parse::parser::ASTNodeType;
+            let mut stack = vec![ast];
+            while let Some(node) = stack.pop() {
+                match &node.node_type {
+                    ASTNodeType::Function { name, args } => {
+                        if names.contains(&crate::function_registry::base_function_name(name)) {
+                            return true;
+                        }
+                        stack.extend(args);
+                    }
+                    ASTNodeType::BinaryOp { left, right, .. } => {
+                        stack.push(left);
+                        stack.push(right);
+                    }
+                    ASTNodeType::UnaryOp { expr, .. } => stack.push(expr),
+                    ASTNodeType::Call { callee, args } => {
+                        stack.push(callee);
+                        stack.extend(args);
+                    }
+                    ASTNodeType::Array(rows) => stack.extend(rows.iter().flatten()),
+                    _ => {}
+                }
+            }
+            false
+        }
+
+        // Formula cells, virtual family members included.
+        let vertices: Vec<(VertexId, bool)> = self
+            .vertex_formulas
+            .iter()
+            .filter(|(_, formula)| calls_arena(&self.data_store, formula.root(), names))
+            .map(|(vertex, formula)| (vertex, formula.own().is_none()))
+            .collect();
+        for (vertex, member) in vertices {
+            let Some(ast) = self.get_formula(vertex) else {
+                continue;
+            };
+            if member {
+                self.materialize_vertex(vertex);
+                let own = self.data_store.store_ast(&ast, &self.sheet_reg);
+                self.vertex_formulas.insert(vertex, own);
+            }
+            self.rebuild_formula_dependencies(vertex, &ast);
+        }
+
+        // Formula-valued names, as `update_name` rebuilds them.
+        let named: Vec<(VertexId, NamedDefinition, NameScope)> = self
+            .named_ranges
+            .values()
+            .chain(self.sheet_named_ranges.values())
+            .filter(|named| {
+                matches!(&named.definition, NamedDefinition::Formula { ast, .. } if calls_tree(ast, names))
+            })
+            .map(|named| (named.vertex, named.definition.clone(), named.scope))
+            .collect();
+        for (vertex, definition, scope) in named {
+            let readers = self.authority_symbol_readers(vertex);
+            self.mark_dirty_many(&readers);
+            self.detach_vertex_from_names(vertex);
+            match self.rebuild_name_dependencies(vertex, &definition, scope) {
+                Ok(referenced) if !referenced.is_empty() => {
+                    self.attach_vertex_to_names(vertex, &referenced)
+                }
+                Ok(_) => {}
+                Err(_) => self.mark_as_name_error(vertex),
+            }
+            self.authority_note_symbol(Some(vertex));
+            self.mark_dirty_many(&[vertex]);
+            self.bump_symbol_revision();
+        }
+    }
+
+    /// The suppressed names (see `call_reads_past_result`).
+    pub(crate) fn lookup_footprint_suppressions(
+        &self,
+    ) -> &crate::builtins::lookup::lookup_utils::FootprintSuppressions {
+        &self.lookup_footprint_suppressed
     }
 
     /// Whether any formula reads a compressed range.

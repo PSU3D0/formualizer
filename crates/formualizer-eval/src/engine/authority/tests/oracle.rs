@@ -96,6 +96,7 @@ fn visit(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError> 
                             &ast,
                             &mut inner,
                             |_, _, _| LocalBindingStyle::None,
+                            |c| c.g.lookup_footprint_suppressions(),
                             visit,
                         );
                         for mut x in inner.out {
@@ -151,6 +152,7 @@ impl Naive {
                 &ast,
                 &mut ctx,
                 |_, _, _| LocalBindingStyle::None,
+                |c| c.g.lookup_footprint_suppressions(),
                 visit,
             );
             formulas.push(((cr.sheet_id, cr.coord.row(), cr.coord.col()), ctx.out));

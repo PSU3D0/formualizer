@@ -665,10 +665,12 @@ impl<R: EvaluationContext> LegacyInspectSource<'_, R> {
 
 fn visit_formula_ast_references(
     ast: &ASTNode,
+    footprint_suppressions: &crate::builtins::lookup::lookup_utils::FootprintSuppressions,
     visitor: &mut dyn ReferenceVisitor,
 ) -> Result<(), InspectError> {
     struct Context<'a> {
         visitor: &'a mut dyn ReferenceVisitor,
+        footprint_suppressions: &'a crate::builtins::lookup::lookup_utils::FootprintSuppressions,
         stopped: bool,
     }
     fn local_bindings(_: &Context<'_>, name: &str, _: usize) -> refs::LocalBindingStyle {
@@ -699,9 +701,16 @@ fn visit_formula_ast_references(
 
     let mut context = Context {
         visitor,
+        footprint_suppressions,
         stopped: false,
     };
-    let result = refs::visit_tree_references(ast, &mut context, local_bindings, consume);
+    let result = refs::visit_tree_references(
+        ast,
+        &mut context,
+        local_bindings,
+        |context| context.footprint_suppressions,
+        consume,
+    );
     if context.stopped {
         Ok(())
     } else {
@@ -759,7 +768,11 @@ impl<R: EvaluationContext> InspectSource for LegacyInspectSource<'_, R> {
             return Ok(());
         };
 
-        visit_formula_ast_references(&formula.ast, visitor)
+        visit_formula_ast_references(
+            &formula.ast,
+            self.engine.graph.lookup_footprint_suppressions(),
+            visitor,
+        )
     }
 
     fn visit_dependents_covering(

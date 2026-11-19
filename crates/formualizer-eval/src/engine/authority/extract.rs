@@ -198,6 +198,7 @@ impl Ctx<'_> {
             ast,
             &mut inner,
             |_, _, _| LocalBindingStyle::None,
+            |c| c.graph.lookup_footprint_suppressions(),
             collect,
         );
         self.edges.append(&mut inner.edges);
@@ -391,6 +392,7 @@ pub fn extract_formula(
         &mut ctx,
         |c| c.graph.data_store(),
         |c| c.graph.sheet_reg(),
+        |c| c.graph.lookup_footprint_suppressions(),
         collect_keyed,
     );
     // Keep only references that instantiate at the cell (all do for an
@@ -404,6 +406,17 @@ pub fn extract_formula(
     if t.literals.len() > super::slots::MAX_ARITY {
         t.relocatable = false;
         t.literals.clear();
+    }
+    // A LOOKUP footprint that cannot be shifted from this cell keeps the
+    // formula an ungrouped singleton with its own edges.
+    if t.relocatable
+        && crate::engine::refs::arena_formula_blocks_lookup_sharing(
+            graph.data_store(),
+            graph.sheet_reg(),
+            ast,
+        )
+    {
+        t.relocatable = false;
     }
     let mut flags = ctx.flags;
     if volatile {
@@ -486,6 +499,7 @@ pub fn extract_symbol_binding(
                 ast,
                 &mut ctx,
                 |_, _, _| LocalBindingStyle::None,
+                |c| c.graph.lookup_footprint_suppressions(),
                 collect,
             );
         }
