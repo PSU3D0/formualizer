@@ -1,0 +1,29 @@
+name: Reuse PR checks
+
+on:
+  workflow_call:
+    inputs:
+      workflow-file:
+        required: true
+        type: string
+    outputs:
+      reuse:
+        value: ${{ jobs.check.outputs.reuse }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      reuse: ${{ steps.check.outputs.reuse }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          WORKFLOW_FILE: ${{ inputs.workflow-file }}
+        run: python3 .github/scripts/reuse-pr-checks.py
