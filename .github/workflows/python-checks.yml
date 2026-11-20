@@ -1,0 +1,97 @@
+name: Python checks
+
+on:
+  workflow_call:
+    inputs:
+      upload-coverage:
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      with:
+        toolchain: 1.99.0
+
+    - name: Cache Rust dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+        working-directory: bindings/python
+
+    - name: Install Python dependencies
+      working-directory: bindings/python
+      run: |
+        uv venv
+        uv pip install maturin -e ".[dev]"
+
+    - name: Generate Python stubs (pyo3-stub-gen)
+      working-directory: bindings/python
+      run: |
+        cargo run --bin stub_gen
+        git diff --exit-code -- \
+          formualizer/__init__.pyi \
+          formualizer/formualizer_py.pyi
+
+    - name: Build Python extension
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        maturin develop
+
+    - name: Run Python linting
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        ruff check .
+        ruff format --check .
+
+    - name: Run Python type checking
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        mypy formualizer
+        python -m mypy.stubtest formualizer --allowlist stubtest_allowlist.txt
+
+    - name: Run Python tests with coverage
+      working-directory: bindings/python
+      run: |
+        source .venv/bin/activate
+        pytest
+
+    - name: Upload coverage artifact
+      if: ${{ inputs.upload-coverage && !env.ACT && matrix.python-version == '3.12' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-coverage
+        path: bindings/python/coverage.xml
+        if-no-files-found: error
