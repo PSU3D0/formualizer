@@ -393,7 +393,13 @@ fn memo_preserves_equal_values_with_different_selected_formats() {
 
 #[test]
 fn guarded_self_reference_stays_legacy_via_internal_dependency() {
-    let mut engine = engine(FormulaPlaneMode::AuthoritativeExperimental);
+    let cfg = EvalConfig::default()
+        .with_formula_plane_mode(FormulaPlaneMode::AuthoritativeExperimental)
+        .with_cycle(CycleConfig {
+            detection: CycleDetection::Static,
+            policy: CyclePolicy::Error,
+        });
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
     let mut formulas = Vec::new();
     for row in 1..=ROWS {
         engine

@@ -930,8 +930,8 @@ pub struct EvalConfig {
     pub spill: SpillConfig,
 
     /// Cycle handling configuration (detection mode + policy). Defaults to
-    /// `CycleDetection::Static` (today's stamp-every-static-SCC behavior);
-    /// `CycleDetection::Runtime` is opt-in (RFC #112).
+    /// `CycleDetection::Runtime` (RFC #112): only a live cycle gets the
+    /// policy verdict. `CycleDetection::Static` stamps every static SCC.
     pub cycle: CycleConfig,
 
     /// Use dynamic topological ordering (Pearce-Kelly algorithm).
@@ -1285,13 +1285,13 @@ impl CycleConfig {
 /// How statically-cyclic SCCs are treated at evaluation time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CycleDetection {
-    /// Today's behavior: every static SCC is stamped `#CIRC!`. Compat escape
-    /// hatch; no live-edge machinery runs.
-    #[default]
+    /// Every static SCC is stamped `#CIRC!` without being evaluated, the
+    /// default before #570. Compat switch; no live-edge machinery runs.
     Static,
     /// Static SCCs are candidates; members are evaluated with live-edge
     /// recording and only *live* cycles get the policy verdict. Phantom
     /// (live-acyclic) SCCs produce ordinary values (discussion #99).
+    #[default]
     Runtime,
 }
 

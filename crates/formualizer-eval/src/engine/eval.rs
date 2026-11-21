@@ -20898,8 +20898,8 @@ where
 
     /// Dispatch point for one `ScheduleUnit::Cycle` (RFC #112, Stage 2).
     ///
-    /// * `CycleDetection::Static` — today's behavior, byte-for-byte: stamp
-    ///   `#CIRC!` on the (optionally dirty-filtered) members.
+    /// * `CycleDetection::Static` — the behavior before #570, byte-for-byte:
+    ///   stamp `#CIRC!` on the (optionally dirty-filtered) members.
     /// * `CycleDetection::Runtime` — evaluate the SCC via
     ///   [`Self::evaluate_scc_unit`]. The recalc-plan dirty quirk maps to:
     ///   no dirty member → skip the task entirely (values stand); any dirty

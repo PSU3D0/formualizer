@@ -3,8 +3,8 @@
 //! Test inventory from `formualizer-stage2-scc-evaluation-design.md` §5 and
 //! the spec's §7 Error-policy subset: phantom (guarded) cycles produce
 //! values, live cycles produce `#CIRC!` with live-cycle-only blast radius,
-//! and `CycleDetection::Static` (the default) stays byte-for-byte today's
-//! behavior.
+//! and `CycleDetection::Static` (the default before #570) stays byte-for-byte
+//! its earlier behavior.
 
 use crate::engine::graph::editor::undo_engine::UndoEngine;
 use crate::engine::named_range::{NameScope, NamedDefinition};
@@ -33,8 +33,15 @@ fn runtime_engine() -> Engine<TestWorkbook> {
     Engine::new(TestWorkbook::new(), runtime_cfg())
 }
 
+fn static_cfg() -> EvalConfig {
+    EvalConfig::default().with_cycle(CycleConfig {
+        detection: CycleDetection::Static,
+        policy: CyclePolicy::Error,
+    })
+}
+
 fn static_engine() -> Engine<TestWorkbook> {
-    Engine::new(TestWorkbook::new(), EvalConfig::default())
+    Engine::new(TestWorkbook::new(), static_cfg())
 }
 
 fn set_formula(engine: &mut Engine<TestWorkbook>, sheet: &str, row: u32, col: u32, f: &str) {
@@ -81,7 +88,7 @@ fn build_99_pair(engine: &mut Engine<TestWorkbook>, guard: bool) {
 /// `live_graph` unit tests.
 #[test]
 fn direct_self_reference_rejected_at_ingest_in_both_modes() {
-    for cfg in [EvalConfig::default(), runtime_cfg()] {
+    for cfg in [static_cfg(), runtime_cfg()] {
         let mut engine = Engine::new(TestWorkbook::new(), cfg);
         let err = engine
             .set_cell_formula("Sheet1", 1, 1, parse("=A1+1").unwrap())
@@ -326,7 +333,7 @@ fn named_range_covering_the_cell_rejected_at_ingest_in_both_modes() {
     // A name whose region covers the formula's own cell is rejected when the
     // formula is set ("Circular reference through named range") — existing
     // engine rule, identical under Runtime.
-    for cfg in [EvalConfig::default(), runtime_cfg()] {
+    for cfg in [static_cfg(), runtime_cfg()] {
         let mut engine = Engine::new(TestWorkbook::new(), cfg);
         let sheet_id = engine.sheet_id("Sheet1").unwrap();
         let nr = RangeRef::new(
@@ -364,7 +371,7 @@ fn whole_column_self_inclusion_gap_runtime_matches_static() {
         let res = engine.evaluate_all().unwrap();
         (engine.get_cell_value("Sheet1", 1, 2), res.cycle_errors)
     };
-    let static_out = run(EvalConfig::default());
+    let static_out = run(static_cfg());
     let runtime_out = run(runtime_cfg());
     assert_eq!(static_out, runtime_out);
     // Whole-column self-inclusion is now a detected cycle in both modes.
@@ -385,7 +392,7 @@ fn whole_column_self_inclusion_gap_runtime_matches_static() {
 /// resolves to `#CIRC!` under both detection modes.
 #[test]
 fn whole_column_in_column_self_inclusion_is_circ_both_modes() {
-    for cfg in [EvalConfig::default(), runtime_cfg()] {
+    for cfg in [static_cfg(), runtime_cfg()] {
         let mut engine = Engine::new(TestWorkbook::new(), cfg);
         for r in 2..=4u32 {
             set_value(&mut engine, "Sheet1", r, 2, LiteralValue::Number(r as f64));
@@ -404,7 +411,7 @@ fn whole_column_in_column_self_inclusion_is_circ_both_modes() {
 /// #120 symmetric whole-row case: `=SUM(2:2)` placed in row 2 is circular.
 #[test]
 fn whole_row_in_row_self_inclusion_is_circ_both_modes() {
-    for cfg in [EvalConfig::default(), runtime_cfg()] {
+    for cfg in [static_cfg(), runtime_cfg()] {
         let mut engine = Engine::new(TestWorkbook::new(), cfg);
         for c in 3..=5u32 {
             set_value(&mut engine, "Sheet1", 2, c, LiteralValue::Number(c as f64));
@@ -426,7 +433,7 @@ fn whole_row_in_row_self_inclusion_is_circ_both_modes() {
 /// covers B5 ⇒ self-loop ⇒ `#CIRC!`.
 #[test]
 fn large_bounded_range_self_inclusion_is_circ_both_modes() {
-    for cfg in [EvalConfig::default(), runtime_cfg()] {
+    for cfg in [static_cfg(), runtime_cfg()] {
         let mut engine = Engine::new(TestWorkbook::new(), cfg);
         for r in 1..=4u32 {
             set_value(&mut engine, "Sheet1", r, 2, LiteralValue::Number(r as f64));
@@ -445,7 +452,7 @@ fn large_bounded_range_self_inclusion_is_circ_both_modes() {
 /// column stays acyclic and computes normally.
 #[test]
 fn whole_column_referenced_from_outside_stays_acyclic() {
-    for cfg in [EvalConfig::default(), runtime_cfg()] {
+    for cfg in [static_cfg(), runtime_cfg()] {
         let mut engine = Engine::new(TestWorkbook::new(), cfg);
         for r in 1..=3u32 {
             set_value(&mut engine, "Sheet1", r, 2, LiteralValue::Number(r as f64));
@@ -462,7 +469,7 @@ fn whole_column_referenced_from_outside_stays_acyclic() {
 /// formula's own cell is unchanged (computes, no cycle).
 #[test]
 fn large_bounded_range_non_intersecting_stays_acyclic() {
-    for cfg in [EvalConfig::default(), runtime_cfg()] {
+    for cfg in [static_cfg(), runtime_cfg()] {
         let mut engine = Engine::new(TestWorkbook::new(), cfg);
         for r in 1..=4u32 {
             set_value(&mut engine, "Sheet1", r, 1, LiteralValue::Number(r as f64));
@@ -546,7 +553,7 @@ fn cross_sheet_phantom_scc_produces_values() {
 /// is rejected at ingest in both modes (existing rule).
 #[test]
 fn named_formula_cycle_rejected_at_ingest_in_both_modes() {
-    for cfg in [EvalConfig::default(), runtime_cfg()] {
+    for cfg in [static_cfg(), runtime_cfg()] {
         let mut engine = Engine::new(TestWorkbook::new(), cfg);
         engine
             .define_name(
@@ -983,9 +990,9 @@ fn recalc_plan_skips_clean_cycles_and_evaluates_dirty_ones_whole() {
 /* ──────────────────────── compat & determinism ───────────────────────── */
 
 #[test]
-fn static_default_keeps_stamping_the_99_pair() {
+fn static_detection_keeps_stamping_the_99_pair() {
     // Golden dual-mode pin: the only documented diff (spec §8) is values vs
-    // #CIRC for the guarded phantom pair.
+    // #CIRC for the guarded phantom pair, which explicit `Static` still stamps.
     let mut engine = static_engine();
     build_99_pair(&mut engine, true);
     let res = engine.evaluate_all().unwrap();
@@ -997,6 +1004,18 @@ fn static_default_keeps_stamping_the_99_pair() {
         engine.last_cycle_telemetry(),
         &crate::engine::CycleTelemetry::default()
     );
+}
+
+#[test]
+fn default_detection_is_runtime() {
+    // #570: a loop whose reads never happen is calculated by default.
+    assert_eq!(CycleConfig::default().detection, CycleDetection::Runtime);
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    build_99_pair(&mut engine, true);
+    let res = engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, "Sheet1", 2, 1), 555.0);
+    assert_eq!(num(&engine, "Sheet1", 3, 1), 555.0);
+    assert_eq!(res.cycle_errors, 0);
 }
 
 #[test]

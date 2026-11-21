@@ -2,7 +2,7 @@
 //!
 //! CELL answers `contents`, `address`, `col`, `row`, `type` and `filename`;
 //! HYPERLINK returns its friendly name or link location as text.
-use crate::engine::{Engine, EvalConfig};
+use crate::engine::{CycleConfig, CycleDetection, CyclePolicy, Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{ExcelErrorKind, LiteralValue};
 use formualizer_parse::parser::parse;
@@ -592,4 +592,120 @@ fn cell_filename_reports_unknown_identity_and_the_implicit_active_cell() {
             );
         }
     }
+}
+
+/// `CELL` reads the value of its reference only for `contents` and `type`
+/// (#570): `A1 =CELL(<info>,B1)` with `B1 =A1` is a loop that happens for
+/// those two, and a static cycle that runtime detection calculates for the
+/// others.
+#[test]
+fn cell_metadata_does_not_read_the_referenced_value() {
+    let text = |s: &str| Some(LiteralValue::Text(s.into()));
+    let cases = [
+        ("filename", text(r"C:\dir\[book.xlsx]Sheet1")),
+        ("address", text("$B$1")),
+        ("row", Some(LiteralValue::Number(1.0))),
+        ("col", Some(LiteralValue::Number(2.0))),
+        // `None`: a live cycle, #CIRC! in both cells.
+        ("contents", None),
+        ("type", None),
+    ];
+    for (info, expected) in cases {
+        let config = EvalConfig::default().with_cycle(CycleConfig {
+            detection: CycleDetection::Runtime,
+            policy: CyclePolicy::Error,
+        });
+        let mut engine = Engine::new(TestWorkbook::new(), config);
+        engine.set_workbook_path(Some(r"C:\dir\book.xlsx".to_owned()));
+        let formula = format!(r#"=CELL("{info}",B1)"#);
+        engine
+            .set_cell_formula("Sheet1", 1, 1, parse(&formula).unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 1, 2, parse("=A1").unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        for col in [1, 2] {
+            let value = engine.get_cell_value("Sheet1", 1, col);
+            match &expected {
+                Some(expected) => assert_eq!(value.as_ref(), Some(expected), "{info}, col {col}"),
+                None => assert!(
+                    matches!(&value, Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Circ),
+                    "{info}, col {col}: {value:?}"
+                ),
+            }
+        }
+    }
+}
+
+/// Returns `B3` as a reference and counts its calls on both paths.
+#[derive(Debug)]
+struct CountedRef(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+impl CountedRef {
+    fn reference() -> formualizer_parse::parser::ReferenceType {
+        formualizer_parse::parser::ReferenceType::cell(None, 3, 2)
+    }
+}
+impl crate::function::Function for CountedRef {
+    fn caps(&self) -> crate::function::FnCaps {
+        crate::function::FnCaps::PURE | crate::function::FnCaps::RETURNS_REFERENCE
+    }
+    fn name(&self) -> &'static str {
+        "COUNTED_REF"
+    }
+    fn min_args(&self) -> usize {
+        0
+    }
+    fn eval_reference<'a, 'b, 'c>(
+        &self,
+        _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+        _ctx: &dyn crate::traits::FunctionContext<'b>,
+    ) -> Option<Result<formualizer_parse::parser::ReferenceType, formualizer_common::ExcelError>>
+    {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Some(Ok(Self::reference()))
+    }
+    fn eval<'a, 'b, 'c>(
+        &self,
+        _args: &'c [crate::traits::ArgumentHandle<'a, 'b>],
+        ctx: &dyn crate::traits::FunctionContext<'b>,
+    ) -> Result<crate::traits::CalcValue<'b>, formualizer_common::ExcelError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(crate::traits::CalcValue::Range(ctx.resolve_range_view(
+            &Self::reference(),
+            ctx.current_sheet(),
+        )?))
+    }
+}
+
+#[test]
+fn cell_metadata_evaluates_a_reference_argument_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let calls = std::sync::Arc::new(AtomicUsize::new(0));
+    let wb = TestWorkbook::new().with_function(std::sync::Arc::new(CountedRef(calls.clone())));
+    let mut engine = Engine::new(wb, EvalConfig::default());
+    engine
+        .set_cell_formula(
+            "Sheet1",
+            1,
+            1,
+            parse(r#"=CELL("row",COUNTED_REF())"#).unwrap(),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula("Sheet1", 2, 1, parse("=CELL()").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(3.0))
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    // Without the argument validation of the default dispatch, `eval` checks
+    // the arity itself.
+    assert!(matches!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Value
+    ));
 }

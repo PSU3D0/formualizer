@@ -7,7 +7,7 @@ Cycle handling is configured through `CycleConfig`, nested under the engine's `E
 
 ```text
 CycleConfig {
-  detection: CycleDetection,  // Static (default) | Runtime
+  detection: CycleDetection,  // Runtime (default) | Static
   policy:    CyclePolicy,      // Error (default) | Iterate { max_iterations, max_change }
 }
 ```
@@ -21,8 +21,8 @@ See the guides for the conceptual model:
 
 | Value | Behavior |
 |-------|----------|
-| `Static` *(default)* | Every static SCC is stamped `#CIRC!`. No live-edge machinery runs. Byte-for-byte compatible with prior releases. |
-| `Runtime` | Static SCCs are candidates; members evaluate with live-edge recording, and only *live* cycles get the policy verdict. Phantom (live-acyclic) SCCs produce ordinary values. |
+| `Static` | Every static SCC is stamped `#CIRC!`. No live-edge machinery runs. The default before [#570](https://github.com/PSU3D0/formualizer/issues/570); its results are unchanged. |
+| `Runtime` *(default)* | Static SCCs are candidates; members evaluate with live-edge recording, and only *live* cycles get the policy verdict. Phantom (live-acyclic) SCCs produce ordinary values. |
 
 ## `CyclePolicy`
 
@@ -95,8 +95,8 @@ cfg.iterate_max_iterations = 100              # only meaningful when iterating
 cfg.iterate_max_change = 0.001
 
 wb = fz.Workbook(config=fz.WorkbookConfig(eval_config=cfg))`}
-  ts={`// JS/WASM accepts cycle config only on the load entry points.
-// The plain \`new Workbook()\` constructor always uses defaults.
+  ts={`// JS/WASM accepts cycle config on the plain \`new Workbook(options)\`
+// constructor and on the load entry points.
 const wb = Workbook.fromJsonWithOptions(json, {
   cycleDetection: "runtime",       // "static" | "runtime"
   cyclePolicy: "iterate",          // "error" | "iterate" (implies runtime)
@@ -111,10 +111,10 @@ const wb = Workbook.fromJsonWithOptions(json, {
 
 | Capability | Rust | Python | JS/WASM |
 |-----------|------|--------|---------|
-| Set detection mode | ✅ | ✅ `cycle_detection` | ✅ `cycleDetection` (load only) |
-| Set policy / iterate knobs | ✅ | ✅ `cycle_policy`, `iterate_*` | ✅ `cyclePolicy`, `iterate*` (load only) |
-| Configure on programmatic (empty) workbook | ✅ | ✅ `Workbook(config=...)` | ❌ constructor takes no options |
-| Read `CycleTelemetry` | ✅ `engine().last_cycle_telemetry()` | ✅ `wb.last_cycle_telemetry()` | ❌ config-only today |
+| Set detection mode | ✅ | ✅ `cycle_detection` | ✅ `cycleDetection` |
+| Set policy / iterate knobs | ✅ | ✅ `cycle_policy`, `iterate_*` | ✅ `cyclePolicy`, `iterate*` |
+| Configure on programmatic (empty) workbook | ✅ | ✅ `Workbook(config=...)` | ✅ `new Workbook(options)` |
+| Read `CycleTelemetry` | ✅ `engine().last_cycle_telemetry()` | ✅ `wb.last_cycle_telemetry()` | ✅ `wb.lastCycleTelemetry()` |
 | XLSX `<calcPr>` round-trip | ✅ | ✅ (via load/save) | ✅ (via `fromXlsxBytesWithOptions`) |
 
 ## XLSX `<calcPr>` mapping

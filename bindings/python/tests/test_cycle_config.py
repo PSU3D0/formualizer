@@ -7,7 +7,7 @@ import formualizer as fz
 
 def test_cycle_defaults():
     cfg = fz.EvaluationConfig()
-    assert cfg.cycle_detection == "static"
+    assert cfg.cycle_detection == "runtime"
     assert cfg.cycle_policy == "error"
     # Knob getters read Excel defaults even when not iterating.
     assert cfg.iterate_max_iterations == 100
@@ -16,6 +16,7 @@ def test_cycle_defaults():
 
 def test_setting_iterate_policy_promotes_detection_to_runtime():
     cfg = fz.EvaluationConfig()
+    cfg.cycle_detection = "static"
     cfg.cycle_policy = "iterate"
     assert cfg.cycle_policy == "iterate"
     # spec §2: iteration requires runtime detection; the setter auto-promotes it.
@@ -24,6 +25,7 @@ def test_setting_iterate_policy_promotes_detection_to_runtime():
 
 def test_iterate_knobs_round_trip():
     cfg = fz.EvaluationConfig()
+    cfg.cycle_detection = "static"
     cfg.iterate_max_iterations = 7
     cfg.iterate_max_change = 0.25
     assert cfg.cycle_policy == "iterate"

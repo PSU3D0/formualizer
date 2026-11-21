@@ -114,3 +114,46 @@ fn cycle_telemetry_resets_per_evaluation_request() {
     assert_eq!(wb.engine().last_cycle_telemetry().static_sccs, 0);
     assert_eq!(wb.engine().last_cycle_telemetry().phantom_sccs, 0);
 }
+
+/// Issue #570's workbook under the default config: `=CELL("filename",A1)` in
+/// A1 and a loop closed only by an untaken `IF` branch are static SCCs whose
+/// reads never form a loop, so both resolve to values as in Excel. The bulk
+/// load accepts the self-reference that `set_formula` would refuse.
+#[cfg(feature = "json")]
+#[test]
+fn issue_570_workbook_calculates_under_the_default_config() {
+    use formualizer_workbook::{JsonAdapter, LoadStrategy, SpreadsheetReader};
+
+    let bytes = br#"{
+        "version": 1,
+        "sheets": {
+            "Sheet1": {
+                "cells": [
+                    { "row": 1, "col": 1, "formula": "=CELL(\"filename\",A1)" },
+                    { "row": 1, "col": 2, "formula": "=A1" },
+                    { "row": 3, "col": 1, "value": { "type": "Number", "value": 0 } },
+                    { "row": 4, "col": 1, "formula": "=IF(A3=1,B4,5)" },
+                    { "row": 4, "col": 2, "formula": "=A4+1" }
+                ]
+            }
+        }
+    }"#
+    .to_vec();
+
+    let adapter = JsonAdapter::open_bytes(bytes).unwrap();
+    let mut wb =
+        Workbook::from_reader(adapter, LoadStrategy::EagerAll, WorkbookConfig::ephemeral())
+            .unwrap();
+    wb.set_workbook_path(Some(r"C:\dir\book.xlsx".to_owned()));
+    let res = wb.evaluate_all().expect("evaluate_all");
+
+    let filename = Some(LiteralValue::Text(r"C:\dir\[book.xlsx]Sheet1".into()));
+    assert_eq!(wb.get_value("Sheet1", 1, 1), filename);
+    assert_eq!(wb.get_value("Sheet1", 1, 2), filename);
+    assert_eq!(num(&wb, "Sheet1", 4, 1), 5.0);
+    assert_eq!(num(&wb, "Sheet1", 4, 2), 6.0);
+    assert_eq!(res.cycle_errors, 0);
+    let t = wb.engine().last_cycle_telemetry();
+    assert_eq!(t.static_sccs, 2, "{t:?}");
+    assert_eq!(t.phantom_sccs, 2, "{t:?}");
+}

@@ -757,6 +757,48 @@ fn workbook_partial_internal_cycle_and_zero_sample_scope_are_truthful() {
     assert!(!member(&cycle.bytes, SHEET).contains("<v>"));
 }
 
+/// #570: loops that never execute recalculate. `CELL("filename",A1)` in A1
+/// reads no value, and A4 reads B4 only through an `IF` branch not taken.
+/// Under `Static` both loops were #CIRC!, which has no cache encoding.
+#[test]
+fn loops_that_never_execute_recalculate() {
+    use formualizer_workbook::{SourceCalculationCoverage, SourceModeVerification};
+    let input = pack(&parts(concat!(
+        r#"<row r="1"><c r="A1" t="str"><f>CELL("filename",A1)</f><v>stale</v></c>"#,
+        r#"<c r="B1" t="str"><f>A1</f><v>stale</v></c></row>"#,
+        r#"<row r="3"><c r="A3"><v>0</v></c></row>"#,
+        r#"<row r="4"><c r="A4"><f>IF(A3=1,B4,5)</f><v>0</v></c>"#,
+        r#"<c r="B4"><f>A4+1</f><v>0</v></c></row>"#,
+    )));
+    let out = recalculate_xlsx_bytes(&input, XlsxRecalculateOptions::default()).unwrap();
+    assert_eq!(out.formula_cells, 4);
+    assert_eq!(out.cache_cells_changed, 4);
+    let mut x = Xlsx::new(Cursor::new(&out.bytes)).unwrap();
+    let range = x.worksheet_range("Sheet1").unwrap();
+    assert_eq!(range.get_value((3, 0)), Some(&Data::Float(5.0)));
+    assert_eq!(range.get_value((3, 1)), Some(&Data::Float(6.0)));
+    // Source bytes carry no workbook path: `filename` is #VALUE! and the only
+    // coverage gap.
+    let value = Data::Error(cached_reader::CellErrorType::Value);
+    assert_eq!(range.get_value((0, 0)), Some(&value));
+    assert_eq!(range.get_value((0, 1)), Some(&value));
+    assert_eq!(out.coverage, SourceCalculationCoverage::Partial);
+    let modes = &out.operation_diagnostics.function_modes;
+    assert_eq!(modes.len(), 1, "{modes:?}");
+    assert_eq!(
+        (modes[0].name.as_str(), modes[0].mode.as_str()),
+        ("CELL", "filename")
+    );
+    assert_eq!(modes[0].verification, SourceModeVerification::Unavailable);
+    assert_eq!(
+        out.operation_diagnostics
+            .unavailable_functions
+            .keys()
+            .collect::<Vec<_>>(),
+        ["CELL"]
+    );
+}
+
 #[test]
 fn parse_refusal_precedes_any_coverage_deferral() {
     use formualizer_workbook::IoError;

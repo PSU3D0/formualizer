@@ -1,7 +1,7 @@
 {
   "docs-site/content/docs/core-concepts/dependency-graph-and-recalc.mdx": {
-    "date": "2026-11-04",
-    "sha256": "170b01f9da8239b31a1bad1fbfbd3800e87096c054acefb4056c56d6a7ff4b2e"
+    "date": "2026-11-21",
+    "sha256": "8106ecb36fab93fdbf044f95c5164edfcf1e1c585b51496190ac84796e7c136b"
   },
   "docs-site/content/docs/core-concepts/index.mdx": {
     "date": "2026-02-23",
@@ -28,8 +28,8 @@
     "sha256": "9eda2c0a118447aa0195b1c7219e3d0a65099e5d85a9abac140412782985d2e0"
   },
   "docs-site/content/docs/guides/circular-references-and-cycle-detection.mdx": {
-    "date": "2026-06-10",
-    "sha256": "5e3ea3b54e81400b3c5e40ce1291a4b0a8ae4f3e366b281a4e70bae61f252869"
+    "date": "2026-11-21",
+    "sha256": "d0d585ef936bf7a72b8b0efdea1262f63cb5ae88efd87b27ea686f13ea6e2a3e"
   },
   "docs-site/content/docs/guides/custom-functions-rust-python-js.mdx": {
     "date": "2026-11-06",
@@ -176,8 +176,8 @@
     "sha256": "079abcdc479af864c73325296229a0a1b9e1d3ec3c4cdce91681571b7ec6da5c"
   },
   "docs-site/content/docs/reference/cycle-config.mdx": {
-    "date": "2026-09-02",
-    "sha256": "1142915a3af4e79f0c832082bfc406f5e77b5dd7126430cb343d1f8e46349df0"
+    "date": "2026-11-21",
+    "sha256": "b0e6328f4f3022e26532484e82b740f015a4f6a4aa6b443d9e927dac2b93f91d"
   },
   "docs-site/content/docs/reference/errors-and-types.mdx": {
     "date": "2026-02-23",
