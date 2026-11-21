@@ -72,13 +72,12 @@ fn binary_search_searched(
     if mode == 0 || searched.is_empty() {
         return None;
     }
-    // Only ascending binary search currently (mode 1); descending path kept linear for now.
     if mode == 1 {
         // largest <= needle
         let mut lo = 0usize;
         let mut hi = searched.len();
         while lo < hi {
-            let mid = (lo + hi) / 2;
+            let mid = lo + (hi - lo) / 2;
             match cmp_for_lookup(searched.get(mid), needle, date_system) {
                 Some(c) => {
                     if c > 0 {
@@ -93,20 +92,35 @@ fn binary_search_searched(
             }
         }
         if lo == 0 { None } else { Some(lo - 1) }
-    } else {
-        // -1 mode handled via linear fallback since semantics differ (smallest >=)
-        let mut best: Option<usize> = None;
-        for i in 0..searched.len() {
-            if let Some(c) = cmp_for_lookup(searched.get(i), needle, date_system) {
-                if c == 0 {
-                    return Some(i);
+    } else if mode == -1 {
+        // smallest >= needle on descending input: first exact match if present,
+        // otherwise last entry strictly > needle.
+        let mut lo = 0usize;
+        let mut hi = searched.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            match cmp_for_lookup(searched.get(mid), needle, date_system) {
+                Some(c) => {
+                    if c > 0 {
+                        lo = mid + 1;
+                    } else {
+                        hi = mid;
+                    }
                 }
-                if c >= 0 && best.is_none_or(|b| i > b) {
-                    best = Some(i);
-                }
+                None => unreachable!(
+                    "SearchedVector contains only entries comparable with the lookup value"
+                ),
             }
         }
-        best
+        if lo < searched.len() && cmp_for_lookup(searched.get(lo), needle, date_system) == Some(0) {
+            Some(lo)
+        } else if lo > 0 {
+            Some(lo - 1)
+        } else {
+            None
+        }
+    } else {
+        None
     }
 }
 
@@ -325,11 +339,10 @@ impl MatchFn {
                         )));
                     }
 
-                    // Approximate modes: a one-column or one-row view's
-                    // values from the engine's lookup index when it has one
-                    // (the same cells in the same order; blanks past the
-                    // sheet's rows are projected out below either way), else
-                    // materialized.
+                    // Approximate modes: use the cached sorted projection on the
+                    // lookup index when warmed (O(1) sortedness guard + O(log N)
+                    // binary search), or stream directly over Arrow chunks without
+                    // materializing a column Vec when below the cache threshold.
                     let axis = if rv.dims().1 == 1 {
                         Some(LookupAxis::ColumnInView(0))
                     } else if rv.dims().0 == 1 {
@@ -337,84 +350,28 @@ impl MatchFn {
                     } else {
                         None
                     };
-                    let index = axis.and_then(|axis| ctx.get_lookup_index(&rv, axis));
-                    let mut owned: Vec<LiteralValue> = Vec::new();
-                    let values: &[LiteralValue] = match &index {
-                        Some(index) => &index.cell_values,
-                        None => {
-                            if let Err(e) = rv.for_each_cell(&mut |v| {
-                                owned.push(v.clone());
-                                Ok(())
-                            }) {
-                                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                                    e,
-                                )));
-                            }
-                            &owned
+                    let idx = if let Some(axis) = axis {
+                        if let Some(index) = ctx.get_lookup_index(&rv, axis) {
+                            index.find_approximate(&lookup_value, mt)
+                        } else {
+                            super::lookup_utils::approximate_search_in_view(
+                                &rv,
+                                axis,
+                                &lookup_value,
+                                mt,
+                                ctx.date_system(),
+                            )?
                         }
-                    };
-
-                    // Project out the entries an approximate search ignores
-                    // (blanks and entries outside the needle's value class)
-                    // before both the sortedness guard and the search itself.
-                    let searched =
-                        match SearchedVector::new(values, &lookup_value, ctx.date_system()) {
-                            Ok(searched) => searched,
-                            Err(error) => {
-                                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                                    error,
-                                )));
-                            }
-                        };
-
-                    // Lightweight unsorted detection for approximate modes
-                    let is_sorted = if mt == 1 {
-                        searched.is_sorted_ascending()
-                    } else if mt == -1 {
-                        searched.is_sorted_descending()
                     } else {
-                        true
-                    };
-                    if !is_sorted {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                            ExcelError::new(ExcelErrorKind::Na),
-                        )));
-                    }
-                    let idx = if searched.len() < 8 {
-                        // linear small
-                        let mut best: Option<usize> = None;
-                        for i in 0..searched.len() {
-                            if let Some(c) =
-                                cmp_for_lookup(searched.get(i), &lookup_value, ctx.date_system())
-                            {
-                                // compare candidate to needle
-                                if mt == 1 {
-                                    // v <= needle
-                                    if (c == 0 || c == -1) && (best.is_none() || i > best.unwrap())
-                                    {
-                                        best = Some(i);
-                                    }
-                                } else {
-                                    // -1, v >= needle. Excel returns the *first*
-                                    // entry of an exact-match run on a descending
-                                    // range, but the *last* entry that still
-                                    // qualifies when the needle falls between two
-                                    // values. This mirrors the >= 8 path.
-                                    if c == 0 {
-                                        best = Some(i);
-                                        break;
-                                    }
-                                    if c == 1 && (best.is_none() || i > best.unwrap()) {
-                                        best = Some(i);
-                                    }
-                                }
-                            }
+                        let mut owned: Vec<LiteralValue> = Vec::new();
+                        if let Err(e) = rv.for_each_cell(&mut |v| {
+                            owned.push(v.clone());
+                            Ok(())
+                        }) {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                         }
-                        best
-                    } else {
-                        binary_search_searched(&searched, &lookup_value, mt, ctx.date_system())
+                        binary_search_match(&owned, &lookup_value, mt, ctx.date_system())?
                     };
-                    let idx = idx.map(|i| searched.original_position(i));
                     match idx {
                         Some(i) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(
                             (i + 1) as i64,
@@ -662,7 +619,6 @@ impl VLookupFn {
                 )));
             }
 
-            let first_col_view = rv.sub_view(0, 0, rows, 1);
             let row_idx_opt = if !approximate {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
                 if !wildcard_mode
@@ -670,6 +626,7 @@ impl VLookupFn {
                 {
                     index.find_first_exact(&lookup_value)
                 } else {
+                    let first_col_view = rv.sub_view(0, 0, rows, 1);
                     super::lookup_utils::find_exact_index_in_view(
                         &first_col_view,
                         &lookup_value,
@@ -678,22 +635,19 @@ impl VLookupFn {
                     )?
                 }
             } else if let Some(index) = ctx.get_lookup_index(&rv, LookupAxis::ColumnInView(0)) {
-                // The engine's lookup index holds the first column's values
-                // (`get_cell`, as `for_each_row` reads them) for repeated
-                // lookups on the same view: no per-call materialization.
-                binary_search_match(&index.cell_values, &lookup_value, 1, ctx.date_system())?
+                // Cached sorted projection on the lookup index: O(1) sortedness
+                // guard and O(log N) binary search with zero per-call materialization.
+                index.find_approximate(&lookup_value, 1)
             } else {
-                // Fallback for approximate mode (requires materializing first column for now)
-                let mut first_col: Vec<LiteralValue> = Vec::new();
-                first_col_view.for_each_row(&mut |row| {
-                    first_col.push(row[0].clone());
-                    Ok(())
-                })?;
-                if first_col.is_empty() {
-                    None
-                } else {
-                    binary_search_match(&first_col, &lookup_value, 1, ctx.date_system())?
-                }
+                // Below-threshold / uncached approximate mode: single-pass streaming
+                // over Arrow chunks without materializing a column Vec.
+                super::lookup_utils::approximate_search_in_view(
+                    &rv,
+                    LookupAxis::ColumnInView(0),
+                    &lookup_value,
+                    1,
+                    ctx.date_system(),
+                )?
             };
 
             match row_idx_opt {
@@ -944,20 +898,19 @@ impl HLookupFn {
                     ExcelError::new(ExcelErrorKind::Ref),
                 )));
             }
-            let first_row_view = rv.sub_view(0, 0, 1, cols);
             let col_idx_opt = if approximate {
                 if let Some(index) = ctx.get_lookup_index(&rv, LookupAxis::RowInView(0)) {
-                    // The lookup index holds the first row's values.
-                    binary_search_match(&index.cell_values, &lookup_value, 1, ctx.date_system())?
+                    // Cached sorted projection on the lookup index: O(1) sortedness
+                    // guard and O(log N) binary search.
+                    index.find_approximate(&lookup_value, 1)
                 } else {
-                    let mut first_row: Vec<LiteralValue> = Vec::with_capacity(cols);
-                    first_row_view.for_each_row(&mut |row| {
-                        if first_row.is_empty() {
-                            first_row.extend_from_slice(row);
-                        }
-                        Ok(())
-                    })?;
-                    binary_search_match(&first_row, &lookup_value, 1, ctx.date_system())?
+                    super::lookup_utils::approximate_search_in_view(
+                        &rv,
+                        LookupAxis::RowInView(0),
+                        &lookup_value,
+                        1,
+                        ctx.date_system(),
+                    )?
                 }
             } else {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
@@ -966,6 +919,7 @@ impl HLookupFn {
                 {
                     index.find_first_exact(&lookup_value)
                 } else {
+                    let first_row_view = rv.sub_view(0, 0, 1, cols);
                     super::lookup_utils::find_exact_index_in_view(
                         &first_row_view,
                         &lookup_value,
