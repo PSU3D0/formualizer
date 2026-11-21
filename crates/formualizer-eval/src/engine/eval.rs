@@ -21144,21 +21144,30 @@ where
 
         let collector = LiveEdgeCollector::new_with_names(&cell_refs, &name_keys);
 
-        // Per-member live out-edges, refreshed whenever a member re-runs.
+        // Per-member sorted, deduplicated live out-edges, refreshed whenever a
+        // member re-runs. Excluded members have empty out-edges.
         let mut out_edges: Vec<Vec<u32>> = vec![Vec::new(); n];
+        // Reusable flat edge buffer for `analyze_live_graph` (already strictly
+        // sorted and deduplicated by construction).
+        let mut edges_buf: Vec<(u32, u32)> = Vec::new();
+        // Cached live-graph classification; recomputed on Pass 1 and whenever
+        // any member's live out-edge set changes (or a member becomes excluded).
+        let mut cached_analysis: Option<crate::engine::live_graph::LiveGraphAnalysis> = None;
+        let mut edges_changed = true;
         // Position of each member in the most recent pass (-1 = did not run).
         let mut pos: Vec<i64> = vec![-1; n];
         // Whether each member's committed value changed in the most recent pass.
         let mut changed = vec![false; n];
 
-        // Evaluate-and-commit one member; returns Ok(true) when the member was
-        // stamped `#CIRC!` (array result — would-be spill anchor, spec §7.9).
+        // Evaluate-and-commit one member; records its live out-edges and
+        // returns `true` if the member's edge set changed relative to the
+        // previous pass.
         macro_rules! run_member {
             ($i:expr) => {{
                 let i: usize = $i;
                 let m = &members[i];
                 if i < recordable {
-                    collector.set_current(i as u32);
+                    collector.begin_member(i as u32);
                 }
                 let value = {
                     let ctx = RecordingContext::new(&*self, &collector);
@@ -21168,17 +21177,28 @@ where
                     }
                 };
                 let is_cell_formula = m.cell.is_some();
+                let mut member_edges_changed = false;
                 if is_cell_formula && matches!(value, LiteralValue::Array(_)) {
                     // A member that *would* spill inside an SCC gets the
                     // conservative §7.9 verdict. It has never spilled before
                     // (a prior spill would make it FormulaArray, pre-stamped
                     // above), so there is no projection to tear down.
+                    if i < recordable {
+                        collector.discard_current_edges();
+                    }
+                    if !out_edges[i].is_empty() {
+                        out_edges[i].clear();
+                        member_edges_changed = true;
+                    }
                     self.stamp_cycle_error(m.vertex, &circ_error, None);
                     excluded[i] = true;
                     stamped += 1;
                     changed[i] = last_value[i] != circ_error;
                     last_value[i] = circ_error.clone();
                 } else {
+                    if i < recordable && collector.finish_member_targets(&mut out_edges[i]) {
+                        member_edges_changed = true;
+                    }
                     self.graph.update_vertex_value_ref(m.vertex, &value);
                     self.mirror_vertex_value_to_overlay(m.vertex, &value);
                     // §7.14 invariant (G2): a formula member must never be
@@ -21202,6 +21222,7 @@ where
                     changed[i] = last_value[i] != value;
                     last_value[i] = value;
                 }
+                member_edges_changed
             }};
         }
 
@@ -21224,7 +21245,7 @@ where
                 if excluded[i] {
                     continue;
                 }
-                run_member!(i);
+                edges_changed |= run_member!(i);
                 pos[i] = p;
                 p += 1;
             }
@@ -21253,10 +21274,14 @@ where
         let mut iterating = false;
         let mut converged = false;
         let mut exact_fixed_point = false;
-        // Values committed by the last *full* pass; `None` until the first
-        // iteration pass runs (pass 1 has no predecessor to compare against)
-        // and reset when a settle pass runs (no cross-kind comparisons).
-        let mut prev_pass: Option<Vec<LiteralValue>> = None;
+        // Values committed by the last *full* pass (reused buffer across
+        // passes); `has_prev_pass` is `false` until the first iteration pass
+        // runs (pass 1 has no predecessor to compare against) and reset when a
+        // settle pass runs (no cross-kind comparisons).
+        let mut prev_pass: Vec<LiteralValue> = Vec::new();
+        let mut has_prev_pass = false;
+        // Reusable buffer for acyclic stale-reader selection.
+        let mut stale: Vec<usize> = Vec::new();
         // Final-round convergence stats (overwritten per round so the values
         // reported are the ones observed at stop).
         let mut iter_max_delta = 0f64;
@@ -21266,37 +21291,32 @@ where
         // behavior exactly).
         let mut settle_passes = 0usize;
         loop {
-            // Drain this pass's recordings; members that ran replace their
-            // out-edge set, members that didn't keep last-known edges.
-            let drained = collector.take_edges();
-            for i in 0..n {
-                if pos[i] >= 0 {
-                    out_edges[i].clear();
+            // Re-run Tarjan only on Pass 1 or when at least one member's live
+            // out-edge set changed (or a member was excluded). Stable-edge
+            // iteration passes reuse the previous classification in O(1).
+            if edges_changed || cached_analysis.is_none() {
+                edges_buf.clear();
+                for (i, outs) in out_edges.iter().enumerate() {
+                    if excluded[i] {
+                        continue;
+                    }
+                    for &t in outs {
+                        edges_buf.push((i as u32, t));
+                    }
                 }
-            }
-            for (from, to) in drained {
                 debug_assert!(
-                    pos[from as usize] >= 0,
-                    "edge from a member that did not run"
+                    edges_buf.windows(2).all(|w| w[0] < w[1]),
+                    "live edges must be strictly sorted and deduplicated"
                 );
-                out_edges[from as usize].push(to);
+                cached_analysis = Some(analyze_live_graph(n, &edges_buf));
+                edges_changed = false;
             }
-            let mut edges: Vec<(u32, u32)> = Vec::new();
-            for (i, outs) in out_edges.iter().enumerate() {
-                if excluded[i] {
-                    continue;
-                }
-                for &t in outs {
-                    edges.push((i as u32, t));
-                }
-            }
-            edges.sort_unstable();
-            edges.dedup();
-
-            let analysis = analyze_live_graph(n, &edges);
+            let analysis = cached_analysis
+                .as_ref()
+                .expect("live graph analysis initialized");
 
             if analysis.cycle_count > 0 {
-                // Classification repeats every iteration pass under
+                // Classification repeats whenever edges change under
                 // `Iterate`; record the widest single witness instead of
                 // accumulating so the count stays "distinct live cycles".
                 witnessed_cycles = witnessed_cycles.max(analysis.cycle_count);
@@ -21325,7 +21345,7 @@ where
                         if !order.is_empty() {
                             passes += 1;
                             for i in order {
-                                run_member!(i);
+                                let _ = run_member!(i);
                             }
                         }
                         break;
@@ -21339,10 +21359,10 @@ where
 
                         // Convergence test: the full pass that just completed
                         // vs the previous full pass, per the spec-§6 rules.
-                        // `prev_pass` is `None` until an iteration pass has
-                        // run — pass 1 has no predecessor, so no convergence
-                        // test occurs before the second pass (spec §6).
-                        if let Some(prev) = &prev_pass {
+                        // `has_prev_pass` is `false` until an iteration pass
+                        // has run — pass 1 has no predecessor, so no
+                        // convergence test occurs before the second pass.
+                        if has_prev_pass {
                             let mut round_max_delta = 0f64;
                             let mut round_nan = 0usize;
                             let mut all_converged = true;
@@ -21355,7 +21375,7 @@ where
                                     continue;
                                 }
                                 let out = crate::engine::convergence::values_converged(
-                                    &prev[i],
+                                    &prev_pass[i],
                                     &last_value[i],
                                     max_change,
                                     self.config.date_system,
@@ -21392,7 +21412,7 @@ where
                         // with `max_iterations: 1` we stop right here — each
                         // member was evaluated exactly once this recalc (the
                         // Excel accumulator contract) and no convergence test
-                        // ran (`prev_pass` is still `None`). Capping keeps
+                        // ran (`has_prev_pass` is still `false`). Capping keeps
                         // the last committed values and is NOT an error
                         // (Excel parity); telemetry records it.
                         if passes >= max_iterations as usize {
@@ -21405,13 +21425,13 @@ where
                         // member order (Gauss–Seidel: each commit is visible
                         // to later members within the pass). Live edges
                         // re-record — guards can flip near convergence
-                        // (§7.3) — so classification repeats next time
-                        // around, and a cycle that dissolves drops back to
-                        // the exact acyclic settle below.
-                        prev_pass = Some(last_value.clone());
-                        for x in pos.iter_mut() {
-                            *x = -1;
-                        }
+                        // (§7.3) — so any edge-set change triggers
+                        // re-classification next time around, and a cycle that
+                        // dissolves drops back to the exact acyclic settle
+                        // below.
+                        prev_pass.clone_from(&last_value);
+                        has_prev_pass = true;
+                        pos.fill(-1);
                         changed.fill(false);
                         passes += 1;
                         let mut p = 0i64;
@@ -21419,7 +21439,7 @@ where
                             if excluded[i] {
                                 continue;
                             }
-                            run_member!(i);
+                            edges_changed |= run_member!(i);
                             pos[i] = p;
                             p += 1;
                         }
@@ -21430,7 +21450,7 @@ where
 
             // Acyclic: find stale readers — members whose live read of `to`
             // happened before `to`'s value changed in the pass that just ran.
-            let mut stale: Vec<usize> = Vec::new();
+            stale.clear();
             for i in 0..n {
                 if excluded[i] {
                     continue;
@@ -21462,22 +21482,20 @@ where
 
             check_cancel(cancel_flag)?;
             // Re-evaluate stale readers in live-topo order, recording fresh
-            // edges (branches may flip on re-eval — spec §7.3 — which is why
-            // classification repeats).
+            // edges (branches may flip on re-eval — spec §7.3 — which triggers
+            // re-classification if any edge changes).
             // A settle pass is a partial sweep: drop the full-pass baseline
             // so a live cycle (re)appearing afterwards never compares values
             // across mixed pass kinds.
-            prev_pass = None;
+            has_prev_pass = false;
             let topo_pos = analysis.topo_positions();
             stale.sort_unstable_by_key(|&i| topo_pos[i]);
-            for x in pos.iter_mut() {
-                *x = -1;
-            }
+            pos.fill(-1);
             changed.fill(false);
             passes += 1;
             settle_passes += 1;
-            for (p, i) in stale.into_iter().enumerate() {
-                run_member!(i);
+            for (p, &i) in stale.iter().enumerate() {
+                edges_changed |= run_member!(i);
                 pos[i] = p as i64;
             }
         }

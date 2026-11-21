@@ -42,7 +42,7 @@
 //! Resolver-level call sites (1-based Excel coordinates) convert before
 //! recording.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use formualizer_common::{ExcelError, LiteralValue};
 use formualizer_parse::parser::{ReferenceType, TableReference};
@@ -58,12 +58,169 @@ use crate::traits::{
 
 /* ───────────────────────── LiveEdgeCollector ───────────────────────── */
 
+/// Below this member count, linear scanning `members` beats allocating and
+/// hashing a `FxHashMap` (critical for workloads with thousands of 2-member
+/// SCCs).
+const SMALL_SCALAR_SCAN_THRESHOLD: usize = 8;
+
+/// Above this member count, `record_rect` lazily builds a per-sheet dual-axis
+/// CSR index (`RectIndex`) so range intersection costs
+/// `O(min(cols_hit, rows_hit) * log |SCC| + K)` instead of `O(|SCC|)`.
+const RECT_INDEX_THRESHOLD: usize = 16;
+
 /// One SCC member cell in collector-internal form (0-based coordinates).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct MemberCell {
     sheet_id: SheetId,
     row: u32,
     col: u32,
+}
+
+/// Per-sheet dual-axis sorted CSR index of SCC cell members for sub-linear
+/// rectangle intersection.
+struct SheetRectIndex {
+    sheet_id: SheetId,
+    /// Distinct occupied columns in ascending order.
+    col_keys: Vec<u32>,
+    /// CSR offsets into `col_entries` (`len == col_keys.len() + 1`).
+    col_offsets: Vec<u32>,
+    /// `(row, member_idx)` grouped by column and sorted ascending by `row`.
+    col_entries: Vec<(u32, u32)>,
+    /// Distinct occupied rows in ascending order.
+    row_keys: Vec<u32>,
+    /// CSR offsets into `row_entries` (`len == row_keys.len() + 1`).
+    row_offsets: Vec<u32>,
+    /// `(col, member_idx)` grouped by row and sorted ascending by `col`.
+    row_entries: Vec<(u32, u32)>,
+}
+
+impl SheetRectIndex {
+    fn for_each_in_rect(&self, sr: u32, sc: u32, er: u32, ec: u32, mut f: impl FnMut(u32)) {
+        let c_lo = self.col_keys.partition_point(|&c| c < sc);
+        let c_hi = self.col_keys.partition_point(|&c| c <= ec);
+        let num_cols = c_hi - c_lo;
+        if num_cols == 0 {
+            return;
+        }
+        let r_lo = self.row_keys.partition_point(|&r| r < sr);
+        let r_hi = self.row_keys.partition_point(|&r| r <= er);
+        let num_rows = r_hi - r_lo;
+        if num_rows == 0 {
+            return;
+        }
+
+        if num_cols <= num_rows {
+            for ci in c_lo..c_hi {
+                let start_off = self.col_offsets[ci] as usize;
+                let end_off = self.col_offsets[ci + 1] as usize;
+                let entries = &self.col_entries[start_off..end_off];
+                let start = entries.partition_point(|&(r, _)| r < sr);
+                for &(r, idx) in &entries[start..] {
+                    if r > er {
+                        break;
+                    }
+                    f(idx);
+                }
+            }
+        } else {
+            for ri in r_lo..r_hi {
+                let start_off = self.row_offsets[ri] as usize;
+                let end_off = self.row_offsets[ri + 1] as usize;
+                let entries = &self.row_entries[start_off..end_off];
+                let start = entries.partition_point(|&(c, _)| c < sc);
+                for &(c, idx) in &entries[start..] {
+                    if c > ec {
+                        break;
+                    }
+                    f(idx);
+                }
+            }
+        }
+    }
+}
+
+struct RectIndex {
+    /// Sorted ascending by `sheet_id`.
+    sheets: Vec<SheetRectIndex>,
+}
+
+impl RectIndex {
+    fn build(members: &[MemberCell]) -> Self {
+        let mut by_sheet_col: Vec<(SheetId, u32, u32, u32)> = members
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (m.sheet_id, m.col, m.row, i as u32))
+            .collect();
+        by_sheet_col.sort_unstable();
+
+        let mut sheets = Vec::new();
+        let mut by_row_buf: Vec<(u32, u32, u32)> = Vec::new();
+        let mut start = 0usize;
+        while start < by_sheet_col.len() {
+            let sid = by_sheet_col[start].0;
+            let mut end = start + 1;
+            while end < by_sheet_col.len() && by_sheet_col[end].0 == sid {
+                end += 1;
+            }
+            let slice = &by_sheet_col[start..end];
+
+            let mut col_keys = Vec::new();
+            let mut col_offsets = Vec::new();
+            let mut col_entries = Vec::with_capacity(slice.len());
+            for &(_, col, row, idx) in slice {
+                if col_keys.last().copied() != Some(col) {
+                    col_keys.push(col);
+                    col_offsets.push(col_entries.len() as u32);
+                }
+                col_entries.push((row, idx));
+            }
+            col_offsets.push(col_entries.len() as u32);
+
+            by_row_buf.clear();
+            by_row_buf.reserve(slice.len());
+            for &(_, col, row, idx) in slice {
+                by_row_buf.push((row, col, idx));
+            }
+            by_row_buf.sort_unstable();
+
+            let mut row_keys = Vec::new();
+            let mut row_offsets = Vec::new();
+            let mut row_entries = Vec::with_capacity(slice.len());
+            for &(row, col, idx) in &by_row_buf {
+                if row_keys.last().copied() != Some(row) {
+                    row_keys.push(row);
+                    row_offsets.push(row_entries.len() as u32);
+                }
+                row_entries.push((col, idx));
+            }
+            row_offsets.push(row_entries.len() as u32);
+
+            sheets.push(SheetRectIndex {
+                sheet_id: sid,
+                col_keys,
+                col_offsets,
+                col_entries,
+                row_keys,
+                row_offsets,
+                row_entries,
+            });
+            start = end;
+        }
+
+        Self { sheets }
+    }
+
+    #[inline]
+    fn sheet(&self, sheet_id: SheetId) -> Option<&SheetRectIndex> {
+        if self.sheets.len() == 1 {
+            let s = &self.sheets[0];
+            return (s.sheet_id == sheet_id).then_some(s);
+        }
+        self.sheets
+            .binary_search_by_key(&sheet_id, |s| s.sheet_id)
+            .ok()
+            .map(|idx| &self.sheets[idx])
+    }
 }
 
 #[derive(Default)]
@@ -74,15 +231,22 @@ struct CollectorState {
     current: Option<u32>,
     /// Live edges as `(from_member_idx, to_member_idx)`. Self-edges `(i, i)`
     /// are recorded (e.g. a member whose range argument includes itself).
-    edges: FxHashSet<(u32, u32)>,
+    /// May contain duplicates until drained/deduplicated.
+    edges: Vec<(u32, u32)>,
+    /// Reusable scratch buffer for per-member target deduplication in
+    /// `finish_member_targets`.
+    scratch_targets: Vec<u32>,
 }
 
 /// Records which reads actually occurred targeting SCC members during a
 /// sequential member-by-member evaluation pass.
 ///
-/// * Scalar reads are O(1) (hash lookup keyed by `(sheet, row, col)`).
+/// * Scalar reads are O(1) (hash lookup keyed by `(sheet, row, col)`, or a
+///   tiny inline scan for SCCs with `<= 8` members to avoid hash-map setup).
 /// * Rectangle reads are recorded **once per resolved rect** and intersected
-///   with the membership in O(|SCC|) — never per cell of the rect.
+///   with the membership via a lazy per-sheet dual-axis CSR index in
+///   `O(min(cols_hit, rows_hit) * log |SCC| + K)` — never per cell of the rect
+///   and never scanning all `|SCC|` members on large SCCs.
 /// * Name reads (named-formula SCC members, spec §7.13) are O(1) lookups by
 ///   the engine-folded name key.
 ///
@@ -90,10 +254,14 @@ struct CollectorState {
 /// members occupy `cell_count..cell_count + name_count` (matching the spec
 /// §7.13 member ordering used by SCC tasks: cells first, then names).
 pub struct LiveEdgeCollector {
-    /// Iterable membership for rect intersection.
+    /// Iterable membership for small-SCC scans and lazy rect-index construction.
     members: Vec<MemberCell>,
-    /// O(1) scalar lookup: (sheet_id, row0, col0) -> member index.
+    /// O(1) scalar lookup: (sheet_id, row0, col0) -> member index (populated
+    /// only when `members.len() > SMALL_SCALAR_SCAN_THRESHOLD`).
     index: FxHashMap<(SheetId, u32, u32), u32>,
+    /// Lazy per-sheet spatial index for `record_rect` on SCCs larger than
+    /// `RECT_INDEX_THRESHOLD`.
+    rect_index: OnceLock<RectIndex>,
     /// O(1) name lookup: engine-folded name key -> member index (indices
     /// start after the cell members).
     name_index: FxHashMap<String, u32>,
@@ -125,19 +293,24 @@ impl LiveEdgeCollector {
             })
             .collect();
         let mut index = FxHashMap::default();
-        index.reserve(members.len());
-        for (i, m) in members.iter().enumerate() {
-            index.insert((m.sheet_id, m.row, m.col), i as u32);
+        if members.len() > SMALL_SCALAR_SCAN_THRESHOLD {
+            index.reserve(members.len());
+            for (i, m) in members.iter().enumerate() {
+                index.insert((m.sheet_id, m.row, m.col), i as u32);
+            }
         }
         let mut name_index = FxHashMap::default();
-        name_index.reserve(names.len());
-        for (j, name) in names.iter().enumerate() {
-            name_index.insert(name.clone(), (members.len() + j) as u32);
+        if !names.is_empty() {
+            name_index.reserve(names.len());
+            for (j, name) in names.iter().enumerate() {
+                name_index.insert(name.clone(), (members.len() + j) as u32);
+            }
         }
         let total_members = members.len() + names.len();
         Self {
             members,
             index,
+            rect_index: OnceLock::new(),
             name_index,
             total_members,
             state: Mutex::new(CollectorState::default()),
@@ -155,6 +328,107 @@ impl LiveEdgeCollector {
         self.state.lock().unwrap().current = Some(member_idx);
     }
 
+    /// Begin recording for a single member in `evaluate_scc_unit`, clearing
+    /// any previously buffered edges.
+    pub(crate) fn begin_member(&self, member_idx: u32) {
+        debug_assert!((member_idx as usize) < self.total_members);
+        let mut st = self.state.lock().unwrap();
+        st.current = Some(member_idx);
+        st.edges.clear();
+    }
+
+    /// Discard edges recorded for the current member (e.g. when the member is
+    /// excluded mid-pass after returning an array value).
+    pub(crate) fn discard_current_edges(&self) {
+        self.state.lock().unwrap().edges.clear();
+    }
+
+    /// Finish recording for the current member and compare its sorted,
+    /// deduplicated target list against `prev_targets`.
+    ///
+    /// Returns `true` if `prev_targets` changed (updating it in place), or
+    /// `false` when the member's live out-edge set is identical to the previous
+    /// pass.
+    pub(crate) fn finish_member_targets(&self, prev_targets: &mut Vec<u32>) -> bool {
+        let mut st = self.state.lock().unwrap();
+        let CollectorState {
+            current,
+            edges,
+            scratch_targets,
+        } = &mut *st;
+        debug_assert!(
+            current.is_some(),
+            "finish_member_targets called without active member"
+        );
+        let cur = current.unwrap_or(0);
+        match edges.len() {
+            0 => {
+                if prev_targets.is_empty() {
+                    false
+                } else {
+                    prev_targets.clear();
+                    true
+                }
+            }
+            1 => {
+                let (from, to) = edges[0];
+                debug_assert_eq!(from, cur);
+                edges.clear();
+                if prev_targets.len() == 1 && prev_targets[0] == to {
+                    false
+                } else {
+                    prev_targets.clear();
+                    prev_targets.push(to);
+                    true
+                }
+            }
+            2 => {
+                let (f0, a) = edges[0];
+                let (f1, b) = edges[1];
+                debug_assert_eq!(f0, cur);
+                debug_assert_eq!(f1, cur);
+                edges.clear();
+                if a == b {
+                    if prev_targets.len() == 1 && prev_targets[0] == a {
+                        false
+                    } else {
+                        prev_targets.clear();
+                        prev_targets.push(a);
+                        true
+                    }
+                } else {
+                    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+                    if prev_targets.len() == 2 && prev_targets[0] == lo && prev_targets[1] == hi {
+                        false
+                    } else {
+                        prev_targets.clear();
+                        prev_targets.push(lo);
+                        prev_targets.push(hi);
+                        true
+                    }
+                }
+            }
+            _ => {
+                scratch_targets.clear();
+                scratch_targets.reserve(edges.len());
+                for &(from, to) in edges.iter() {
+                    debug_assert_eq!(from, cur);
+                    scratch_targets.push(to);
+                }
+                edges.clear();
+                scratch_targets.sort_unstable();
+                scratch_targets.dedup();
+                if scratch_targets.as_slice() == prev_targets.as_slice() {
+                    false
+                } else {
+                    prev_targets.clear();
+                    prev_targets.extend_from_slice(scratch_targets);
+                    true
+                }
+            }
+        }
+    }
+
     /// Stop attributing reads to any member (used between passes so that
     /// out-of-band reads — snapshots, deltas — never record edges).
     pub fn clear_current(&self) {
@@ -163,46 +437,87 @@ impl LiveEdgeCollector {
 
     /// Record a scalar read of `(sheet_id, row, col)` (0-based).
     pub fn record_scalar(&self, sheet_id: SheetId, row: u32, col: u32) {
-        let Some(&to) = self.index.get(&(sheet_id, row, col)) else {
-            return;
+        let to = if self.members.len() <= SMALL_SCALAR_SCAN_THRESHOLD {
+            let Some(pos) = self
+                .members
+                .iter()
+                .rposition(|m| m.sheet_id == sheet_id && m.row == row && m.col == col)
+            else {
+                return;
+            };
+            pos as u32
+        } else {
+            let Some(&to) = self.index.get(&(sheet_id, row, col)) else {
+                return;
+            };
+            to
         };
         let mut st = self.state.lock().unwrap();
         if let Some(from) = st.current {
-            st.edges.insert((from, to));
+            st.edges.push((from, to));
         }
     }
 
-    /// Record a rectangle read (0-based, inclusive corners). Intersection is
-    /// O(|SCC|): each member is tested against the rect once; the rect is
-    /// never enumerated per cell.
+    /// Record a rectangle read (0-based, inclusive corners). For SCCs larger
+    /// than `RECT_INDEX_THRESHOLD`, intersects via a lazy per-sheet dual-axis
+    /// CSR index in `O(min(cols_hit, rows_hit) * log |SCC| + K)` instead of
+    /// scanning all members.
     pub fn record_rect(&self, sheet_id: SheetId, sr: u32, sc: u32, er: u32, ec: u32) {
+        if er < sr || ec < sc || self.members.is_empty() {
+            return;
+        }
+        if self.members.len() <= RECT_INDEX_THRESHOLD {
+            let mut st = self.state.lock().unwrap();
+            let Some(from) = st.current else {
+                return;
+            };
+            for (i, m) in self.members.iter().enumerate() {
+                if m.sheet_id == sheet_id
+                    && m.row >= sr
+                    && m.row <= er
+                    && m.col >= sc
+                    && m.col <= ec
+                {
+                    st.edges.push((from, i as u32));
+                }
+            }
+            return;
+        }
+
+        let rect_index = self
+            .rect_index
+            .get_or_init(|| RectIndex::build(&self.members));
+        let Some(sheet_idx) = rect_index.sheet(sheet_id) else {
+            return;
+        };
         let mut st = self.state.lock().unwrap();
         let Some(from) = st.current else {
             return;
         };
-        for (i, m) in self.members.iter().enumerate() {
-            if m.sheet_id == sheet_id && m.row >= sr && m.row <= er && m.col >= sc && m.col <= ec {
-                st.edges.insert((from, i as u32));
-            }
-        }
+        sheet_idx.for_each_in_rect(sr, sc, er, ec, |idx| {
+            st.edges.push((from, idx));
+        });
     }
 
     /// Record a read of a named entity by folded name key (e.g. a formula
     /// referencing a named-formula SCC member).
     pub fn record_name(&self, folded_name: &str) {
+        if self.name_index.is_empty() {
+            return;
+        }
         let Some(&to) = self.name_index.get(folded_name) else {
             return;
         };
         let mut st = self.state.lock().unwrap();
         if let Some(from) = st.current {
-            st.edges.insert((from, to));
+            st.edges.push((from, to));
         }
     }
 
     /// Drain the collected edges, leaving the collector empty (current member
     /// attribution is preserved).
     pub fn take_edges(&self) -> FxHashSet<(u32, u32)> {
-        std::mem::take(&mut self.state.lock().unwrap().edges)
+        self.state.lock().unwrap().edges.drain(..).collect()
     }
 }
 
@@ -481,6 +796,18 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
         self.record_cell_1based(sheet.unwrap_or(current_sheet), row, col);
         self.engine
             .resolve_cell_reference_value(sheet, row, col, current_sheet)
+    }
+
+    fn resolve_cell_reference_value_formatted(
+        &self,
+        sheet: Option<&str>,
+        row: u32,
+        col: u32,
+        current_sheet: &str,
+    ) -> Result<(LiteralValue, Option<crate::format::FormatId>), ExcelError> {
+        self.record_cell_1based(sheet.unwrap_or(current_sheet), row, col);
+        self.engine
+            .resolve_cell_reference_value_formatted(sheet, row, col, current_sheet)
     }
 
     fn resolve_cell_format(

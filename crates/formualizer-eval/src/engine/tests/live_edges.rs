@@ -432,3 +432,141 @@ fn reads_without_current_member_are_dropped() {
     let _ = interp.evaluate_ast(&parse("=A1"));
     assert!(collector.take_edges().is_empty());
 }
+
+/* ───────────── 12. spatial rect index & per-member edge diff ──────────── */
+
+#[test]
+fn rect_index_matches_linear_scan_for_large_multi_sheet_scc() {
+    let mut engine = new_engine();
+    engine.add_sheet("Sheet2").unwrap();
+    engine.add_sheet("Sheet3").unwrap();
+    let s1 = engine.sheet_id("Sheet1").unwrap();
+    let s2 = engine.sheet_id("Sheet2").unwrap();
+    let s3 = engine.sheet_id("Sheet3").unwrap();
+
+    // Build > 16 members across Sheet1 (2D grid + sparse outliers) and Sheet2
+    // in intentionally unsorted order to exercise the lazy dual-axis RectIndex.
+    let mut members: Vec<CellRef> = Vec::new();
+    for r in (0..10u32).rev() {
+        for c in (0..4u32).rev() {
+            if (r + c) % 2 == 0 {
+                members.push(CellRef::new(s1, Coord::new(r, c, true, true)));
+            }
+        }
+    }
+    for r in [0u32, 3, 7, 12, 100] {
+        members.push(CellRef::new(s2, Coord::new(r, 2, true, true)));
+    }
+    assert!(members.len() > 20);
+
+    let collector = LiveEdgeCollector::new(&members);
+    let queries = [
+        // Single column on Sheet1 (col-axis wins)
+        (s1, 2, 1, 8, 1),
+        // Single row on Sheet1 (row-axis wins)
+        (s1, 4, 0, 4, 3),
+        // 2D interior rect
+        (s1, 1, 1, 6, 3),
+        // Single-cell rect (hit and miss)
+        (s1, 0, 0, 0, 0),
+        (s1, 0, 1, 0, 1),
+        // Disjoint rect outside bounds
+        (s1, 50, 0, 60, 10),
+        // Inverted/empty rect
+        (s1, 5, 0, 2, 3),
+        // Sheet2 partial and wide rects
+        (s2, 3, 2, 12, 2),
+        (s2, 0, 0, 200, 10),
+        // Sheet with no SCC members at all
+        (s3, 0, 0, 10, 10),
+    ];
+
+    for &(sid, sr, sc, er, ec) in &queries {
+        collector.set_current(0);
+        collector.record_rect(sid, sr, sc, er, ec);
+        let got = collector.take_edges();
+        let expected: FxHashSet<(u32, u32)> = members
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                er >= sr
+                    && ec >= sc
+                    && m.sheet_id == sid
+                    && m.coord.row() >= sr
+                    && m.coord.row() <= er
+                    && m.coord.col() >= sc
+                    && m.coord.col() <= ec
+            })
+            .map(|(i, _)| (0, i as u32))
+            .collect();
+        assert_eq!(
+            got, expected,
+            "rect mismatch for sheet={sid} ({sr},{sc})..=({er},{ec})"
+        );
+    }
+}
+
+#[test]
+fn finish_member_targets_detects_exact_edge_deltas() {
+    let engine = new_engine();
+    let s1 = engine.sheet_id("Sheet1").unwrap();
+    let cells: Vec<CellRef> = (0..20u32)
+        .map(|r| CellRef::new(s1, Coord::new(r, 0, true, true)))
+        .collect();
+    let collector = LiveEdgeCollector::new(&cells);
+    let mut out: Vec<u32> = Vec::new();
+
+    // 0 -> 0: unchanged.
+    collector.begin_member(0);
+    assert!(!collector.finish_member_targets(&mut out));
+    assert!(out.is_empty());
+
+    // 0 -> [5]: changed.
+    collector.begin_member(0);
+    collector.record_scalar(s1, 5, 0);
+    assert!(collector.finish_member_targets(&mut out));
+    assert_eq!(out, vec![5]);
+
+    // [5] -> [5]: unchanged (fast 1-edge path).
+    collector.begin_member(0);
+    collector.record_scalar(s1, 5, 0);
+    assert!(!collector.finish_member_targets(&mut out));
+    assert_eq!(out, vec![5]);
+
+    // [5] -> [5, 5] (duplicate scalar): unchanged after dedup.
+    collector.begin_member(0);
+    collector.record_scalar(s1, 5, 0);
+    collector.record_scalar(s1, 5, 0);
+    assert!(!collector.finish_member_targets(&mut out));
+    assert_eq!(out, vec![5]);
+
+    // [5] -> [9, 2]: changed and sorted to [2, 9].
+    collector.begin_member(0);
+    collector.record_scalar(s1, 9, 0);
+    collector.record_scalar(s1, 2, 0);
+    assert!(collector.finish_member_targets(&mut out));
+    assert_eq!(out, vec![2, 9]);
+
+    // [2, 9] -> [2, 9] in reversed order: unchanged.
+    collector.begin_member(0);
+    collector.record_scalar(s1, 2, 0);
+    collector.record_scalar(s1, 9, 0);
+    assert!(!collector.finish_member_targets(&mut out));
+
+    // [2, 9] -> rect 1..=4 + dup scalar 3: changed to [1, 2, 3, 4].
+    collector.begin_member(0);
+    collector.record_rect(s1, 1, 0, 4, 0);
+    collector.record_scalar(s1, 3, 0);
+    assert!(collector.finish_member_targets(&mut out));
+    assert_eq!(out, vec![1, 2, 3, 4]);
+
+    // Same rect again: unchanged.
+    collector.begin_member(0);
+    collector.record_rect(s1, 1, 0, 4, 0);
+    assert!(!collector.finish_member_targets(&mut out));
+
+    // Drop back to empty: changed.
+    collector.begin_member(0);
+    assert!(collector.finish_member_targets(&mut out));
+    assert!(out.is_empty());
+}

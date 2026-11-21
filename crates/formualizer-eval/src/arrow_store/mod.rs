@@ -4215,7 +4215,15 @@ impl Overlay {
         range: core::ops::Range<usize>,
         shape: OverlayFragmentShape,
     ) -> Option<&OverlayFragment> {
-        if range.is_empty() || self.points.keys().any(|off| range.contains(off)) {
+        if range.is_empty() || self.fragments.is_empty() {
+            return None;
+        }
+        let has_point = if range.len() < self.points.len() {
+            range.clone().any(|off| self.points.contains_key(&off))
+        } else {
+            self.points.keys().any(|off| range.contains(off))
+        };
+        if has_point {
             return None;
         }
         let mut found = None;
