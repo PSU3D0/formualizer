@@ -1012,3 +1012,292 @@ fn iterate_is_deterministic_across_thread_counts_and_repeats() {
         }
     }
 }
+
+/* ── #133 linear SCC iteration: stable edges, dynamic reclassification,
+mixed real+phantom sub-SCCs, and resumable step parity ─────────── */
+
+#[test]
+fn large_ring_stable_edge_convergence_scalar_and_range_reads() {
+    // Exercises > RECT_INDEX_THRESHOLD (16) members with stable live edges
+    // across passes so cached live-graph classification and the lazy spatial
+    // rect index are both hit on the hot path.
+    let n = 40u32;
+
+    // 1. Scalar-only contractive ring: cell_i = 0.9 * cell_{i-1} + 1 -> 10.0.
+    let mut scalar_engine = iterate_engine(100, 1e-6);
+    for i in 1..=n {
+        let prev = if i == 1 { n } else { i - 1 };
+        set_formula(
+            &mut scalar_engine,
+            "Sheet1",
+            i,
+            1,
+            &format!("=0.9*A{prev}+1"),
+        );
+    }
+    set_formula(
+        &mut scalar_engine,
+        "Sheet1",
+        1,
+        2,
+        &format!("=SUM(A1:A{n})"),
+    );
+    scalar_engine.evaluate_all().unwrap();
+    for i in 1..=n {
+        let v = num(&scalar_engine, "Sheet1", i, 1);
+        assert!((v - 10.0).abs() < 1e-4, "scalar ring A{i}={v}");
+    }
+    assert!((num(&scalar_engine, "Sheet1", 1, 2) - 400.0).abs() < 1e-2);
+    let t = scalar_engine.last_cycle_telemetry();
+    assert_eq!(t.iterated_sccs, 1);
+    assert_eq!(t.converged_sccs, 1);
+    assert_eq!(t.capped_sccs, 0);
+
+    // 2. Range-reading contractive ring: each member also sums an 8-row window
+    //    of its neighbours, hitting LiveEdgeCollector's spatial RectIndex and
+    //    point-only overlay fast path.
+    let mut range_engine = iterate_engine(100, 1e-6);
+    for i in 1..=n {
+        let prev = if i == 1 { n } else { i - 1 };
+        let end = (i + 7).min(n);
+        set_formula(
+            &mut range_engine,
+            "Sheet1",
+            i,
+            1,
+            &format!("=0.9*A{prev}+1+0.0001*SUM(A{i}:A{end})"),
+        );
+    }
+    set_formula(&mut range_engine, "Sheet1", 1, 2, &format!("=SUM(A1:A{n})"));
+    range_engine.evaluate_all().unwrap();
+    let mut sum = 0.0;
+    for i in 1..=n {
+        let v = num(&range_engine, "Sheet1", i, 1);
+        assert!(v.is_finite() && v > 9.9 && v < 10.5, "range ring A{i}={v}");
+        sum += v;
+    }
+    assert!(
+        (num(&range_engine, "Sheet1", 1, 2) - sum).abs() < 1e-9,
+        "downstream SUM must match converged ring values"
+    );
+    let t = range_engine.last_cycle_telemetry();
+    assert_eq!(t.iterated_sccs, 1);
+    assert_eq!(t.converged_sccs, 1);
+    assert_eq!(t.capped_sccs, 0);
+}
+
+#[test]
+fn dynamic_guard_flip_reclassifies_dissolving_and_reforming_cycles() {
+    // A. Cycle dissolves mid-iteration: A1 increments via B1 until B1 >= 3,
+    //    then switches to a constant branch (dropping the live edge A1 -> B1).
+    //    Cached live-graph analysis MUST invalidate when the edge disappears so
+    //    the SCC falls through to exact acyclic settling.
+    let mut engine = iterate_engine(50, 1e-9);
+    set_formula(&mut engine, "Sheet1", 1, 1, "=IF(B1>=3,100,B1+1)");
+    set_formula(&mut engine, "Sheet1", 1, 2, "=A1");
+    engine.evaluate_all().unwrap();
+    assert_eq!(num(&engine, "Sheet1", 1, 1), 100.0);
+    assert_eq!(num(&engine, "Sheet1", 1, 2), 100.0);
+    let t = engine.last_cycle_telemetry();
+    assert_eq!(t.iterated_sccs, 1);
+    assert_eq!(t.converged_sccs, 1);
+    assert_eq!(t.capped_sccs, 0);
+
+    // B. Acyclic on pass 1, becomes cyclic during stale-reader settle pass 2:
+    //    A1 reads B1 (initially Empty=0), taking the constant branch 5;
+    //    B1 = IF(A1=5, C1+1, 0) -> on pass 1 sees A1=5, reads C1 (Empty=0) -> 1;
+    //    C1 = IF(B1>=1, A1+1, 0) -> on pass 1 sees B1=1, reads A1 -> 6;
+    //    Now B1 is stale (read C1 before C1 changed to 6) AND A1 is stale (read
+    //    B1 before B1 changed to 1). Wait: construct an explicit pass-1 acyclic
+    //    graph where A1 reads A3 (stale!) and A3 changes to flip A1 into a live
+    //    cycle with A2:
+    //      A1 = IF(A3>0, A2+1, 10)   [pass 1: A3=0 -> reads A3 only -> 10]
+    //      A2 = IF(A3>0, A1+1, 20)   [pass 1: A3=0 -> reads A3 only -> 20]
+    //      A3 = IF(A1=10, 1, 0)      [pass 1: A1=10 -> reads A1 -> 1; acyclic!]
+    //    On pass 2 (stale settle of A1, A2 because A3 changed 0->1):
+    //      A1 reads A3 and A2 (live edge 0->1), A2 reads A3 and A1 (live edge 1->0)
+    //      -> live 2-cycle {A1, A2} forms mid-settle!
+    let mut err_engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_cycle(CycleConfig {
+            detection: CycleDetection::Runtime,
+            policy: CyclePolicy::Error,
+        }),
+    );
+    set_formula(&mut err_engine, "Sheet1", 1, 1, "=IF(A3>0,A2+1,10)");
+    set_formula(&mut err_engine, "Sheet1", 2, 1, "=IF(A3>0,A1+1,20)");
+    set_formula(&mut err_engine, "Sheet1", 3, 1, "=IF(A1=10,1,0)");
+    let res = err_engine.evaluate_all().unwrap();
+    assert_eq!(res.cycle_errors, 1);
+    assert_eq!(err_kind(&err_engine, "Sheet1", 1, 1), ExcelErrorKind::Circ);
+    assert_eq!(err_kind(&err_engine, "Sheet1", 2, 1), ExcelErrorKind::Circ);
+    assert_eq!(err_engine.last_cycle_telemetry().live_cycles_witnessed, 1);
+
+    // Same pass-1-acyclic -> pass-2-cyclic shape under Iterate (convergent):
+    //   A1 = IF(A3>0, 0.5*A2+10, 10)
+    //   A2 = IF(A3>0, 0.5*A1+10, 20)
+    //   A3 = IF(A1>=10, 1, 0)
+    // Pass 1: A1=10 (reads A3), A2=20 (reads A3), A3=1 (reads A1) -> acyclic,
+    // A1 & A2 stale. Pass 2: live cycle {A1, A2} forms and iterates to (20, 20),
+    // with A3=1.
+    let mut iter_engine = iterate_engine(100, 1e-6);
+    set_formula(&mut iter_engine, "Sheet1", 1, 1, "=IF(A3>0,0.5*A2+10,10)");
+    set_formula(&mut iter_engine, "Sheet1", 2, 1, "=IF(A3>0,0.5*A1+10,20)");
+    set_formula(&mut iter_engine, "Sheet1", 3, 1, "=IF(A1>=10,1,0)");
+    iter_engine.evaluate_all().unwrap();
+    assert!((num(&iter_engine, "Sheet1", 1, 1) - 20.0).abs() < 1e-4);
+    assert!((num(&iter_engine, "Sheet1", 2, 1) - 20.0).abs() < 1e-4);
+    assert_eq!(num(&iter_engine, "Sheet1", 3, 1), 1.0);
+    let t = iter_engine.last_cycle_telemetry();
+    assert_eq!(t.iterated_sccs, 1);
+    assert_eq!(t.converged_sccs, 1);
+    assert_eq!(t.live_cycles_witnessed, 1);
+}
+
+#[test]
+fn mixed_real_and_phantom_sub_sccs_under_runtime_error_and_iterate() {
+    // One single static SCC {A1, A2, A3, A4} linked by untaken guard branches:
+    //   - {A1, A2}: real live 2-cycle (A1 = 0.5*A2 + 10, A2 = 0.5*A1 + 10)
+    //   - {A3, A4}: guarded phantom pair referencing A1/A2 only on untaken
+    //     branches (and A1 references A4 on an untaken branch to close one
+    //     static SCC over all 4 cells).
+    // Guard G1 = TRUE:
+    //   A1 = IF(G1, 0.5*A2+10, A4)
+    //   A2 = 0.5*A1+10
+    //   A3 = IF(G1, 42, A1+A4)
+    //   A4 = IF(G1, A3+1, A2)
+    //
+    // Under CyclePolicy::Error: live-cycle-only blast radius stamps A1, A2 as
+    // #CIRC! while A3=42 and A4=43 stand!
+    let mut err_engine = Engine::new(
+        TestWorkbook::new(),
+        EvalConfig::default().with_cycle(CycleConfig {
+            detection: CycleDetection::Runtime,
+            policy: CyclePolicy::Error,
+        }),
+    );
+    set_value(&mut err_engine, "Sheet1", 1, 7, LiteralValue::Boolean(true));
+    set_formula(&mut err_engine, "Sheet1", 1, 1, "=IF(G1,0.5*A2+10,A4)");
+    set_formula(&mut err_engine, "Sheet1", 2, 1, "=0.5*A1+10");
+    set_formula(&mut err_engine, "Sheet1", 3, 1, "=IF(G1,42,A1+A4)");
+    set_formula(&mut err_engine, "Sheet1", 4, 1, "=IF(G1,A3+1,A2)");
+    let res = err_engine.evaluate_all().unwrap();
+    assert_eq!(res.cycle_errors, 1);
+    assert_eq!(err_kind(&err_engine, "Sheet1", 1, 1), ExcelErrorKind::Circ);
+    assert_eq!(err_kind(&err_engine, "Sheet1", 2, 1), ExcelErrorKind::Circ);
+    assert_eq!(num(&err_engine, "Sheet1", 3, 1), 42.0);
+    assert_eq!(num(&err_engine, "Sheet1", 4, 1), 43.0);
+    let t = err_engine.last_cycle_telemetry();
+    assert_eq!(t.static_sccs, 1);
+    assert_eq!(t.live_cycles_witnessed, 1);
+    assert_eq!(t.circ_cells_stamped, 2);
+
+    // Under CyclePolicy::Iterate: {A1, A2} converges to (20, 20) while
+    // {A3, A4} settles to (42, 43) in the same SCC task.
+    let mut iter_engine = iterate_engine(100, 1e-6);
+    set_value(
+        &mut iter_engine,
+        "Sheet1",
+        1,
+        7,
+        LiteralValue::Boolean(true),
+    );
+    set_formula(&mut iter_engine, "Sheet1", 1, 1, "=IF(G1,0.5*A2+10,A4)");
+    set_formula(&mut iter_engine, "Sheet1", 2, 1, "=0.5*A1+10");
+    set_formula(&mut iter_engine, "Sheet1", 3, 1, "=IF(G1,42,A1+A4)");
+    set_formula(&mut iter_engine, "Sheet1", 4, 1, "=IF(G1,A3+1,A2)");
+    iter_engine.evaluate_all().unwrap();
+    assert!((num(&iter_engine, "Sheet1", 1, 1) - 20.0).abs() < 1e-4);
+    assert!((num(&iter_engine, "Sheet1", 2, 1) - 20.0).abs() < 1e-4);
+    assert_eq!(num(&iter_engine, "Sheet1", 3, 1), 42.0);
+    assert_eq!(num(&iter_engine, "Sheet1", 4, 1), 43.0);
+    let t = iter_engine.last_cycle_telemetry();
+    assert_eq!(t.static_sccs, 1);
+    assert_eq!(t.iterated_sccs, 1);
+    assert_eq!(t.converged_sccs, 1);
+    assert_eq!(t.circ_cells_stamped, 0);
+}
+
+#[test]
+fn resumable_step_evaluation_across_scc_passes_matches_evaluate_all() {
+    use crate::engine::{EvaluationStop, StepPhase};
+    use std::time::Duration;
+
+    let build = || {
+        let mut engine = iterate_engine(100, 1e-6);
+        // SCC 1: 24-member range-reading ring in A1:A24.
+        for i in 1..=24u32 {
+            let prev = if i == 1 { 24 } else { i - 1 };
+            let end = (i + 3).min(24);
+            set_formula(
+                &mut engine,
+                "Sheet1",
+                i,
+                1,
+                &format!("=0.8*A{prev}+2+0.0001*SUM(A{i}:A{end})"),
+            );
+        }
+        // SCC 2: guarded phantom pair in B1:B2 controlled by C1.
+        set_value(&mut engine, "Sheet1", 1, 3, LiteralValue::Boolean(true));
+        set_formula(&mut engine, "Sheet1", 1, 2, "=IF(C1,B2+5,77)");
+        set_formula(&mut engine, "Sheet1", 2, 2, "=IF(C1,10,B1+1)");
+        // SCC 3: dissolving guarded cycle in D1:D2.
+        set_formula(&mut engine, "Sheet1", 1, 4, "=IF(D2>=3,50,D2+1)");
+        set_formula(&mut engine, "Sheet1", 2, 4, "=D1");
+        // Downstream consumer across all three SCCs.
+        set_formula(&mut engine, "Sheet1", 1, 5, "=SUM(A1:A24)+B1+B2+D1+D2");
+        engine
+    };
+
+    let mut direct = build();
+    direct.evaluate_all().unwrap();
+
+    let mut stepped = build();
+    stepped.begin_recalc(Default::default()).unwrap();
+    let mut steps = 0usize;
+    loop {
+        let report = stepped
+            .step_recalc(EvaluationStop::after(Duration::ZERO))
+            .unwrap();
+        steps += 1;
+        if report.phase == StepPhase::Finished {
+            break;
+        }
+        assert!(steps < 1000, "resumable job did not converge/finish");
+    }
+    assert!(!stepped.has_active_recalc_job());
+    assert!(steps >= 2, "expected multiple resumable steps, got {steps}");
+
+    // Compare every cell across both engines.
+    for r in 1..=24u32 {
+        assert_eq!(
+            stepped.get_cell_value("Sheet1", r, 1),
+            direct.get_cell_value("Sheet1", r, 1),
+            "ring cell A{r}"
+        );
+    }
+    for (r, c) in [(1, 2), (2, 2), (1, 4), (2, 4), (1, 5)] {
+        assert_eq!(
+            stepped.get_cell_value("Sheet1", r, c),
+            direct.get_cell_value("Sheet1", r, c),
+            "cell r{r}c{c}"
+        );
+    }
+
+    // Flip the phantom guard and run a second stepped recalc vs evaluate_all.
+    set_value(&mut direct, "Sheet1", 1, 3, LiteralValue::Boolean(false));
+    direct.evaluate_all().unwrap();
+
+    set_value(&mut stepped, "Sheet1", 1, 3, LiteralValue::Boolean(false));
+    stepped.begin_recalc(Default::default()).unwrap();
+    while stepped.has_active_recalc_job() {
+        stepped
+            .step_recalc(EvaluationStop::after(Duration::ZERO))
+            .unwrap();
+    }
+    assert_eq!(
+        stepped.get_cell_value("Sheet1", 1, 5),
+        direct.get_cell_value("Sheet1", 1, 5),
+        "post-flip consumer parity"
+    );
+}
