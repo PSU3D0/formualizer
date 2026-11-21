@@ -637,6 +637,9 @@ impl Function for SumProductFn {
             }
         };
 
+        let tail_cols = (target.1 - active_cols) as u64;
+        let tail_rows = (target.0 - active_rows) as u64;
+
         let mut total = 0.0f64;
         for r in 0..active_rows {
             for c in 0..active_cols {
@@ -652,13 +655,7 @@ impl Function for SumProductFn {
                 }
                 total += prod;
             }
-        }
-
-        let tail_cols = (target.1 - active_cols) as u64;
-        let tail_rows = (target.0 - active_rows) as u64;
-
-        if tail_cols > 0 {
-            for r in 0..active_rows {
+            if tail_cols > 0 {
                 poll.advance(1)?;
                 let mut prod = 1.0f64;
                 for op in &operands {
@@ -687,19 +684,20 @@ impl Function for SumProductFn {
                 }
                 total += prod * (tail_rows as f64);
             }
-        }
 
-        if tail_rows > 0 && tail_cols > 0 {
-            let mut prod = 1.0f64;
-            for op in &operands {
-                match factor(op.get_corner_tail()) {
-                    Ok(n) => prod *= n,
-                    Err(e) => {
-                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+            if tail_cols > 0 {
+                poll.advance(1)?;
+                let mut prod = 1.0f64;
+                for op in &operands {
+                    match factor(op.get_corner_tail()) {
+                        Ok(n) => prod *= n,
+                        Err(e) => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                        }
                     }
                 }
+                total += prod * ((tail_rows as f64) * (tail_cols as f64));
             }
-            total += prod * ((tail_rows as f64) * (tail_cols as f64));
         }
 
         Ok(crate::traits::CalcValue::Scalar(

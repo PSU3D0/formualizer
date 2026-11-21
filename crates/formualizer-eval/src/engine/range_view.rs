@@ -75,6 +75,15 @@ pub(crate) struct RangeTail {
     pub(crate) corner_tail: LiteralValue,
 }
 
+impl RangeTail {
+    #[inline]
+    fn right_tail_slice(&self, row_start: usize, row_len: usize) -> &[LiteralValue] {
+        let start = row_start.min(self.right_tail.len());
+        let end = row_start.saturating_add(row_len).min(self.right_tail.len());
+        &self.right_tail[start..end]
+    }
+}
+
 /// Numeric value as stored in an Arrow numeric lane (ignoring booleans, text, and blanks).
 #[inline]
 pub(crate) fn range_numeric_value(v: &LiteralValue, date_system: DateSystem) -> Option<f64> {
@@ -464,8 +473,7 @@ impl Iterator for RowChunkIterator<'_> {
                     if let Some(tail) = &view.tail
                         && local_c >= tail.active_cols
                     {
-                        let slice =
-                            &tail.right_tail[segment.row_start..segment.row_start + seg_len];
+                        let slice = tail.right_tail_slice(segment.row_start, seg_len);
                         let tv = TailValues::Slice(slice);
                         cols.push(ChunkCol {
                             numbers: Some(tail_numbers_array(tv, seg_len, sheet.date_system)),
@@ -800,7 +808,7 @@ impl<'a> RangeView<'a> {
                 }
             }
             if tail_rows > 0 && tail_cols > 0 {
-                f(&tail.corner_tail, tail_rows * tail_cols)?;
+                f(&tail.corner_tail, tail_rows.saturating_mul(tail_cols))?;
             }
         } else {
             let empty_count = (self.rows as u64)
@@ -928,8 +936,132 @@ impl<'a> RangeView<'a> {
     }
 
     pub fn expand_to(&self, rows: usize, cols: usize) -> RangeView<'a> {
-        if self.tail.is_some() && rows <= self.rows && cols <= self.cols {
-            return self.sub_view(0, 0, rows, cols);
+        if self.tail.is_some() {
+            if rows == 0 || cols == 0 {
+                return self.sub_view(0, 0, 0, 0);
+            }
+            if rows <= self.rows && cols <= self.cols {
+                return self.sub_view(0, 0, rows, cols);
+            }
+            let r_ov = rows.min(self.rows);
+            let c_ov = cols.min(self.cols);
+            let ov = self.sub_view(0, 0, r_ov, c_ov);
+            let (ar, ac) = ov.active_dims();
+            let row_tail_non_empty = rows > r_ov
+                && ar < r_ov
+                && ((0..ac).any(|c| !matches!(ov.bottom_tail_cell(c), LiteralValue::Empty))
+                    || (ac < c_ov && !matches!(ov.corner_tail_cell(), LiteralValue::Empty)));
+            let col_tail_non_empty = cols > c_ov
+                && ac < c_ov
+                && ((0..ar).any(|r| !matches!(ov.right_tail_cell(r), LiteralValue::Empty))
+                    || (ar < r_ov && !matches!(ov.corner_tail_cell(), LiteralValue::Empty)));
+
+            if !row_tail_non_empty && !col_tail_non_empty {
+                let right_tail = if ac < cols && ar > 0 {
+                    if cols > c_ov {
+                        vec![LiteralValue::Empty; ar]
+                    } else {
+                        (0..ar).map(|r| ov.right_tail_cell(r)).collect()
+                    }
+                } else {
+                    Vec::new()
+                };
+                let bottom_tail = if ar < rows && ac > 0 {
+                    if rows > r_ov {
+                        vec![LiteralValue::Empty; ac]
+                    } else {
+                        (0..ac).map(|c| ov.bottom_tail_cell(c)).collect()
+                    }
+                } else {
+                    Vec::new()
+                };
+                let corner_tail = LiteralValue::Empty;
+                let tail_all_empty = (ar == rows && ac == cols)
+                    || (right_tail.iter().all(|v| matches!(v, LiteralValue::Empty))
+                        && bottom_tail.iter().all(|v| matches!(v, LiteralValue::Empty)));
+                let backing_clean_outside_active = (ar == rows
+                    || ov.sr + ar >= ov.sheet().nrows as usize)
+                    && (ac == cols || ov.sc + ac >= ov.sheet().columns.len());
+                let tail = if tail_all_empty && backing_clean_outside_active {
+                    None
+                } else {
+                    Some(Arc::new(RangeTail {
+                        active_rows: ar,
+                        active_cols: ac,
+                        right_tail,
+                        bottom_tail,
+                        corner_tail,
+                    }))
+                };
+                return RangeView {
+                    backing: match &ov.backing {
+                        RangeBacking::Borrowed(s) => RangeBacking::Borrowed(s),
+                        RangeBacking::Owned(s) => RangeBacking::Owned(s.clone()),
+                    },
+                    sr: ov.sr,
+                    sc: ov.sc,
+                    er: ov.sr + rows - 1,
+                    ec: ov.sc + cols - 1,
+                    rows,
+                    cols,
+                    cancel_token: self.cancel_token.clone(),
+                    cell_budget: self.cell_budget,
+                    tail,
+                };
+            }
+
+            // Growing past a non-empty uniform tail along rows and/or cols requires
+            // materializing the overlap up to the non-empty tail boundary so cells
+            // beyond `(r_ov, c_ov)` remain `Empty` instead of extrapolating the tail.
+            let new_ar = if row_tail_non_empty { r_ov } else { ar };
+            let new_ac = if col_tail_non_empty { c_ov } else { ac };
+            let date_system = self.sheet().date_system;
+            let mut ib = IngestBuilder::new("__tmp", new_ac, 32 * 1024, date_system);
+            if new_ar > 0 && new_ac > 0 {
+                let mut row_buf = Vec::with_capacity(new_ac);
+                for r in 0..new_ar {
+                    row_buf.clear();
+                    for c in 0..new_ac {
+                        row_buf.push(ov.get_cell(r, c));
+                    }
+                    ib.append_row(&row_buf)
+                        .expect("append_row for expand_to tailed RangeView");
+                }
+            }
+            let mut core_sheet = ib.finish();
+            if new_ar > 0 && new_ac == 0 {
+                core_sheet.ensure_row_capacity(new_ar);
+            }
+            let right_tail = if new_ac < cols && new_ar > 0 {
+                if cols > c_ov {
+                    vec![LiteralValue::Empty; new_ar]
+                } else {
+                    (0..new_ar).map(|r| ov.get_cell(r, new_ac)).collect()
+                }
+            } else {
+                Vec::new()
+            };
+            let bottom_tail = if new_ar < rows && new_ac > 0 {
+                if rows > r_ov {
+                    vec![LiteralValue::Empty; new_ac]
+                } else {
+                    (0..new_ac).map(|c| ov.get_cell(new_ar, c)).collect()
+                }
+            } else {
+                Vec::new()
+            };
+            return RangeView::from_core_and_tail(
+                rows,
+                cols,
+                new_ar,
+                new_ac,
+                Arc::new(core_sheet),
+                right_tail,
+                bottom_tail,
+                LiteralValue::Empty,
+                self.cancel_token.clone(),
+                self.cell_budget,
+            );
         }
         let er = self.sr + rows.saturating_sub(1);
         let ec = self.sc + cols.saturating_sub(1);
@@ -946,7 +1078,7 @@ impl<'a> RangeView<'a> {
             cols,
             cancel_token: self.cancel_token.clone(),
             cell_budget: self.cell_budget,
-            tail: self.tail.clone(),
+            tail: None,
         }
     }
 
@@ -1445,8 +1577,7 @@ impl<'a> RangeView<'a> {
                         if let Some(tail) = &self.tail
                             && local_c >= tail.active_cols
                         {
-                            let slice = &tail.right_tail
-                                [segment.row_start..segment.row_start + segment.row_len];
+                            let slice = tail.right_tail_slice(segment.row_start, segment.row_len);
                             out_cols.push(tail_numbers_array(
                                 TailValues::Slice(slice),
                                 segment.row_len,
@@ -1635,7 +1766,7 @@ impl<'a> RangeView<'a> {
                         continue;
                     }
                     if local_c >= tail.active_cols {
-                        let slice = &tail.right_tail[cs.row_start..cs.row_start + cs.row_len];
+                        let slice = tail.right_tail_slice(cs.row_start, cs.row_len);
                         out_cols.push(tail_lowered_text_array(
                             TailValues::Slice(slice),
                             cs.row_len,
@@ -1714,8 +1845,7 @@ impl<'a> RangeView<'a> {
                         if let Some(tail) = &self.tail
                             && local_c >= tail.active_cols
                         {
-                            let slice = &tail.right_tail
-                                [segment.row_start..segment.row_start + segment.row_len];
+                            let slice = tail.right_tail_slice(segment.row_start, segment.row_len);
                             out_cols
                                 .push(tail_errors_array(TailValues::Slice(slice), segment.row_len));
                             continue;
@@ -2022,8 +2152,30 @@ impl<'a> RangeView<'a> {
         rel_start: usize,
         len: usize,
     ) -> Vec<Option<Arc<arrow_array::Float64Array>>> {
-        if self.tail.is_some() {
+        if let Some(tail) = &self.tail {
             let date_system = self.sheet().date_system;
+            if len > 0
+                && rel_start >= tail.active_rows
+                && rel_start.saturating_add(len) <= self.rows
+            {
+                let mut out_cols = Vec::with_capacity(self.cols);
+                for c in 0..self.cols {
+                    let val = if c < tail.active_cols {
+                        tail.bottom_tail.get(c).unwrap_or(&LiteralValue::Empty)
+                    } else {
+                        &tail.corner_tail
+                    };
+                    if let Some(n) = range_numeric_value(val, date_system) {
+                        out_cols.push(Some(Arc::new(arrow_array::Float64Array::from(vec![
+                            n;
+                            len
+                        ]))));
+                    } else {
+                        out_cols.push(None);
+                    }
+                }
+                return out_cols;
+            }
             let mut out_cols = Vec::with_capacity(self.cols);
             for c in 0..self.cols {
                 let mut b = arrow_array::builder::Float64Builder::with_capacity(len);
@@ -3194,5 +3346,141 @@ mod bounded_projection_tests {
         assert_projection(&sheet.range_view(0, 0, 55, 4));
         sheet.delete_columns(0, 1);
         assert_projection(&sheet.range_view(0, 0, 55, 4));
+    }
+
+    #[test]
+    fn tailed_expand_to_preserves_invariants_and_pads_with_empty() {
+        let mut ib = IngestBuilder::new("__tmp", 2, 32, DateSystem::Excel1900);
+        ib.append_row(&[LiteralValue::Number(1.0), LiteralValue::Number(2.0)])
+            .unwrap();
+        ib.append_row(&[LiteralValue::Number(3.0), LiteralValue::Number(4.0)])
+            .unwrap();
+        let core = Arc::new(ib.finish());
+
+        // 2D tailed view: 6x5, active 2x2, right_tail=[10,20], bottom_tail=[30,40], corner=50
+        let view_2d = RangeView::from_core_and_tail(
+            6,
+            5,
+            2,
+            2,
+            core,
+            vec![LiteralValue::Number(10.0), LiteralValue::Number(20.0)],
+            vec![LiteralValue::Number(30.0), LiteralValue::Number(40.0)],
+            LiteralValue::Number(50.0),
+            None,
+            DEFAULT_MATERIALIZED_ARRAY_CELLS,
+        );
+
+        // 1D vertical tailed view: 100x1, active 50x1, right_tail=[], bottom_tail=[1.0]
+        let mut ib1 = IngestBuilder::new("__tmp", 1, 32, DateSystem::Excel1900);
+        for r in 0..50 {
+            ib1.append_row(&[LiteralValue::Number((r + 1) as f64)])
+                .unwrap();
+        }
+        let view_1d = RangeView::from_core_and_tail(
+            100,
+            1,
+            50,
+            1,
+            Arc::new(ib1.finish()),
+            Vec::new(),
+            vec![LiteralValue::Number(1.0)],
+            LiteralValue::Empty,
+            None,
+            DEFAULT_MATERIALIZED_ARRAY_CELLS,
+        );
+
+        // Empty-core tailed view: 6x1, active 0x0, corner=7.0
+        let empty_core =
+            Arc::new(IngestBuilder::new("__tmp", 0, 32, DateSystem::Excel1900).finish());
+        let view_empty_core = RangeView::from_core_and_tail(
+            6,
+            1,
+            0,
+            0,
+            empty_core,
+            Vec::new(),
+            Vec::new(),
+            LiteralValue::Number(7.0),
+            None,
+            DEFAULT_MATERIALIZED_ARRAY_CELLS,
+        );
+
+        for (base, targets) in [
+            (
+                &view_2d,
+                vec![
+                    (0, 0),
+                    (2, 2),
+                    (4, 3),
+                    (1, 7),
+                    (9, 1),
+                    (9, 5),
+                    (6, 8),
+                    (9, 8),
+                ],
+            ),
+            (
+                &view_1d,
+                vec![(10, 2), (100, 2), (120, 1), (120, 3), (10, 1)],
+            ),
+            (&view_empty_core, vec![(3, 1), (10, 1), (3, 3), (10, 3)]),
+        ] {
+            let (orig_r, orig_c) = base.dims();
+            for (tr, tc) in targets {
+                let expanded = base.expand_to(tr, tc);
+                assert_eq!(expanded.dims(), (tr, tc));
+                if let Some(t) = expanded.tail() {
+                    assert!(t.active_rows <= tr);
+                    assert!(t.active_cols <= tc);
+                }
+
+                // Every cell must match `base` inside `(orig_r, orig_c)` and be `Empty` outside.
+                for r in 0..tr {
+                    for c in 0..tc {
+                        let expected = if r < orig_r && c < orig_c {
+                            base.get_cell(r, c)
+                        } else {
+                            LiteralValue::Empty
+                        };
+                        assert_eq!(
+                            expanded.get_cell(r, c),
+                            expected,
+                            "cell ({r},{c}) for expand_to({tr},{tc}) from ({orig_r},{orig_c})"
+                        );
+                    }
+                }
+
+                // Chunk/lane iterators must never panic and must match `get_cell`.
+                let mut seen_rows = 0usize;
+                for seg in expanded.numbers_slices() {
+                    let (rs, rl, cols) = seg.unwrap();
+                    assert_eq!(cols.len(), tc);
+                    for off in 0..rl {
+                        for (c, col_arr) in cols.iter().enumerate() {
+                            let expected = match expanded.get_cell(rs + off, c) {
+                                LiteralValue::Number(n) => Some(n),
+                                _ => None,
+                            };
+                            let actual = (!col_arr.is_null(off)).then(|| col_arr.value(off));
+                            assert_eq!(actual, expected);
+                        }
+                    }
+                    seen_rows += rl;
+                }
+                if expanded.tail().is_some() {
+                    assert_eq!(seen_rows, tr);
+                }
+                for seg in expanded.iter_row_chunks() {
+                    seg.unwrap();
+                }
+                for seg in expanded.errors_slices() {
+                    seg.unwrap();
+                }
+                for seg in expanded.lowered_text_slices() {
+                    seg.unwrap();
+                }
+            }
+        }
     }
 }

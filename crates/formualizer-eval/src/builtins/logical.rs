@@ -356,14 +356,54 @@ pub(crate) fn scan_logical_args(
                         _ => {}
                     }
                 };
-                view.core_sub_view().for_each_cell(&mut |cell| {
-                    visit(cell, 1);
-                    Ok(())
-                })?;
-                view.for_each_tail_entry(|cell, count| {
-                    visit(cell, count);
-                    Ok(())
-                })?;
+                let (rows, cols) = view.dims();
+                let (ar, ac) = view.active_dims();
+                let tail_rows = (rows - ar) as u64;
+                let tail_cols = (cols - ac) as u64;
+                if tail_cols == 0 {
+                    view.core_sub_view().for_each_cell(&mut |cell| {
+                        visit(cell, 1);
+                        Ok(())
+                    })?;
+                } else {
+                    let mut since_poll = 4096usize;
+                    for r in 0..ar {
+                        for c in 0..ac {
+                            if since_poll >= 4096 {
+                                since_poll = 0;
+                                if view.criteria_cache_cancelled() {
+                                    return Err(ExcelError::new(
+                                        formualizer_common::ExcelErrorKind::Cancelled,
+                                    ));
+                                }
+                            }
+                            since_poll += 1;
+                            let cell = view.get_cell(r, c);
+                            visit(&cell, 1);
+                        }
+                        if since_poll >= 4096 {
+                            since_poll = 0;
+                            if view.criteria_cache_cancelled() {
+                                return Err(ExcelError::new(
+                                    formualizer_common::ExcelErrorKind::Cancelled,
+                                ));
+                            }
+                        }
+                        since_poll += 1;
+                        let tail_cell = view.right_tail_cell(r);
+                        visit(&tail_cell, tail_cols);
+                    }
+                }
+                if tail_rows > 0 {
+                    for c in 0..ac {
+                        let tail_cell = view.bottom_tail_cell(c);
+                        visit(&tail_cell, tail_rows);
+                    }
+                    if tail_cols > 0 {
+                        let corner = view.corner_tail_cell();
+                        visit(&corner, tail_rows.saturating_mul(tail_cols));
+                    }
+                }
             }
             ResolvedArgument::ReferenceError(error) => {
                 if super::logical_ext::is_live_fault(&error) {
