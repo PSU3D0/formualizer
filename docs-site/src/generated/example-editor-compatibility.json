@@ -14,6 +14,69 @@
       "wasm": "#VALUE!"
     },
     {
+      "name": "BESSELI",
+      "formula": "=BESSELI(2,1)",
+      "grid": {},
+      "native": "1.59063685463733",
+      "wasm": "1.59063685726331"
+    },
+    {
+      "name": "BESSELI",
+      "formula": "=BESSELI(2,2)",
+      "grid": {},
+      "native": "0.688948447698738",
+      "wasm": "0.688948449197763"
+    },
+    {
+      "name": "BESSELI",
+      "formula": "=BESSELI(0.5,1)",
+      "grid": {},
+      "native": "0.257894305390896",
+      "wasm": "0.257894303289036"
+    },
+    {
+      "name": "BESSELI",
+      "formula": "=BESSELI(0.5,1.9)",
+      "grid": {},
+      "native": "0.257894305390896",
+      "wasm": "0.257894303289036"
+    },
+    {
+      "name": "BESSELK",
+      "formula": "=BESSELK(2,1)",
+      "grid": {},
+      "native": "0.139865881816522",
+      "wasm": "0.13986588"
+    },
+    {
+      "name": "BESSELK",
+      "formula": "=BESSELK(2,2)",
+      "grid": {},
+      "native": "0.253759754566056",
+      "wasm": "0.25375976"
+    },
+    {
+      "name": "BESSELK",
+      "formula": "=BESSELK(0.1,0)",
+      "grid": {},
+      "native": "2.42706902470202",
+      "wasm": "2.42706902485802"
+    },
+    {
+      "name": "BESSELK",
+      "formula": "=BESSELK(0.5,1)",
+      "grid": {},
+      "native": "1.6564411200033",
+      "wasm": "1.65644112801108"
+    },
+    {
+      "name": "BESSELK",
+      "formula": "=BESSELK(0.5,0)",
+      "grid": {},
+      "native": "0.924419071227666",
+      "wasm": "0.924419035021323"
+    },
+    {
       "name": "COUNTIF",
       "formula": "=COUNTIF(A1:A3, \"10/26/1999\")",
       "grid": {

@@ -352,16 +352,16 @@
     "sha256": "141b65b67b7f4a8d6a9d061445643b1a33e1074407bff2cfb6fd8b9bd31653b2"
   },
   "docs-site/content/docs/reference/functions/engineering/besseli.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ec87ea38a42cf8ed08e02c6345e7daea84895b57ba6da435fe733db6c314e9a4"
+    "date": "2026-11-21",
+    "sha256": "40468f4b0d9a10c38eab41cc6aabfb5fc2bbfc375caa9afd95630aecf9ae6bf9"
   },
   "docs-site/content/docs/reference/functions/engineering/besselj.mdx": {
     "date": "2026-11-18",
     "sha256": "888291db65dbe611eb7c238b2b34d4f39f12626426b26236cb9161fb54a0e6cb"
   },
   "docs-site/content/docs/reference/functions/engineering/besselk.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7270cd69106df80ed830461af112987eb1740a83852242a0a4e6262fe264e4f7"
+    "date": "2026-11-21",
+    "sha256": "bb92ef7c9e8c8b32290737d900408df5365a41897e7734cf0daf3f20e338d566"
   },
   "docs-site/content/docs/reference/functions/engineering/bessely.mdx": {
     "date": "2026-11-18",
