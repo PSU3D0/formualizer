@@ -2046,6 +2046,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::events(&s
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::is_empty(&self) -> bool
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::last_group_indices(&self) -> alloc::vec::Vec<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::len(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::max_changelog_events(&self) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::meta(&self, usize) -> core::option::Option<(u64, core::option::Option<u64>)>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::new() -> Self
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent)
@@ -2060,7 +2061,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
 impl core::default::Default for formualizer_eval::engine::graph::editor::change_log::ChangeLog
-pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::default() -> formualizer_eval::engine::graph::editor::change_log::ChangeLog
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::default() -> Self
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl formualizer_eval::engine::graph::editor::change_log::ChangeLogger for formualizer_eval::engine::graph::editor::change_log::ChangeLog
@@ -2147,6 +2148,10 @@ impl core::fmt::Debug for formualizer_eval::engine::graph::editor::undo_engine::
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoBatchItem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_eval::engine::graph::editor::undo_engine::UndoEngine
 impl formualizer_eval::engine::graph::editor::undo_engine::UndoEngine
+pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::actions_done_len(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::actions_undone_len(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::clear_logged_redo(&mut self)
+pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::max_actions(&self) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new() -> Self
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::pop_redo_action(&mut self) -> core::option::Option<formualizer_eval::engine::journal::ActionJournal>
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::pop_undo_action(&mut self) -> core::option::Option<formualizer_eval::engine::journal::ActionJournal>
@@ -2154,7 +2159,10 @@ pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::push_ac
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::push_done_action(&mut self, formualizer_eval::engine::journal::ActionJournal)
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::push_redo_action(&mut self, formualizer_eval::engine::journal::ActionJournal)
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::redo(&mut self, &mut formualizer_eval::engine::graph::DependencyGraph, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog) -> core::result::Result<alloc::vec::Vec<formualizer_eval::engine::graph::editor::undo_engine::UndoBatchItem>, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::set_max_actions(&mut self, core::option::Option<usize>)
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::undo(&mut self, &mut formualizer_eval::engine::graph::DependencyGraph, &mut formualizer_eval::engine::graph::editor::change_log::ChangeLog) -> core::result::Result<alloc::vec::Vec<formualizer_eval::engine::graph::editor::undo_engine::UndoBatchItem>, formualizer_eval::engine::graph::editor::vertex_editor::EditorError>
+pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::undone_len(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::with_max_actions(usize) -> Self
 impl core::default::Default for formualizer_eval::engine::graph::editor::undo_engine::UndoEngine
 pub fn formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::default() -> formualizer_eval::engine::graph::editor::undo_engine::UndoEngine
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::undo_engine::UndoEngine
@@ -2630,6 +2638,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::events(&s
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::is_empty(&self) -> bool
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::last_group_indices(&self) -> alloc::vec::Vec<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::len(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::max_changelog_events(&self) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::meta(&self, usize) -> core::option::Option<(u64, core::option::Option<u64>)>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::new() -> Self
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent)
@@ -2644,7 +2653,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
 impl core::default::Default for formualizer_eval::engine::graph::editor::change_log::ChangeLog
-pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::default() -> formualizer_eval::engine::graph::editor::change_log::ChangeLog
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::default() -> Self
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl formualizer_eval::engine::graph::editor::change_log::ChangeLogger for formualizer_eval::engine::graph::editor::change_log::ChangeLog
@@ -6115,6 +6124,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::events(&s
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::is_empty(&self) -> bool
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::last_group_indices(&self) -> alloc::vec::Vec<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::len(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::max_changelog_events(&self) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::meta(&self, usize) -> core::option::Option<(u64, core::option::Option<u64>)>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::new() -> Self
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent)
@@ -6129,7 +6139,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::take_from
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::truncate(&mut self, usize)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::with_max_changelog_events(usize) -> Self
 impl core::default::Default for formualizer_eval::engine::graph::editor::change_log::ChangeLog
-pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::default() -> formualizer_eval::engine::graph::editor::change_log::ChangeLog
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::default() -> Self
 impl core::fmt::Debug for formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl formualizer_eval::engine::graph::editor::change_log::ChangeLogger for formualizer_eval::engine::graph::editor::change_log::ChangeLog
@@ -6644,6 +6654,7 @@ pub formualizer_eval::engine::EvalConfig::formula_compression: bool
 pub formualizer_eval::engine::EvalConfig::formula_parse_policy: formualizer_eval::engine::FormulaParsePolicy
 pub formualizer_eval::engine::EvalConfig::formula_plane_mode: formualizer_eval::engine::FormulaPlaneMode
 pub formualizer_eval::engine::EvalConfig::lookup_index_cache_max_bytes: usize
+pub formualizer_eval::engine::EvalConfig::max_changelog_events: core::option::Option<usize>
 pub formualizer_eval::engine::EvalConfig::max_eval_time: core::option::Option<core::time::Duration>
 pub formualizer_eval::engine::EvalConfig::max_formula_plane_cache_bytes: usize
 pub formualizer_eval::engine::EvalConfig::max_formula_plane_cache_candidates: usize
@@ -6684,6 +6695,7 @@ pub fn formualizer_eval::engine::EvalConfig::with_evaluation_budgets(self, formu
 pub fn formualizer_eval::engine::EvalConfig::with_formula_overlay(self, bool) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_formula_parse_policy(self, formualizer_eval::engine::FormulaParsePolicy) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_formula_plane_mode(self, formualizer_eval::engine::FormulaPlaneMode) -> Self
+pub fn formualizer_eval::engine::EvalConfig::with_max_changelog_events(self, core::option::Option<usize>) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_parallel(self, bool) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_preparation_policy(self, formualizer_eval::engine::PreparationPolicy) -> Self
 pub fn formualizer_eval::engine::EvalConfig::with_range_expansion_limit(self, usize) -> Self

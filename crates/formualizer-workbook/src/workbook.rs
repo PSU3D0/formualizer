@@ -986,7 +986,7 @@ mod spill_history_tests;
 /// history events are visited once; snapshot cells are indexed once per clear.
 #[derive(Default)]
 struct SpillActionHistory {
-    next_event: usize,
+    next_seq: u64,
     spill_clear_revision: u64,
     cells: std::collections::HashSet<formualizer_eval::reference::CellRef>,
     #[cfg(test)]
@@ -1204,6 +1204,9 @@ pub struct WorkbookConfig {
 }
 
 impl WorkbookConfig {
+    /// Default bounded history limit for interactive workbooks.
+    pub const DEFAULT_INTERACTIVE_HISTORY_LIMIT: usize = 10_000;
+
     pub fn ephemeral() -> Self {
         Self {
             eval: formualizer_eval::engine::EvalConfig::default(),
@@ -1216,6 +1219,7 @@ impl WorkbookConfig {
         let eval = formualizer_eval::engine::EvalConfig {
             defer_graph_building: true,
             formula_parse_policy: formualizer_eval::engine::FormulaParsePolicy::CoerceToError,
+            max_changelog_events: Some(Self::DEFAULT_INTERACTIVE_HISTORY_LIMIT),
             ..Default::default()
         };
         Self {
@@ -1223,6 +1227,11 @@ impl WorkbookConfig {
             enable_changelog: true,
             ingest_limits: formualizer_eval::engine::WorkbookLoadLimits::default(),
         }
+    }
+
+    pub fn with_history_limit(mut self, limit: Option<usize>) -> Self {
+        self.eval.max_changelog_events = limit;
+        self
     }
 
     pub fn with_ingest_limits(
@@ -1273,6 +1282,7 @@ impl Workbook {
         config.eval.delta_overlay_enabled = true;
         config.eval.write_formula_overlay_enabled = true;
 
+        let history_limit = config.eval.max_changelog_events;
         let ingest_limits = config.ingest_limits.clone();
         let custom_functions = Arc::new(RwLock::new(BTreeMap::new()));
         let custom_function_revision = Arc::new(std::sync::atomic::AtomicU64::new(0));
@@ -1285,6 +1295,9 @@ impl Workbook {
 
         let mut log = formualizer_eval::engine::ChangeLog::new();
         log.set_enabled(config.enable_changelog);
+        log.set_max_changelog_events(history_limit);
+        let mut undo = formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new();
+        undo.set_max_actions(history_limit);
         Self {
             engine,
             custom_functions,
@@ -1293,7 +1306,7 @@ impl Workbook {
             enable_changelog: config.enable_changelog,
             log,
             spill_action_history: SpillActionHistory::default(),
-            undo: formualizer_eval::engine::graph::editor::undo_engine::UndoEngine::new(),
+            undo,
             calc_settings: None,
             name_import_diagnostics: Vec::new(),
             sheet_import_diagnostics: Vec::new(),
@@ -1780,6 +1793,21 @@ impl Workbook {
         self.log.set_enabled(enabled);
     }
 
+    /// Maximum number of retained changelog events and undo/redo actions (`None` = unbounded).
+    pub fn history_limit(&self) -> Option<usize> {
+        self.log.max_changelog_events()
+    }
+
+    /// Configure the retained history limit for both the changelog and undo/redo stacks.
+    ///
+    /// Passing `Some(limit)` immediately evicts oldest retained history FIFO to `limit`.
+    /// Passing `None` disables the cap (unbounded history).
+    pub fn set_history_limit(&mut self, limit: Option<usize>) {
+        self.engine.config.max_changelog_events = limit;
+        self.log.set_max_changelog_events(limit);
+        self.undo.set_max_actions(limit);
+    }
+
     // Changelog metadata
     pub fn set_actor_id(&mut self, actor_id: Option<String>) {
         self.log.set_actor_id(actor_id);
@@ -1837,7 +1865,12 @@ impl Workbook {
             if self.log.compound_depth() == 0 {
                 let history = &mut self.spill_action_history;
                 history.cells.clear();
-                history.next_event = self.log.len();
+                history.next_seq = self
+                    .log
+                    .len()
+                    .checked_sub(1)
+                    .and_then(|i| self.log.meta(i))
+                    .map_or(0, |(seq, _)| seq + 1);
                 history.spill_clear_revision = self.log.spill_clear_revision();
             }
             self.log.begin_compound(description.into());
@@ -2503,7 +2536,21 @@ impl Workbook {
         let revision = self.log.spill_clear_revision();
         if history.spill_clear_revision != revision {
             let events = self.log.events();
-            for event in &events[history.next_event..] {
+            let mut lo = 0usize;
+            let mut hi = events.len();
+            while lo < hi {
+                let mid = lo + (hi - lo) / 2;
+                if self
+                    .log
+                    .meta(mid)
+                    .is_some_and(|(seq, _)| seq < history.next_seq)
+                {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            for event in &events[lo..] {
                 #[cfg(test)]
                 {
                     history.events_inspected += 1;
@@ -2519,7 +2566,11 @@ impl Workbook {
                     _ => {}
                 }
             }
-            history.next_event = events.len();
+            history.next_seq = events
+                .len()
+                .checked_sub(1)
+                .and_then(|i| self.log.meta(i))
+                .map_or(history.next_seq, |(seq, _)| seq + 1);
             history.spill_clear_revision = revision;
         }
         if history.cells.is_empty() {

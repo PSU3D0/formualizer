@@ -2,7 +2,8 @@ use super::*;
 
 #[test]
 fn no_spill_action_history_cost_is_linear() {
-    let mut workbook = Workbook::new();
+    let mut workbook =
+        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(None));
     workbook.add_sheet("S").unwrap();
     let n = 32_000;
     workbook
@@ -55,4 +56,39 @@ fn spill_history_survives_nested_actions_and_resets_between_actions() {
     workbook.begin_action("fresh");
     assert!(!workbook.formula_needs_spill_history("S", 4, 1));
     workbook.end_action();
+}
+
+#[test]
+fn interactive_history_caps_both_changelog_and_undo_stacks() {
+    let cap = WorkbookConfig::DEFAULT_INTERACTIVE_HISTORY_LIMIT;
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+
+    // Exceed cap in logged mode and check changelog + logged redo stack stay bounded.
+    for i in 0..(cap + 500) {
+        wb.set_value("S", 1, 1, LiteralValue::Number(i as f64))
+            .unwrap();
+    }
+    assert_eq!(wb.changelog().len(), cap);
+    assert_eq!(wb.undo.undone_len(), 0);
+
+    // Exceed cap in ActionJournal mode (changelog disabled) and check actions_done stays bounded.
+    let mut wb_actions =
+        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(16)));
+    wb_actions.set_changelog_enabled(false);
+    wb_actions.add_sheet("S").unwrap();
+    for i in 0..40 {
+        wb_actions
+            .action("inc", |tx| {
+                tx.set_value("S", 1, 1, LiteralValue::Number(i as f64))
+            })
+            .unwrap();
+    }
+    assert_eq!(wb_actions.undo.actions_done_len(), 16);
+    assert_eq!(wb_actions.undo.actions_undone_len(), 0);
+    for _ in 0..16 {
+        wb_actions.undo().unwrap();
+    }
+    assert_eq!(wb_actions.undo.actions_done_len(), 0);
+    assert_eq!(wb_actions.undo.actions_undone_len(), 16);
 }

@@ -2069,6 +2069,7 @@ pub fn formualizer_workbook::workbook::Workbook::has_name(&self, &str, core::opt
 pub fn formualizer_workbook::workbook::Workbook::has_pending_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_sheet(&self, &str) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_staged_formulas(&self) -> bool
+pub fn formualizer_workbook::workbook::Workbook::history_limit(&self) -> core::option::Option<usize>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_bytes(&self, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_file(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_modules_dir(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
@@ -2105,6 +2106,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_correlation_id(&mut self, c
 pub fn formualizer_workbook::workbook::Workbook::set_deterministic_mode(&mut self, formualizer_eval::engine::DeterministicMode) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_formula(&mut self, &str, u32, u32, &str) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_formulas(&mut self, &str, u32, u32, &[alloc::vec::Vec<alloc::string::String>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::set_history_limit(&mut self, core::option::Option<usize>)
 pub fn formualizer_workbook::workbook::Workbook::set_reason(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::set_row_hidden(&mut self, &str, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -2155,10 +2157,12 @@ pub formualizer_workbook::workbook::WorkbookConfig::enable_changelog: bool
 pub formualizer_workbook::workbook::WorkbookConfig::eval: formualizer_eval::engine::EvalConfig
 pub formualizer_workbook::workbook::WorkbookConfig::ingest_limits: formualizer_eval::engine::WorkbookLoadLimits
 impl formualizer_workbook::workbook::WorkbookConfig
+pub const formualizer_workbook::workbook::WorkbookConfig::DEFAULT_INTERACTIVE_HISTORY_LIMIT: usize
 pub fn formualizer_workbook::workbook::WorkbookConfig::ephemeral() -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::interactive() -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::span_evaluation_enabled(&self) -> bool
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_formula_plane_mode(self, formualizer_eval::engine::FormulaPlaneMode) -> Self
+pub fn formualizer_workbook::workbook::WorkbookConfig::with_history_limit(self, core::option::Option<usize>) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_ingest_limits(self, formualizer_eval::engine::WorkbookLoadLimits) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_span_evaluation(self, bool) -> Self
 impl core::clone::Clone for formualizer_workbook::workbook::WorkbookConfig
@@ -3477,6 +3481,7 @@ pub fn formualizer_workbook::workbook::Workbook::has_name(&self, &str, core::opt
 pub fn formualizer_workbook::workbook::Workbook::has_pending_in_rect(&self, formualizer_common::address::SheetId, u32, u32, u32, u32) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_sheet(&self, &str) -> bool
 pub fn formualizer_workbook::workbook::Workbook::has_staged_formulas(&self) -> bool
+pub fn formualizer_workbook::workbook::Workbook::history_limit(&self) -> core::option::Option<usize>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_bytes(&self, &[u8]) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_module_file(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<formualizer_workbook::workbook::WasmModuleInfo, formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::inspect_wasm_modules_dir(&self, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<alloc::vec::Vec<formualizer_workbook::workbook::WasmModuleInfo>, formualizer_common::error::ExcelError>
@@ -3513,6 +3518,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_correlation_id(&mut self, c
 pub fn formualizer_workbook::workbook::Workbook::set_deterministic_mode(&mut self, formualizer_eval::engine::DeterministicMode) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_formula(&mut self, &str, u32, u32, &str) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_formulas(&mut self, &str, u32, u32, &[alloc::vec::Vec<alloc::string::String>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::set_history_limit(&mut self, core::option::Option<usize>)
 pub fn formualizer_workbook::workbook::Workbook::set_reason(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::set_row_hidden(&mut self, &str, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -3553,10 +3559,12 @@ pub formualizer_workbook::WorkbookConfig::enable_changelog: bool
 pub formualizer_workbook::WorkbookConfig::eval: formualizer_eval::engine::EvalConfig
 pub formualizer_workbook::WorkbookConfig::ingest_limits: formualizer_eval::engine::WorkbookLoadLimits
 impl formualizer_workbook::workbook::WorkbookConfig
+pub const formualizer_workbook::workbook::WorkbookConfig::DEFAULT_INTERACTIVE_HISTORY_LIMIT: usize
 pub fn formualizer_workbook::workbook::WorkbookConfig::ephemeral() -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::interactive() -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::span_evaluation_enabled(&self) -> bool
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_formula_plane_mode(self, formualizer_eval::engine::FormulaPlaneMode) -> Self
+pub fn formualizer_workbook::workbook::WorkbookConfig::with_history_limit(self, core::option::Option<usize>) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_ingest_limits(self, formualizer_eval::engine::WorkbookLoadLimits) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_span_evaluation(self, bool) -> Self
 impl core::clone::Clone for formualizer_workbook::workbook::WorkbookConfig
