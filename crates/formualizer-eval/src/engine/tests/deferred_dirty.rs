@@ -259,3 +259,65 @@ fn propagation_is_normal_after_scope_ends() {
         Some(LiteralValue::Number(30.0))
     );
 }
+
+#[test]
+fn deferred_dirty_guard_recovers_after_caught_panic_in_engine_closures() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(1))
+        .unwrap();
+    set_formula(&mut engine, "Sheet1", 1, 2, "=A1*10");
+    engine.evaluate_all().unwrap();
+
+    // 1. Panic inside `Engine::action`
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let _ = engine.action::<()>("panic-action", |tx| {
+            tx.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(2))?;
+            panic!("boom in action");
+        });
+    }));
+    assert!(res.is_err());
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(20.0))
+    );
+
+    // 2. Panic inside `Engine::action_atomic`
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let _ = engine.action_atomic::<()>("panic-atomic", |tx| {
+            tx.set_cell_value("Sheet1", 1, 1, LiteralValue::Int(3))?;
+            panic!("boom in action_atomic");
+        });
+    }));
+    assert!(res.is_err());
+    engine.evaluate_all().unwrap();
+
+    // 3. Panic inside `Engine::edit_with_logger`
+    let sid = engine.sheet_id("Sheet1").unwrap();
+    let mut log = crate::engine::ChangeLog::new();
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let _ = engine.edit_with_logger(&mut log, |editor| {
+            let cell = crate::reference::CellRef::new(
+                sid,
+                crate::reference::Coord::from_excel(1, 1, true, true),
+            );
+            editor.set_cell_value(cell, LiteralValue::Int(4));
+            panic!("boom in edit_with_logger");
+        });
+    }));
+    assert!(res.is_err());
+    engine.evaluate_all().unwrap();
+
+    // Subsequent edits must still propagate normally without a leaked scope.
+    engine
+        .set_cell_value("Sheet1", 1, 1, LiteralValue::Int(5))
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(50.0))
+    );
+}

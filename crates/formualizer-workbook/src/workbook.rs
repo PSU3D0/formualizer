@@ -993,6 +993,25 @@ struct SpillActionHistory {
     events_inspected: usize,
 }
 
+struct WorkbookDeferredDirtyGuard<'a> {
+    wb: *mut Workbook,
+    _marker: std::marker::PhantomData<&'a mut Workbook>,
+}
+
+impl Drop for WorkbookDeferredDirtyGuard<'_> {
+    fn drop(&mut self) {
+        // Safety: created from a unique `&mut Workbook` borrow for the duration
+        // of the enclosing call and dropped after any inner reborrow ends.
+        // Skip if poisoned during rollback to avoid double-panicking on unwind.
+        unsafe {
+            let engine = &mut (&mut *self.wb).engine;
+            if !engine.is_poisoned() {
+                engine.end_deferred_dirty();
+            }
+        }
+    }
+}
+
 /// Engine-backed workbook facade.
 pub struct Workbook {
     engine: formualizer_eval::engine::Engine<WBResolver>,
@@ -1865,12 +1884,7 @@ impl Workbook {
             if self.log.compound_depth() == 0 {
                 let history = &mut self.spill_action_history;
                 history.cells.clear();
-                history.next_seq = self
-                    .log
-                    .len()
-                    .checked_sub(1)
-                    .and_then(|i| self.log.meta(i))
-                    .map_or(0, |(seq, _)| seq + 1);
+                history.next_seq = self.log.next_seq();
                 history.spill_clear_revision = self.log.spill_clear_revision();
             }
             self.log.begin_compound(description.into());
@@ -1900,9 +1914,12 @@ impl Workbook {
         f: impl FnOnce(&mut WorkbookAction<'_>) -> Result<T, IoError>,
     ) -> Result<T, IoError> {
         self.engine.begin_deferred_dirty();
-        let result = self.action_inner(name, f);
-        self.engine.end_deferred_dirty();
-        result
+        let wb_ptr: *mut Workbook = self;
+        let _dirty_guard = WorkbookDeferredDirtyGuard {
+            wb: wb_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        unsafe { &mut *wb_ptr }.action_inner(name, f)
     }
 
     fn action_inner<T>(
@@ -2218,6 +2235,7 @@ impl Workbook {
                 }
             }
         });
+        self.sync_spill_action_history();
 
         if let Some(e) = user_err {
             return Err(e);
@@ -2231,9 +2249,12 @@ impl Workbook {
     }
     pub fn undo(&mut self) -> Result<(), IoError> {
         self.engine.begin_deferred_dirty();
-        let result = self.undo_inner();
-        self.engine.end_deferred_dirty();
-        result
+        let wb_ptr: *mut Workbook = self;
+        let _dirty_guard = WorkbookDeferredDirtyGuard {
+            wb: wb_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        unsafe { &mut *wb_ptr }.undo_inner()
     }
 
     fn undo_inner(&mut self) -> Result<(), IoError> {
@@ -2241,6 +2262,7 @@ impl Workbook {
             self.engine
                 .undo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
+            self.sync_spill_action_history();
         } else {
             self.engine
                 .undo_action(&mut self.undo)
@@ -2250,9 +2272,12 @@ impl Workbook {
     }
     pub fn redo(&mut self) -> Result<(), IoError> {
         self.engine.begin_deferred_dirty();
-        let result = self.redo_inner();
-        self.engine.end_deferred_dirty();
-        result
+        let wb_ptr: *mut Workbook = self;
+        let _dirty_guard = WorkbookDeferredDirtyGuard {
+            wb: wb_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        unsafe { &mut *wb_ptr }.redo_inner()
     }
 
     fn redo_inner(&mut self) -> Result<(), IoError> {
@@ -2260,6 +2285,7 @@ impl Workbook {
             self.engine
                 .redo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
+            self.sync_spill_action_history();
         } else {
             self.engine
                 .redo_action(&mut self.undo)
@@ -2496,6 +2522,7 @@ impl Workbook {
                     );
                 })
                 .map_err(|e| IoError::from_backend("editor", e))?;
+            self.sync_spill_action_history();
 
             self.mirror_value_to_overlay(sheet, row, col, &value);
             self.engine.clear_staged_formula_text(sheet, row, col);
@@ -2520,6 +2547,24 @@ impl Workbook {
             || self.formula_needs_spill_history(sheet, row, col)
     }
 
+    /// Eagerly fold any newly-cleared spill projection cells from the open
+    /// compound action into `spill_action_history` without reading or expanding
+    /// `ChangeLog::events()`. `ChangeLog` captures these cells before retention
+    /// cap eviction can drop the `SpillCleared` event mid-action.
+    fn sync_spill_action_history(&mut self) {
+        if !self.enable_changelog || self.log.compound_depth() == 0 {
+            return;
+        }
+        let revision = self.log.spill_clear_revision();
+        if self.spill_action_history.spill_clear_revision == revision {
+            return;
+        }
+        let cleared = self.log.drain_open_compound_spill_cleared();
+        self.spill_action_history.cells.extend(cleared);
+        self.spill_action_history.next_seq = self.log.next_seq();
+        self.spill_action_history.spill_clear_revision = revision;
+    }
+
     // Projection edits need graph history even in deferred mode. Also cover
     // later cells in the same action after its first edit cleared the spill.
     fn formula_needs_spill_history(&mut self, sheet: &str, row: u32, col: u32) -> bool {
@@ -2532,48 +2577,8 @@ impl Workbook {
         if self.log.compound_depth() == 0 {
             return false;
         }
-        let history = &mut self.spill_action_history;
-        let revision = self.log.spill_clear_revision();
-        if history.spill_clear_revision != revision {
-            let events = self.log.events();
-            let mut lo = 0usize;
-            let mut hi = events.len();
-            while lo < hi {
-                let mid = lo + (hi - lo) / 2;
-                if self
-                    .log
-                    .meta(mid)
-                    .is_some_and(|(seq, _)| seq < history.next_seq)
-                {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            for event in &events[lo..] {
-                #[cfg(test)]
-                {
-                    history.events_inspected += 1;
-                }
-                match event {
-                    formualizer_eval::engine::ChangeEvent::CompoundStart { depth: 1, .. }
-                    | formualizer_eval::engine::ChangeEvent::CompoundEnd { depth: 1 } => {
-                        history.cells.clear();
-                    }
-                    formualizer_eval::engine::ChangeEvent::SpillCleared { old, .. } => {
-                        history.cells.extend(old.target_cells.iter().copied());
-                    }
-                    _ => {}
-                }
-            }
-            history.next_seq = events
-                .len()
-                .checked_sub(1)
-                .and_then(|i| self.log.meta(i))
-                .map_or(history.next_seq, |(seq, _)| seq + 1);
-            history.spill_clear_revision = revision;
-        }
-        if history.cells.is_empty() {
+        self.sync_spill_action_history();
+        if self.spill_action_history.cells.is_empty() {
             return false;
         }
         let Some(sheet_id) = self.engine.sheet_id(sheet) else {
@@ -2583,7 +2588,7 @@ impl Workbook {
             sheet_id,
             formualizer_eval::reference::Coord::from_excel(row, col, true, true),
         );
-        history.cells.contains(&cell)
+        self.spill_action_history.cells.contains(&cell)
     }
 
     pub fn set_formula(
@@ -2635,6 +2640,7 @@ impl Workbook {
                         })
                         .map_err(|e| IoError::from_backend("editor", e))?
                         .map_err(IoError::Engine)?;
+                    self.sync_spill_action_history();
 
                     self.engine.clear_staged_formula_text(sheet, row, col);
                     if let Some(before) = staged_before {
@@ -2681,6 +2687,7 @@ impl Workbook {
                     })
                     .map_err(|e| IoError::from_backend("editor", e))?
                     .map_err(IoError::Engine)?;
+                self.sync_spill_action_history();
                 self.engine.clear_staged_formula_text(sheet, row, col);
                 if let Some(before) = staged_before {
                     self.record_staged_formula_cell_change(sheet, row, col, before, None);
@@ -2777,9 +2784,12 @@ impl Workbook {
         // The unconditional end_deferred_dirty below flushes on every exit
         // path, including the `?` error returns inside the inner body.
         self.engine.begin_deferred_dirty();
-        let result = self.write_range_inner(sheet, _start, cells);
-        self.engine.end_deferred_dirty();
-        result
+        let wb_ptr: *mut Workbook = self;
+        let _dirty_guard = WorkbookDeferredDirtyGuard {
+            wb: wb_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        unsafe { &mut *wb_ptr }.write_range_inner(sheet, _start, cells)
     }
 
     fn write_range_inner(
@@ -2879,6 +2889,7 @@ impl Workbook {
                     Ok(())
                 })
                 .map_err(|e| IoError::from_backend("editor", e))??;
+            self.sync_spill_action_history();
 
             for (r, c, v) in overlay_ops {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
@@ -2956,9 +2967,12 @@ impl Workbook {
         // The unconditional end_deferred_dirty below flushes on every exit
         // path, including the `?` error returns inside the inner body.
         self.engine.begin_deferred_dirty();
-        let result = self.set_values_inner(sheet, start_row, start_col, rows);
-        self.engine.end_deferred_dirty();
-        result
+        let wb_ptr: *mut Workbook = self;
+        let _dirty_guard = WorkbookDeferredDirtyGuard {
+            wb: wb_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        unsafe { &mut *wb_ptr }.set_values_inner(sheet, start_row, start_col, rows)
     }
 
     fn set_values_inner(
@@ -3041,6 +3055,7 @@ impl Workbook {
                     }
                 })
                 .map_err(|e| IoError::from_backend("editor", e))?;
+            self.sync_spill_action_history();
 
             for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
@@ -3082,9 +3097,12 @@ impl Workbook {
         // The unconditional end_deferred_dirty below flushes on every exit
         // path, including the `?` error returns inside the inner body.
         self.engine.begin_deferred_dirty();
-        let result = self.set_formulas_inner(sheet, start_row, start_col, rows);
-        self.engine.end_deferred_dirty();
-        result
+        let wb_ptr: *mut Workbook = self;
+        let _dirty_guard = WorkbookDeferredDirtyGuard {
+            wb: wb_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        unsafe { &mut *wb_ptr }.set_formulas_inner(sheet, start_row, start_col, rows)
     }
 
     fn set_formulas_inner(
@@ -3172,6 +3190,7 @@ impl Workbook {
                     Ok(())
                 })
                 .map_err(|e| IoError::from_backend("editor", e))??;
+            self.sync_spill_action_history();
 
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;

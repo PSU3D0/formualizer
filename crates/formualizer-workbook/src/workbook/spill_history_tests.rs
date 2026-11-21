@@ -92,3 +92,91 @@ fn interactive_history_caps_both_changelog_and_undo_stacks() {
     assert_eq!(wb_actions.undo.actions_done_len(), 0);
     assert_eq!(wb_actions.undo.actions_undone_len(), 16);
 }
+
+#[test]
+fn spill_action_history_survives_mid_action_cap_eviction_and_zero_cap() {
+    // Case A: SpillCleared evicted mid-action by subsequent edits under small cap.
+    let mut wb =
+        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(4)));
+    wb.add_sheet("S").unwrap();
+    wb.set_formula("S", 1, 2, "=SEQUENCE(5)").unwrap();
+    wb.evaluate_all().unwrap();
+
+    wb.begin_action("oversized-compound");
+    wb.set_value("S", 3, 2, LiteralValue::Number(99.0)).unwrap();
+    for r in 10..25u32 {
+        wb.set_value("S", r, 1, LiteralValue::Number(r as f64))
+            .unwrap();
+    }
+    assert!(
+        wb.formula_needs_spill_history("S", 4, 2),
+        "evicted SpillCleared must still be tracked in SpillActionHistory"
+    );
+    wb.set_formula("S", 4, 2, "=88").unwrap();
+    assert!(
+        wb.engine().get_cell("S", 4, 2).is_some(),
+        "formula over cleared spill child must commit to graph, not stage"
+    );
+    wb.end_action();
+
+    // Case B: SpillCleared evicted within a single batch exceeding cap.
+    let mut wb_batch =
+        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(4)));
+    wb_batch.add_sheet("S").unwrap();
+    wb_batch.set_formula("S", 1, 2, "=SEQUENCE(5)").unwrap();
+    wb_batch.evaluate_all().unwrap();
+
+    wb_batch.begin_action("single-batch-overflow");
+    let rows: Vec<Vec<LiteralValue>> = (0..12)
+        .map(|i| vec![LiteralValue::Number(i as f64)])
+        .collect();
+    wb_batch.set_values("S", 3, 2, &rows).unwrap();
+    assert!(
+        wb_batch.formula_needs_spill_history("S", 2, 2),
+        "SpillCleared evicted during single publish_capture must still be tracked"
+    );
+    wb_batch.end_action();
+
+    // Case C: history_limit = Some(0).
+    let mut wb_zero =
+        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(0)));
+    wb_zero.add_sheet("S").unwrap();
+    wb_zero.set_formula("S", 1, 2, "=SEQUENCE(5)").unwrap();
+    wb_zero.evaluate_all().unwrap();
+
+    wb_zero.begin_action("zero-cap");
+    wb_zero
+        .set_value("S", 3, 2, LiteralValue::Number(77.0))
+        .unwrap();
+    assert_eq!(wb_zero.changelog().len(), 0);
+    assert!(
+        wb_zero.formula_needs_spill_history("S", 4, 2),
+        "SpillCleared under cap=0 must still be tracked for the open action"
+    );
+    wb_zero.end_action();
+    assert!(wb_zero.spill_action_history.cells.is_empty());
+}
+
+#[test]
+fn workbook_action_panic_does_not_leak_deferred_dirty_scope() {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    let mut wb = Workbook::new();
+    wb.add_sheet("S").unwrap();
+    wb.set_value("S", 1, 1, LiteralValue::Number(1.0)).unwrap();
+    wb.set_formula("S", 1, 2, "=A1*10").unwrap();
+    wb.evaluate_all().unwrap();
+
+    let res = catch_unwind(AssertUnwindSafe(|| {
+        let _ = wb.action::<()>("boom", |tx| {
+            tx.set_value("S", 1, 1, LiteralValue::Number(2.0))?;
+            panic!("deliberate workbook action panic");
+        });
+    }));
+    assert!(res.is_err());
+
+    wb.evaluate_all().unwrap();
+    wb.set_value("S", 1, 1, LiteralValue::Number(5.0)).unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(wb.get_value("S", 1, 2), Some(LiteralValue::Number(50.0)));
+}

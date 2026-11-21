@@ -2015,6 +2015,23 @@ impl<'a, R> Drop for ActionDepthGuard<'a, R> {
     }
 }
 
+struct DeferredDirtyGuard<'a, R> {
+    engine: *mut Engine<R>,
+    _marker: std::marker::PhantomData<&'a mut Engine<R>>,
+}
+
+impl<'a, R> Drop for DeferredDirtyGuard<'a, R> {
+    fn drop(&mut self) {
+        // Safety: created from a unique `&mut Engine` borrow for the duration
+        // of the enclosing call and dropped after any inner reborrow ends.
+        // Call `graph.end_deferred_dirty()` directly rather than `Engine::end_deferred_dirty()`
+        // so unwinding on a poisoned engine cannot double-panic.
+        unsafe {
+            let _ = (&mut *self.engine).graph.end_deferred_dirty();
+        }
+    }
+}
+
 #[derive(Default)]
 struct SourceCache {
     scalars: FxHashMap<(String, Option<u64>), LiteralValue>,
@@ -5622,24 +5639,26 @@ where
         }
 
         self.action_depth = 1;
+        self.begin_deferred_dirty();
         let engine_ptr: *mut Engine<R> = self;
         let _guard = ActionDepthGuard {
             engine: engine_ptr,
             _marker: std::marker::PhantomData,
         };
+        let _dirty_guard = DeferredDirtyGuard {
+            engine: engine_ptr,
+            _marker: std::marker::PhantomData,
+        };
 
-        self.begin_deferred_dirty();
         let mut tx = EngineAction {
-            engine: self,
+            engine: unsafe { &mut *engine_ptr },
             name: name.as_ref().to_string(),
             capture: None,
             arrow_undo: None,
             atomic_policy: false,
             spill_projection_history: Default::default(),
         };
-        let res = f(&mut tx);
-        self.end_deferred_dirty();
-        res
+        f(&mut tx)
     }
 
     /// Execute a named Engine action with atomic commit/rollback semantics.
@@ -5691,9 +5710,18 @@ where
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
         self.begin_deferred_dirty();
-        let res = self.action_atomic_impl_inner(capture, start_len, expand_runs, name, f);
-        self.end_deferred_dirty();
-        res
+        let engine_ptr: *mut Engine<R> = self;
+        let _dirty_guard = DeferredDirtyGuard {
+            engine: engine_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        unsafe { &mut *engine_ptr }.action_atomic_impl_inner(
+            capture,
+            start_len,
+            expand_runs,
+            name,
+            f,
+        )
     }
 
     fn action_atomic_impl_inner<T>(
@@ -6021,9 +6049,12 @@ where
         f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
     ) -> Result<T, crate::engine::EditorError> {
         self.begin_deferred_dirty();
-        let res = self.edit_with_capture_inner(capture, f);
-        self.end_deferred_dirty();
-        res
+        let engine_ptr: *mut Engine<R> = self;
+        let _dirty_guard = DeferredDirtyGuard {
+            engine: engine_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        unsafe { &mut *engine_ptr }.edit_with_capture_inner(capture, f)
     }
 
     fn edit_with_capture_inner<T>(
@@ -6533,6 +6564,9 @@ where
         let Some(first) = snap.target_cells.first() else {
             return;
         };
+        if !clear_only && self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
+            self.clear_delta_overlays_for_spill_restore(&snap.target_cells);
+        }
         for cell in &snap.target_cells {
             let r_off = cell.coord.row().saturating_sub(first.coord.row()) as usize;
             let c_off = cell.coord.col().saturating_sub(first.coord.col()) as usize;
@@ -6545,9 +6579,6 @@ where
             // a repeated edit sees orphan values and blocks the next spill.
             if clear_only && cell != first && self.read_cell_formula_ast(&sheet, r, c).is_some() {
                 continue;
-            }
-            if !clear_only {
-                self.clear_delta_overlay_cell(&sheet, r, c);
             }
             let out = if clear_only {
                 LiteralValue::Empty
@@ -12815,6 +12846,104 @@ where
         };
         if let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) {
             let _ = ch.overlay.remove(in_off);
+        }
+    }
+
+    /// Clear an explicit `Empty` delta-overlay tombstone for a cell about to
+    /// receive a spilled computed value without resurrecting a deleted base
+    /// Arrow value if the computed overlay is later cleared (e.g. `remove_sheet`
+    /// or post-shrink `insert_rows`).
+    ///
+    /// - Leaves non-empty user values in the delta overlay untouched.
+    /// - If the base lane is already `Empty`, removes the redundant overlay
+    ///   entry in O(1).
+    /// - If the base lane is non-empty, compacts the chunk's delta overlay into
+    ///   base storage so the `Empty` deletion persists in base Arrow.
+    fn clear_empty_delta_overlay_cell(&mut self, sheet: &str, row: u32, col: u32) {
+        if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
+            return;
+        }
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        let row0 = row.saturating_sub(1) as usize;
+        let col0 = col.saturating_sub(1) as usize;
+        if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
+            return;
+        }
+        let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+            return;
+        };
+        let needs_compact = {
+            let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) else {
+                return;
+            };
+            let Some(ov) = ch.overlay.get_scalar(in_off) else {
+                return;
+            };
+            if ov.type_tag() != crate::arrow_store::TypeTag::Empty {
+                return;
+            }
+            if crate::arrow_store::TypeTag::from_u8(ch.type_tag.value(in_off))
+                == crate::arrow_store::TypeTag::Empty
+            {
+                let _ = ch.overlay.remove(in_off);
+                false
+            } else {
+                true
+            }
+        };
+        if needs_compact {
+            let freed = asheet.maybe_compact_chunk(col0, ch_idx, 0, usize::MAX);
+            if freed > 0 {
+                self.overlay_compactions = self.overlay_compactions.saturating_add(1);
+            }
+        }
+    }
+
+    /// Clear delta-overlay entries for spill-owned cells being restored from a
+    /// `SpillSnapshot` (undo/redo), compacting any chunks where a restored cell
+    /// still has a non-empty base lane so subsequent computed-overlay clears
+    /// cannot resurrect stale base values.
+    fn clear_delta_overlays_for_spill_restore(&mut self, cells: &[CellRef]) {
+        let mut to_compact: rustc_hash::FxHashSet<(SheetId, usize, usize)> =
+            rustc_hash::FxHashSet::default();
+        for cell in cells {
+            let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
+            let Some(asheet) = self.arrow_sheets.sheet_mut(&sheet_name) else {
+                continue;
+            };
+            let row0 = cell.coord.row() as usize;
+            let col0 = cell.coord.col() as usize;
+            if row0 >= asheet.nrows as usize || col0 >= asheet.columns.len() {
+                continue;
+            }
+            let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+                continue;
+            };
+            let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx) else {
+                continue;
+            };
+            if crate::arrow_store::TypeTag::from_u8(ch.type_tag.value(in_off))
+                == crate::arrow_store::TypeTag::Empty
+            {
+                let _ = ch.overlay.remove(in_off);
+            } else {
+                let _ = ch
+                    .overlay
+                    .set(in_off, crate::arrow_store::OverlayValue::Empty);
+                ch.overlay.set_format(in_off, None);
+                to_compact.insert((cell.sheet_id, col0, ch_idx));
+            }
+        }
+        for (sheet_id, col0, ch_idx) in to_compact {
+            let sheet_name = self.graph.sheet_name(sheet_id).to_string();
+            if let Some(asheet) = self.arrow_sheets.sheet_mut(&sheet_name) {
+                let freed = asheet.maybe_compact_chunk(col0, ch_idx, 0, usize::MAX);
+                if freed > 0 {
+                    self.overlay_compactions = self.overlay_compactions.saturating_add(1);
+                }
+            }
         }
     }
 
@@ -19329,8 +19458,9 @@ impl ShimSpillManager {
                 let row = cell.coord.row() + 1;
                 let col = cell.coord.col() + 1;
                 // A cleared cell may retain an explicit Empty entry in the delta overlay
-                // (when compaction did not run); remove it so the spilled computed value is visible.
-                engine.clear_delta_overlay_cell(&sheet_name, row, col);
+                // (when compaction did not run); clear or compact it so the spilled computed
+                // value is visible without resurrecting a non-empty base lane on later clears.
+                engine.clear_empty_delta_overlay_cell(&sheet_name, row, col);
                 engine.mirror_value_to_computed_overlay(&sheet_name, row, col, &v);
             }
         }
@@ -21217,6 +21347,8 @@ where
                 let m = &members[i];
                 if i < recordable {
                     collector.begin_member(i as u32);
+                } else {
+                    collector.clear_current();
                 }
                 let value = {
                     let ctx = RecordingContext::new(&*self, &collector);
@@ -22058,8 +22190,9 @@ where
                 let row = cell.coord.row() + 1;
                 let col = cell.coord.col() + 1;
                 // A cleared cell may retain an explicit Empty entry in the delta overlay
-                // (when compaction did not run); remove it so the spilled computed value is visible.
-                self.clear_delta_overlay_cell(&sheet_name, row, col);
+                // (when compaction did not run); clear or compact it so the spilled computed
+                // value is visible without resurrecting a non-empty base lane on later clears.
+                self.clear_empty_delta_overlay_cell(&sheet_name, row, col);
                 self.mirror_value_to_computed_overlay(&sheet_name, row, col, &v);
             }
         }

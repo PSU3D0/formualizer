@@ -2040,6 +2040,7 @@ impl formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::begin_compound(&mut self, alloc::string::String)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::clear(&mut self)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::compound_depth(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::drain_open_compound_spill_cleared(&mut self) -> alloc::vec::Vec<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::end_compound(&mut self)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::event_meta(&self, usize) -> core::option::Option<&formualizer_eval::engine::graph::editor::change_log::ChangeEventMeta>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::events(&self) -> &[formualizer_eval::engine::graph::editor::change_log::ChangeEvent]
@@ -2049,6 +2050,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::len(&self
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::max_changelog_events(&self) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::meta(&self, usize) -> core::option::Option<(u64, core::option::Option<u64>)>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::new() -> Self
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::next_seq(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record_with_meta(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent, formualizer_eval::engine::graph::editor::change_log::ChangeEventMeta)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_actor_id(&mut self, core::option::Option<alloc::string::String>)
@@ -2632,6 +2634,7 @@ impl formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::begin_compound(&mut self, alloc::string::String)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::clear(&mut self)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::compound_depth(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::drain_open_compound_spill_cleared(&mut self) -> alloc::vec::Vec<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::end_compound(&mut self)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::event_meta(&self, usize) -> core::option::Option<&formualizer_eval::engine::graph::editor::change_log::ChangeEventMeta>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::events(&self) -> &[formualizer_eval::engine::graph::editor::change_log::ChangeEvent]
@@ -2641,6 +2644,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::len(&self
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::max_changelog_events(&self) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::meta(&self, usize) -> core::option::Option<(u64, core::option::Option<u64>)>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::new() -> Self
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::next_seq(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record_with_meta(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent, formualizer_eval::engine::graph::editor::change_log::ChangeEventMeta)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_actor_id(&mut self, core::option::Option<alloc::string::String>)
@@ -6118,6 +6122,7 @@ impl formualizer_eval::engine::graph::editor::change_log::ChangeLog
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::begin_compound(&mut self, alloc::string::String)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::clear(&mut self)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::compound_depth(&self) -> usize
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::drain_open_compound_spill_cleared(&mut self) -> alloc::vec::Vec<formualizer_eval::reference::CellRef>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::end_compound(&mut self)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::event_meta(&self, usize) -> core::option::Option<&formualizer_eval::engine::graph::editor::change_log::ChangeEventMeta>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::events(&self) -> &[formualizer_eval::engine::graph::editor::change_log::ChangeEvent]
@@ -6127,6 +6132,7 @@ pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::len(&self
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::max_changelog_events(&self) -> core::option::Option<usize>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::meta(&self, usize) -> core::option::Option<(u64, core::option::Option<u64>)>
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::new() -> Self
+pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::next_seq(&self) -> u64
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::record_with_meta(&mut self, formualizer_eval::engine::graph::editor::change_log::ChangeEvent, formualizer_eval::engine::graph::editor::change_log::ChangeEventMeta)
 pub fn formualizer_eval::engine::graph::editor::change_log::ChangeLog::set_actor_id(&mut self, core::option::Option<alloc::string::String>)
