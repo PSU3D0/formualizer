@@ -466,11 +466,11 @@ impl LiveEdgeCollector {
         if er < sr || ec < sc || self.members.is_empty() {
             return;
         }
+        let mut st = self.state.lock().unwrap();
+        let Some(from) = st.current else {
+            return;
+        };
         if self.members.len() <= RECT_INDEX_THRESHOLD {
-            let mut st = self.state.lock().unwrap();
-            let Some(from) = st.current else {
-                return;
-            };
             for (i, m) in self.members.iter().enumerate() {
                 if m.sheet_id == sheet_id
                     && m.row >= sr
@@ -488,10 +488,6 @@ impl LiveEdgeCollector {
             .rect_index
             .get_or_init(|| RectIndex::build(&self.members));
         let Some(sheet_idx) = rect_index.sheet(sheet_id) else {
-            return;
-        };
-        let mut st = self.state.lock().unwrap();
-        let Some(from) = st.current else {
             return;
         };
         sheet_idx.for_each_in_rect(sr, sc, er, ec, |idx| {
@@ -967,5 +963,28 @@ impl<'a, R: EvaluationContext, S: ReadSink> EvaluationContext for RecordingConte
         include_aggregate: bool,
     ) -> Option<Vec<(usize, usize, usize)>> {
         self.engine.nested_subtotal_cells(view, include_aggregate)
+    }
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use crate::reference::Coord;
+
+    #[test]
+    fn record_rect_skips_lazy_rect_index_when_no_current_member() {
+        let cells: Vec<CellRef> = (0..(RECT_INDEX_THRESHOLD as u32 + 8))
+            .map(|r| CellRef::new(0, Coord::new(r, 0, true, true)))
+            .collect();
+        let collector = LiveEdgeCollector::new(&cells);
+        collector.record_rect(0, 0, 0, 100, 10);
+        assert!(
+            collector.rect_index.get().is_none(),
+            "record_rect must not build RectIndex when current member is None"
+        );
+        collector.set_current(0);
+        collector.record_rect(0, 0, 0, 5, 0);
+        assert!(collector.rect_index.get().is_some());
+        assert_eq!(collector.take_edges().len(), 6);
     }
 }

@@ -30,8 +30,8 @@ A holiday range cell containing a date-typed value, such as one produced by DATE
    read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - The `weekend` argument can be a number code (1-7, 11-17) or a 7-character string
    of `0`s and `1`s (Mon-Sun, `1` = weekend day). Default is `1` (Sat/Sun).
- - The optional `holidays` argument accepts a range or array of date serials or date text to
-   exclude. Date-typed range cells are skipped.
+ - The optional `holidays` argument accepts a range or array of date values, serials, or date
+   text to exclude.
  - If `start_date &gt; end_date`, the result is negative.
 
 ## Error cases

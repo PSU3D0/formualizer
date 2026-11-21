@@ -1348,7 +1348,7 @@
     "shortSummary": "Returns the number of weekday business days between two dates, inclusive.",
     "signature": "=NETWORKDAYS(start_date, end_date, [holidays])",
     "typeName": "NetworkdaysFn",
-    "uniqueShare": 0.5186567164179104,
+    "uniqueShare": 0.5113636363636364,
     "variadic": false
   },
   "datetime/networkdays-intl": {
@@ -1424,7 +1424,7 @@
     "shortSummary": "Returns the number of working days between two dates with configurable weekends.",
     "signature": "=NETWORKDAYS.INTL(start_date, end_date, [weekend], [holidays])",
     "typeName": "NetworkdaysIntlFn",
-    "uniqueShare": 0.33460076045627374,
+    "uniqueShare": 0.34108527131782945,
     "variadic": false
   },
   "datetime/now": {
@@ -1750,7 +1750,7 @@
     "shortSummary": "Returns the date serial that is a given number of weekdays from a start date.",
     "signature": "=WORKDAY(start_date, days, [holidays])",
     "typeName": "WorkdayFn",
-    "uniqueShare": 0.5077519379844961,
+    "uniqueShare": 0.5,
     "variadic": false
   },
   "datetime/workday-intl": {
@@ -1826,7 +1826,7 @@
     "shortSummary": "Returns the date serial that is a given number of workdays from a start date, with configurable weekends.",
     "signature": "=WORKDAY.INTL(start_date, days, [weekend], [holidays])",
     "typeName": "WorkdayIntlFn",
-    "uniqueShare": 0.3951048951048951,
+    "uniqueShare": 0.40213523131672596,
     "variadic": false
   },
   "datetime/year": {

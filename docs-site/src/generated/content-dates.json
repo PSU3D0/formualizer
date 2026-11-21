@@ -300,12 +300,12 @@
     "sha256": "37cef2314ec1b0c696d39024619955fe3d08242f5cd618f6f73c9ad5f034cf9e"
   },
   "docs-site/content/docs/reference/functions/datetime/networkdays-intl.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ffe19024ad2754d2ac0fc1476d945377e6436599374f60d1a7d9763d441fc75a"
+    "date": "2026-11-21",
+    "sha256": "2e5387aaad9d19a4d041cff5baaf8271a5f174b312137efacf891ef0f72200f9"
   },
   "docs-site/content/docs/reference/functions/datetime/networkdays.mdx": {
-    "date": "2026-11-18",
-    "sha256": "516e8254f1aecdcc2687bbcc2a2e5b822436c248591eef594758d7d13a0264a5"
+    "date": "2026-11-21",
+    "sha256": "216b636488bab2811c29935945b9178caa1edaf60d0dc85e20cf9beb59ef1fbb"
   },
   "docs-site/content/docs/reference/functions/datetime/now.mdx": {
     "date": "2026-11-18",
@@ -336,12 +336,12 @@
     "sha256": "097139ed45d1cf07a3bc3dcf0e88ce25d13130518533183c44d9903d28169e77"
   },
   "docs-site/content/docs/reference/functions/datetime/workday-intl.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5ae189f51751e57f91ac7bc8af20e14dc03336162a14765754c477be2db2e6ef"
+    "date": "2026-11-21",
+    "sha256": "92b42d78cec3a46e45be652823350249ebd5defaa968c1f7de2bc90d93287401"
   },
   "docs-site/content/docs/reference/functions/datetime/workday.mdx": {
-    "date": "2026-11-18",
-    "sha256": "49113f6836f9da732c822c32cef26b7be1af7fd1757d41ad30ccabd0d7300753"
+    "date": "2026-11-21",
+    "sha256": "b3f32d0034519da90f5ea1e5bb51a11319ea742730e4ec5c9a00818369ff3266"
   },
   "docs-site/content/docs/reference/functions/datetime/year.mdx": {
     "date": "2026-11-18",

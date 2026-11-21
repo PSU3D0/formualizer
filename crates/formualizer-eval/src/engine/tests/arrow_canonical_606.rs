@@ -229,3 +229,146 @@ fn empty_semantics_spill_children_are_none_after_retraction_canonical_mode() {
     assert_eq!(engine.get_cell_value("Sheet1", 2, 1), None);
     assert_eq!(engine.get_cell_value("Sheet1", 2, 2), None);
 }
+
+#[test]
+fn cleared_base_arrow_blocker_not_resurrected_by_remove_sheet() {
+    let cfg = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+
+    // Bulk-ingest 100 rows so clearing a single cell leaves an Empty tombstone in
+    // `ch.overlay` without hitting the heuristic compaction threshold (> len/50).
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet("S", 1, 100);
+        ab.add_sheet("Other", 1, 1);
+        for row in 0..100 {
+            let v = if row == 1 {
+                LiteralValue::Number(999.0)
+            } else {
+                LiteralValue::Empty
+            };
+            ab.append_row("S", &[v]).unwrap();
+        }
+        ab.append_row("Other", &[LiteralValue::Empty]).unwrap();
+        let _ = ab.finish().unwrap();
+    }
+
+    engine
+        .set_cell_formula("S", 1, 1, parse("=SEQUENCE(3)").unwrap())
+        .unwrap();
+    // Base Arrow A2=999 blocks A1=SEQUENCE(3).
+    let _ = engine.evaluate_all();
+    assert_eq!(
+        engine.get_cell_value("S", 2, 1),
+        Some(LiteralValue::Number(999.0))
+    );
+
+    // Clear A2 and evaluate: spill succeeds with [1, 2, 3].
+    engine
+        .set_cell_value("S", 2, 1, LiteralValue::Empty)
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("S", 1, 1),
+        Some(LiteralValue::Number(1.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("S", 2, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("S", 3, 1),
+        Some(LiteralValue::Number(3.0))
+    );
+
+    // Removing an unrelated sheet clears all computed overlays; deleted base Arrow
+    // blocker `999` must NOT resurrect and re-block A1 with `#SPILL!`.
+    let other_id = engine.sheet_id("Other").unwrap();
+    engine.remove_sheet(other_id).unwrap();
+    assert!(matches!(
+        engine.get_cell_value("S", 2, 1),
+        None | Some(LiteralValue::Empty)
+    ));
+
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("S", 1, 1),
+        Some(LiteralValue::Number(1.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("S", 2, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("S", 3, 1),
+        Some(LiteralValue::Number(3.0))
+    );
+}
+
+#[test]
+fn cleared_base_arrow_blocker_not_resurrected_by_shrink_and_insert_rows() {
+    let cfg = arrow_eval_config();
+    let mut engine = Engine::new(TestWorkbook::default(), cfg);
+
+    // Bulk-ingest 100 rows with A2=999 in base Arrow.
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet("S", 1, 100);
+        for row in 0..100 {
+            let v = if row == 1 {
+                LiteralValue::Number(999.0)
+            } else {
+                LiteralValue::Empty
+            };
+            ab.append_row("S", &[v]).unwrap();
+        }
+        let _ = ab.finish().unwrap();
+    }
+
+    engine
+        .set_cell_formula("S", 1, 1, parse("=SEQUENCE(3)").unwrap())
+        .unwrap();
+    engine
+        .set_cell_value("S", 2, 1, LiteralValue::Empty)
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("S", 2, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+
+    // Shrink A1 to SEQUENCE(1), then insert a row before row 1 (clearing computed overlays).
+    engine
+        .set_cell_formula("S", 1, 1, parse("=SEQUENCE(1)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert!(matches!(
+        engine.get_cell_value("S", 2, 1),
+        None | Some(LiteralValue::Empty)
+    ));
+
+    engine.insert_rows("S", 1, 1).unwrap();
+    // Former A2 shifted to A3 must remain empty, not resurrect base Arrow 999.
+    assert!(matches!(
+        engine.get_cell_value("S", 3, 1),
+        None | Some(LiteralValue::Empty)
+    ));
+
+    // Re-expanding shifted anchor A2 to SEQUENCE(3) must succeed cleanly.
+    engine
+        .set_cell_formula("S", 2, 1, parse("=SEQUENCE(3)").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("S", 2, 1),
+        Some(LiteralValue::Number(1.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("S", 3, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("S", 4, 1),
+        Some(LiteralValue::Number(3.0))
+    );
+}
