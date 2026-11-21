@@ -1376,6 +1376,868 @@ impl<'a> RangeView<'a> {
         }
     }
 
+    #[inline]
+    fn read_chunk_cell(
+        ch: &arrow_store::ColumnChunk,
+        tags: &[u8],
+        numbers: Option<&arrow_array::Float64Array>,
+        booleans: Option<&arrow_array::BooleanArray>,
+        text: Option<&arrow_array::StringArray>,
+        errors: Option<&arrow_array::UInt8Array>,
+        in_off: usize,
+        has_overlay: bool,
+        date_system: DateSystem,
+    ) -> LiteralValue {
+        if has_overlay {
+            let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+            if let Some(ov) = cascade.get_scalar(in_off) {
+                return ov.to_literal_for(date_system);
+            }
+        }
+        match arrow_store::TypeTag::from_u8(tags[in_off]) {
+            arrow_store::TypeTag::Empty => LiteralValue::Empty,
+            arrow_store::TypeTag::Number
+            | arrow_store::TypeTag::DateTime
+            | arrow_store::TypeTag::Duration => match numbers {
+                Some(arr) if !arr.is_null(in_off) => LiteralValue::Number(arr.value(in_off)),
+                _ => LiteralValue::Empty,
+            },
+            arrow_store::TypeTag::Boolean => match booleans {
+                Some(arr) if !arr.is_null(in_off) => LiteralValue::Boolean(arr.value(in_off)),
+                _ => LiteralValue::Empty,
+            },
+            arrow_store::TypeTag::Text => match text {
+                Some(sa) if !sa.is_null(in_off) => LiteralValue::Text(sa.value(in_off).to_string()),
+                _ => LiteralValue::Empty,
+            },
+            arrow_store::TypeTag::Error => match errors {
+                Some(arr) if !arr.is_null(in_off) => LiteralValue::Error(ExcelError::new(
+                    arrow_store::unmap_error_code(arr.value(in_off)),
+                )),
+                _ => LiteralValue::Empty,
+            },
+            arrow_store::TypeTag::Pending => LiteralValue::Pending,
+        }
+    }
+
+    /// Visit every cell along a 1D lookup axis chunk-by-chunk, avoiding per-cell
+    /// chunk binary searches and redundant Arrow array downcasts.
+    pub(crate) fn visit_axis_values(
+        &self,
+        axis: crate::engine::lookup_index_cache::LookupAxis,
+        f: &mut impl FnMut(usize, LiteralValue) -> std::ops::ControlFlow<()>,
+    ) -> Result<(), ExcelError> {
+        use crate::engine::lookup_index_cache::LookupAxis;
+        use std::ops::ControlFlow;
+
+        if let Some(tail) = &self.tail {
+            let ar = tail.active_rows.min(self.rows);
+            let ac = tail.active_cols.min(self.cols);
+            match axis {
+                LookupAxis::ColumnInView(col) => {
+                    if col >= self.cols || self.rows == 0 {
+                        return Ok(());
+                    }
+                    if col < ac {
+                        if ar > 0
+                            && self
+                                .core_sub_view()
+                                .visit_axis_values_backing(LookupAxis::ColumnInView(col), f)?
+                        {
+                            return Ok(());
+                        }
+                        let tail_val = tail.bottom_tail.get(col).unwrap_or(&LiteralValue::Empty);
+                        for r in ar..self.rows {
+                            if (r - ar) & 4095 == 0 && self.criteria_cache_cancelled() {
+                                return Err(ExcelError::new(
+                                    formualizer_common::ExcelErrorKind::Cancelled,
+                                ));
+                            }
+                            if let ControlFlow::Break(()) = f(r, tail_val.clone()) {
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        for r in 0..ar {
+                            if r & 4095 == 0 && self.criteria_cache_cancelled() {
+                                return Err(ExcelError::new(
+                                    formualizer_common::ExcelErrorKind::Cancelled,
+                                ));
+                            }
+                            let val = tail
+                                .right_tail
+                                .get(r)
+                                .cloned()
+                                .unwrap_or(LiteralValue::Empty);
+                            if let ControlFlow::Break(()) = f(r, val) {
+                                return Ok(());
+                            }
+                        }
+                        for r in ar..self.rows {
+                            if (r - ar) & 4095 == 0 && self.criteria_cache_cancelled() {
+                                return Err(ExcelError::new(
+                                    formualizer_common::ExcelErrorKind::Cancelled,
+                                ));
+                            }
+                            if let ControlFlow::Break(()) = f(r, tail.corner_tail.clone()) {
+                                return Ok(());
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                LookupAxis::RowInView(row) => {
+                    if row >= self.rows || self.cols == 0 {
+                        return Ok(());
+                    }
+                    if row < ar {
+                        if ac > 0
+                            && self
+                                .core_sub_view()
+                                .visit_axis_values_backing(LookupAxis::RowInView(row), f)?
+                        {
+                            return Ok(());
+                        }
+                        let tail_val = tail.right_tail.get(row).unwrap_or(&LiteralValue::Empty);
+                        for c in ac..self.cols {
+                            if (c - ac) & 4095 == 0 && self.criteria_cache_cancelled() {
+                                return Err(ExcelError::new(
+                                    formualizer_common::ExcelErrorKind::Cancelled,
+                                ));
+                            }
+                            if let ControlFlow::Break(()) = f(c, tail_val.clone()) {
+                                return Ok(());
+                            }
+                        }
+                    } else {
+                        for c in 0..ac {
+                            if c & 4095 == 0 && self.criteria_cache_cancelled() {
+                                return Err(ExcelError::new(
+                                    formualizer_common::ExcelErrorKind::Cancelled,
+                                ));
+                            }
+                            let val = tail
+                                .bottom_tail
+                                .get(c)
+                                .cloned()
+                                .unwrap_or(LiteralValue::Empty);
+                            if let ControlFlow::Break(()) = f(c, val) {
+                                return Ok(());
+                            }
+                        }
+                        for c in ac..self.cols {
+                            if (c - ac) & 4095 == 0 && self.criteria_cache_cancelled() {
+                                return Err(ExcelError::new(
+                                    formualizer_common::ExcelErrorKind::Cancelled,
+                                ));
+                            }
+                            if let ControlFlow::Break(()) = f(c, tail.corner_tail.clone()) {
+                                return Ok(());
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
+        let _ = self.visit_axis_values_backing(axis, f)?;
+        Ok(())
+    }
+
+    /// Backing-only implementation of [`Self::visit_axis_values`] (no tail).
+    /// Returns `Ok(true)` if `f` requested an early break.
+    fn visit_axis_values_backing(
+        &self,
+        axis: crate::engine::lookup_index_cache::LookupAxis,
+        f: &mut impl FnMut(usize, LiteralValue) -> std::ops::ControlFlow<()>,
+    ) -> Result<bool, ExcelError> {
+        use crate::engine::lookup_index_cache::LookupAxis;
+        use std::ops::ControlFlow;
+
+        let sheet = self.sheet();
+        let date_system = sheet.date_system;
+        match axis {
+            LookupAxis::ColumnInView(col) => {
+                if col >= self.cols || self.rows == 0 {
+                    return Ok(false);
+                }
+                let abs_col = self.sc + col;
+                let col_ref = sheet.columns.get(abs_col);
+                let mut next_idx = 0usize;
+                for seg in self.iter_row_segments() {
+                    let seg = seg?;
+                    let SegmentKind::Backing {
+                        chunk_idx,
+                        chunk_offset,
+                    } = seg.kind
+                    else {
+                        continue;
+                    };
+                    while next_idx < seg.row_start {
+                        if let ControlFlow::Break(()) = f(next_idx, LiteralValue::Empty) {
+                            return Ok(true);
+                        }
+                        next_idx += 1;
+                    }
+                    let Some(ch) = col_ref.and_then(|c| c.chunk(chunk_idx)) else {
+                        for k in 0..seg.row_len {
+                            if let ControlFlow::Break(()) =
+                                f(seg.row_start + k, LiteralValue::Empty)
+                            {
+                                return Ok(true);
+                            }
+                        }
+                        next_idx = seg.row_start + seg.row_len;
+                        continue;
+                    };
+                    let tags = ch.type_tag.values();
+                    let numbers = ch.numbers.as_deref();
+                    let booleans = ch.booleans.as_deref();
+                    let text = ch
+                        .text
+                        .as_deref()
+                        .and_then(|a| a.as_any().downcast_ref::<arrow_array::StringArray>());
+                    let errors = ch.errors.as_deref();
+                    let cascade =
+                        arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                    let has_overlay =
+                        cascade.has_any_in_range(chunk_offset..chunk_offset + seg.row_len);
+
+                    for k in 0..seg.row_len {
+                        let in_off = chunk_offset + k;
+                        let val = Self::read_chunk_cell(
+                            ch,
+                            tags,
+                            numbers,
+                            booleans,
+                            text,
+                            errors,
+                            in_off,
+                            has_overlay,
+                            date_system,
+                        );
+                        if let ControlFlow::Break(()) = f(seg.row_start + k, val) {
+                            return Ok(true);
+                        }
+                    }
+                    next_idx = seg.row_start + seg.row_len;
+                }
+                while next_idx < self.rows {
+                    if let ControlFlow::Break(()) = f(next_idx, LiteralValue::Empty) {
+                        return Ok(true);
+                    }
+                    next_idx += 1;
+                }
+                Ok(false)
+            }
+            LookupAxis::RowInView(row) => {
+                if row >= self.rows || self.cols == 0 {
+                    return Ok(false);
+                }
+                let abs_row = self.sr + row;
+                let sheet_rows = sheet.nrows as usize;
+                if abs_row >= sheet_rows || sheet.chunk_starts.is_empty() {
+                    for c in 0..self.cols {
+                        if c & 4095 == 0 && self.criteria_cache_cancelled() {
+                            return Err(ExcelError::new(
+                                formualizer_common::ExcelErrorKind::Cancelled,
+                            ));
+                        }
+                        if let ControlFlow::Break(()) = f(c, LiteralValue::Empty) {
+                            return Ok(true);
+                        }
+                    }
+                    return Ok(false);
+                }
+                let ch_idx = match sheet.chunk_starts.binary_search(&abs_row) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                let in_off = abs_row - sheet.chunk_starts[ch_idx];
+                for c in 0..self.cols {
+                    if c & 4095 == 0 && self.criteria_cache_cancelled() {
+                        return Err(ExcelError::new(
+                            formualizer_common::ExcelErrorKind::Cancelled,
+                        ));
+                    }
+                    let abs_col = self.sc + c;
+                    let val = match sheet.columns.get(abs_col).and_then(|col| col.chunk(ch_idx)) {
+                        Some(ch) => {
+                            let tags = ch.type_tag.values();
+                            let numbers = ch.numbers.as_deref();
+                            let booleans = ch.booleans.as_deref();
+                            let text = ch.text.as_deref().and_then(|a| {
+                                a.as_any().downcast_ref::<arrow_array::StringArray>()
+                            });
+                            let errors = ch.errors.as_deref();
+                            Self::read_chunk_cell(
+                                ch,
+                                tags,
+                                numbers,
+                                booleans,
+                                text,
+                                errors,
+                                in_off,
+                                true,
+                                date_system,
+                            )
+                        }
+                        None => LiteralValue::Empty,
+                    };
+                    if let ControlFlow::Break(()) = f(c, val) {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    /// Stream approximate-searchable numeric values (as `f64`, excluding blanks and
+    /// errors) along a 1D lookup axis with zero per-cell heap allocations.
+    pub(crate) fn visit_axis_approx_numeric(
+        &self,
+        axis: crate::engine::lookup_index_cache::LookupAxis,
+        f: &mut impl FnMut(usize, f64) -> std::ops::ControlFlow<()>,
+    ) -> Result<(), ExcelError> {
+        use crate::builtins::lookup::lookup_utils::value_to_f64_lenient;
+        use crate::engine::lookup_index_cache::LookupAxis;
+        use std::ops::ControlFlow;
+
+        if let Some(tail) = &self.tail {
+            let date_system = self.sheet().date_system;
+            let ar = tail.active_rows.min(self.rows);
+            let ac = tail.active_cols.min(self.cols);
+            let extract_lit = |v: &LiteralValue| -> Option<f64> {
+                if matches!(v, LiteralValue::Empty) {
+                    None
+                } else {
+                    value_to_f64_lenient(v, date_system)
+                }
+            };
+            // A uniform constant tail spanning `start..end` only needs its first
+            // and last positions emitted: sortedness across identical values is
+            // always satisfied, ascending tie-breaking selects `end - 1`, and
+            // descending exact tie-breaking selects `start` while `>` selects `end - 1`.
+            let emit_uniform_span =
+                |start: usize,
+                 end: usize,
+                 v: &LiteralValue,
+                 f: &mut dyn FnMut(usize, f64) -> ControlFlow<()>| {
+                    if start >= end {
+                        return;
+                    }
+                    if let Some(n) = extract_lit(v) {
+                        if let ControlFlow::Break(()) = f(start, n) {
+                            return;
+                        }
+                        if end - 1 > start {
+                            let _ = f(end - 1, n);
+                        }
+                    }
+                };
+
+            match axis {
+                LookupAxis::ColumnInView(col) => {
+                    if col >= self.cols || self.rows == 0 {
+                        return Ok(());
+                    }
+                    if col < ac {
+                        if ar > 0
+                            && self.core_sub_view().visit_axis_approx_numeric_backing(
+                                LookupAxis::ColumnInView(col),
+                                f,
+                            )?
+                        {
+                            return Ok(());
+                        }
+                        let tail_val = tail.bottom_tail.get(col).unwrap_or(&LiteralValue::Empty);
+                        emit_uniform_span(ar, self.rows, tail_val, f);
+                    } else {
+                        for r in 0..ar {
+                            if let Some(n) = tail.right_tail.get(r).and_then(extract_lit)
+                                && let ControlFlow::Break(()) = f(r, n)
+                            {
+                                return Ok(());
+                            }
+                        }
+                        emit_uniform_span(ar, self.rows, &tail.corner_tail, f);
+                    }
+                    return Ok(());
+                }
+                LookupAxis::RowInView(row) => {
+                    if row >= self.rows || self.cols == 0 {
+                        return Ok(());
+                    }
+                    if row < ar {
+                        if ac > 0
+                            && self
+                                .core_sub_view()
+                                .visit_axis_approx_numeric_backing(LookupAxis::RowInView(row), f)?
+                        {
+                            return Ok(());
+                        }
+                        let tail_val = tail.right_tail.get(row).unwrap_or(&LiteralValue::Empty);
+                        emit_uniform_span(ac, self.cols, tail_val, f);
+                    } else {
+                        for c in 0..ac {
+                            if let Some(n) = tail.bottom_tail.get(c).and_then(extract_lit)
+                                && let ControlFlow::Break(()) = f(c, n)
+                            {
+                                return Ok(());
+                            }
+                        }
+                        emit_uniform_span(ac, self.cols, &tail.corner_tail, f);
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
+        let _ = self.visit_axis_approx_numeric_backing(axis, f)?;
+        Ok(())
+    }
+
+    /// Backing-only implementation of [`Self::visit_axis_approx_numeric`] (no tail).
+    /// Returns `Ok(true)` if `f` requested an early break.
+    fn visit_axis_approx_numeric_backing(
+        &self,
+        axis: crate::engine::lookup_index_cache::LookupAxis,
+        f: &mut impl FnMut(usize, f64) -> std::ops::ControlFlow<()>,
+    ) -> Result<bool, ExcelError> {
+        use crate::builtins::lookup::lookup_utils::try_parse_f64_fast;
+        use crate::engine::lookup_index_cache::LookupAxis;
+        use std::ops::ControlFlow;
+
+        let extract_overlay = |ov: &arrow_store::OverlayScalar<'_>| -> Option<f64> {
+            match ov.type_tag() {
+                arrow_store::TypeTag::Number
+                | arrow_store::TypeTag::DateTime
+                | arrow_store::TypeTag::Duration => ov.numeric_lane_value(),
+                arrow_store::TypeTag::Boolean => {
+                    ov.boolean_lane_value().map(|b| if b { 1.0 } else { 0.0 })
+                }
+                arrow_store::TypeTag::Text => ov.text_lane_value().and_then(try_parse_f64_fast),
+                arrow_store::TypeTag::Empty
+                | arrow_store::TypeTag::Error
+                | arrow_store::TypeTag::Pending => None,
+            }
+        };
+
+        let sheet = self.sheet();
+        match axis {
+            LookupAxis::ColumnInView(col) => {
+                if col >= self.cols || self.rows == 0 {
+                    return Ok(false);
+                }
+                let abs_col = self.sc + col;
+                let Some(col_ref) = sheet.columns.get(abs_col) else {
+                    return Ok(false);
+                };
+                for seg in self.iter_row_segments() {
+                    let seg = seg?;
+                    let SegmentKind::Backing {
+                        chunk_idx,
+                        chunk_offset,
+                    } = seg.kind
+                    else {
+                        continue;
+                    };
+                    let Some(ch) = col_ref.chunk(chunk_idx) else {
+                        continue;
+                    };
+                    let cascade =
+                        arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                    let has_overlay =
+                        cascade.has_any_in_range(chunk_offset..chunk_offset + seg.row_len);
+                    let tags = ch.type_tag.values();
+                    let numbers = ch.numbers.as_deref();
+                    let booleans = ch.booleans.as_deref();
+                    let text = ch
+                        .text
+                        .as_deref()
+                        .and_then(|a| a.as_any().downcast_ref::<arrow_array::StringArray>());
+
+                    if !has_overlay {
+                        // Fast path: chunk has non-null numeric lane and no boolean/text lanes.
+                        if let Some(num_arr) = numbers
+                            && num_arr.null_count() == 0
+                            && booleans.is_none()
+                            && text.is_none()
+                        {
+                            let num_vals = num_arr.values();
+                            let num_tag = arrow_store::TypeTag::Number as u8;
+                            let dt_tag = arrow_store::TypeTag::DateTime as u8;
+                            let dur_tag = arrow_store::TypeTag::Duration as u8;
+                            for k in 0..seg.row_len {
+                                let in_off = chunk_offset + k;
+                                let t = tags[in_off];
+                                if (t == num_tag || t == dt_tag || t == dur_tag)
+                                    && let ControlFlow::Break(()) =
+                                        f(seg.row_start + k, num_vals[in_off])
+                                {
+                                    return Ok(true);
+                                }
+                            }
+                            continue;
+                        }
+                        for k in 0..seg.row_len {
+                            let in_off = chunk_offset + k;
+                            let val = match arrow_store::TypeTag::from_u8(tags[in_off]) {
+                                arrow_store::TypeTag::Number
+                                | arrow_store::TypeTag::DateTime
+                                | arrow_store::TypeTag::Duration => numbers
+                                    .filter(|a| !a.is_null(in_off))
+                                    .map(|a| a.value(in_off)),
+                                arrow_store::TypeTag::Boolean => booleans
+                                    .filter(|a| !a.is_null(in_off))
+                                    .map(|a| if a.value(in_off) { 1.0 } else { 0.0 }),
+                                arrow_store::TypeTag::Text => text
+                                    .filter(|sa| !sa.is_null(in_off))
+                                    .and_then(|sa| try_parse_f64_fast(sa.value(in_off))),
+                                arrow_store::TypeTag::Empty
+                                | arrow_store::TypeTag::Error
+                                | arrow_store::TypeTag::Pending => None,
+                            };
+                            if let Some(v) = val
+                                && let ControlFlow::Break(()) = f(seg.row_start + k, v)
+                            {
+                                return Ok(true);
+                            }
+                        }
+                    } else {
+                        for k in 0..seg.row_len {
+                            let in_off = chunk_offset + k;
+                            let val = if let Some(ov) = cascade.get_scalar(in_off) {
+                                extract_overlay(&ov)
+                            } else {
+                                match arrow_store::TypeTag::from_u8(tags[in_off]) {
+                                    arrow_store::TypeTag::Number
+                                    | arrow_store::TypeTag::DateTime
+                                    | arrow_store::TypeTag::Duration => numbers
+                                        .filter(|a| !a.is_null(in_off))
+                                        .map(|a| a.value(in_off)),
+                                    arrow_store::TypeTag::Boolean => booleans
+                                        .filter(|a| !a.is_null(in_off))
+                                        .map(|a| if a.value(in_off) { 1.0 } else { 0.0 }),
+                                    arrow_store::TypeTag::Text => text
+                                        .filter(|sa| !sa.is_null(in_off))
+                                        .and_then(|sa| try_parse_f64_fast(sa.value(in_off))),
+                                    arrow_store::TypeTag::Empty
+                                    | arrow_store::TypeTag::Error
+                                    | arrow_store::TypeTag::Pending => None,
+                                }
+                            };
+                            if let Some(v) = val
+                                && let ControlFlow::Break(()) = f(seg.row_start + k, v)
+                            {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            LookupAxis::RowInView(row) => {
+                if row >= self.rows || self.cols == 0 {
+                    return Ok(false);
+                }
+                let abs_row = self.sr + row;
+                let sheet_rows = sheet.nrows as usize;
+                if abs_row >= sheet_rows || sheet.chunk_starts.is_empty() {
+                    return Ok(false);
+                }
+                let ch_idx = match sheet.chunk_starts.binary_search(&abs_row) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                let in_off = abs_row - sheet.chunk_starts[ch_idx];
+                let max_cols = self.cols.min(sheet.columns.len().saturating_sub(self.sc));
+                for c in 0..max_cols {
+                    if c & 4095 == 0 && self.criteria_cache_cancelled() {
+                        return Err(ExcelError::new(
+                            formualizer_common::ExcelErrorKind::Cancelled,
+                        ));
+                    }
+                    let Some(ch) = sheet.columns[self.sc + c].chunk(ch_idx) else {
+                        continue;
+                    };
+                    let cascade =
+                        arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                    let val = if let Some(ov) = cascade.get_scalar(in_off) {
+                        extract_overlay(&ov)
+                    } else {
+                        match arrow_store::TypeTag::from_u8(ch.type_tag.value(in_off)) {
+                            arrow_store::TypeTag::Number
+                            | arrow_store::TypeTag::DateTime
+                            | arrow_store::TypeTag::Duration => ch
+                                .numbers
+                                .as_deref()
+                                .filter(|a| !a.is_null(in_off))
+                                .map(|a| a.value(in_off)),
+                            arrow_store::TypeTag::Boolean => ch
+                                .booleans
+                                .as_deref()
+                                .filter(|a| !a.is_null(in_off))
+                                .map(|a| if a.value(in_off) { 1.0 } else { 0.0 }),
+                            arrow_store::TypeTag::Text => ch
+                                .text
+                                .as_deref()
+                                .and_then(|a| a.as_any().downcast_ref::<arrow_array::StringArray>())
+                                .filter(|sa| !sa.is_null(in_off))
+                                .and_then(|sa| try_parse_f64_fast(sa.value(in_off))),
+                            arrow_store::TypeTag::Empty
+                            | arrow_store::TypeTag::Error
+                            | arrow_store::TypeTag::Pending => None,
+                        }
+                    };
+                    if let Some(v) = val
+                        && let ControlFlow::Break(()) = f(c, v)
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
+    /// Stream approximate-searchable text values (borrowed `&str` from Arrow/overlay)
+    /// along a 1D lookup axis with zero per-cell heap allocations.
+    pub(crate) fn visit_axis_approx_text(
+        &self,
+        axis: crate::engine::lookup_index_cache::LookupAxis,
+        f: &mut impl FnMut(usize, &str) -> std::ops::ControlFlow<()>,
+    ) -> Result<(), ExcelError> {
+        use crate::engine::lookup_index_cache::LookupAxis;
+        use std::ops::ControlFlow;
+
+        if let Some(tail) = &self.tail {
+            let ar = tail.active_rows.min(self.rows);
+            let ac = tail.active_cols.min(self.cols);
+            let emit_uniform_span =
+                |start: usize,
+                 end: usize,
+                 v: &LiteralValue,
+                 f: &mut dyn FnMut(usize, &str) -> ControlFlow<()>| {
+                    if start >= end {
+                        return;
+                    }
+                    if let LiteralValue::Text(s) = v {
+                        if let ControlFlow::Break(()) = f(start, s.as_str()) {
+                            return;
+                        }
+                        if end - 1 > start {
+                            let _ = f(end - 1, s.as_str());
+                        }
+                    }
+                };
+
+            match axis {
+                LookupAxis::ColumnInView(col) => {
+                    if col >= self.cols || self.rows == 0 {
+                        return Ok(());
+                    }
+                    if col < ac {
+                        if ar > 0
+                            && self
+                                .core_sub_view()
+                                .visit_axis_approx_text_backing(LookupAxis::ColumnInView(col), f)?
+                        {
+                            return Ok(());
+                        }
+                        let tail_val = tail.bottom_tail.get(col).unwrap_or(&LiteralValue::Empty);
+                        emit_uniform_span(ar, self.rows, tail_val, f);
+                    } else {
+                        for r in 0..ar {
+                            if let Some(LiteralValue::Text(s)) = tail.right_tail.get(r)
+                                && let ControlFlow::Break(()) = f(r, s.as_str())
+                            {
+                                return Ok(());
+                            }
+                        }
+                        emit_uniform_span(ar, self.rows, &tail.corner_tail, f);
+                    }
+                    return Ok(());
+                }
+                LookupAxis::RowInView(row) => {
+                    if row >= self.rows || self.cols == 0 {
+                        return Ok(());
+                    }
+                    if row < ar {
+                        if ac > 0
+                            && self
+                                .core_sub_view()
+                                .visit_axis_approx_text_backing(LookupAxis::RowInView(row), f)?
+                        {
+                            return Ok(());
+                        }
+                        let tail_val = tail.right_tail.get(row).unwrap_or(&LiteralValue::Empty);
+                        emit_uniform_span(ac, self.cols, tail_val, f);
+                    } else {
+                        for c in 0..ac {
+                            if let Some(LiteralValue::Text(s)) = tail.bottom_tail.get(c)
+                                && let ControlFlow::Break(()) = f(c, s.as_str())
+                            {
+                                return Ok(());
+                            }
+                        }
+                        emit_uniform_span(ac, self.cols, &tail.corner_tail, f);
+                    }
+                    return Ok(());
+                }
+            }
+        }
+
+        let _ = self.visit_axis_approx_text_backing(axis, f)?;
+        Ok(())
+    }
+
+    /// Backing-only implementation of [`Self::visit_axis_approx_text`] (no tail).
+    /// Returns `Ok(true)` if `f` requested an early break.
+    fn visit_axis_approx_text_backing(
+        &self,
+        axis: crate::engine::lookup_index_cache::LookupAxis,
+        f: &mut impl FnMut(usize, &str) -> std::ops::ControlFlow<()>,
+    ) -> Result<bool, ExcelError> {
+        use crate::engine::lookup_index_cache::LookupAxis;
+        use std::ops::ControlFlow;
+
+        let sheet = self.sheet();
+        match axis {
+            LookupAxis::ColumnInView(col) => {
+                if col >= self.cols || self.rows == 0 {
+                    return Ok(false);
+                }
+                let abs_col = self.sc + col;
+                let Some(col_ref) = sheet.columns.get(abs_col) else {
+                    return Ok(false);
+                };
+                let text_tag = arrow_store::TypeTag::Text as u8;
+                for seg in self.iter_row_segments() {
+                    let seg = seg?;
+                    let SegmentKind::Backing {
+                        chunk_idx,
+                        chunk_offset,
+                    } = seg.kind
+                    else {
+                        continue;
+                    };
+                    let Some(ch) = col_ref.chunk(chunk_idx) else {
+                        continue;
+                    };
+                    let cascade =
+                        arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                    let has_overlay =
+                        cascade.has_any_in_range(chunk_offset..chunk_offset + seg.row_len);
+                    let text = ch
+                        .text
+                        .as_deref()
+                        .and_then(|a| a.as_any().downcast_ref::<arrow_array::StringArray>());
+                    if !has_overlay {
+                        let Some(sa) = text else {
+                            continue;
+                        };
+                        let tags = ch.type_tag.values();
+                        if sa.null_count() == 0 {
+                            for k in 0..seg.row_len {
+                                let in_off = chunk_offset + k;
+                                if tags[in_off] == text_tag
+                                    && let ControlFlow::Break(()) =
+                                        f(seg.row_start + k, sa.value(in_off))
+                                {
+                                    return Ok(true);
+                                }
+                            }
+                        } else {
+                            for k in 0..seg.row_len {
+                                let in_off = chunk_offset + k;
+                                if tags[in_off] == text_tag
+                                    && !sa.is_null(in_off)
+                                    && let ControlFlow::Break(()) =
+                                        f(seg.row_start + k, sa.value(in_off))
+                                {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                    } else {
+                        let tags = ch.type_tag.values();
+                        for k in 0..seg.row_len {
+                            let in_off = chunk_offset + k;
+                            let ov_opt = cascade.get_scalar(in_off);
+                            let val = if let Some(ov) = ov_opt.as_ref() {
+                                ov.text_lane_value()
+                            } else if tags[in_off] == text_tag {
+                                text.filter(|sa| !sa.is_null(in_off))
+                                    .map(|sa| sa.value(in_off))
+                            } else {
+                                None
+                            };
+                            if let Some(s) = val
+                                && let ControlFlow::Break(()) = f(seg.row_start + k, s)
+                            {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
+                Ok(false)
+            }
+            LookupAxis::RowInView(row) => {
+                if row >= self.rows || self.cols == 0 {
+                    return Ok(false);
+                }
+                let abs_row = self.sr + row;
+                let sheet_rows = sheet.nrows as usize;
+                if abs_row >= sheet_rows || sheet.chunk_starts.is_empty() {
+                    return Ok(false);
+                }
+                let ch_idx = match sheet.chunk_starts.binary_search(&abs_row) {
+                    Ok(i) => i,
+                    Err(0) => 0,
+                    Err(i) => i - 1,
+                };
+                let in_off = abs_row - sheet.chunk_starts[ch_idx];
+                let max_cols = self.cols.min(sheet.columns.len().saturating_sub(self.sc));
+                let text_tag = arrow_store::TypeTag::Text as u8;
+                for c in 0..max_cols {
+                    if c & 4095 == 0 && self.criteria_cache_cancelled() {
+                        return Err(ExcelError::new(
+                            formualizer_common::ExcelErrorKind::Cancelled,
+                        ));
+                    }
+                    let Some(ch) = sheet.columns[self.sc + c].chunk(ch_idx) else {
+                        continue;
+                    };
+                    let cascade =
+                        arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                    let ov_opt = cascade.get_scalar(in_off);
+                    let val = if let Some(ov) = ov_opt.as_ref() {
+                        ov.text_lane_value()
+                    } else if ch.type_tag.value(in_off) == text_tag {
+                        ch.text
+                            .as_deref()
+                            .and_then(|a| a.as_any().downcast_ref::<arrow_array::StringArray>())
+                            .filter(|sa| !sa.is_null(in_off))
+                            .map(|sa| sa.value(in_off))
+                    } else {
+                        None
+                    };
+                    if let Some(s) = val
+                        && let ControlFlow::Break(()) = f(c, s)
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+        }
+    }
+
     /// Row-major cell traversal.
     pub fn for_each_cell(
         &self,
