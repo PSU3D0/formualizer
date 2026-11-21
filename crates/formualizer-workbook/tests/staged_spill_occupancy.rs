@@ -81,13 +81,12 @@ fn uncached_xlsx_pending_spill_blocks_without_preparing_source_and_retries() {
                 wb.evaluate_cell("S", 1, 1).unwrap(),
                 LiteralValue::Number(1.0)
             );
-            // Existing user-overlay precedence keeps an explicit Empty edit
-            // visible over spill output (also reproduced on published 0.9.2).
-            // Engine-only tests assert the projected member is actually 2.
-            assert_eq!(wb.get_value("S", 2, 1), None);
+            // Clearing the blocker cell unblocks the spill and exposes the
+            // spilled member value rather than leaving a stale Empty overlay.
+            assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Number(2.0)));
             wb.evaluate_all().unwrap();
             assert!(wb.get_formula("S", 2, 1).is_none());
-            assert_eq!(wb.get_value("S", 2, 1), None);
+            assert_eq!(wb.get_value("S", 2, 1), Some(LiteralValue::Number(2.0)));
         }
     }
 }
