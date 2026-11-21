@@ -162,9 +162,11 @@ impl GraphUndoBatch {
     }
 
     pub fn undo(&self, graph: &mut DependencyGraph) -> Result<(), EditorError> {
+        graph.begin_deferred_dirty();
         graph.authority_set_replay(crate::engine::authority::history::Replay::Undo);
         let replayed = self.undo_events(graph);
         graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        let _ = graph.end_deferred_dirty();
         replayed
     }
 
@@ -199,12 +201,14 @@ impl GraphUndoBatch {
     }
 
     pub fn redo(&self, graph: &mut DependencyGraph) -> Result<(), EditorError> {
+        graph.begin_deferred_dirty();
         graph.authority_set_replay(crate::engine::authority::history::Replay::Redo);
         let replayed = self
             .events
             .iter()
             .try_for_each(|ev| apply_forward_change_event(graph, ev));
         graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        let _ = graph.end_deferred_dirty();
         replayed
     }
 }

@@ -886,9 +886,13 @@ impl<'g> VertexEditor<'g> {
         // Remove all edges
         self.graph.remove_all_edges(id);
 
-        // Mark all dependents as having #REF! error
-        for dep_id in &dependents {
-            self.graph.mark_as_ref_error(*dep_id);
+        // Mark all dependents as having #REF! error in one batched propagation.
+        if !dependents.is_empty() {
+            self.graph.begin_deferred_dirty();
+            for dep_id in &dependents {
+                self.graph.mark_as_ref_error(*dep_id);
+            }
+            let _ = self.graph.end_deferred_dirty();
         }
 
         // Mark as deleted in store (tombstone)
@@ -1102,8 +1106,10 @@ impl<'g> VertexEditor<'g> {
         before: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        self.graph.begin_deferred_dirty();
         let result = self.insert_rows_impl(sheet_id, before, count);
         self.graph.authority_end_structural();
+        let _ = self.graph.end_deferred_dirty();
         result
     }
 
@@ -1202,8 +1208,10 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        self.graph.begin_deferred_dirty();
         let result = self.delete_rows_impl(sheet_id, start, count);
         self.graph.authority_end_structural();
+        let _ = self.graph.end_deferred_dirty();
         result
     }
 
@@ -1333,8 +1341,10 @@ impl<'g> VertexEditor<'g> {
         before: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        self.graph.begin_deferred_dirty();
         let result = self.insert_columns_impl(sheet_id, before, count);
         self.graph.authority_end_structural();
+        let _ = self.graph.end_deferred_dirty();
         result
     }
 
@@ -1552,8 +1562,10 @@ impl<'g> VertexEditor<'g> {
         start: u32,
         count: u32,
     ) -> Result<ShiftSummary, EditorError> {
+        self.graph.begin_deferred_dirty();
         let result = self.delete_columns_impl(sheet_id, start, count);
         self.graph.authority_end_structural();
+        let _ = self.graph.end_deferred_dirty();
         result
     }
 
@@ -2028,6 +2040,20 @@ impl<'g> VertexEditor<'g> {
         end_row: u32,
         end_col: u32,
     ) -> Result<RangeSummary, EditorError> {
+        self.graph.begin_deferred_dirty();
+        let result = self.clear_range_impl(sheet_id, start_row, start_col, end_row, end_col);
+        let _ = self.graph.end_deferred_dirty();
+        result
+    }
+
+    fn clear_range_impl(
+        &mut self,
+        sheet_id: SheetId,
+        start_row: u32,
+        start_col: u32,
+        end_row: u32,
+        end_col: u32,
+    ) -> Result<RangeSummary, EditorError> {
         let mut summary = RangeSummary::default();
 
         self.begin_batch();
@@ -2067,6 +2093,33 @@ impl<'g> VertexEditor<'g> {
 
     /// Copy a range to a new location
     pub fn copy_range(
+        &mut self,
+        sheet_id: SheetId,
+        from_start_row: u32,
+        from_start_col: u32,
+        from_end_row: u32,
+        from_end_col: u32,
+        to_sheet_id: SheetId,
+        to_row: u32,
+        to_col: u32,
+    ) -> Result<RangeSummary, EditorError> {
+        self.graph.begin_deferred_dirty();
+        let result = self.copy_range_impl(
+            sheet_id,
+            from_start_row,
+            from_start_col,
+            from_end_row,
+            from_end_col,
+            to_sheet_id,
+            to_row,
+            to_col,
+        );
+        let _ = self.graph.end_deferred_dirty();
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn copy_range_impl(
         &mut self,
         sheet_id: SheetId,
         from_start_row: u32,
@@ -2188,6 +2241,7 @@ impl<'g> VertexEditor<'g> {
         to_row: u32,
         to_col: u32,
     ) -> Result<RangeSummary, EditorError> {
+        self.graph.begin_deferred_dirty();
         let result = self.move_range_impl(
             sheet_id,
             from_start_row,
@@ -2199,6 +2253,7 @@ impl<'g> VertexEditor<'g> {
             to_col,
         );
         self.graph.authority_end_structural();
+        let _ = self.graph.end_deferred_dirty();
         result
     }
 

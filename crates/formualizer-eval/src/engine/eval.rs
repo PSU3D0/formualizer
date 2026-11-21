@@ -5635,6 +5635,7 @@ where
             _marker: std::marker::PhantomData,
         };
 
+        self.begin_deferred_dirty();
         let mut tx = EngineAction {
             engine: self,
             name: name.as_ref().to_string(),
@@ -5643,7 +5644,9 @@ where
             atomic_policy: false,
             spill_projection_history: Default::default(),
         };
-        f(&mut tx)
+        let res = f(&mut tx);
+        self.end_deferred_dirty();
+        res
     }
 
     /// Execute a named Engine action with atomic commit/rollback semantics.
@@ -5694,6 +5697,20 @@ where
         name: String,
         f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
     ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
+        self.begin_deferred_dirty();
+        let res = self.action_atomic_impl_inner(capture, start_len, expand_runs, name, f);
+        self.end_deferred_dirty();
+        res
+    }
+
+    fn action_atomic_impl_inner<T>(
+        &mut self,
+        capture: &mut MutationCapture,
+        start_len: usize,
+        expand_runs: bool,
+        name: String,
+        f: impl FnOnce(&mut EngineAction<'_, R>) -> Result<T, crate::engine::EditorError>,
+    ) -> Result<(T, crate::engine::ActionJournal), crate::engine::EditorError> {
         let invalidation_baseline = self.invalidation_baseline();
         let mut arrow_undo = crate::engine::ArrowUndoBatch::default();
         let arrow_ptr: *mut crate::engine::ArrowUndoBatch = &mut arrow_undo;
@@ -5737,9 +5754,7 @@ where
         match res {
             Ok(v) => {
                 if !journal.graph.is_empty() || !journal.arrow.is_empty() || has_runs {
-                    for event in &journal.graph.events {
-                        self.record_change_for_event(event);
-                    }
+                    self.record_changes_for_events(&journal.graph.events);
                     let mut impact = Self::classify_change_events(
                         &journal.graph.events,
                         LoggedEditDirection::Original,
@@ -5762,12 +5777,10 @@ where
                     });
                 }
                 if !journal.graph.is_empty() || !journal.arrow.is_empty() {
-                    for event in &journal.graph.events {
-                        // Rollback restored projection ownership just like undo.
-                        // Notify dependents without treating restored cells as
-                        // new user writes that release that ownership again.
-                        self.record_inverse_change_for_event(event);
-                    }
+                    // Rollback restored projection ownership just like undo.
+                    // Notify dependents without treating restored cells as
+                    // new user writes that release that ownership again.
+                    self.record_inverse_changes_for_events(&journal.graph.events);
                 }
                 Err(e)
             }
@@ -5861,6 +5874,7 @@ where
         );
 
         // 1) Roll back the dependency graph.
+        self.graph.begin_deferred_dirty();
         self.graph
             .authority_set_replay(crate::engine::authority::history::Replay::Undo);
         let rolled_back = (|| {
@@ -5897,6 +5911,7 @@ where
         })();
         self.graph
             .authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        let _ = self.graph.end_deferred_dirty();
         rolled_back?;
 
         // 2) Roll back engine row-visibility metadata.
@@ -6012,6 +6027,17 @@ where
         capture: &mut MutationCapture,
         f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
     ) -> Result<T, crate::engine::EditorError> {
+        self.begin_deferred_dirty();
+        let res = self.edit_with_capture_inner(capture, f);
+        self.end_deferred_dirty();
+        res
+    }
+
+    fn edit_with_capture_inner<T>(
+        &mut self,
+        capture: &mut MutationCapture,
+        f: impl FnOnce(&mut crate::engine::VertexEditor) -> T,
+    ) -> Result<T, crate::engine::EditorError> {
         let invalidation_baseline = self.invalidation_baseline();
         let start_len = capture.len();
         let lazy_start = capture.lazy_len();
@@ -6079,9 +6105,7 @@ where
         for ev in &new_events {
             self.mirror_forward_change_to_arrow(ev);
         }
-        for ev in &new_events {
-            self.record_change_for_event(ev);
-        }
+        self.record_changes_for_events(&new_events);
 
         // Atomic EngineAction calls publish one invalidation for their complete
         // journal at commit/rollback. Direct logged edits publish here.
@@ -6221,33 +6245,36 @@ where
             LoggedEditDirection::InverseReplay,
             invalidation_baseline,
         );
-        let batch = undo.undo(&mut self.graph, log)?;
-        for item in batch.iter().rev() {
-            self.apply_inverse_row_visibility_event(&item.event);
-            self.apply_inverse_staged_formula_event(&item.event);
-        }
-        if !batch.is_empty() {
-            let events = batch
-                .iter()
-                .map(|item| item.event.clone())
-                .collect::<Vec<_>>();
-            self.clear_logged_cell_format_states(&events);
-        }
-        self.mirror_undo_batch_to_arrow(&batch);
-        if !batch.is_empty() {
-            for item in &batch {
-                self.record_inverse_change_for_event(&item.event);
+        self.begin_deferred_dirty();
+        let res = (|| {
+            let batch = undo.undo(&mut self.graph, log)?;
+            for item in batch.iter().rev() {
+                self.apply_inverse_row_visibility_event(&item.event);
+                self.apply_inverse_staged_formula_event(&item.event);
             }
-        }
-        crate::engine::trace::fz_event!(
-            tracing::Level::INFO,
-            "history",
-            "history.replay",
-            op = "undo",
-            events_replayed = batch.len(),
-            ownership_resyncs = batch.len()
-        );
-        Ok(())
+            if !batch.is_empty() {
+                let events = batch
+                    .iter()
+                    .map(|item| item.event.clone())
+                    .collect::<Vec<_>>();
+                self.clear_logged_cell_format_states(&events);
+            }
+            self.mirror_undo_batch_to_arrow(&batch);
+            if !batch.is_empty() {
+                self.record_inverse_changes_for_events(batch.iter().map(|item| &item.event));
+            }
+            crate::engine::trace::fz_event!(
+                tracing::Level::INFO,
+                "history",
+                "history.replay",
+                op = "undo",
+                events_replayed = batch.len(),
+                ownership_resyncs = batch.len()
+            );
+            Ok(())
+        })();
+        self.end_deferred_dirty();
+        res
     }
 
     pub fn redo_logged(
@@ -6264,33 +6291,36 @@ where
             LoggedEditDirection::ForwardReplay,
             invalidation_baseline,
         );
-        let batch = undo.redo(&mut self.graph, log)?;
-        for item in &batch {
-            self.apply_forward_row_visibility_event(&item.event);
-            self.apply_forward_staged_formula_event(&item.event);
-        }
-        if !batch.is_empty() {
-            let events = batch
-                .iter()
-                .map(|item| item.event.clone())
-                .collect::<Vec<_>>();
-            self.clear_logged_cell_format_states(&events);
-        }
-        self.mirror_redo_batch_to_arrow(&batch);
-        if !batch.is_empty() {
+        self.begin_deferred_dirty();
+        let res = (|| {
+            let batch = undo.redo(&mut self.graph, log)?;
             for item in &batch {
-                self.record_change_for_event(&item.event);
+                self.apply_forward_row_visibility_event(&item.event);
+                self.apply_forward_staged_formula_event(&item.event);
             }
-        }
-        crate::engine::trace::fz_event!(
-            tracing::Level::INFO,
-            "history",
-            "history.replay",
-            op = "redo",
-            events_replayed = batch.len(),
-            ownership_resyncs = batch.len()
-        );
-        Ok(())
+            if !batch.is_empty() {
+                let events = batch
+                    .iter()
+                    .map(|item| item.event.clone())
+                    .collect::<Vec<_>>();
+                self.clear_logged_cell_format_states(&events);
+            }
+            self.mirror_redo_batch_to_arrow(&batch);
+            if !batch.is_empty() {
+                self.record_changes_for_events(batch.iter().map(|item| &item.event));
+            }
+            crate::engine::trace::fz_event!(
+                tracing::Level::INFO,
+                "history",
+                "history.replay",
+                op = "redo",
+                events_replayed = batch.len(),
+                ownership_resyncs = batch.len()
+            );
+            Ok(())
+        })();
+        self.end_deferred_dirty();
+        res
     }
 
     /// Undo the last committed atomic action using the journal stack.
@@ -6315,14 +6345,18 @@ where
             LoggedEditDirection::InverseReplay,
             invalidation_baseline,
         );
-        journal.graph.undo(&mut self.graph)?;
-        self.apply_inverse_row_visibility_events(&journal.graph.events);
-        self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
-        if !journal.graph.is_empty() || !journal.arrow.is_empty() {
-            for event in &journal.graph.events {
-                self.record_inverse_change_for_event(event);
+        self.begin_deferred_dirty();
+        let res = (|| {
+            journal.graph.undo(&mut self.graph)?;
+            self.apply_inverse_row_visibility_events(&journal.graph.events);
+            self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ true);
+            if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                self.record_inverse_changes_for_events(&journal.graph.events);
             }
-        }
+            Ok::<(), crate::engine::EditorError>(())
+        })();
+        self.end_deferred_dirty();
+        res?;
 
         #[cfg(feature = "tracing")]
         let events_replayed = journal.graph.events.len();
@@ -6359,14 +6393,18 @@ where
             LoggedEditDirection::ForwardReplay,
             invalidation_baseline,
         );
-        journal.graph.redo(&mut self.graph)?;
-        self.apply_forward_row_visibility_events(&journal.graph.events);
-        self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ false);
-        if !journal.graph.is_empty() || !journal.arrow.is_empty() {
-            for event in &journal.graph.events {
-                self.record_change_for_event(event);
+        self.begin_deferred_dirty();
+        let res = (|| {
+            journal.graph.redo(&mut self.graph)?;
+            self.apply_forward_row_visibility_events(&journal.graph.events);
+            self.apply_arrow_undo_batch(&journal.arrow, /*undo=*/ false);
+            if !journal.graph.is_empty() || !journal.arrow.is_empty() {
+                self.record_changes_for_events(&journal.graph.events);
             }
-        }
+            Ok::<(), crate::engine::EditorError>(())
+        })();
+        self.end_deferred_dirty();
+        res?;
 
         #[cfg(feature = "tracing")]
         let events_replayed = journal.graph.events.len();
@@ -12031,23 +12069,28 @@ where
             .iter()
             .flat_map(|&anchor| self.graph.spill_cells_to_clear(anchor))
             .collect();
-        if let Some(capture) = capture {
-            let start_len = capture.len();
-            self.edit_with_capture(capture, |editor| {
-                for &anchor in &anchors {
-                    editor.clear_spill_region(anchor);
+        self.begin_deferred_dirty();
+        let res = (|| {
+            if let Some(capture) = capture {
+                let start_len = capture.len();
+                self.edit_with_capture(capture, |editor| {
+                    for &anchor in &anchors {
+                        editor.clear_spill_region(anchor);
+                    }
+                })?;
+                if let Some(undo) = undo {
+                    self.record_spill_ops_into_arrow_undo(undo, &capture.events()[start_len..]);
                 }
-            })?;
-            if let Some(undo) = undo {
-                self.record_spill_ops_into_arrow_undo(undo, &capture.events()[start_len..]);
+            } else {
+                for &anchor in &anchors {
+                    self.clear_spill_projection_and_mirror(anchor, None);
+                }
             }
-        } else {
-            for &anchor in &anchors {
-                self.clear_spill_projection_and_mirror(anchor, None);
-            }
-        }
-        self.graph.mark_dirty_many(&anchors);
-        Ok(cells)
+            self.graph.mark_dirty_many(&anchors);
+            Ok(cells)
+        })();
+        self.end_deferred_dirty();
+        res
     }
 
     /// Empty overlays mask old outputs compacted into base storage. Structural
@@ -14446,6 +14489,25 @@ where
         });
     }
 
+    fn record_changes_for_events<'a>(&mut self, events: impl IntoIterator<Item = &'a ChangeEvent>) {
+        self.begin_deferred_dirty();
+        for event in events {
+            self.record_change_for_event(event);
+        }
+        self.end_deferred_dirty();
+    }
+
+    fn record_inverse_changes_for_events<'a>(
+        &mut self,
+        events: impl IntoIterator<Item = &'a ChangeEvent>,
+    ) {
+        self.begin_deferred_dirty();
+        for event in events {
+            self.record_inverse_change_for_event(event);
+        }
+        self.end_deferred_dirty();
+    }
+
     fn record_inverse_change_for_event(&mut self, event: &ChangeEvent) {
         if let ChangeEvent::SetValue { addr, .. } | ChangeEvent::SetFormula { addr, .. } = event {
             // Replay already restored any spill snapshot's ownership. This
@@ -14733,14 +14795,20 @@ where
             })
             .collect();
         let n = self.graph.bulk_set_formulas_with_plans(sheet, planned)?;
-        for (row, col) in edited_cells {
-            let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
-            for table in self.graph.empty_tables_at(cell) {
-                self.graph.resize_table(&table.name, table.range)?;
+        self.begin_deferred_dirty();
+        let post_res = (|| {
+            for (row, col) in edited_cells {
+                let cell = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+                for table in self.graph.empty_tables_at(cell) {
+                    self.graph.resize_table(&table.name, table.range)?;
+                }
+                self.clear_cell_format_state(sheet, cell);
+                self.record_changed_cell(sheet, row, col);
             }
-            self.clear_cell_format_state(sheet, cell);
-            self.record_changed_cell(sheet, row, col);
-        }
+            Ok::<_, ExcelError>(())
+        })();
+        self.end_deferred_dirty();
+        post_res?;
         // Single topology bump after batch
         if n > 0 {
             self.mark_topology_edited();

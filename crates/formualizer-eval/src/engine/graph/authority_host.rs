@@ -537,13 +537,27 @@ impl DependencyGraph {
         }
         match self.authority.state {
             // Nothing is built yet, or the host failed: the next sync
-            // builds from scratch or stays failed.
-            HostState::Unbuilt | HostState::Failed(_) => return,
+            // builds from scratch or stays failed. If pre-edit rect dirty
+            // seeds were deferred while unbuilt (after load closures are
+            // active), sync now so those rects are evaluated in the pre-edit
+            // coordinate frame before vertices move.
+            HostState::Failed(_) => return,
+            HostState::Unbuilt => {
+                if self.deferred_dirty_pending_rects.is_empty()
+                    || self.authority_load_skips_closures()
+                {
+                    return;
+                }
+            }
             HostState::Ready => {}
         }
         self.authority_sync();
         if self.authority.state != HostState::Ready {
             return;
+        }
+        if !self.deferred_dirty_pending_rects.is_empty() {
+            let rects = std::mem::take(&mut self.deferred_dirty_pending_rects);
+            let _ = self.authority_mark_dirty_rects(&rects);
         }
         self.authority.structural_pending = true;
     }
@@ -1176,10 +1190,15 @@ impl DependencyGraph {
         if self.authority.pending_dirty.is_empty() {
             return;
         }
-        let seeds: Vec<VertexId> = std::mem::take(&mut self.authority.pending_dirty)
+        let mut seeds: Vec<VertexId> = std::mem::take(&mut self.authority.pending_dirty)
             .into_iter()
             .filter(|&v| self.store.vertex_exists(v) && !self.store.is_deleted(v))
             .collect();
+        seeds.sort_unstable();
+        seeds.dedup();
+        if seeds.is_empty() {
+            return;
+        }
         let mut affected = FxHashSet::default();
         self.authority_mark_closure(&seeds, &mut affected);
         self.formula_dirty.legacy_extend(affected.iter().copied());
@@ -1279,20 +1298,84 @@ impl DependencyGraph {
         self.authority_closure_of_rects(&rects)
     }
 
+    /// Coalesce adjacent/overlapping seed rects on grid sheets into fewer
+    /// rectangles so multi-source closures over runs/ranges issue O(runs)
+    /// store queries instead of O(cells) queries.
+    fn coalesce_seed_rects(rects: &[(u16, Rect)]) -> Vec<(u16, Rect)> {
+        let mut merged: Vec<(u16, Rect)> = rects.to_vec();
+        // Pass 1: merge vertically adjacent/overlapping rects sharing (sheet, c0, c1).
+        merged.sort_unstable_by_key(|&(s, r)| (s, r.c0, r.c1, r.r0, r.r1));
+        let mut write = 0usize;
+        for read in 0..merged.len() {
+            let cur = merged[read];
+            if write > 0 {
+                let prev = &mut merged[write - 1];
+                if prev.0 == cur.0 && prev.1 == cur.1 {
+                    continue;
+                }
+                if prev.0 != SYMBOL_SHEET
+                    && prev.0 == cur.0
+                    && prev.1.c0 == cur.1.c0
+                    && prev.1.c1 == cur.1.c1
+                    && cur.1.r0 <= prev.1.r1.saturating_add(1)
+                {
+                    prev.1.r1 = prev.1.r1.max(cur.1.r1);
+                    continue;
+                }
+            }
+            merged[write] = cur;
+            write += 1;
+        }
+        merged.truncate(write);
+
+        // Pass 2: merge horizontally adjacent/overlapping rects sharing (sheet, r0, r1).
+        merged.sort_unstable_by_key(|&(s, r)| (s, r.r0, r.r1, r.c0, r.c1));
+        let mut write = 0usize;
+        for read in 0..merged.len() {
+            let cur = merged[read];
+            if write > 0 {
+                let prev = &mut merged[write - 1];
+                if prev.0 == cur.0 && prev.1 == cur.1 {
+                    continue;
+                }
+                if prev.0 != SYMBOL_SHEET
+                    && prev.0 == cur.0
+                    && prev.1.r0 == cur.1.r0
+                    && prev.1.r1 == cur.1.r1
+                    && cur.1.c0 <= prev.1.c1.saturating_add(1)
+                {
+                    prev.1.c1 = prev.1.c1.max(cur.1.c1);
+                    continue;
+                }
+            }
+            merged[write] = cur;
+            write += 1;
+        }
+        merged.truncate(write);
+        merged
+    }
+
     /// The executor vertices of the transitive dependents of `rects`.
     pub(crate) fn authority_closure_of_rects(&self, rects: &[(u16, Rect)]) -> Vec<VertexId> {
         if rects.is_empty() {
             return Vec::new();
         }
+        let coalesced;
+        let seeds = if rects.len() > 1 {
+            coalesced = Self::coalesce_seed_rects(rects);
+            coalesced.as_slice()
+        } else {
+            rects
+        };
         // Observations are planner hints as well as runtime reverse routes.
         // Query their geometric index alongside static relations; a producer
         // need not exist yet (e.g. the first publication into an empty spill
         // child). Coverage differences bound the traversal to affected pieces.
         let cover = if !self.authority.has_observed_routes() {
-            self.authority.store.dependents(rects, TagFilter::All).0
+            self.authority.store.dependents(seeds, TagFilter::All).0
         } else {
             let mut cover = Cover::new();
-            let mut frontier = rects.to_vec();
+            let mut frontier = seeds.to_vec();
             let mut hits = Vec::new();
             let mut readers = Vec::new();
             while let Some((sheet, rect)) = frontier.pop() {
