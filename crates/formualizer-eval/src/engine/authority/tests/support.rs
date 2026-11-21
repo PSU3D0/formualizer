@@ -106,6 +106,33 @@ pub fn column(col: u32, sheet: u16) -> RefProj {
     }
 }
 
+/// Whole row `row` (absolute).
+pub fn row(row: u32, sheet: u16) -> RefProj {
+    RefProj {
+        sheet,
+        rows: AxisMap::point(Bound::Abs(row)),
+        cols: AxisMap {
+            lo: Bound::Open,
+            hi: Bound::Open,
+        },
+    }
+}
+
+/// Relative whole-row band `[r + a, r + b]`.
+pub fn row_band(a: i32, b: i32, sheet: u16) -> RefProj {
+    RefProj {
+        sheet,
+        rows: AxisMap {
+            lo: Bound::Rel(a),
+            hi: Bound::Rel(b),
+        },
+        cols: AxisMap {
+            lo: Bound::Open,
+            hi: Bound::Open,
+        },
+    }
+}
+
 /// Independent model: cell → formula.
 #[derive(Clone, Default)]
 pub struct Model {
