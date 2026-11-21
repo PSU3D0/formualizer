@@ -1231,10 +1231,12 @@ where
                     }
                 }
                 for (&coord, cell) in &mut sheet_data.cells {
-                    if !nonlegacy_cells.contains(&coord)
+                    if (nonlegacy_cells.is_empty() || !nonlegacy_cells.contains(&coord))
                         && let Some(formula) = &mut cell.formula
+                        && let std::borrow::Cow::Owned(rewritten) =
+                            lowerer.evaluation_text(formula)
                     {
-                        *formula = lowerer.evaluation_text(formula).into_owned();
+                        *formula = rewritten;
                     }
                 }
                 array_declarations.extend(arrays.into_iter().map(|array| (n.clone(), array)));
