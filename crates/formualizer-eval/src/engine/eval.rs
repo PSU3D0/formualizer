@@ -2764,6 +2764,20 @@ fn compute_criteria_mask(
     col_in_view: usize,
     pred: &crate::args::CriteriaPredicate,
 ) -> Option<std::sync::Arc<arrow_array::BooleanArray>> {
+    // The mask is for one column: build it from that column alone. Slicing the whole view for
+    // each of its columns made a criteria range along a row cost the square of its width. Only
+    // a column inside a nonempty view without a tail is narrowed: a column past the view's
+    // width (another range of the formula may be wider) keeps the old answer, as `sub_view`
+    // does not clip to its parent.
+    let narrowed;
+    let (rows, cols) = view.dims();
+    let (view, col_in_view) = if rows > 0 && cols > 1 && col_in_view < cols && view.tail().is_none()
+    {
+        narrowed = view.sub_view(0, col_in_view, rows, 1);
+        (&narrowed, 0usize)
+    } else {
+        (view, col_in_view)
+    };
     use crate::compute_prelude::{boolean, cmp, concat_engine_arrays as concat_arrays};
     use arrow_array::{
         Array as _, ArrayRef, BooleanArray, Float64Array, StringArray, builder::BooleanBuilder,

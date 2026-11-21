@@ -318,3 +318,185 @@ fn distinct_count_idiom_over_a_long_column() {
         .unwrap_or(LiteralValue::Empty);
     assert!(close(&got, &n(1_000.0)), "{got:?}");
 }
+
+/// A criteria range narrower than another in the same formula: its masks for the wider
+/// columns must not read the cells beside it.
+#[test]
+fn criteria_masks_stay_inside_their_range() {
+    let mut e = Engine::new(TestWorkbook::default(), EvalConfig::default());
+    for col in 1..=6 {
+        e.set_cell_value("Sheet1", 1, col, n(1.0)).unwrap();
+    }
+    e.set_cell_formula("Sheet1", 3, 1, parse("=COUNTIFS(A1:B1,1,D1:F1,1)").unwrap())
+        .unwrap();
+    e.set_cell_formula("Sheet1", 3, 2, parse("=SUMIFS(A1:C1,A1:B1,1)").unwrap())
+        .unwrap();
+    e.evaluate_all().unwrap();
+    assert_eq!(e.get_cell_value("Sheet1", 3, 1), Some(n(2.0)));
+    assert_eq!(e.get_cell_value("Sheet1", 3, 2), Some(n(2.0)));
+}
+
+/// Over a range along a row, COUNTIF and SUMIF give the sum of what they give over each of its
+/// cells alone, for every kind of cell and criterion, as ingested and over edits still in the
+/// user overlay; COUNTIFS and
+/// SUMIFS over the row agree with them. A one-cell range is one column, so this compares a mask
+/// built for a column of a wide view with one built for that column's own view. (The *IFS
+/// functions take a one-cell criteria range as a scalar, so they are compared row with row.)
+#[test]
+fn criteria_along_a_row_add_up_cell_by_cell() {
+    use chrono::NaiveDate;
+    use formualizer_common::coord::col_letters_from_1based as letters;
+    let date = NaiveDate::from_ymd_opt(2002, 2, 1).unwrap();
+    let serial = LiteralValue::Date(date).as_serial_number().unwrap();
+    let cells = [
+        n(5.0),
+        LiteralValue::Int(5),
+        n(5.0 + 1e-13),
+        n(-0.0),
+        n(0.0),
+        t("5"),
+        t("05"),
+        t("5.0"),
+        t("50%"),
+        t("Ab"),
+        t("ab "),
+        t(""),
+        LiteralValue::Empty,
+        LiteralValue::Boolean(true),
+        LiteralValue::Boolean(false),
+        t("TRUE"),
+        n(1.0),
+        n(0.5),
+        LiteralValue::Date(date),
+        n(serial),
+        t("2/1/2002"),
+        LiteralValue::Error(formualizer_common::ExcelErrorKind::Na.into()),
+    ];
+    let criteria = [
+        "5",
+        "\"5\"",
+        "\"=5\"",
+        "\"<>5\"",
+        "\">=5\"",
+        "\"<0\"",
+        "\"<=-0\"",
+        "\">=0\"",
+        "\"0\"",
+        "\"50%\"",
+        "\"<>50%\"",
+        "\"ab\"",
+        "\"a*\"",
+        "\"*\"",
+        "\"?b\"",
+        "\"<>ab\"",
+        "\"\"",
+        "\"=\"",
+        "\"<>\"",
+        "TRUE",
+        "\"true\"",
+        "\"2/1/2002\"",
+        "\">a\"",
+        "\"<>\"\"1\"\"\"",
+    ];
+    let width = cells.len() as u32;
+    let last = letters(width).unwrap();
+    let mut e = Engine::new(TestWorkbook::default(), EvalConfig::default());
+    {
+        // Ingested in one 128-row chunk, so that later edits stay in the user overlay instead
+        // of being compacted into the base lanes at once.
+        let mut ingest = e.begin_bulk_ingest_arrow();
+        ingest.add_sheet("Sheet1", width as usize, 128);
+        ingest.append_row("Sheet1", &cells).unwrap();
+        // Sums by powers of two, so a sum names exactly which cells were selected.
+        let weights: Vec<_> = (0..width).map(|i| n((1_u64 << i) as f64)).collect();
+        ingest.append_row("Sheet1", &weights).unwrap();
+        // A second criteria row of all ones.
+        ingest
+            .append_row("Sheet1", &vec![n(1.0); width as usize])
+            .unwrap();
+        let empty = vec![LiteralValue::Empty; width as usize];
+        for _ in 3..128 {
+            ingest.append_row("Sheet1", &empty).unwrap();
+        }
+        ingest.finish().unwrap();
+    }
+    for (i, criterion) in criteria.iter().enumerate() {
+        let row = 10 + i as u32;
+        let whole = [
+            format!("=COUNTIF(A1:{last}1,{criterion})"),
+            format!("=SUMIF(A1:{last}1,{criterion},A2:{last}2)"),
+            format!("=COUNTIFS(A1:{last}1,{criterion},A3:{last}3,1)"),
+            format!("=SUMIFS(A2:{last}2,A1:{last}1,{criterion})"),
+        ];
+        for (k, formula) in (1..).zip(&whole) {
+            e.set_cell_formula("Sheet1", row, k, parse(formula).unwrap())
+                .unwrap();
+        }
+        for col in 1..=width {
+            let c = letters(col).unwrap();
+            let parts = [
+                format!("=COUNTIF({c}1,{criterion})"),
+                format!("=SUMIF({c}1,{criterion},{c}2)"),
+            ];
+            for (k, formula) in (0..).zip(&parts) {
+                let at = 10 + k * (width + 1) + col;
+                e.set_cell_formula("Sheet1", row, at, parse(formula).unwrap())
+                    .unwrap();
+            }
+        }
+    }
+    let number =
+        |e: &Engine<TestWorkbook>, row: u32, col: u32| match e.get_cell_value("Sheet1", row, col) {
+            Some(LiteralValue::Number(x)) => x,
+            Some(LiteralValue::Int(x)) => x as f64,
+            other => panic!("R{row}C{col}: {other:?}"),
+        };
+    // As ingested, then after edits that put values in the overlay over the base lanes.
+    for pass in ["as ingested", "after edits"] {
+        if pass == "after edits" {
+            let edits = [
+                (2, t("05")),
+                (6, n(-0.0)),
+                (10, LiteralValue::Date(date)),
+                (13, t("x")),
+            ];
+            for (col, value) in &edits {
+                e.set_cell_value("Sheet1", 1, *col, value.clone()).unwrap();
+            }
+            e.evaluate_all().unwrap();
+            // The edits are still in the user overlay, so the masks are built over it.
+            let sheet = e.sheet_store().sheet("Sheet1").unwrap();
+            for (col, _) in &edits {
+                let chunk = &sheet.columns[*col as usize - 1].chunks[0];
+                assert_eq!(
+                    chunk.overlay.len(),
+                    1,
+                    "column {col} keeps its edit in the overlay"
+                );
+            }
+        }
+        e.evaluate_all().unwrap();
+        for (i, criterion) in criteria.iter().enumerate() {
+            let row = 10 + i as u32;
+            for k in 0..2u32 {
+                let whole = number(&e, row, 1 + k);
+                let parts: f64 = (1..=width)
+                    .map(|col| number(&e, row, 10 + k * (width + 1) + col))
+                    .sum();
+                assert_eq!(
+                    whole.to_bits(),
+                    parts.to_bits(),
+                    "{pass}: formula {k} with {criterion}: the row gives {whole}, its cells {parts}"
+                );
+            }
+            for (k, same_as) in [(3u32, 1u32), (4, 2)] {
+                let (got, want) = (number(&e, row, k), number(&e, row, same_as));
+                assert_eq!(
+                    got.to_bits(),
+                    want.to_bits(),
+                    "{pass}: formula {k} with {criterion} gives {got}, formula {same_as} {want}"
+                );
+            }
+        }
+    }
+}
