@@ -5527,15 +5527,31 @@ mod tests {
 
     #[test]
     fn bessel_functions_match_known_values_and_excel_order_truncation() {
-        assert_number_rel_close(eval("=BESSELI(0.5,1)"), 0.2578943053908963, 1e-6);
-        assert_number_rel_close(eval("=BESSELI(0.5,1.9)"), 0.2578943053908963, 1e-6);
+        assert_number_rel_close(eval("=BESSELI(0.5,1)"), 0.2578943053908963, 1e-14);
+        assert_number_rel_close(eval("=BESSELI(0.5,1.9)"), 0.2578943053908963, 1e-14);
         assert_number_rel_close(eval("=BESSELJ(0.5,3)"), 0.002563729994587244, 1e-13);
-        assert_number_rel_close(eval("=BESSELK(0.5,1)"), 1.656441120003301, 1e-6);
+        assert_number_rel_close(eval("=BESSELK(0.5,1)"), 1.656441120003301, 1e-14);
         assert_number_rel_close(eval("=BESSELY(0.5,3)"), -42.059494304723883, 1e-13);
+
+        // Issue #596 full double-precision regression cases.
+        assert_number_rel_close(eval("=BESSELI(2,1)"), 1.590636854637329, 1e-14);
+        assert_number_rel_close(eval("=BESSELI(2,2)"), 0.6889484476987382, 1e-14);
+        assert_number_rel_close(eval("=BESSELI(-2,1)"), -1.590636854637329, 1e-14);
+        assert_number_rel_close(eval("=BESSELI(-2,2)"), 0.6889484476987382, 1e-14);
+        assert_number_rel_close(eval("=BESSELK(0.1,0)"), 2.4270690247020163, 1e-14);
+        assert_number_rel_close(eval("=BESSELK(0.5,0)"), 0.9244190712276659, 1e-14);
+        assert_number_rel_close(eval("=BESSELK(2,1)"), 0.13986588181652243, 1e-14);
+        assert_number_rel_close(eval("=BESSELK(2,2)"), 0.2537597545660559, 1e-14);
     }
 
     #[test]
     fn bessel_functions_map_invalid_domains_to_num() {
+        assert!(
+            matches!(eval("=BESSELI(1,-1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
+        );
+        assert!(
+            matches!(eval("=BESSELI(720,0)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
+        );
         assert!(
             matches!(eval("=BESSELJ(1,-1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
         );
@@ -5546,8 +5562,15 @@ mod tests {
             matches!(eval("=BESSELK(0,1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
         );
         assert!(
+            matches!(eval("=BESSELK(-1,0)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
+        );
+        assert!(
+            matches!(eval("=BESSELK(1,-1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
+        );
+        assert!(
             matches!(eval("=BESSELY(-1,1)"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num)
         );
+        assert_eq!(eval("=BESSELK(1000,0)"), LiteralValue::Number(0.0));
     }
 
     #[test]
