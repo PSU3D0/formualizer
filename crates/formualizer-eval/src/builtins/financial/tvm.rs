@@ -129,19 +129,80 @@ impl Function for PmtFn {
             ));
         }
 
-        let pmt = if rate.abs() < 1e-10 {
-            // When rate is 0, PMT = -(pv + fv) / nper
-            -(pv + fv) / nper
-        } else {
-            // PMT = (rate * (pv * (1+rate)^nper + fv)) / ((1+rate)^nper - 1)
-            // With type adjustment for beginning of period
-            let factor = (1.0 + rate).powf(nper);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
-        };
+        let pmt = tvm_pmt(rate, nper, pv, fv, pmt_type);
 
         Ok(CalcValue::Scalar(LiteralValue::Number(pmt)))
     }
+}
+
+/// Computes periodic payment `PMT` for fixed-rate TVM functions.
+fn tvm_pmt(rate: f64, nper: f64, pv: f64, fv: f64, pmt_type: i32) -> f64 {
+    if rate.abs() < 1e-10 {
+        // When rate is 0, PMT = -(pv + fv) / nper
+        -(pv + fv) / nper
+    } else {
+        // PMT = -(rate * (pv * (1+rate)^nper + fv)) / (((1+rate)^nper - 1) * type_adj)
+        let factor = (1.0 + rate).powf(nper);
+        let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+        -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
+    }
+}
+
+/// Computes periodic interest component `IPMT` given precomputed periodic `pmt`.
+fn tvm_ipmt(rate: f64, per: f64, pv: f64, pmt_type: i32, pmt: f64) -> f64 {
+    if (pmt_type != 0 && per == 1.0) || rate == 0.0 {
+        return 0.0;
+    }
+
+    // For annuity-due (`type != 0`), payment occurs at the start of each period, so for
+    // `per > 1` interest accrues on the balance after the period-start payment rather than
+    // before it. Because `pmt(type=1) = pmt(type=0) / (1 + rate)`, dividing the equivalent
+    // `type=0` interest by `(1 + rate)` matches Excel for all `fv` and `per > 1`.
+    let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+    let fv_at_start_type0 = if rate.abs() < 1e-10 {
+        -pv - (pmt * type_adj) * (per - 1.0)
+    } else {
+        let factor = (1.0 + rate).powf(per - 1.0);
+        -pv * factor - (pmt * type_adj) * (factor - 1.0) / rate
+    };
+
+    (fv_at_start_type0 * rate) / type_adj
+}
+
+struct TvmPeriodArgs {
+    rate: f64,
+    per: f64,
+    nper: f64,
+    pv: f64,
+    fv: f64,
+    pmt_type: i32,
+}
+
+fn parse_tvm_period_args<'a, 'b>(
+    args: &[ArgumentHandle<'a, 'b>],
+) -> Result<TvmPeriodArgs, ExcelError> {
+    let rate = coerce_num(&args[0])?;
+    let per = coerce_num(&args[1])?;
+    let nper = coerce_num(&args[2])?;
+    let pv = coerce_num(&args[3])?;
+    let fv = if args.len() > 4 {
+        coerce_num(&args[4])?
+    } else {
+        0.0
+    };
+    let pmt_type = if args.len() > 5 {
+        coerce_num(&args[5])? as i32
+    } else {
+        0
+    };
+    Ok(TvmPeriodArgs {
+        rate,
+        per,
+        nper,
+        pv,
+        fv,
+        pmt_type,
+    })
 }
 
 /// Calculates present value from periodic cash flows at a fixed rate.
@@ -858,52 +919,16 @@ impl Function for IpmtFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let rate = coerce_num(&args[0])?;
-        let per = coerce_num(&args[1])?;
-        let nper = coerce_num(&args[2])?;
-        let pv = coerce_num(&args[3])?;
-        let fv = if args.len() > 4 {
-            coerce_num(&args[4])?
-        } else {
-            0.0
-        };
-        let pmt_type = if args.len() > 5 {
-            coerce_num(&args[5])? as i32
-        } else {
-            0
-        };
+        let a = parse_tvm_period_args(args)?;
 
-        if per < 1.0 || per > nper {
+        if a.per < 1.0 || a.per > a.nper {
             return Ok(CalcValue::Scalar(
                 LiteralValue::Error(ExcelError::new_num()),
             ));
         }
 
-        // Calculate PMT first
-        let pmt = if rate.abs() < 1e-10 {
-            -(pv + fv) / nper
-        } else {
-            let factor = (1.0 + rate).powf(nper);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
-        };
-
-        // Calculate FV at start of period
-        let fv_at_start = if rate.abs() < 1e-10 {
-            -pv - pmt * (per - 1.0)
-        } else {
-            let factor = (1.0 + rate).powf(per - 1.0);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -pv * factor - pmt * type_adj * (factor - 1.0) / rate
-        };
-
-        // Interest is rate * balance at start of period
-        // fv_at_start is negative of balance, so ipmt = fv_at_start * rate
-        let ipmt = if pmt_type != 0 && per == 1.0 {
-            0.0 // No interest in first period for annuity due
-        } else {
-            fv_at_start * rate
-        };
+        let pmt = tvm_pmt(a.rate, a.nper, a.pv, a.fv, a.pmt_type);
+        let ipmt = tvm_ipmt(a.rate, a.per, a.pv, a.pmt_type, pmt);
 
         Ok(CalcValue::Scalar(LiteralValue::Number(ipmt)))
     }
@@ -982,50 +1007,16 @@ impl Function for PpmtFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let rate = coerce_num(&args[0])?;
-        let per = coerce_num(&args[1])?;
-        let nper = coerce_num(&args[2])?;
-        let pv = coerce_num(&args[3])?;
-        let fv = if args.len() > 4 {
-            coerce_num(&args[4])?
-        } else {
-            0.0
-        };
-        let pmt_type = if args.len() > 5 {
-            coerce_num(&args[5])? as i32
-        } else {
-            0
-        };
+        let a = parse_tvm_period_args(args)?;
 
-        if per < 1.0 || per > nper {
+        if a.per < 1.0 || a.per > a.nper {
             return Ok(CalcValue::Scalar(
                 LiteralValue::Error(ExcelError::new_num()),
             ));
         }
 
-        // Calculate PMT
-        let pmt = if rate.abs() < 1e-10 {
-            -(pv + fv) / nper
-        } else {
-            let factor = (1.0 + rate).powf(nper);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
-        };
-
-        // Calculate IPMT
-        let fv_at_start = if rate.abs() < 1e-10 {
-            -pv - pmt * (per - 1.0)
-        } else {
-            let factor = (1.0 + rate).powf(per - 1.0);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -pv * factor - pmt * type_adj * (factor - 1.0) / rate
-        };
-
-        let ipmt = if pmt_type != 0 && per == 1.0 {
-            0.0
-        } else {
-            fv_at_start * rate
-        };
+        let pmt = tvm_pmt(a.rate, a.nper, a.pv, a.fv, a.pmt_type);
+        let ipmt = tvm_ipmt(a.rate, a.per, a.pv, a.pmt_type, pmt);
 
         // PPMT = PMT - IPMT
         let ppmt = pmt - ipmt;
