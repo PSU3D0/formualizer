@@ -179,6 +179,7 @@ impl UndoEngine {
                 reason: "Non-tail undo not supported".into(),
             });
         }
+        graph.begin_deferred_dirty();
         graph.authority_set_replay(crate::engine::authority::history::Replay::Undo);
         let replayed = (|| {
             let mut editor = VertexEditor::new(graph);
@@ -193,6 +194,7 @@ impl UndoEngine {
             Ok::<_, EditorError>(())
         })();
         graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+        let _ = graph.end_deferred_dirty();
         replayed?;
 
         // Keep a copy for redo, but also return the batch so callers can mirror side effects.
@@ -253,6 +255,7 @@ impl UndoEngine {
             // we apply events by value below.
             let ret = batch.clone();
 
+            graph.begin_deferred_dirty();
             graph.authority_set_replay(crate::engine::authority::history::Replay::Redo);
             let replayed = (|| {
                 for item in batch {
@@ -362,6 +365,7 @@ impl UndoEngine {
                 Ok::<_, EditorError>(())
             })();
             graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+            let _ = graph.end_deferred_dirty();
             match mode {
                 RedoGroupMode::Bare => {}
                 RedoGroupMode::ReplayGroup => log.end_replay_group(),

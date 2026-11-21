@@ -3429,11 +3429,15 @@ impl DependencyGraph {
         if pending.is_empty() {
             return affected;
         }
-        let live: Vec<VertexId> = pending
+        let mut live: Vec<VertexId> = pending
             .into_iter()
             .filter(|&id| self.vertex_exists(id))
             .collect();
-        affected.extend(self.mark_dirty_many(&live));
+        live.sort_unstable();
+        live.dedup();
+        if !live.is_empty() {
+            affected.extend(self.mark_dirty_many(&live));
+        }
         affected
     }
 
