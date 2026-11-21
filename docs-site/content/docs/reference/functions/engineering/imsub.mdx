@@ -31,14 +31,14 @@ Subtract corresponding components to get (a − c) + (b − d)i. Subtraction is 
 
 ## Differences from Excel
 
-When the first operand is purely real and the second uses a j suffix, Formualizer uses i in the result where Excel preserves j. The examples display each coefficient to at most 15 significant digits.
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
 
 ## Remarks
  - Inputs are coerced to complex-number text before parsing.
- - The output uses the suffix style of the first argument, defaulting to `i` for a purely real first argument.
 
 ## Error cases
 
+ - Preserves an explicit `i` or `j` suffix when present (defaulting to `i` when both operands are purely real), and returns `#VALUE!` when explicit `i` and `j` suffixes are mixed.
  - Invalid complex text returns `#NUM!`.
 
 ## Examples

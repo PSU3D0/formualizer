@@ -2786,14 +2786,15 @@ impl Function for ErfPreciseFn {
 /* ─────────────────────────── Complex Number Functions ──────────────────────────── */
 
 /// Parse a complex number string like "3+4i", "3-4i", "5i", "3", "-2j", etc.
-/// Returns (real, imaginary, suffix) where suffix is 'i' or 'j'
-fn parse_complex(s: &str) -> Result<(f64, f64, char), ExcelError> {
+/// Returns (real, imaginary, suffix) where suffix is `Some('i')`/`Some('j')` when
+/// explicitly present, or `None` for purely real inputs.
+fn parse_complex(s: &str) -> Result<(f64, f64, Option<char>), ExcelError> {
     let s = s.trim();
     if s.is_empty() {
         return Err(ExcelError::new_num());
     }
 
-    // Determine the suffix (i or j)
+    // Determine the explicit suffix (i or j), if any
     let suffix = if s.ends_with('i') || s.ends_with('I') {
         'i'
     } else if s.ends_with('j') || s.ends_with('J') {
@@ -2801,7 +2802,7 @@ fn parse_complex(s: &str) -> Result<(f64, f64, char), ExcelError> {
     } else {
         // No imaginary suffix - must be purely real
         let real: f64 = s.parse().map_err(|_| ExcelError::new_num())?;
-        return Ok((real, 0.0, 'i'));
+        return Ok((real, 0.0, None));
     };
 
     // Remove the suffix for parsing
@@ -2809,10 +2810,10 @@ fn parse_complex(s: &str) -> Result<(f64, f64, char), ExcelError> {
 
     // Handle pure imaginary cases like "i", "-i", "4i"
     if s.is_empty() || s == "+" {
-        return Ok((0.0, 1.0, suffix));
+        return Ok((0.0, 1.0, Some(suffix)));
     }
     if s == "-" {
-        return Ok((0.0, -1.0, suffix));
+        return Ok((0.0, -1.0, Some(suffix)));
     }
 
     // Find the last + or - that separates real and imaginary parts
@@ -2856,12 +2857,12 @@ fn parse_complex(s: &str) -> Result<(f64, f64, char), ExcelError> {
                 imag_str.parse().map_err(|_| ExcelError::new_num())?
             };
 
-            Ok((real, imag, suffix))
+            Ok((real, imag, Some(suffix)))
         }
         None => {
             // Pure imaginary number (no real part), e.g., "5" (before suffix was removed)
             let imag: f64 = s.parse().map_err(|_| ExcelError::new_num())?;
-            Ok((0.0, imag, suffix))
+            Ok((0.0, imag, Some(suffix)))
         }
     }
 }
@@ -3453,22 +3454,22 @@ impl Function for ImConjugateFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
-        let result = format_complex(real, -imag, suffix);
+        let result = format_complex(real, -imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
 
-/// Helper to check if two complex numbers have compatible suffixes
-fn check_suffix_compatibility(s1: char, s2: char) -> Result<char, ExcelError> {
-    // If both have the same suffix, use it
-    // If one is from a purely real number (default 'i'), use the other's suffix
-    // Excel doesn't allow mixing 'i' and 'j' when both are explicit
-    if s1 == s2 {
-        Ok(s1)
-    } else {
-        // For simplicity, treat 'i' as the default and allow mixed
-        // In strict Excel mode, this would error
-        Ok(s1)
+/// Helper to check if two complex numbers have compatible suffixes.
+/// `None` represents a purely real operand (no explicit suffix), which adopts
+/// the other operand's suffix. Mixing explicit `'i'` and `'j'` returns `#VALUE!`.
+fn check_suffix_compatibility(
+    s1: Option<char>,
+    s2: Option<char>,
+) -> Result<Option<char>, ExcelError> {
+    match (s1, s2) {
+        (None, s) | (s, None) => Ok(s),
+        (Some(a), Some(b)) if a == b => Ok(Some(a)),
+        (Some(_), Some(_)) => Err(ExcelError::new_value()),
     }
 }
 
@@ -3535,8 +3536,7 @@ impl Function for ImSumFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut sum_real = 0.0;
         let mut sum_imag = 0.0;
-        let mut result_suffix = 'i';
-        let mut first = true;
+        let mut result_suffix = None;
 
         for arg in args {
             let inumber = match arg.value()?.into_literal() {
@@ -3554,18 +3554,16 @@ impl Function for ImSumFn {
                 Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
             };
 
-            if first {
-                result_suffix = suffix;
-                first = false;
-            } else {
-                result_suffix = check_suffix_compatibility(result_suffix, suffix)?;
-            }
+            result_suffix = match check_suffix_compatibility(result_suffix, suffix) {
+                Ok(s) => s,
+                Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+            };
 
             sum_real += real;
             sum_imag += imag;
         }
 
-        let result = format_complex(sum_real, sum_imag, result_suffix);
+        let result = format_complex(sum_real, sum_imag, result_suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -3576,7 +3574,7 @@ impl Function for ImSumFn {
 ///
 /// # Remarks
 /// - Inputs are coerced to complex-number text before parsing.
-/// - The output uses the suffix style of the first argument, defaulting to `i` for a purely real first argument.
+/// - Preserves an explicit `i` or `j` suffix when present (defaulting to `i` when both operands are purely real), and returns `#VALUE!` when explicit `i` and `j` suffixes are mixed.
 /// - Invalid complex text returns `#NUM!`.
 ///
 /// # Examples
@@ -3653,8 +3651,11 @@ impl Function for ImSubFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
-        let result_suffix = check_suffix_compatibility(suffix1, suffix2)?;
-        let result = format_complex(real1 - real2, imag1 - imag2, result_suffix);
+        let result_suffix = match check_suffix_compatibility(suffix1, suffix2) {
+            Ok(s) => s,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+        let result = format_complex(real1 - real2, imag1 - imag2, result_suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -3722,7 +3723,7 @@ impl Function for ImProductFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut prod_real = 1.0;
         let mut prod_imag = 0.0;
-        let mut result_suffix = 'i';
+        let mut result_suffix = None;
         let mut first = true;
 
         for arg in args {
@@ -3747,7 +3748,10 @@ impl Function for ImProductFn {
                 prod_imag = imag;
                 first = false;
             } else {
-                result_suffix = check_suffix_compatibility(result_suffix, suffix)?;
+                result_suffix = match check_suffix_compatibility(result_suffix, suffix) {
+                    Ok(s) => s,
+                    Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+                };
                 // (a + bi) * (c + di) = (ac - bd) + (ad + bc)i
                 let new_real = prod_real * real - prod_imag * imag;
                 let new_imag = prod_real * imag + prod_imag * real;
@@ -3756,7 +3760,7 @@ impl Function for ImProductFn {
             }
         }
 
-        let result = format_complex(prod_real, prod_imag, result_suffix);
+        let result = format_complex(prod_real, prod_imag, result_suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -3849,6 +3853,11 @@ impl Function for ImDivFn {
             Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
         };
 
+        let result_suffix = match check_suffix_compatibility(suffix1, suffix2) {
+            Ok(s) => s,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+
         // Division by zero check - returns #DIV/0! for Excel compatibility
         let denom = c * c + d * d;
         if denom.abs() < 1e-15 {
@@ -3857,13 +3866,11 @@ impl Function for ImDivFn {
             )));
         }
 
-        let result_suffix = check_suffix_compatibility(suffix1, suffix2)?;
-
         // (a + bi) / (c + di) = ((ac + bd) + (bc - ad)i) / (c^2 + d^2)
         let real = (a * c + b * d) / denom;
         let imag = (b * c - a * d) / denom;
 
-        let result = format_complex(real, imag, result_suffix);
+        let result = format_complex(real, imag, result_suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -3947,7 +3954,7 @@ impl Function for ImExpFn {
         let real = exp_a * b.cos();
         let imag = exp_a * b.sin();
 
-        let result = format_complex(real, imag, suffix);
+        let result = format_complex(real, imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -4037,7 +4044,7 @@ impl Function for ImLnFn {
         let real = modulus.ln();
         let imag = b.atan2(a);
 
-        let result = format_complex(real, imag, suffix);
+        let result = format_complex(real, imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -4128,7 +4135,7 @@ impl Function for ImLog10Fn {
         let real = modulus.ln() / ln10;
         let imag = b.atan2(a) / ln10;
 
-        let result = format_complex(real, imag, suffix);
+        let result = format_complex(real, imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -4219,7 +4226,7 @@ impl Function for ImLog2Fn {
         let real = modulus.ln() / ln2;
         let imag = b.atan2(a) / ln2;
 
-        let result = format_complex(real, imag, suffix);
+        let result = format_complex(real, imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -4327,7 +4334,7 @@ impl Function for ImPowerFn {
         let real = r_n * n_theta.cos();
         let imag = r_n * n_theta.sin();
 
-        let result = format_complex(real, imag, suffix);
+        let result = format_complex(real, imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -4414,7 +4421,7 @@ impl Function for ImSqrtFn {
         let real = sqrt_r * half_theta.cos();
         let imag = sqrt_r * half_theta.sin();
 
-        let result = format_complex(real, imag, suffix);
+        let result = format_complex(real, imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -4495,7 +4502,7 @@ impl Function for ImSinFn {
         let real = a.sin() * b.cosh();
         let imag = a.cos() * b.sinh();
 
-        let result = format_complex(real, imag, suffix);
+        let result = format_complex(real, imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -4576,7 +4583,7 @@ impl Function for ImCosFn {
         let real = a.cos() * b.cosh();
         let imag = -a.sin() * b.sinh();
 
-        let result = format_complex(real, imag, suffix);
+        let result = format_complex(real, imag, suffix.unwrap_or('i'));
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Text(result)))
     }
 }
@@ -4606,7 +4613,7 @@ where
         Ok(c) => c,
         Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
     };
-    let (real, imag, suffix) = f(a, b, suffix)?;
+    let (real, imag, suffix) = f(a, b, suffix.unwrap_or('i'))?;
     if real.is_nan() || imag.is_nan() || real.is_infinite() || imag.is_infinite() {
         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
             ExcelError::new_num(),
@@ -5441,6 +5448,12 @@ mod tests {
             .with_function(Arc::new(ImSechFn))
             .with_function(Arc::new(ImSinhFn))
             .with_function(Arc::new(ImTanFn))
+            .with_function(Arc::new(ImSumFn))
+            .with_function(Arc::new(ImSubFn))
+            .with_function(Arc::new(ImProductFn))
+            .with_function(Arc::new(ImDivFn))
+            .with_function(Arc::new(ImPowerFn))
+            .with_function(Arc::new(ImConjugateFn))
             .with_function(Arc::new(ValueFn));
         let interp = wb.interpreter();
         let ast = parse(formula).expect("parse");
@@ -5579,5 +5592,105 @@ mod tests {
         }
         let pole = eval("=IMCSC(\"0\")");
         assert!(matches!(pole, LiteralValue::Error(e) if e.kind == ExcelErrorKind::Num));
+    }
+
+    #[test]
+    fn complex_binary_and_variadic_functions_preserve_j_suffix_with_real_operands() {
+        // IMSUB (#595)
+        assert_eq!(
+            eval("=IMSUB(\"4\",\"7j\")"),
+            LiteralValue::Text("4-7j".into())
+        );
+        assert_eq!(eval("=IMSUB(4,\"7j\")"), LiteralValue::Text("4-7j".into()));
+        assert_eq!(
+            eval("=IMSUB(\"3+4j\",\"2\")"),
+            LiteralValue::Text("1+4j".into())
+        );
+        assert_eq!(
+            eval("=IMSUB(\"3+4j\",2)"),
+            LiteralValue::Text("1+4j".into())
+        );
+        assert_eq!(eval("=IMSUB(\"0\",\"j\")"), LiteralValue::Text("-j".into()));
+        assert_eq!(eval("=IMSUB(\"4\",\"2\")"), LiteralValue::Text("2".into()));
+
+        // IMSUM
+        assert_eq!(
+            eval("=IMSUM(\"4\",\"7j\")"),
+            LiteralValue::Text("4+7j".into())
+        );
+        assert_eq!(
+            eval("=IMSUM(\"4\",\"2\",\"7j\")"),
+            LiteralValue::Text("6+7j".into())
+        );
+        assert_eq!(
+            eval("=IMSUM(\"7j\",\"4\")"),
+            LiteralValue::Text("4+7j".into())
+        );
+        assert_eq!(
+            eval("=IMSUM(\"3+4j\",\"2\",\"1-j\")"),
+            LiteralValue::Text("6+3j".into())
+        );
+        assert_eq!(eval("=IMSUM(\"7j\")"), LiteralValue::Text("7j".into()));
+
+        // IMPRODUCT
+        assert_eq!(
+            eval("=IMPRODUCT(\"4\",\"7j\")"),
+            LiteralValue::Text("28j".into())
+        );
+        assert_eq!(
+            eval("=IMPRODUCT(\"2\",\"3\",\"4j\")"),
+            LiteralValue::Text("24j".into())
+        );
+        assert_eq!(
+            eval("=IMPRODUCT(\"7j\",\"4\")"),
+            LiteralValue::Text("28j".into())
+        );
+        assert_eq!(
+            eval("=IMPRODUCT(\"j\",\"j\")"),
+            LiteralValue::Text("-1".into())
+        );
+
+        // IMDIV
+        assert_eq!(
+            eval("=IMDIV(\"4\",\"2j\")"),
+            LiteralValue::Text("-2j".into())
+        );
+        assert_eq!(
+            eval("=IMDIV(\"6+4j\",\"2\")"),
+            LiteralValue::Text("3+2j".into())
+        );
+        assert!(
+            matches!(eval("=IMDIV(\"3+4j\",\"0\")"), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Div)
+        );
+
+        // IMPOWER / IMCONJUGATE
+        assert_eq!(eval("=IMPOWER(\"1+j\",2)"), LiteralValue::Text("2j".into()));
+        assert_eq!(eval("=IMPOWER(\"-1\",0.5)"), LiteralValue::Text("i".into()));
+        assert_eq!(
+            eval("=IMCONJUGATE(\"3+4j\")"),
+            LiteralValue::Text("3-4j".into())
+        );
+        assert_eq!(eval("=IMCONJUGATE(\"4\")"), LiteralValue::Text("4".into()));
+    }
+
+    #[test]
+    fn complex_binary_and_variadic_functions_reject_mismatched_explicit_suffixes() {
+        for formula in [
+            "=IMSUB(\"3+4i\",\"1+2j\")",
+            "=IMSUB(\"3+4j\",\"1+2i\")",
+            "=IMSUB(\"3+0i\",\"7j\")",
+            "=IMSUM(\"3+4i\",\"1+2j\")",
+            "=IMSUM(\"4\",\"7j\",\"1+2i\")",
+            "=IMPRODUCT(\"3+4i\",\"1+2j\")",
+            "=IMPRODUCT(\"4\",\"7j\",\"1+2i\")",
+            "=IMDIV(\"3+4i\",\"1+2j\")",
+            "=IMDIV(\"3+4j\",\"1+2i\")",
+        ] {
+            assert!(
+                matches!(eval(formula), LiteralValue::Error(e) if e.kind == ExcelErrorKind::Value),
+                "expected #VALUE! for {formula}, got {:?}",
+                eval(formula)
+            );
+        }
     }
 }

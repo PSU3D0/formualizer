@@ -3966,7 +3966,7 @@
     "shortSummary": "Returns the difference between two complex numbers.",
     "signature": "=IMSUB(inumber1, inumber2)",
     "typeName": "ImSubFn",
-    "uniqueShare": 0.6591928251121076,
+    "uniqueShare": 0.5491071428571429,
     "variadic": false
   },
   "engineering/imsum": {
