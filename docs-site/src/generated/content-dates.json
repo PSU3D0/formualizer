@@ -188,52 +188,52 @@
     "sha256": "a9211b6fee56b2883616953af82e585ff7dcfcd76b651c53d9ba55a93fdab0ec"
   },
   "docs-site/content/docs/reference/functions/database/daverage.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4747c170865aaa5d50f2a2573508018ac3d04568c1492183547ccb61df36e0bb"
+    "date": "2026-11-21",
+    "sha256": "de210667a205d307d6bef7ebfd800e1fef22e12f08ec5151ddfae07afceb9d89"
   },
   "docs-site/content/docs/reference/functions/database/dcount.mdx": {
-    "date": "2026-11-18",
-    "sha256": "626a8537b7558d8b733bf8eb90cc3fcd3b43d0009a7e25ea6941dcc7697fc5a3"
+    "date": "2026-11-21",
+    "sha256": "99d663067167d357d811ef19ed712e1c578711393c296f545fe651806ffe1dd5"
   },
   "docs-site/content/docs/reference/functions/database/dcounta.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ec143cf894ce069cc7201ae540f217f058ab62506e4a8f747e514da3de10c55e"
+    "date": "2026-11-21",
+    "sha256": "72c395351144f21699d00420201aea001fd243f9256de4b3cbc393c88bd9e44d"
   },
   "docs-site/content/docs/reference/functions/database/dget.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a13b0ea767a4587d53c0864542bbf9b95109c83422b1ac39449bfc458949a769"
+    "date": "2026-11-21",
+    "sha256": "84a69cacddb9cf760bffc104bfd8a782ead82120b59f871062e6e7b65f63e5dc"
   },
   "docs-site/content/docs/reference/functions/database/dmax.mdx": {
-    "date": "2026-11-18",
-    "sha256": "70b81ee6c65c8d19db992e2ae998ed53d954a9a93abbb60438415ddc162c796a"
+    "date": "2026-11-21",
+    "sha256": "11c47e4e6f93756f038f4e351f3b81498a0ef1550e3beb5de1802e78aecc9e7b"
   },
   "docs-site/content/docs/reference/functions/database/dmin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d0a1b2427b3c907eec8370922b12ed88b565b9e139b9fb26a037515ce8ae57e3"
+    "date": "2026-11-21",
+    "sha256": "192619a8786fea5fb8f834fc06a84ef2de8da9e02a5d341fdef7b8b3fe0296f2"
   },
   "docs-site/content/docs/reference/functions/database/dproduct.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f8113a3da066259315db3a78439cb96b25ae55c1d4e8740798940fb4695dcdd9"
+    "date": "2026-11-21",
+    "sha256": "d11d53f0100c41223ac7281f5fc3c81e61f0d3aaf88a3bfad852578597528af2"
   },
   "docs-site/content/docs/reference/functions/database/dstdev.mdx": {
-    "date": "2026-11-18",
-    "sha256": "40b819e29ea95677bc11404a82d84c7690f9295794533ed69fc3512e91f73277"
+    "date": "2026-11-21",
+    "sha256": "d210f80292d5a52fd9ad13204cc101ee549bc23a9eb32fbd967d91be010b588a"
   },
   "docs-site/content/docs/reference/functions/database/dstdevp.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d9bdc04f08fa37c9044c13e5628d8e3e155ea751c89a176caed6d85037798279"
+    "date": "2026-11-21",
+    "sha256": "8ce99e695a472fcfc2b789baa1bd705f6a807287da1bd0c02e3c764c2bf98997"
   },
   "docs-site/content/docs/reference/functions/database/dsum.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a8a29fd5c0e57d20682fa755c606103c03009526fc9b17f375b181230def6e95"
+    "date": "2026-11-21",
+    "sha256": "fd0a4dcb25dea164032dc4e43399a02382405877982e8f5a4d463380c38dcc30"
   },
   "docs-site/content/docs/reference/functions/database/dvar.mdx": {
-    "date": "2026-11-18",
-    "sha256": "011a80be3d2e5edda74d42a390427291fc5b488f022a2f2673bae3ba8501a90a"
+    "date": "2026-11-21",
+    "sha256": "1c598422ed1358a85bee84548162897bf6f2ccb8d72669dfbb18b04116e6a938"
   },
   "docs-site/content/docs/reference/functions/database/dvarp.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0a4107628ab5913825f17a114632fc7ecff222dff5420b520aa891f321674602"
+    "date": "2026-11-21",
+    "sha256": "f22a17470e32c33a436cd9acae7d024c6d65adf61a851222ff13426ffa19592c"
   },
   "docs-site/content/docs/reference/functions/database/index.mdx": {
     "date": "2026-11-18",
@@ -244,316 +244,316 @@
     "sha256": "df578baaebfad385ecdac104fe5a4ae99173726178a8555271be4aa07b0bb2a6"
   },
   "docs-site/content/docs/reference/functions/datetime/date.mdx": {
-    "date": "2026-11-18",
-    "sha256": "04ac88bbe49c3ca6600913fc00bd9826f712efaf4d740bf76408a74e86760f58"
+    "date": "2026-11-21",
+    "sha256": "e6adf99032252a11adce10257ed39bfb964fc28c08a5745077e06363a1240528"
   },
   "docs-site/content/docs/reference/functions/datetime/datedif.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f9b8740801b4417b7d45d5da860febf961fac7e0110083114509bc0a6e7bdce5"
+    "date": "2026-11-21",
+    "sha256": "e89884d1e90cb73c33eb693bd520639825baf6ded307bfb5af664e5958a6c48c"
   },
   "docs-site/content/docs/reference/functions/datetime/datevalue.mdx": {
-    "date": "2026-11-18",
-    "sha256": "23abfff0296b41836d3445ee55597641e07cd3462587c3e4762c85ecf99c830f"
+    "date": "2026-11-21",
+    "sha256": "3b53457b301c78441b61db5ced7b954745fbda36ddd5a711839b04a7b60c4e03"
   },
   "docs-site/content/docs/reference/functions/datetime/day.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4a3937afb11c06b1138542a6edc77692a15c94f7c6826865a3fd45535de488a2"
+    "date": "2026-11-21",
+    "sha256": "d7770f86bceb21ad62a51ee755b9dec70605b988a7a0cdaff5f4c1e7b3a94cfc"
   },
   "docs-site/content/docs/reference/functions/datetime/days.mdx": {
-    "date": "2026-11-18",
-    "sha256": "085767f4189158aaeeade7a410b909d8643fe3069e9791daa6dcc49adad8e8c7"
+    "date": "2026-11-21",
+    "sha256": "113e140a2d8f02aa216cbe85a1c04f56ec3485ad12a685eb4d6648404ca2b495"
   },
   "docs-site/content/docs/reference/functions/datetime/days360.mdx": {
-    "date": "2026-11-18",
-    "sha256": "94d99d4ce3de143a13086e86f86cbb87c5a5f55b4ba02409d143e731d122b4b6"
+    "date": "2026-11-21",
+    "sha256": "4a301fb122fb3c9d5ef1e784cd4b51cb908807e57a1a0772ff30777925596eca"
   },
   "docs-site/content/docs/reference/functions/datetime/edate.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3d9cc0c1674b20b53d95640e747bb1eaaf7321547e9ee09329cb29151927d11e"
+    "date": "2026-11-21",
+    "sha256": "0f111f562c3dc8ef600709d47dff557cd6b1a89a11fb22e3c0b0620291e42a4f"
   },
   "docs-site/content/docs/reference/functions/datetime/eomonth.mdx": {
-    "date": "2026-11-18",
-    "sha256": "8af534c26e3ec1ede16363fb9b1f79f83186f2f8e4b0487dcae75eb446f76494"
+    "date": "2026-11-21",
+    "sha256": "0e507f681e03803532123011f6635fd36d06b49b225fc2b8ebaa7cc223b40ef3"
   },
   "docs-site/content/docs/reference/functions/datetime/hour.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f3b807cc2e332a589d03eda37c12344ebfb88eb0d97150631e9477196d18891a"
+    "date": "2026-11-21",
+    "sha256": "60409fa5961cca53328bb2ec0340faf79c68deecf1ae90117cc1460f397cbf0a"
   },
   "docs-site/content/docs/reference/functions/datetime/index.mdx": {
     "date": "2026-11-18",
     "sha256": "10586e495ab98a9d0db53de2ad1e55f16033ecc6845945cde249cf808321e6d5"
   },
   "docs-site/content/docs/reference/functions/datetime/isoweeknum.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e4d939e68857dd4fcc18ecad03ab46c90c3a84b7c0fc765a1b75c27f9eb21fde"
+    "date": "2026-11-21",
+    "sha256": "600c4f5b4baafd3e6742e952997fe17c368b47a6f70fdf8fb39d0063c22f6cbd"
   },
   "docs-site/content/docs/reference/functions/datetime/meta.json": {
     "date": "2026-03-24",
     "sha256": "5fb581d43e356ad729e4ae0e2f19d5fbb8ed1a9a774230567064440051c79d37"
   },
   "docs-site/content/docs/reference/functions/datetime/minute.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d1ea5f3d328c37bf438de40463b1c85b2fb8b293e4e1581f1c3e575d01d2fc5a"
+    "date": "2026-11-21",
+    "sha256": "a788cc0c75b99a59f4f4e714eefa379f979bb48084cbf595deea5a0488789d4e"
   },
   "docs-site/content/docs/reference/functions/datetime/month.mdx": {
-    "date": "2026-11-18",
-    "sha256": "37cef2314ec1b0c696d39024619955fe3d08242f5cd618f6f73c9ad5f034cf9e"
+    "date": "2026-11-21",
+    "sha256": "c21295ac14f01b13af8404003ab8e7279429d256993b7694485dbffd53e96526"
   },
   "docs-site/content/docs/reference/functions/datetime/networkdays-intl.mdx": {
     "date": "2026-11-21",
-    "sha256": "2e5387aaad9d19a4d041cff5baaf8271a5f174b312137efacf891ef0f72200f9"
+    "sha256": "e4d78e7315ef178782c5d812fdc54ee8d3a3ba9add09549caa58a39a6aaadde2"
   },
   "docs-site/content/docs/reference/functions/datetime/networkdays.mdx": {
     "date": "2026-11-21",
-    "sha256": "216b636488bab2811c29935945b9178caa1edaf60d0dc85e20cf9beb59ef1fbb"
+    "sha256": "68d09969b66065447bd99662af02b1fda1d2251539e76e8a4556254a93cefffb"
   },
   "docs-site/content/docs/reference/functions/datetime/now.mdx": {
-    "date": "2026-11-18",
-    "sha256": "167b1545221174364e1e1c31a256909062483a72b45b3bdac857c908c8e0080b"
+    "date": "2026-11-21",
+    "sha256": "1601cdc672e7e1942124d781b567bc7f7b83d89142d9faca568219f97801ad4c"
   },
   "docs-site/content/docs/reference/functions/datetime/second.mdx": {
-    "date": "2026-11-18",
-    "sha256": "67f071defc04f187f2c66df5bfeb953ea4ae8456410b9ba41520422b55cbf7df"
+    "date": "2026-11-21",
+    "sha256": "bba855f400910181242615d8510847c4ea75ac64d8efbc431587160165d476aa"
   },
   "docs-site/content/docs/reference/functions/datetime/time.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f1a277def096a36e118abe0b8d48ef2f317e638b46cdd6ba9489f17aade29519"
+    "date": "2026-11-21",
+    "sha256": "f10ad8d0a2ce1cc3913fe0764cae053b62d035cc8e02a65b0896faa1ec4e98ad"
   },
   "docs-site/content/docs/reference/functions/datetime/timevalue.mdx": {
-    "date": "2026-11-18",
-    "sha256": "fdf2f5bf8bbe8efff70708c02fe659df2a4dad8394f1a80bb49b070b1c848b12"
+    "date": "2026-11-21",
+    "sha256": "14b9e63796f9e3779c1ea5966afd3d71a8e6a20e18e56da11ac8e200ef118fc4"
   },
   "docs-site/content/docs/reference/functions/datetime/today.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4c6facf9bcb323d9afc50436ba61a84d749ae76b67b8045015cefe82e32daf5a"
+    "date": "2026-11-21",
+    "sha256": "773323872f1fa3cc2478311f25e9685d44aacadb810bc49854fe0e6aab843e77"
   },
   "docs-site/content/docs/reference/functions/datetime/weekday.mdx": {
-    "date": "2026-11-18",
-    "sha256": "75abed72445a4356a85feffe210ab76658ed08e6bee57683be2cab4e556052bb"
+    "date": "2026-11-21",
+    "sha256": "974ac6ac05a9b12ffd6fd8353060c017fba7115ec2a14b140d91f5cd3c721df1"
   },
   "docs-site/content/docs/reference/functions/datetime/weeknum.mdx": {
-    "date": "2026-11-18",
-    "sha256": "097139ed45d1cf07a3bc3dcf0e88ce25d13130518533183c44d9903d28169e77"
+    "date": "2026-11-21",
+    "sha256": "b09b360ff1679778145d6a561b63d503603ae50066781b2bfcbf4ca481aceda5"
   },
   "docs-site/content/docs/reference/functions/datetime/workday-intl.mdx": {
     "date": "2026-11-21",
-    "sha256": "92b42d78cec3a46e45be652823350249ebd5defaa968c1f7de2bc90d93287401"
+    "sha256": "c877495b0bf6b5acef9102327ffb47ca80e9a59ad0d7e30a96884b8091f0b06e"
   },
   "docs-site/content/docs/reference/functions/datetime/workday.mdx": {
     "date": "2026-11-21",
-    "sha256": "b3f32d0034519da90f5ea1e5bb51a11319ea742730e4ec5c9a00818369ff3266"
+    "sha256": "8cd62b5f57b57569df728825e43d674333956a02aae2646608b08a1ad84a5bb4"
   },
   "docs-site/content/docs/reference/functions/datetime/year.mdx": {
-    "date": "2026-11-18",
-    "sha256": "740593f2b7083f197dbbf918327732b7ba4da8ce7b6b5ed63eb46ec1ba6749ab"
+    "date": "2026-11-21",
+    "sha256": "a78d362a62f83eb0684d84091767999129f783d79ad482ac8248536685d606f4"
   },
   "docs-site/content/docs/reference/functions/datetime/yearfrac.mdx": {
-    "date": "2026-11-18",
-    "sha256": "141b65b67b7f4a8d6a9d061445643b1a33e1074407bff2cfb6fd8b9bd31653b2"
+    "date": "2026-11-21",
+    "sha256": "59c1a59e3e8627fc27b2014233231aeec06845bd02550ce8b819b41d5c2b6348"
   },
   "docs-site/content/docs/reference/functions/engineering/besseli.mdx": {
     "date": "2026-11-21",
-    "sha256": "40468f4b0d9a10c38eab41cc6aabfb5fc2bbfc375caa9afd95630aecf9ae6bf9"
+    "sha256": "cf9ac9b8a4ca186984d6693e1ffc376c93de9f10ef12ce2550fba32b2d15a713"
   },
   "docs-site/content/docs/reference/functions/engineering/besselj.mdx": {
-    "date": "2026-11-18",
-    "sha256": "888291db65dbe611eb7c238b2b34d4f39f12626426b26236cb9161fb54a0e6cb"
+    "date": "2026-11-21",
+    "sha256": "26eabadf6b492ba850ffb1c92cbb14cec3354826e40e981a7af508df20392440"
   },
   "docs-site/content/docs/reference/functions/engineering/besselk.mdx": {
     "date": "2026-11-21",
-    "sha256": "bb92ef7c9e8c8b32290737d900408df5365a41897e7734cf0daf3f20e338d566"
+    "sha256": "d005ccb7e05f6c50051d4b95e31ef1cde62b8c35e5734fd875127edab3e4efdc"
   },
   "docs-site/content/docs/reference/functions/engineering/bessely.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c299ad0be29cf6643771feae51011abe1917b1d72da5a50bdaee376dab0f396d"
+    "date": "2026-11-21",
+    "sha256": "8e58e8fd78705f7b2690d516acdfadd324c7612ef4286b4e66b23f806d115fb6"
   },
   "docs-site/content/docs/reference/functions/engineering/bin2dec.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6461226e40738240fc46e7fbaf9eb8d5058de2282c955c377b8d2cf5980c1505"
+    "date": "2026-11-21",
+    "sha256": "11322879f4e8a309e8bf1ffcdcdb716291c07d467b8f458b1a1e2eaa70e898b9"
   },
   "docs-site/content/docs/reference/functions/engineering/bin2hex.mdx": {
-    "date": "2026-11-18",
-    "sha256": "27b693e8ec5f0db811496aac9ddd5aa08b69e521e6bf8f33c48acb05a6c5aaee"
+    "date": "2026-11-21",
+    "sha256": "79019dd8cb7ee98195a5c2f1f5af9d8b647204229ea25063d304519e11fafd36"
   },
   "docs-site/content/docs/reference/functions/engineering/bin2oct.mdx": {
-    "date": "2026-11-18",
-    "sha256": "faaa392361598b8f7ab14512647dcc9e224df6a54e9e429a8b9a46ec6ba72cd2"
+    "date": "2026-11-21",
+    "sha256": "f2a84a43bb2f3200d03e577c3a6fd06225297937699617922b498323b6b82656"
   },
   "docs-site/content/docs/reference/functions/engineering/bitand.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c38754b2f0f7f1c5c5072e82f44ee66c796a059221a64585da3f40e36d3399b8"
+    "date": "2026-11-21",
+    "sha256": "7765405efac1c808cbdbd3f90221677ecc71d6c60747fe100b12bd248daf700b"
   },
   "docs-site/content/docs/reference/functions/engineering/bitlshift.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0a08793288708f0eb6c80ed1983461f7a4075849e1f1aeebe63efbe79b7dc364"
+    "date": "2026-11-21",
+    "sha256": "7cf5f8f8ed556392f5ff3e2bd1f60d17e2fbad3c1d6d96ad68784a012cfd739c"
   },
   "docs-site/content/docs/reference/functions/engineering/bitor.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7f03ea7711315cf90ad4b1961a4b5cf43f32e36c926e9c6eb7dab141ddaf213e"
+    "date": "2026-11-21",
+    "sha256": "74e8e9f705f414a7ddfb87a5a31bd82ae2657158b1f47f6ac42b1fe51327c928"
   },
   "docs-site/content/docs/reference/functions/engineering/bitrshift.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4d6ddca84955d7ff90f1daf7a3fe37f913c4175527aafc15f85ef095e19d3ca0"
+    "date": "2026-11-21",
+    "sha256": "7cd6c040cba0eda4408f74fcffaa65b07e01b1601dfa6202fdecf872a2296d10"
   },
   "docs-site/content/docs/reference/functions/engineering/bitxor.mdx": {
-    "date": "2026-11-18",
-    "sha256": "fd1c788aa3f6f38d5e46c85a94c627b15f1715f96dcf8663e127a330e8d92c41"
+    "date": "2026-11-21",
+    "sha256": "7111d45f397ea3d175f9aafad815a445770fcccf02150eeb61aa166b0be07aa1"
   },
   "docs-site/content/docs/reference/functions/engineering/complex.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c764521c304b8387689fb31ad2509b0491397e060c58163a7f22cdd8f397fdea"
+    "date": "2026-11-21",
+    "sha256": "85aaa470bb38cdcc331b43f6d4f97a4f87ed74adc4cd49717f04889229d24c3a"
   },
   "docs-site/content/docs/reference/functions/engineering/convert.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2b93cbee59f66388eac71ac8c0155f13a9d4b4c9f350840fe5521f27aa0ffb6b"
+    "date": "2026-11-21",
+    "sha256": "a85be76fc5a219b8a67a909da8e4c99f2f856cc63a8ecbd344f419265185dc71"
   },
   "docs-site/content/docs/reference/functions/engineering/dec2bin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b1aaa9f8bdf831a5a48c5b0af4c24cc9d208658a88d0a5a16a221192b0703cad"
+    "date": "2026-11-21",
+    "sha256": "937008bc72f533361081fc8a70227c6cecb6bdb511a52f08e7ea47fdb5322181"
   },
   "docs-site/content/docs/reference/functions/engineering/dec2hex.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5e82dcd15c3dc14d7e82fddb4acc48ef99d4690a13b268c08215199b16c4580a"
+    "date": "2026-11-21",
+    "sha256": "7bd83bdb975717c2cf92184798a7acd30992f16a57d06ca58dc5f224b40f4619"
   },
   "docs-site/content/docs/reference/functions/engineering/dec2oct.mdx": {
-    "date": "2026-11-18",
-    "sha256": "cde76d9a747b17e095d4156f9ec663d868285a7e01e12dd8798ec3d261e91499"
+    "date": "2026-11-21",
+    "sha256": "c30980cbe7b38c25451256b84a1c737dc47e2de2348394dbe2f92286405b4734"
   },
   "docs-site/content/docs/reference/functions/engineering/delta.mdx": {
-    "date": "2026-11-18",
-    "sha256": "613f697892b70cb4a9c5a986ae1cb2e81dc0adebe0c8b474bab15bff02978ffd"
+    "date": "2026-11-21",
+    "sha256": "00cd960d4ef35cc89bf87e1e0fbb2f70206272c016c26cc032f8e36d7f8eaca5"
   },
   "docs-site/content/docs/reference/functions/engineering/erf-precise.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9d89bd0c243d41a87ab865005b482740651fc93b146dbc94cf979d8a2d7c2a7f"
+    "date": "2026-11-21",
+    "sha256": "c3086d2360fcdeca41355742f24cd317fa9d3322edd99c2a1559922ab78a9da8"
   },
   "docs-site/content/docs/reference/functions/engineering/erf.mdx": {
-    "date": "2026-11-18",
-    "sha256": "791921a37b2520f87f6da2ede5cde090463eb508af59cc37b0f5643f098b019e"
+    "date": "2026-11-21",
+    "sha256": "fcb8699bd42213d97435f5dcaf2fa8351e0b033f40842717dee76ac638e4d667"
   },
   "docs-site/content/docs/reference/functions/engineering/erfc-precise.mdx": {
-    "date": "2026-11-18",
-    "sha256": "21abb95b054ae8e555b17ad52b44be336149146f2adac2f434b513ef4e5b3516"
+    "date": "2026-11-21",
+    "sha256": "f2bc05cdd7437ac8f2d48a6dca4392526285b15c359428830ee7d103843e8c02"
   },
   "docs-site/content/docs/reference/functions/engineering/erfc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0fda905b95ee5edd145382c4ffac302c2bf7fab216f829a2669d585f8428e48e"
+    "date": "2026-11-21",
+    "sha256": "9294342aea22136ace214cb96cb342042de287822d7a8d21690fed81099bb276"
   },
   "docs-site/content/docs/reference/functions/engineering/gestep.mdx": {
-    "date": "2026-11-18",
-    "sha256": "69ee6df5addd0f8e64d77a292ab296bc32d6e00c24039a254febcaaa0618f868"
+    "date": "2026-11-21",
+    "sha256": "7ad0586d957922c9d57ecd547dee0b630e2b4393401b8af684b3434eb6f174d5"
   },
   "docs-site/content/docs/reference/functions/engineering/hex2bin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "fd36cd57f25b222645da8742675cb126a6294d6a50678db12f001f7e8bfbce2e"
+    "date": "2026-11-21",
+    "sha256": "35ce57e2d7c22ed5508ffc5ae99417978c9b4346f8b28d1111d0b5e929f50dae"
   },
   "docs-site/content/docs/reference/functions/engineering/hex2dec.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1c9019db76e79bd7038a0b6e86e8fa2c23e976fe5bbcc7aa3dd3686b6c6d6da8"
+    "date": "2026-11-21",
+    "sha256": "bba2306a29ac3eb0d22f294d1240fad6e7144a598781a24873b198ddc18ad17f"
   },
   "docs-site/content/docs/reference/functions/engineering/hex2oct.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3c266cfc4a9128c27bbb053b86c610b7cdf803b948c4cc98b95eae0f9a6ff7b9"
+    "date": "2026-11-21",
+    "sha256": "6ad3f005de622253562de3080c6846f8873412306e9af8b39fcf88195287bb82"
   },
   "docs-site/content/docs/reference/functions/engineering/imabs.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2b61c3dc5af552493c66bce2969f9fcde5a8ea1210a48437381e74838c0ba854"
+    "date": "2026-11-21",
+    "sha256": "50c13ab1d66f7ff716cd2cb14bbd73976c77b9b8727ded9007bc11ca27bdad77"
   },
   "docs-site/content/docs/reference/functions/engineering/imaginary.mdx": {
-    "date": "2026-11-18",
-    "sha256": "96dce097675af4bdf7cef6b30d0814d0f0f04415ff919933736aab7787fd3d8c"
+    "date": "2026-11-21",
+    "sha256": "a03566382cff32cdf66c499bb95a358282033e669e1eebf52fd3ad72e35456da"
   },
   "docs-site/content/docs/reference/functions/engineering/imargument.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b852947d10c00e75b5b43dfcb7545129459d543005ba3e158974904fa761313b"
+    "date": "2026-11-21",
+    "sha256": "ae2f72b9d31bf69bc4231cfbe52c378f3eb61911e70a6a9f17f15305bed8bdc4"
   },
   "docs-site/content/docs/reference/functions/engineering/imconjugate.mdx": {
-    "date": "2026-11-18",
-    "sha256": "54dbac0d8f46f1c8041fb5de27521f9eddbebda3797e662f448086bbed337e87"
+    "date": "2026-11-21",
+    "sha256": "2b8c1c005a058ee1f0cb0afbd3c799e672eb1decf701bf6fea83e589acf7885f"
   },
   "docs-site/content/docs/reference/functions/engineering/imcos.mdx": {
-    "date": "2026-11-18",
-    "sha256": "426e61df7e81864a185bfb72d6e3293f6c36abe3a4055422cc83634a7fc20f1a"
+    "date": "2026-11-21",
+    "sha256": "dcc1c1d22af74c062ba0998305e96413b2f84bdffb28c22b3cea154f60fe41c6"
   },
   "docs-site/content/docs/reference/functions/engineering/imcosh.mdx": {
-    "date": "2026-11-18",
-    "sha256": "11374564e12777e5c532e028628c53c7607443af4fb4028439afa948c2f504d5"
+    "date": "2026-11-21",
+    "sha256": "c335b59b68ed98e30ffef34b7914e10e067e7b899c40c6ebb08a30947665dfab"
   },
   "docs-site/content/docs/reference/functions/engineering/imcot.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f901cf6d39399d33b404db42386fd2517f5d3f7320336a3efc7d6f0e0229e1f1"
+    "date": "2026-11-21",
+    "sha256": "cc08afdf4b300355678e96f7d088ec601628114364ffd3f3b2906baf67362bd8"
   },
   "docs-site/content/docs/reference/functions/engineering/imcsc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ad2d7db01ae969f2ed835a3dfcd418a380fd244f3ee88ce3e3286046e681f568"
+    "date": "2026-11-21",
+    "sha256": "d60e7525a5e4f13bea9273870d952dc3e469186d9924f6081f48ba3ba542722f"
   },
   "docs-site/content/docs/reference/functions/engineering/imcsch.mdx": {
-    "date": "2026-11-18",
-    "sha256": "813a04df005dff135e44bfd607e4edc0c1de76ab42020528dd1f2f9742652dd9"
+    "date": "2026-11-21",
+    "sha256": "a7bd1e27d871638fe7e76a505c997c6691a782dabb86c7c331c117c29015ad3f"
   },
   "docs-site/content/docs/reference/functions/engineering/imdiv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "16354dec9fbeeb4e47555cedb5f8dcbd95e0562ec59e04601dea9dfb2e8c4676"
+    "date": "2026-11-21",
+    "sha256": "6581c189aed11474198952c6496d37f362a27356f1553a9f43a156d9591251f8"
   },
   "docs-site/content/docs/reference/functions/engineering/imexp.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3f6124908de381e5d51f574c41884eb11fc2aa95c917dd415d3ac8e55f8ffa8c"
+    "date": "2026-11-21",
+    "sha256": "59ad409582bb16fb8254c9896a458b8dcf887a59600833c64b6a17b51ec4b56b"
   },
   "docs-site/content/docs/reference/functions/engineering/imln.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d253937ee5fbe12894c35be83b00f142aac23c5e32b8a91b4a9c7e8427c2c25c"
+    "date": "2026-11-21",
+    "sha256": "35fb0080167bfd75f16971a2c1f439d48d8244aebdee5cafa299ea2c683dcb8f"
   },
   "docs-site/content/docs/reference/functions/engineering/imlog10.mdx": {
-    "date": "2026-11-18",
-    "sha256": "098efe976d08d7bb1559b44cc43e95e59b32accc90ee146270c9617351fe2ee5"
+    "date": "2026-11-21",
+    "sha256": "60b3909fb3879d3221f8c85ccde3040a9e9f635d558b723d0711f5fb4819eecb"
   },
   "docs-site/content/docs/reference/functions/engineering/imlog2.mdx": {
-    "date": "2026-11-18",
-    "sha256": "39405d67a279fb67a97cd62f1159f1755b70643e57048ffa4857c6b4fdb1dd0e"
+    "date": "2026-11-21",
+    "sha256": "43015cefb1c5d4bd4db5cb7dd05ea224cc0f440317e0f600df84520dac5e9f1e"
   },
   "docs-site/content/docs/reference/functions/engineering/impower.mdx": {
-    "date": "2026-11-18",
-    "sha256": "71a7b061a3b0e505f1ab2692ce48bf712d167d3e89ff0019afa06bce5cef250e"
+    "date": "2026-11-21",
+    "sha256": "a141f39ed5c7b92aea2015cb4a4d13cc899fcd9b56466092fb06f504a3968a0a"
   },
   "docs-site/content/docs/reference/functions/engineering/improduct.mdx": {
-    "date": "2026-11-18",
-    "sha256": "84b8ea873e73848445c8ce311ca117a73cedd53fc094f8c37dd2a3bee14a796f"
+    "date": "2026-11-21",
+    "sha256": "66b4361b33be453dfa25f0e906ad5b162abedecc31f20a0665e6dc5133014339"
   },
   "docs-site/content/docs/reference/functions/engineering/imreal.mdx": {
-    "date": "2026-11-18",
-    "sha256": "04c8c1be1d9854a78fc015446fa4d0f6c8711a1fb1eb0fd5632ba21435fca148"
+    "date": "2026-11-21",
+    "sha256": "170ceaaa0b74696d14b5538823217070f8eccbd19c4f8a1d100256bb1348a816"
   },
   "docs-site/content/docs/reference/functions/engineering/imsec.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6bcf3bf5a6807aa263252fcf597428d05192f7715c3e85f1ba74c849cc584e67"
+    "date": "2026-11-21",
+    "sha256": "af2437098cda75c9ba0162372de1efa019469e394426389337c55699b0aa94c2"
   },
   "docs-site/content/docs/reference/functions/engineering/imsech.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ee0f888fc82c57eea862815a5e40abee9de353d14aad6020f9cc59bc21712261"
+    "date": "2026-11-21",
+    "sha256": "ba08938954dc1eca2d23837a4e0adfb5cfb711ebd08134150c6a0c55e3c791b7"
   },
   "docs-site/content/docs/reference/functions/engineering/imsin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "95b6c06e4d2664452c658fb77574186e24b1fdaa331aa45817f65b7eeb27acb7"
+    "date": "2026-11-21",
+    "sha256": "d25f02089493eee13a1744db738e4396aa841d67a68cafafa0e50bb2a5347d49"
   },
   "docs-site/content/docs/reference/functions/engineering/imsinh.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5b08217e6bc77886b35e5b7f7f33bb81832add0e8cac3bce76d6c484f2edbf3d"
+    "date": "2026-11-21",
+    "sha256": "114b1a6e132c314a31edbe52b9497fb2e983eb137f2f20059078a99360fdf216"
   },
   "docs-site/content/docs/reference/functions/engineering/imsqrt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "165a4c3a2ab592ce746206b43b29555648bb59a478b5545d0292b6ca8132d3b2"
+    "date": "2026-11-21",
+    "sha256": "06f8bda4b89b57338e475b6ea1e3212bb13d9aed8ce6417a45c7cdb8447a6f4e"
   },
   "docs-site/content/docs/reference/functions/engineering/imsub.mdx": {
     "date": "2026-11-21",
-    "sha256": "60f777e2252a6ed20bbf14a4f12cb79f28b70be600f16b0996ce96a337026319"
+    "sha256": "4c6bfbe67c8f6ecd9ac0b510e58f44be20dc9740c489aa3721c41f63fb11d666"
   },
   "docs-site/content/docs/reference/functions/engineering/imsum.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ef38059202c21649094e4baf6a3e5213ad01719ae5f36a75280ec20c79f0fca8"
+    "date": "2026-11-21",
+    "sha256": "f6d8ad16795763dd9e7987e8bea5a9ceda04a54edd39610b908f42ec21c06363"
   },
   "docs-site/content/docs/reference/functions/engineering/imtan.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e0f5851003ed25956a511d977db8c73826fbfae161d641599b1bf4fb64c2c373"
+    "date": "2026-11-21",
+    "sha256": "105ec35d2eabb78b7096d72acc1b3a50a105d3392db71ccd74b3e8ac588dcf94"
   },
   "docs-site/content/docs/reference/functions/engineering/index.mdx": {
     "date": "2026-11-18",
@@ -564,276 +564,276 @@
     "sha256": "0ff9110a1c80977c21e4ca319266b179c1a6ac3ac74f43d7a6d2198dbaabd53f"
   },
   "docs-site/content/docs/reference/functions/engineering/oct2bin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "43a3c51ccd93c179a434f73f4dd9be025e31e1c812c32a19093a6c212497b2de"
+    "date": "2026-11-21",
+    "sha256": "dbe2213ec708ae5db50e216e8122697de0068addc8052b0ccc2394a559532620"
   },
   "docs-site/content/docs/reference/functions/engineering/oct2dec.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b67e313d4f558ca1129d8c04ee02d131feea8fc7e8421935af7ac30ddf0a64c1"
+    "date": "2026-11-21",
+    "sha256": "e115820b31b2f1d508cfdc9290c5e9e59a6f42acef2139df0ba1a719da8248bd"
   },
   "docs-site/content/docs/reference/functions/engineering/oct2hex.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3099398b6e8b52ef6741423d63726afa14e6f2865d48a5582ac1845bc6a09b3d"
+    "date": "2026-11-21",
+    "sha256": "c628bb1ad7face42ad239a5943f0a5c8e2ca76801388e6b5da77ca1253815c96"
   },
   "docs-site/content/docs/reference/functions/financial/accrint.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6fe7a1e51caa3d2ec623c1aa9f09e4db540c066a23500061dde1003f8ce8b961"
+    "date": "2026-11-21",
+    "sha256": "f97688d38fb1691cb58e43f1948102ddb59f5a4668f9f6e1ad3c58ef1cb57d3b"
   },
   "docs-site/content/docs/reference/functions/financial/accrintm.mdx": {
-    "date": "2026-11-18",
-    "sha256": "404185f9bdae945db6e518415bcfa845e24be8f36ca005d9f58a80fde9440016"
+    "date": "2026-11-21",
+    "sha256": "7020a3088e4ad6fb4e6f50fed2d86089fc62739f8ac1f57ff35b83391c84b306"
   },
   "docs-site/content/docs/reference/functions/financial/cumipmt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d7b42e277c5124f2e7cc19e306c2acf0845ca892a49bbdc81e36301691a6b981"
+    "date": "2026-11-21",
+    "sha256": "f2eb8afc3032a0b0e99116ad923148c7649cdefe34dd5d50efa6e935ada73561"
   },
   "docs-site/content/docs/reference/functions/financial/cumprinc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6ee6b48762aff02b2e1d15cfb0d23ddc5d5a4970d1e2f9c20cea415b25953e06"
+    "date": "2026-11-21",
+    "sha256": "ea3ac413936f74ff7858a21b0fdeb77f40c2970bf0ed075c6f99095530a8849d"
   },
   "docs-site/content/docs/reference/functions/financial/db.mdx": {
-    "date": "2026-11-18",
-    "sha256": "cfc9824e93affb89c91d0810b8f764553ed89878c963d10c8eaac886e99fbf71"
+    "date": "2026-11-21",
+    "sha256": "00b46f9875de7633a04345d369c7470f15cc6accca2e887e1700ec4a5288edae"
   },
   "docs-site/content/docs/reference/functions/financial/ddb.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ee1cd66d5575ac89f1aacbd39430b762ce5f063f1813cc2518b9fb191fecf166"
+    "date": "2026-11-21",
+    "sha256": "a7db84f2125e806063c1241d04a757534377ddf0e083c4fc10142856b3a57465"
   },
   "docs-site/content/docs/reference/functions/financial/dollarde.mdx": {
-    "date": "2026-11-18",
-    "sha256": "56560adc89e618b62ce60a74d80ff2df94afced7bea3c1b54ffa106ca9c1a76a"
+    "date": "2026-11-21",
+    "sha256": "2beadfcced852a53a2ee7e7a18cbc7bed1d666f394087514ae4b86671a5c993f"
   },
   "docs-site/content/docs/reference/functions/financial/dollarfr.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ac47da97e3747d70e9935ae6d26715a014a3ab7011bba582dd1b7207a56ed872"
+    "date": "2026-11-21",
+    "sha256": "7da8e46d463e1e2c456352d10db4b01f2a66146ca6f7f271d00b46b631578711"
   },
   "docs-site/content/docs/reference/functions/financial/effect.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0ec5693e3d3dabb6112e2f7499e6d39c21f4833e32535f838ba3b0411f106821"
+    "date": "2026-11-21",
+    "sha256": "916f224eba4edea9381b665a69a1e1268c5d21ad00e85c92d778900a8c589ff3"
   },
   "docs-site/content/docs/reference/functions/financial/fv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "52625dfe9b23220eee83fe1514e2710904104afe72d0c6e307346a41731562bb"
+    "date": "2026-11-21",
+    "sha256": "d29147135e726fa9e212891405b2578bceef740d3eeb10bffc21004bd8b45c7f"
   },
   "docs-site/content/docs/reference/functions/financial/index.mdx": {
     "date": "2026-11-18",
     "sha256": "f1ec29aeb088d552332e7f872204c4ed12d1cf819662794b4393c6551e51028b"
   },
   "docs-site/content/docs/reference/functions/financial/ipmt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "cb49bbab804037e8a15abd65881e60ad436857630edf077cda1f30648fd13ab7"
+    "date": "2026-11-21",
+    "sha256": "6e82b117829d108f927405694a3ca4e3ac25c8adf777dc9298ebc590857a2a19"
   },
   "docs-site/content/docs/reference/functions/financial/irr.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ffbbfae0b25fd2caeb64ecd4d3be6996bd365b9aaf7b082893f331c815b81a6e"
+    "date": "2026-11-21",
+    "sha256": "950257a8fe681e3494064e4900b5d22ddd1d0586edf50ef773d8bdbed771a7e8"
   },
   "docs-site/content/docs/reference/functions/financial/ispmt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3b4b9c94b9a5e8d8318093408af941877a5d6cc9866f9ce72f350b1cb580fe24"
+    "date": "2026-11-21",
+    "sha256": "ab114ae181592ce899e25269e1501aed72b24bc7db350db357add3ee777c2950"
   },
   "docs-site/content/docs/reference/functions/financial/meta.json": {
     "date": "2026-03-24",
     "sha256": "8d1650e2b942a80ff0b9bde9301b7239956e4547d31133afe68052408aec79c4"
   },
   "docs-site/content/docs/reference/functions/financial/mirr.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ce872a479efa0b2d1fb4ece4949b1caec24d8b188d5fc336fdf26d2a87a1153a"
+    "date": "2026-11-21",
+    "sha256": "09823ed81bb1fae518ffbc251eeb246f50c000933059a6f48556d5d7bef8225c"
   },
   "docs-site/content/docs/reference/functions/financial/nominal.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ed7b0e00fe5e6116d50c66825f53451a63b8fa98e5990a556463c2819a9348c9"
+    "date": "2026-11-21",
+    "sha256": "9356eb90c2b92defcb85293c9c4a06e09e415bca97d90d8d93e1aa7811d3c45a"
   },
   "docs-site/content/docs/reference/functions/financial/nper.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7a3b154f0e89a27928db8b71c0ac558aedb02394ae2458991314ed36f2fd82cc"
+    "date": "2026-11-21",
+    "sha256": "a42eb9e16a838ee0cfca832fc36cf9e9601807abc35a6c4bb420e08a1e3c3ff8"
   },
   "docs-site/content/docs/reference/functions/financial/npv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1af2eb471537c702da109c993ba36da7b5025166bddf82c5d9f8f9104fab8da8"
+    "date": "2026-11-21",
+    "sha256": "086de2ed04a742aa30a7965d3c0954c528558a527ee975fcc83216f7a9a33d4b"
   },
   "docs-site/content/docs/reference/functions/financial/pduration.mdx": {
-    "date": "2026-11-18",
-    "sha256": "941895dbaed9d8f8ba01c5be791184bdeb40f6b3ca9b455d1cfd3590808a428a"
+    "date": "2026-11-21",
+    "sha256": "f1811cb76e8145a0cf63c147c8136300b9b52c04986a847376bcadc30f32c73d"
   },
   "docs-site/content/docs/reference/functions/financial/pmt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5a422079f23b8364f401d512c7e87562bdcae48eada667e4516a0bd674ad952f"
+    "date": "2026-11-21",
+    "sha256": "97e736b76cb7f26b21165693e6c0e30655ede6ad128993c873cfb06699c4f006"
   },
   "docs-site/content/docs/reference/functions/financial/ppmt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "dd843c3be84ccd934adc8acf751cc45a64665c9603f72d42602b8942b24434dd"
+    "date": "2026-11-21",
+    "sha256": "998e8a95b0bc4cdcce4b4b89c257c60094c6fb058f9fadf888ff9d45d5bc4ba4"
   },
   "docs-site/content/docs/reference/functions/financial/price.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c00e0c3981c4ad8e51ca79ba2f380d2f3a1ba2e4159c375f7fe0ff3233445695"
+    "date": "2026-11-21",
+    "sha256": "8ad2ba24fac74c10aecc03759d878226c4f90d93b35fa482542cb5a5ad6da9f3"
   },
   "docs-site/content/docs/reference/functions/financial/pv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "247a1077b90bd920a32e6bf07ca6ebf815920880ab23e88eff3bbb0549f36624"
+    "date": "2026-11-21",
+    "sha256": "30370012c4e569880caac1cbc2abb84e864151b36bf4888ee4c87713206fd2e4"
   },
   "docs-site/content/docs/reference/functions/financial/rate.mdx": {
-    "date": "2026-11-18",
-    "sha256": "70e47df659ce2687c003a2b7ecc4ad24622a305eaf92c4a56b35ef269bfa9318"
+    "date": "2026-11-21",
+    "sha256": "d7c8aa31cf0c2f36212a8c189b89fc2caaef548e13bb2631eb3c4b7b6e6e87b0"
   },
   "docs-site/content/docs/reference/functions/financial/rri.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3fb39e73c12c4aaf5e261c8b29d010f5d4d8f92b88732c6febbb7c0a50d1d7c5"
+    "date": "2026-11-21",
+    "sha256": "53d3f601d0f2fe8015aac676c053c4f1bf9d4cf7ae4e9b8519aff2f640b50e34"
   },
   "docs-site/content/docs/reference/functions/financial/sln.mdx": {
-    "date": "2026-11-18",
-    "sha256": "089f0d0b1953b090d57bc8916c1cffe0ba6baad62fad46a4cf0d135c84e2375d"
+    "date": "2026-11-21",
+    "sha256": "71c79d5cd8e9285d68d347e61c65c07e5744f3b1cef4e857a73f64e5e77fbde6"
   },
   "docs-site/content/docs/reference/functions/financial/syd.mdx": {
-    "date": "2026-11-18",
-    "sha256": "8a8c7c89fdc5c623add31e8349f221ccf04c8e09bdef2127171301ff30713a77"
+    "date": "2026-11-21",
+    "sha256": "be07d699173e669f42c1b81168cc84802d09ed886ada5ef1e0c07163d4eb7c07"
   },
   "docs-site/content/docs/reference/functions/financial/tbilleq.mdx": {
-    "date": "2026-11-18",
-    "sha256": "11fc73721df40e2f542f91176620012e6a4705a536ccd76b404afc47b7380e7e"
+    "date": "2026-11-21",
+    "sha256": "1942187815418661d00a29087099e968fa242ae7d717bd9f989b21fa94b2b106"
   },
   "docs-site/content/docs/reference/functions/financial/tbillprice.mdx": {
-    "date": "2026-11-18",
-    "sha256": "aa39f591995fca1dc9a3a11f2fa9961479dcbc45d6ba7864e5f34524e768e7b5"
+    "date": "2026-11-21",
+    "sha256": "383d935896ac8646b8b8efe59ed778e967dc10489ea5dcc7fa3e38a4ebeddd1e"
   },
   "docs-site/content/docs/reference/functions/financial/tbillyield.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e91b89212d4531f27fb3a18008d9cf0e46063346419559d47ab3659f16a6cbc7"
+    "date": "2026-11-21",
+    "sha256": "52cfb85f4713ae85cf9b26c8525142e30410cda966489d7d3e5abdbb7e8434d8"
   },
   "docs-site/content/docs/reference/functions/financial/xirr.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1852b31fb0c7e65a4e61066d81baa5c787b101497a89e64dd886db42f0c9e075"
+    "date": "2026-11-21",
+    "sha256": "673cd789f0e282c1a2728bf40905c1ccfbbee69a69a3aa155d6d225107363c2b"
   },
   "docs-site/content/docs/reference/functions/financial/xnpv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "280bcb44536437e4bbb68a814ab601984978629cb4eb66f546e5dd43c44cc01c"
+    "date": "2026-11-21",
+    "sha256": "45c8b3bdffef15ea79d4a5567825626951b1d0510e6115d1745d3e8b2ccbb552"
   },
   "docs-site/content/docs/reference/functions/financial/yield.mdx": {
-    "date": "2026-11-18",
-    "sha256": "453e77f4c051acd87cd486d3252cc9a152817b110060d533c4c03f28392147fc"
+    "date": "2026-11-21",
+    "sha256": "ec644edc8819f47201e6a6bc8a4d683185a1b125fbd406d24e64468b89d14a1f"
   },
   "docs-site/content/docs/reference/functions/index.mdx": {
     "date": "2026-11-18",
     "sha256": "320704930a62eeb584c00d3665ecc00e718fdc3bcfe3fcddf0d5fe0d8bba815e"
   },
   "docs-site/content/docs/reference/functions/info/cell.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7f83b6f8a46ad177fc202aeb5cf51b81407aa6e391f9dfca1833b7441f5b5a68"
+    "date": "2026-11-21",
+    "sha256": "59ec9feab2bbbc6b39c9583419818f6d2db681e8f1bf4c16911816703aeaaf15"
   },
   "docs-site/content/docs/reference/functions/info/error-type.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b47e72fe887d8b49c0aff0eaf470751ccce1676885d0cf05f56f284c104e4384"
+    "date": "2026-11-21",
+    "sha256": "9106de624f5594d8718ecfe85dc564e327aabb20e780a1f8358c02d90ed58ec4"
   },
   "docs-site/content/docs/reference/functions/info/formulatext.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ef2b477026192e5a3596709da902e348cc5f079bc1dd5c83739a31b6f58095d2"
+    "date": "2026-11-21",
+    "sha256": "04ac54d8204637218b79386ba2ddd3e96f4c8d335172840b2b64c0591dfd02a2"
   },
   "docs-site/content/docs/reference/functions/info/index.mdx": {
     "date": "2026-11-18",
     "sha256": "26c1505d5f0c224d89630069363d7c85a3c365f5392a2d0b53bf503581c861cd"
   },
   "docs-site/content/docs/reference/functions/info/isblank.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5b900786ffe07aa04746c846a6273939dfbd0a56df3fbbb0572c0b599eeb84d8"
+    "date": "2026-11-21",
+    "sha256": "1b9db735710c8bb017d69cb89e1f0654af8fa36da036fd32f3376190f7ab6438"
   },
   "docs-site/content/docs/reference/functions/info/iserr.mdx": {
-    "date": "2026-11-18",
-    "sha256": "bed7cd0b4064ef0e4a88fa9c59360842e5ff0fb8674260e064ce4b0e94a09f0a"
+    "date": "2026-11-21",
+    "sha256": "9d0367cac88b7e4c5c656c9d62148a16b70f0bdd38812aa861016fcb9ad555ec"
   },
   "docs-site/content/docs/reference/functions/info/iserror.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4c0a5694f449727c784e2014549d7db1640f5a2656dc520c91d37175e26091c6"
+    "date": "2026-11-21",
+    "sha256": "865c18af15ffb6b2acd94b3a8e1790e11ae30005c63e16d25971f7aeb7f9231e"
   },
   "docs-site/content/docs/reference/functions/info/iseven.mdx": {
-    "date": "2026-11-18",
-    "sha256": "71888bba5bd4f78f81908e132679da504a55fb6d249214bb6af4ffb4bf82e8f3"
+    "date": "2026-11-21",
+    "sha256": "ebb906c13cd367f80a28edc115b6b62070218a7540a5c8da142771f868608769"
   },
   "docs-site/content/docs/reference/functions/info/isformula.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9dcae65bfa812ac3e8ff70bb87820d6db8d3b9f8973a471cb942073390ddff4c"
+    "date": "2026-11-21",
+    "sha256": "a0d0f6e308481b42a73308fddee26c0c47499009066b8d675e6190b37598e1b6"
   },
   "docs-site/content/docs/reference/functions/info/islogical.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ee8aa08ed0a6b7d8bd871d91b264ffca9b16cbb2a0e72a4006531482734265a5"
+    "date": "2026-11-21",
+    "sha256": "1a3ad3ff92a81fc9cc449af5ff708dece063a0a5505c2ef965522ea90ead97bb"
   },
   "docs-site/content/docs/reference/functions/info/isna.mdx": {
-    "date": "2026-11-18",
-    "sha256": "8ff03ca520f18c8a4306760b8f9e0511a3208cc8d60760ee1152d5dbcf6af086"
+    "date": "2026-11-21",
+    "sha256": "e026d05e609ae8ed77dbf76a8f8039bd1066691f66f071d889b8e723af404ea1"
   },
   "docs-site/content/docs/reference/functions/info/isnontext.mdx": {
-    "date": "2026-11-18",
-    "sha256": "72aa16dc395b6b5bdcc29e4d183498a0411629833ba3e1f3956c725b8146578c"
+    "date": "2026-11-21",
+    "sha256": "8799124ee9a55502b8e5a2b49c09bc776995383c7f019ad82fadb6633bef2813"
   },
   "docs-site/content/docs/reference/functions/info/isnumber.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f8514fefd354452ef04fdd7bc89b07af603f5d185bc2e54a5bb1c3a74159a306"
+    "date": "2026-11-21",
+    "sha256": "043af6a6b6539205ccc45c90bca38cd69ae20e42ff9da0e02c7fd5eb61e14de1"
   },
   "docs-site/content/docs/reference/functions/info/isodd.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1bcb7968d3b8e22a4800b67c2a3754b6083fb5a7daf3224ecd824f04483c41b2"
+    "date": "2026-11-21",
+    "sha256": "b691e8caac6dc61dcc6e7c2e766a8cf5aec35303f8920a8d5b0733da374a4f11"
   },
   "docs-site/content/docs/reference/functions/info/isref.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2c73ab9a22484c17c70321f4c4701601b1f4345051210a382bd7838cb2818bc8"
+    "date": "2026-11-21",
+    "sha256": "c696874a78de74ddb72496bbc6f8526a8005ef0662b2e385def8dab2aad33d47"
   },
   "docs-site/content/docs/reference/functions/info/istext.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c90060f1a9f592e4131d74b2a4591e4afc3bcb52ac47086b66a30bc32b9126f7"
+    "date": "2026-11-21",
+    "sha256": "3412e47b278e22f746ef172451480a7e1f47a4a58f19deb5fb3b78afb334fdd5"
   },
   "docs-site/content/docs/reference/functions/info/meta.json": {
     "date": "2026-09-01",
     "sha256": "14cb1ceb62b3bf65a55bbe2e7f6180c62d907e51f279cfa03fa730f7395f703d"
   },
   "docs-site/content/docs/reference/functions/info/n.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ad0471b814fe48c52c2ee09dd476c169b820727a8e17797d4c5b638599bb6561"
+    "date": "2026-11-21",
+    "sha256": "ad1bf471cc1a39f48a206bdc2cfee7d59680cd11202386840c8a95c17f25bd19"
   },
   "docs-site/content/docs/reference/functions/info/na.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c015fe51189bf46a7d6487ce149411540d48b8619d1b393a859aa3cb650559e1"
+    "date": "2026-11-21",
+    "sha256": "1e8823de114efb4bae07fa7d0a110ebe982455ccb93e03ba01759e4c225e505f"
   },
   "docs-site/content/docs/reference/functions/info/sheet.mdx": {
-    "date": "2026-11-18",
-    "sha256": "46427bca0c4f43d6b04cb04c2c094d15f5cfc971ecbf334019fc9dc2ee6f698e"
+    "date": "2026-11-21",
+    "sha256": "f9ca0f2102fc3acbd0902d489c8f20377f9049c28fbc5f4854a90f43f12315a9"
   },
   "docs-site/content/docs/reference/functions/info/sheets.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7268624d058db163970afdc445890e561fe12e693781d96be2e61e7da1d24b0a"
+    "date": "2026-11-21",
+    "sha256": "e4f4b4d77cde17fa5df79c9a8df29c3ac67f00765c9a2d549edb42c1f73c840e"
   },
   "docs-site/content/docs/reference/functions/info/t.mdx": {
-    "date": "2026-11-18",
-    "sha256": "fd5c0d7a01d88cb0cb80b8b20448cbafe1abe11d07502578a4be8e434fb04519"
+    "date": "2026-11-21",
+    "sha256": "722670ce881ef1c0a11342a0dea94508a91d6fd106d6bd27bcf6d620ff9ecd9e"
   },
   "docs-site/content/docs/reference/functions/info/type.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0071aef3794570072daf841b66b78f25910c124c12c3cd64fdf73fe5b0a06d4a"
+    "date": "2026-11-21",
+    "sha256": "cd6f26967d4c89307a76bf1329ef9d33ab2ed16571cddc3e6299834bf6e1cb44"
   },
   "docs-site/content/docs/reference/functions/lambda/index.mdx": {
     "date": "2026-11-18",
     "sha256": "5ae791b37a40b159bb6f7e7353fa8db9fd729607d9acd3512a617312406ceb95"
   },
   "docs-site/content/docs/reference/functions/lambda/lambda.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e8848221e140060a8b9c677f7b1f093ca89f1ddba06c32e7fbdfbdffb5f4a944"
+    "date": "2026-11-21",
+    "sha256": "1353db80df324ad7bc8ae09fc8130d82e216d6e8be980e3316b41e266b46e70a"
   },
   "docs-site/content/docs/reference/functions/lambda/let.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3d9d134efcb321f584731af8663592b7aee77f8cd80f3961ec0bfcf3579fc355"
+    "date": "2026-11-21",
+    "sha256": "88cee45dab53929b59cb4ad24a413ef26d0ffe9e902aa38394499ac605b647ef"
   },
   "docs-site/content/docs/reference/functions/lambda/meta.json": {
     "date": "2026-02-22",
     "sha256": "cea371983c5596c5bc28631db42e66371942c4051a8719a8033c146d7ee4e992"
   },
   "docs-site/content/docs/reference/functions/logical-ext/iferror.mdx": {
-    "date": "2026-11-18",
-    "sha256": "70eadee2a1361a228d55b712f0754069b5a167d6219a7db44127758f625d9389"
+    "date": "2026-11-21",
+    "sha256": "b663eba3d8664c7481da684cc0aa53d7f49fd1e6b134c74a562cbc5f160d9629"
   },
   "docs-site/content/docs/reference/functions/logical-ext/ifna.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f7f8402859f32bd6497561bde90125ea36f7be905862cfbdbf8b5d9699e9b80a"
+    "date": "2026-11-21",
+    "sha256": "faec3644d8cac6a949df1b9a8f668b2ced18ef92a9c1f344773d2a490c7406a9"
   },
   "docs-site/content/docs/reference/functions/logical-ext/ifs.mdx": {
-    "date": "2026-11-18",
-    "sha256": "205a5e35e67a69ac2e2fe348ab9219caedb021bfe5ff364b63a816b7618e1bf9"
+    "date": "2026-11-21",
+    "sha256": "456d887dfcd63bf70a80cf1c9c1106b208ea024e63955a745e8c52b7bb884ec4"
   },
   "docs-site/content/docs/reference/functions/logical-ext/index.mdx": {
     "date": "2026-11-18",
@@ -844,28 +844,28 @@
     "sha256": "fb306727ef1c67981c0dca3ee87995e7e988c3488b6e8a503414fe9fe1598787"
   },
   "docs-site/content/docs/reference/functions/logical-ext/not.mdx": {
-    "date": "2026-11-18",
-    "sha256": "034f66e6e33b85519dcdcf5cdbf778a840a55c1c48e5c784c4ae47f6b69ee5ef"
+    "date": "2026-11-21",
+    "sha256": "62194a366796084586e50ada30e0da51cb6a5d88fd090e734ed670442d930a8f"
   },
   "docs-site/content/docs/reference/functions/logical-ext/switch.mdx": {
-    "date": "2026-11-18",
-    "sha256": "43a4aa9eeb4faf8fe2a3a2cea562740f042e3c572cac9d8733ca49fb156081e3"
+    "date": "2026-11-21",
+    "sha256": "18ec563e3fdc7cc8549ad4cb807f1fc8cd6a84c3939a587986bc6ef930e0ed29"
   },
   "docs-site/content/docs/reference/functions/logical-ext/xor.mdx": {
-    "date": "2026-11-18",
-    "sha256": "947895975bfef8ab31a943c6b0af7d9d575cd6848385f4987f59e8326858e235"
+    "date": "2026-11-21",
+    "sha256": "0ad6bd9e7fad3e4b570924c3cda57cf5af2041a69caa4df42deece39e2ae7867"
   },
   "docs-site/content/docs/reference/functions/logical/and.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3412071f48215cf186f2cf4816be72476ab093de7ce69a26683af99180c4b07c"
+    "date": "2026-11-21",
+    "sha256": "b2b3d31743f485aec7d5f950674e9d46aac1651a3a7c1572867a5729b4f35adb"
   },
   "docs-site/content/docs/reference/functions/logical/false.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a1c5b8fd1811f033be28e84592d023b0351ba4c07edb4ee598d546af314b16ca"
+    "date": "2026-11-21",
+    "sha256": "54a9b872d74e52cbab4202f31a986bc077c1a78531232796243c2ce220ba2d11"
   },
   "docs-site/content/docs/reference/functions/logical/if.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a47cb1c1dcf222d2c0ef4dc41c546c6c4787f170c9076356426dd47b7423f50c"
+    "date": "2026-11-21",
+    "sha256": "6b2ef06d4fa41417f4c9f2a7e62a69bfa9121bf2c651ea19021189409b7f2873"
   },
   "docs-site/content/docs/reference/functions/logical/index.mdx": {
     "date": "2026-11-18",
@@ -876,476 +876,476 @@
     "sha256": "5eb6ca1572dbad9ec17ae50ab07b8c9cd5789b787f70e8d96c394575bbe4c0db"
   },
   "docs-site/content/docs/reference/functions/logical/or.mdx": {
-    "date": "2026-11-18",
-    "sha256": "55220c9f286c1b8255773fff9c9a41b387700179da7cfa77c8cffb41f0aa40c0"
+    "date": "2026-11-21",
+    "sha256": "c8bba84f5c29f1abcbe8b19c001aca517ce63225d325adba1802174c8ffd7e78"
   },
   "docs-site/content/docs/reference/functions/logical/true.mdx": {
-    "date": "2026-11-18",
-    "sha256": "8be09d4fcb0b9ad4a7fc430406042cd35ee044fda5ac777930166f82f1f20f62"
+    "date": "2026-11-21",
+    "sha256": "f6bc31ec12d3968490d5e3e2c0f93a2497f7a3c07d1dee2f2cbee3bae2ab366c"
   },
   "docs-site/content/docs/reference/functions/lookup/address.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a96a1d31e94c914c7069e61da133ebb991b42f8ea6e810dfd72d3af1605da296"
+    "date": "2026-11-21",
+    "sha256": "a09f5dd3dd838a1dc7b83a44002f3ae8e98eed681bbcdfce010cc94a39d3e58e"
   },
   "docs-site/content/docs/reference/functions/lookup/choose.mdx": {
-    "date": "2026-11-18",
-    "sha256": "79906e9c98e37e619cea8aec88b4e2a0eb47d44a60c2ffebf9f565c475c9de26"
+    "date": "2026-11-21",
+    "sha256": "b3863b1cfadcb0339ee4832dc4cabd5b5358fb4ce73a52a49169ffbef9ebe18e"
   },
   "docs-site/content/docs/reference/functions/lookup/choosecols.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c91d57987a3e722a3d5c05adfb92f1eb96a137947aa8fcfff8cb02b74ff0b085"
+    "date": "2026-11-21",
+    "sha256": "7cea0d1ad1711e2b7ea7ab684fb42e1314a6eb64aa681868f861f3e351f016d0"
   },
   "docs-site/content/docs/reference/functions/lookup/chooserows.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4f0f47a29e85a99080eddd1d9d19c79dda4981eeb82fd3589f3f4cc0cc297da7"
+    "date": "2026-11-21",
+    "sha256": "a5678d3e4c392448ffbb21d65e561d37b3ecd944db08e4e1bd08f8cd9a41de44"
   },
   "docs-site/content/docs/reference/functions/lookup/column.mdx": {
-    "date": "2026-11-18",
-    "sha256": "26500c78782560b6da08a21d224ab309d91480e147e6f302e0adf61458f4d0d4"
+    "date": "2026-11-21",
+    "sha256": "0d252178e040aeeb33f7d40923342d16419444f2ccafa8a218b71890ae948b88"
   },
   "docs-site/content/docs/reference/functions/lookup/columns.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5539fd48a5368b971b424c32af401af50223bd22cb5662e77b4d0f1a593496b7"
+    "date": "2026-11-21",
+    "sha256": "d4be54783d8ea7b386a7cd4867d5b1941ea786cf998b5fb45b3eab86c7df0e55"
   },
   "docs-site/content/docs/reference/functions/lookup/drop.mdx": {
-    "date": "2026-11-18",
-    "sha256": "347d0c5abd885cbd538415a8ddf6d8d15aa67dfe374340a40537483fa7ce42bb"
+    "date": "2026-11-21",
+    "sha256": "aad3e3857da4adf935121aaf66fed01248e4421b9ca82df488ab6e3e7a7f7285"
   },
   "docs-site/content/docs/reference/functions/lookup/filter.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f4d1162c82452b6d67aae85dbdc3bff45032ed5bd9d6ffe4a08d548d8406e7ec"
+    "date": "2026-11-21",
+    "sha256": "7e04450e2b7013624453a37b0190a8ab35cd1738f0d9f29017b9112ebaaa217a"
   },
   "docs-site/content/docs/reference/functions/lookup/groupby.mdx": {
-    "date": "2026-11-18",
-    "sha256": "29caadb84745c17334b47d6f2ee5e9659d840e000a24990b08ab54aed1133678"
+    "date": "2026-11-21",
+    "sha256": "3f6b2b72cfac5fe419d36a1c152fc8776b7cb2f2b7a976f960c344dc3e677651"
   },
   "docs-site/content/docs/reference/functions/lookup/hlookup.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4644b04ed6876c237ac5a1ea70bc25e6e006c01749e5a71068402d6d1d4bb546"
+    "date": "2026-11-21",
+    "sha256": "00f411d03d1da06d2261c8416665562807577b98fb689f1ebdfda130bec35f00"
   },
   "docs-site/content/docs/reference/functions/lookup/hstack.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3838a59efb962de5fece5b3e75ad05333257f937590498f2d46bd9a9d56db6f4"
+    "date": "2026-11-21",
+    "sha256": "fe5c13c7bbb422a2641a2928aec818a11029a91543a215763f4e12dcdd9715a0"
   },
   "docs-site/content/docs/reference/functions/lookup/index.mdx": {
     "date": "2026-11-18",
     "sha256": "e4410cba97031b2c8b926410ff1ac4906dfa63f9533d0b2644c89a3de2f945da"
   },
   "docs-site/content/docs/reference/functions/lookup/lookup.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1602fd66ab9f63f2928474c72e054bfa75e68eccefb88b0bb6a2f4c3345acf33"
+    "date": "2026-11-21",
+    "sha256": "02d003f51ed85fc23bdb10a8f0bc88817cd3ec78ad22b17778c9cf3dedc239e3"
   },
   "docs-site/content/docs/reference/functions/lookup/match.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7c0c8aacc9da98fa7ae3a924d9a22a874ef482ed5267ef349931106407faed57"
+    "date": "2026-11-21",
+    "sha256": "3c4cdfe91943fa949754296be0cefa54257df711ea1127d7c84257b6d74d5e4e"
   },
   "docs-site/content/docs/reference/functions/lookup/meta.json": {
     "date": "2026-05-19",
     "sha256": "4a766cdd581bb2a5eb2986bba2b870b997192b73eab289b75f76b529fb0c6206"
   },
   "docs-site/content/docs/reference/functions/lookup/pivotby.mdx": {
-    "date": "2026-11-18",
-    "sha256": "67458418b9ae1a10b92aef267e07adf05511abea12dbf609f7c9c4242b5d3c3d"
+    "date": "2026-11-21",
+    "sha256": "32b4c86e1c1675e6a845c71d8373bf13f3ea588c3461327a990d4ca727952db6"
   },
   "docs-site/content/docs/reference/functions/lookup/randarray.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9ce07184a7a331c185109ae0d634744e77d7952918d9532d61c3d18f2dfb357e"
+    "date": "2026-11-21",
+    "sha256": "52aae6c581b1abbcd858d7ac914444f37697b6aba6d02d074e2a298ba7bb4270"
   },
   "docs-site/content/docs/reference/functions/lookup/row.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9d6fd03702280ebcbfc2d3c3a9f7bba2883d8c62aecbb8876880ab5bb077d60b"
+    "date": "2026-11-21",
+    "sha256": "f49280ebc137a12862a8ca296a64a57dc1e499d1b76e40bac80b4bd2cbf3439d"
   },
   "docs-site/content/docs/reference/functions/lookup/rows.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f18194f22cf4d9597b9d13751c928e6cfc60b14301549ea76c0f374a595a9c52"
+    "date": "2026-11-21",
+    "sha256": "fe21bd8c265b32eec89977139171ab4fe0788ee8a1a9807f2ad3cec5d9d99266"
   },
   "docs-site/content/docs/reference/functions/lookup/sequence.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c78e48d8727fc16c5e38bffc23d481a5f5791f528ae2d7c7699d9bc614e12554"
+    "date": "2026-11-21",
+    "sha256": "9eb5f83a4543f0ac074266ef0a0132b44a44ffa1942c9ecac9389bf72d5f7164"
   },
   "docs-site/content/docs/reference/functions/lookup/sort.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3b759b33b2a3590eb2853061ddb462cb45f8dc6302b6109b6c93dd034fb29162"
+    "date": "2026-11-21",
+    "sha256": "b8520aa44ec28627c9f4d445b3ff1c83d8dff049e3317cf340b68ce824a85234"
   },
   "docs-site/content/docs/reference/functions/lookup/sortby.mdx": {
-    "date": "2026-11-18",
-    "sha256": "77d4edc889d936a7a95ee14af8dadb7ccbd8e9d9fd355d230d56595375f45e25"
+    "date": "2026-11-21",
+    "sha256": "94625b9c4b615bb65fb7e15a435851ba41ae925d68dd58ce8dff813c9709ed2e"
   },
   "docs-site/content/docs/reference/functions/lookup/take.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6c47764ed5a5fea82fb3eae9da07e160039baae0360e2c93807ed4b66f7ab515"
+    "date": "2026-11-21",
+    "sha256": "d53e247f788c485c326f896b0cecf3a2914a6b5d3d94e543d039049f2fb0b4aa"
   },
   "docs-site/content/docs/reference/functions/lookup/tocol.mdx": {
-    "date": "2026-11-18",
-    "sha256": "80d8a24923d187344776a30ea71c0f075eef126d9e5a15e68a3304e89e5dedf1"
+    "date": "2026-11-21",
+    "sha256": "23155c3eb43075b1b59d4ae695ff5bd30e168022a2628dbfa5f01a7f2069d805"
   },
   "docs-site/content/docs/reference/functions/lookup/torow.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3b96fd25e6b09898772b791233aa0c941f63df312d9fb402857cf424ef4cb3c7"
+    "date": "2026-11-21",
+    "sha256": "8c171766428b43b223231168d5e44e403c8e888a1aae0aad9ad4a94fb8dce569"
   },
   "docs-site/content/docs/reference/functions/lookup/transpose.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ac7255164708ba0482ec36a88bea1e50bfe9ae99c01c4e1b8eb62c0b82f67645"
+    "date": "2026-11-21",
+    "sha256": "2b54a8db52c7ac4fe7c229e97a42272e48e0869e0eeccb4e29726f21dbbf524e"
   },
   "docs-site/content/docs/reference/functions/lookup/unique.mdx": {
-    "date": "2026-11-18",
-    "sha256": "aaea44ff35c30e893ad0187134ee71073ae4aad1cd57b56ea7acf733a6f7322b"
+    "date": "2026-11-21",
+    "sha256": "8b99cfd771b88720ada6157aa4ae364ce39bf569eb5357be58c2cff18c980ecb"
   },
   "docs-site/content/docs/reference/functions/lookup/vlookup.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ed3da6208da3a6ed6f96ccb40a60f7ff60733475d23199eaa07255049553a522"
+    "date": "2026-11-21",
+    "sha256": "09303b28d9cccf24b82301b3b3e78e83f372334ce1b714b3fbf3bba8978175ea"
   },
   "docs-site/content/docs/reference/functions/lookup/vstack.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0d27d38cf8563c6e661ba6ff43ddd99c8c5fcdac8ac1f13addbc0a2d3bc69576"
+    "date": "2026-11-21",
+    "sha256": "1b5abaf1b3f2b0931e95af13361c6b00fb4f1b6ab4860742045212523496faaa"
   },
   "docs-site/content/docs/reference/functions/lookup/xlookup.mdx": {
-    "date": "2026-11-18",
-    "sha256": "cc29cfa01a1d9d04519848c6ec66aa0502f3caeadd7b9d8d50ff5d078a7566c6"
+    "date": "2026-11-21",
+    "sha256": "f8e1398588a94431934e6610df265fd0d48d7f8441f7b2151783115441fe2ac4"
   },
   "docs-site/content/docs/reference/functions/lookup/xmatch.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d317b42b4117bd7537ff7d751edef74e77a26f83abdd014be50520c395e3de26"
+    "date": "2026-11-21",
+    "sha256": "3801d5b38d2626b2e59647bda877c6bb7394c1da508aa75e28096f54b98af2a3"
   },
   "docs-site/content/docs/reference/functions/math/abs.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d855d889246576b85ffa848fb663f95a23b4b9f433b6ec4d321e531f2a5fc7c2"
+    "date": "2026-11-21",
+    "sha256": "3965bb1d2e8914eecdf01522c36501d1987bcaeae5e71bdd3abd9652bf3fe05d"
   },
   "docs-site/content/docs/reference/functions/math/acos.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a263a6bdb525ac95c95c91ad8182352c347c2ae2b96a0d3ddb19bf10085b9aaa"
+    "date": "2026-11-21",
+    "sha256": "4889b8f31beb92638459375378c66e60b59c98afb6f29f938e8732cd6ef55827"
   },
   "docs-site/content/docs/reference/functions/math/acosh.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5dd6e5709b9cbbf739761f2808633398e313699ab8b604c4fa2157f32404a2e2"
+    "date": "2026-11-21",
+    "sha256": "1d4c770e9e4dd51f9c20e988640658246dd9eb5fde2060515c86048418e3802a"
   },
   "docs-site/content/docs/reference/functions/math/acot.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f969e59972b227f23fca7bfe43450f43fd30c660e6af8a0c05d6dc1695fa6267"
+    "date": "2026-11-21",
+    "sha256": "e09e09a0197209c79d8b87d40df1eb58f2b4f3409c86ca7aa398587d77dc66a0"
   },
   "docs-site/content/docs/reference/functions/math/acoth.mdx": {
-    "date": "2026-11-18",
-    "sha256": "87b8b0bb724de4a1c7c5a3c5f4d7ddc3baf20e2b55c94e8ad5389e2dc1aa37e5"
+    "date": "2026-11-21",
+    "sha256": "3f6cfd3a8f0989a47a8bb211ff15104d3dd92680216d6206d003292527b623d4"
   },
   "docs-site/content/docs/reference/functions/math/aggregate.mdx": {
-    "date": "2026-11-18",
-    "sha256": "72aeb7a432b5adc7e6fc251a579aeb8e969c35b5aa0a4c25b9a246e66b9f40f3"
+    "date": "2026-11-21",
+    "sha256": "d67d4052af3ab32e2251665b01862939dabe5d980183a98d9a1aa8f3c7577a34"
   },
   "docs-site/content/docs/reference/functions/math/arabic.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6637cb9bf8b875328a82bb62414df9cab6fa583e3a94f547e8e3166ba33abe12"
+    "date": "2026-11-21",
+    "sha256": "4bab59275aec13b3fdb0f7ed24a8b8adc6ae830174f0bfb55f25c2a8d3e3b4cd"
   },
   "docs-site/content/docs/reference/functions/math/asin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d44b4a3eb715736922f13beb338577829123c64e3952393cf32c9a86dd196ee1"
+    "date": "2026-11-21",
+    "sha256": "08db467706624572306605959e67024081aa6ae6d331875978ca3d5a4d827068"
   },
   "docs-site/content/docs/reference/functions/math/asinh.mdx": {
-    "date": "2026-11-18",
-    "sha256": "40da237ed2aa080b1246640dd3c87c39b6684a5a680ea7cacefdbc83337aee72"
+    "date": "2026-11-21",
+    "sha256": "ed6ea3fbbd505dec4d356c846c9fe75b33dd5795ac3880a0e889ad866c7bad48"
   },
   "docs-site/content/docs/reference/functions/math/atan.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e92c714aa8031a8eda2ceb7dc715b877e2764ee932e506c9ea00febaace23d7f"
+    "date": "2026-11-21",
+    "sha256": "ede5233ecafa376e8960967392321249cbddddd7de99385408797041ec3cc910"
   },
   "docs-site/content/docs/reference/functions/math/atan2.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2ad6a8601ad4ec6dc56ef9e84f3cd5d5f4044e5daf37e3b2ae5721bbf8b9bcb5"
+    "date": "2026-11-21",
+    "sha256": "8a099c624c10fff8a821734904cd00212eaeb64da8164a1eec57f6a62dc1c4df"
   },
   "docs-site/content/docs/reference/functions/math/atanh.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f67afef45ac50033d4c348d70c744312bc8b015004f9262bbfc7ed3841b58ff1"
+    "date": "2026-11-21",
+    "sha256": "20ca759258d59d6dc729ce06e2aa3d77ec71d75d1618b42f4354cd3e7b627e4a"
   },
   "docs-site/content/docs/reference/functions/math/average.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9435b98a9698ca4a2971202de9ba9248b847ca65255812cac479430a5d9ae82b"
+    "date": "2026-11-21",
+    "sha256": "977803f05b59bef53d014c8a12e5c80fb93e99778466797febbda42faadd3015"
   },
   "docs-site/content/docs/reference/functions/math/averageif.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e8787c36436306cf99faf8e9ba005c7b185f22b3022465ddec1884cb81d51f2a"
+    "date": "2026-11-21",
+    "sha256": "091b1fc99b7d394e9960312106ea5e739330fe5b4d7a7675b06077f4a4733829"
   },
   "docs-site/content/docs/reference/functions/math/averageifs.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b98136f0b898828a8e0361bdf6781274f4f40842b116614fb3cd28e3c65c720f"
+    "date": "2026-11-21",
+    "sha256": "f4c4f663a2e10f7e3504e7836334efb8da4ad62906b709cea04e6e3b228c4d04"
   },
   "docs-site/content/docs/reference/functions/math/base.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2d335a096bf7b44f00703c9568b258377e59ac1c2499a5f28454c1bd2927d9a0"
+    "date": "2026-11-21",
+    "sha256": "b02df821ac475cf08eba5186a38cc9a5d973baa9250806fa22e11ba3ba860e88"
   },
   "docs-site/content/docs/reference/functions/math/ceiling-math.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9dbc9f9dd90ade08a7d70a06b1e4ab53b5962ecfe4ab71aa17ef082dcf940d5d"
+    "date": "2026-11-21",
+    "sha256": "ef4a5140df54529ee43e56945b24690cad8b4cfc25801059dc3e975e5a8811eb"
   },
   "docs-site/content/docs/reference/functions/math/ceiling-precise.mdx": {
-    "date": "2026-11-18",
-    "sha256": "83fc5a6f9c9fc21b8d57c6d8e9c57f81ea942daeb45f2a271e9118d01e578692"
+    "date": "2026-11-21",
+    "sha256": "644f5408df7dc151536bdc9c91e861acc30206f5d0e682ae5ec7242eb92f75a2"
   },
   "docs-site/content/docs/reference/functions/math/ceiling.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6841e5c364365c0f2fd84c5a8d2f1d59b10d15e8bbd82ba71824301b0011f06e"
+    "date": "2026-11-21",
+    "sha256": "f1a55e491b04aa5b47151c052773645e6b7aae4f0bac5b1aac029169ac04cebc"
   },
   "docs-site/content/docs/reference/functions/math/combin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f1712fb464a7c1b23b7492810837cdeba88d01aca49cc74a1b0b93d7a9aeb3d7"
+    "date": "2026-11-21",
+    "sha256": "956ca03a22030b682e60076d82efe9d83b95b623792d78ea381b750388c3b386"
   },
   "docs-site/content/docs/reference/functions/math/combina.mdx": {
-    "date": "2026-11-18",
-    "sha256": "90e7089f80471a6fb63499b02570e4f86e8ca0384a7123137b57471598851327"
+    "date": "2026-11-21",
+    "sha256": "d52c34b1867ef3f4a6092ce8aa0873a3aba9685475f3d1a253c662759b026a2d"
   },
   "docs-site/content/docs/reference/functions/math/cos.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d65553cd58099941e94969430524c8d25587e95fc77474ed5b80de4808ec03b4"
+    "date": "2026-11-21",
+    "sha256": "63102b93f7f1bccaec691320877c878ffac0c8365acdb0da53c60b3c87f6388b"
   },
   "docs-site/content/docs/reference/functions/math/cosh.mdx": {
-    "date": "2026-11-18",
-    "sha256": "fbe05e35885e22b144a11c299cb97325e61d46e4b15886f18f010d5c8e3bf4e7"
+    "date": "2026-11-21",
+    "sha256": "8bc25da9102caadd738029a258c16055cc15fa9942d41fb90be99dfd327ca5b2"
   },
   "docs-site/content/docs/reference/functions/math/cot.mdx": {
-    "date": "2026-11-18",
-    "sha256": "bd5d7a1986e12b6d55801ac66fa3eb291fb1839ee42a432622dc8fbae70093b4"
+    "date": "2026-11-21",
+    "sha256": "412a16fd85bfd611c77139fe3cb4a2adc74683add99ec3e5c59b25dc47501d5b"
   },
   "docs-site/content/docs/reference/functions/math/coth.mdx": {
-    "date": "2026-11-18",
-    "sha256": "44d1f290deb89b14d0f6918b242d72674d4c691c02dafa4e3d6609ba6ae92e7b"
+    "date": "2026-11-21",
+    "sha256": "68258d537602484b45c47a57d4d5d064684eef0c8077e75a78ccf37e14fc97fa"
   },
   "docs-site/content/docs/reference/functions/math/count.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3ffa65369cc8316dacae263e20f823fe801f7c0f5ae58c331f51e30bad471829"
+    "date": "2026-11-21",
+    "sha256": "8e9132967c5a2f967bbefc4688c56bd4dda83a4339a74f11f1f506a1f2dd07af"
   },
   "docs-site/content/docs/reference/functions/math/counta.mdx": {
-    "date": "2026-11-18",
-    "sha256": "741df078514d395854f68e95019ea29618bcc8022f17890e652e59d3355cf3cc"
+    "date": "2026-11-21",
+    "sha256": "8077a1f46f014ba353713f4b289b21b77d6cb6e3d8f2d77271968bb4021c1090"
   },
   "docs-site/content/docs/reference/functions/math/countblank.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1262e66c93269a68b052040c3842fa126492b5c69390a28fefbbf9fe7c83dfe9"
+    "date": "2026-11-21",
+    "sha256": "4e5ef38ea6e6944375e413d0b6c63e1b84525fc66c7985ef563caa18bd2479a1"
   },
   "docs-site/content/docs/reference/functions/math/countif.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a2093473c1c68ee7327abac6f705239a4abea1a911463ef33fa7a94130a03916"
+    "date": "2026-11-21",
+    "sha256": "419630a31fa14512510aeb405cfa7806da49be71539732984a949a0813d1e7ed"
   },
   "docs-site/content/docs/reference/functions/math/countifs.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c9525e49f87f48327e78b3e69d57e55cdc1828dd611608736c2cc0e30b932eae"
+    "date": "2026-11-21",
+    "sha256": "dcaf493351a74a4c166bd12ddc0aa0ec8499887c444d3de9064ca5ad332f9d78"
   },
   "docs-site/content/docs/reference/functions/math/csc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6a725db1b33cb44deb17cd08624cea0253b2c8f004f8383b471696ba150c7819"
+    "date": "2026-11-21",
+    "sha256": "99de3f52b3d22059688a618c98c2d28bd520244db0b5f8fae6f8abf37d68dbdf"
   },
   "docs-site/content/docs/reference/functions/math/csch.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9b776d5b16b09fd5ef2dd03b88d2832321fd05db4d6e367453962000161851f0"
+    "date": "2026-11-21",
+    "sha256": "7d20a43c0faf9f779b33d8e3a2e0afb54ebd917d44fa072bb0822c8cae1bd550"
   },
   "docs-site/content/docs/reference/functions/math/decimal.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1364edb07a4d477c711a9b64ef3047577a7f90f539dab2631ed570b16a18912b"
+    "date": "2026-11-21",
+    "sha256": "959e7271ee2fd4a2b5dbc23fbf1c59090abf7c20e25ed971466fe303958570b0"
   },
   "docs-site/content/docs/reference/functions/math/degrees.mdx": {
-    "date": "2026-11-18",
-    "sha256": "23b98f9a7494a7832e8f770251b96185122492e2ae3a60af3facab387177ef0c"
+    "date": "2026-11-21",
+    "sha256": "6bffffb858e2c81d404fa6d5166288caacea189cd4d07dfc7fc07c91e0619aad"
   },
   "docs-site/content/docs/reference/functions/math/even.mdx": {
-    "date": "2026-11-18",
-    "sha256": "aef005d77f87fd5184b69f45c9b2bfe8c13e24441f67f79915df44ea71074ce3"
+    "date": "2026-11-21",
+    "sha256": "7cedc66933a18ba9e9d9e25586b6f1b595a2c05a2fa1fc192116dd84c513ab50"
   },
   "docs-site/content/docs/reference/functions/math/exp.mdx": {
-    "date": "2026-11-18",
-    "sha256": "cbc8d65a4da4d696d3ea95cf4bc938c8be6b87794e4a8ad16b860943a9e50442"
+    "date": "2026-11-21",
+    "sha256": "a79859d7b969607f5f38e276c648936b7809801851a60c0e54cb1bb95cef05e8"
   },
   "docs-site/content/docs/reference/functions/math/fact.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7a0a6681c510211e72822c3c1b6bda30bcd11bcf6933dadafe2b38370dc2d499"
+    "date": "2026-11-21",
+    "sha256": "d80709f922e4a9bc84961835df66a10131ef1ca1d029e0a2e2734b3933393c1f"
   },
   "docs-site/content/docs/reference/functions/math/factdouble.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c5d1f453f3e9f7c746f2ee7d89d5ea629db391d5afaece078a53f831dbc0f14a"
+    "date": "2026-11-21",
+    "sha256": "77675ce67e951b91e7f1e51b7875c54ea5cd1330af42c969288e28f8f6f67a7a"
   },
   "docs-site/content/docs/reference/functions/math/floor-math.mdx": {
-    "date": "2026-11-18",
-    "sha256": "08adcdbdbec8cccdaa4c95ff24a488583a7b1ebd21001997a4f6e69db58d263e"
+    "date": "2026-11-21",
+    "sha256": "1e87a79afdf11f26ccdfdb55c756b5cb4d38fad6b1071e1fede4623edd335435"
   },
   "docs-site/content/docs/reference/functions/math/floor-precise.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3b30116e00c20c38090e1d876ce067a448b6b30413eedc9d1fbf2f02c68ffe14"
+    "date": "2026-11-21",
+    "sha256": "39eb7111919c06bd44eddd6d74935e43b5609c4813929ca66f571d9c44bd94ee"
   },
   "docs-site/content/docs/reference/functions/math/floor.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d56267a039da552ceac9432aeca2ac7d17f67db1acf0ec7a0fae8294f3af2303"
+    "date": "2026-11-21",
+    "sha256": "a5209f45b5a8b47496d1f58e78e8776047c3e802588f44eb7150aa1994bd69d9"
   },
   "docs-site/content/docs/reference/functions/math/gcd.mdx": {
-    "date": "2026-11-18",
-    "sha256": "cb963a6b16c77f162b0cf2d2f0456778bcf97cda045fc189479fb6de92f15e50"
+    "date": "2026-11-21",
+    "sha256": "1ed18fd719cec5968306e3fc36e99d08ffe53941212e741e40e5dfd744d9a53c"
   },
   "docs-site/content/docs/reference/functions/math/index.mdx": {
     "date": "2026-11-18",
     "sha256": "0540a111d50fad65e6c0edc2014d8659cbcdb1e85ab3503255ad466528920167"
   },
   "docs-site/content/docs/reference/functions/math/int.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ad8a65e09209433f9b472c66ff723d2b9a7c0cf614b7f7d0b2558206e883eced"
+    "date": "2026-11-21",
+    "sha256": "d114e786a6fd554d9265123690d005cf61fb1022468a238a948d07f471b38002"
   },
   "docs-site/content/docs/reference/functions/math/iso-ceiling.mdx": {
-    "date": "2026-11-18",
-    "sha256": "89776d8bfc32660a09bcfc6756fca9e4cfcc178613e352bd5dcabcdc0a912cdd"
+    "date": "2026-11-21",
+    "sha256": "0e04b846514aba6b33ac6edc167c4def0790c13b6f9fe9c3f395500876f70986"
   },
   "docs-site/content/docs/reference/functions/math/lcm.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3f10e4b6ee3b67322272de99381a2f6d2fa70c08bc358ac35384479c45ac648e"
+    "date": "2026-11-21",
+    "sha256": "4f5a55196dc3a18c365946d2759b53a83627a90ff782181821d89fe6bf33aca3"
   },
   "docs-site/content/docs/reference/functions/math/ln.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1d842028ef061b78083da9c2ceb449faa4cac59a6114d6e2beaf972562e31934"
+    "date": "2026-11-21",
+    "sha256": "c3c8ca854bb2bbf9f8e2debcb0ed056178c01dfc564b8bc7b283a96f987006dd"
   },
   "docs-site/content/docs/reference/functions/math/log.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7c152c9ab5183868e349e161da27d2fc373369d013a5ffdb5421aea8897a0522"
+    "date": "2026-11-21",
+    "sha256": "35e75784f8a0964d579718267c51b2bacd168ce333d2c0951032b962f4759c3a"
   },
   "docs-site/content/docs/reference/functions/math/log10.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4bed062e389211ec680f3c055c8e75d0ea4cc47bc1f60db8ea7a2f534ec25201"
+    "date": "2026-11-21",
+    "sha256": "782f999bc1fec99f559cd7cb2eb9fca20d209897a8fecad5d7e134cc351bc090"
   },
   "docs-site/content/docs/reference/functions/math/max.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e04a88aed7485ad325552ede47da1975b2ede0ea1cbaa6bd5639fce161a00e45"
+    "date": "2026-11-21",
+    "sha256": "c60f3e292624f1919d0770d14756eae30b2450367ae56dcc3ccd7ad3e2c41c39"
   },
   "docs-site/content/docs/reference/functions/math/meta.json": {
     "date": "2026-03-24",
     "sha256": "2315b386b4d3bcbe959e4ec91252e8e2a476777355e4a74bb9405592841a3f0b"
   },
   "docs-site/content/docs/reference/functions/math/min.mdx": {
-    "date": "2026-11-18",
-    "sha256": "8dc63c5e757f168388caafe6986d2a695893cf1cd92561010dde2c8ff8cd749d"
+    "date": "2026-11-21",
+    "sha256": "1d214ba47c75f73b37bbefdff27db898f5d20550a619a1afd13c8ba36654ab60"
   },
   "docs-site/content/docs/reference/functions/math/mod.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0d82feaad343d6e0e2c12f42733f91a0e736171c2f81fe9b4ca9bed25069b78d"
+    "date": "2026-11-21",
+    "sha256": "e26621d0c0e77a4a857fa726659af61748e1c0b5efa16f30375f6996dacdecbf"
   },
   "docs-site/content/docs/reference/functions/math/mround.mdx": {
-    "date": "2026-11-18",
-    "sha256": "8eace4876066c516ce1afd89a1f1f31ba01b2862c893dc6f7e2a03d48a866e33"
+    "date": "2026-11-21",
+    "sha256": "8362057688ada31b958a4af2af37d9ba5dd43cca60a206ff7242cb338c41d144"
   },
   "docs-site/content/docs/reference/functions/math/multinomial.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7c6b001304ca6233059383e76f63aa7fa019b15d4662ca2c15e2107cd2fe5ac0"
+    "date": "2026-11-21",
+    "sha256": "f39b2ad6c629e98a66dc36eb2d52bda5ecf52eb34483671312c2680395916fc5"
   },
   "docs-site/content/docs/reference/functions/math/odd.mdx": {
-    "date": "2026-11-18",
-    "sha256": "55c686db0ec4ae666a2c777e09aee68f5c4ebfd234b53acb1c81af78f3dc6c2c"
+    "date": "2026-11-21",
+    "sha256": "3ab2b8bb2f0fba557cc19a6d6268ecbdf19c257dff03b4ba633353b9aecbf4b7"
   },
   "docs-site/content/docs/reference/functions/math/permut.mdx": {
-    "date": "2026-11-18",
-    "sha256": "aa991e9eb6532a1fc9f98f4274265806a8e1b992b21cb7797cae99f7c3d45106"
+    "date": "2026-11-21",
+    "sha256": "2b27d8f0e68f5a859d666881aa9ca9f2519bb828d7af48fa1205d98fcc20b8c3"
   },
   "docs-site/content/docs/reference/functions/math/pi.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0f30155e5c7eee0ff969fa0ceaa7bc14b41d5a365dead5e048f9a3d835afe111"
+    "date": "2026-11-21",
+    "sha256": "992ad900a050839353e56bb5d51acd20f908930c6aec2035caf11fded9430f5c"
   },
   "docs-site/content/docs/reference/functions/math/power.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2d0a6f1a40b9c95ae53e2991e5ec869e6fc6fd56b7225894bc4c636155607cb0"
+    "date": "2026-11-21",
+    "sha256": "a6931b4cd1fc24685c38c37a70a32ded2729de4489a8e00ba650040f9625b75c"
   },
   "docs-site/content/docs/reference/functions/math/quotient.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d510d3840a882592158bb61a0ac621c7a8771d4ddf5a01d4ac0e72844b5e07e2"
+    "date": "2026-11-21",
+    "sha256": "c38ebd4a23c9e605b8ea5faa8a66ea1c2b4675a59d42b0bd93cabc0a68ffca65"
   },
   "docs-site/content/docs/reference/functions/math/radians.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b110e5b39c7f992bd45b20d2a401156802187c23007b0ae5af6274af401cdb25"
+    "date": "2026-11-21",
+    "sha256": "5147acfc4f5eeb5f409b46f839b0176a8e3edbc47e604c5d8323c029cfded1a2"
   },
   "docs-site/content/docs/reference/functions/math/roman.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b0930384d2347670dd560e1ddfd4123e5e09e8768834abb8e66affa2a00b580f"
+    "date": "2026-11-21",
+    "sha256": "1932a232f875b7caf4d4d42c1598eef7c392635750dda34fff1a543cedbbee2d"
   },
   "docs-site/content/docs/reference/functions/math/round.mdx": {
-    "date": "2026-11-18",
-    "sha256": "18e3d7eb85a026399f0c38c4e7a6bac9f5e822f97fffb968436cc723d000ccff"
+    "date": "2026-11-21",
+    "sha256": "5a1c229a2ee8f8c0e411c372b38f00e9376d79116e41146639aef6716362b222"
   },
   "docs-site/content/docs/reference/functions/math/rounddown.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0bda414001e84a56280f27a64fe93d546f4066b78cbf2f1733438ac0e5791084"
+    "date": "2026-11-21",
+    "sha256": "050fa7e7bb134c56fc83af75179f6921e2cf8e3f28a1394a8f9f37675517ed36"
   },
   "docs-site/content/docs/reference/functions/math/roundup.mdx": {
-    "date": "2026-11-18",
-    "sha256": "07d04040ffde5488580ccde128cdb8d421f5d986d1dc9e0cc3e073b7cdd37bff"
+    "date": "2026-11-21",
+    "sha256": "8210f145e632165ec1978cf8ed677f13227ed575db3a4c02448f7a29f91bd66e"
   },
   "docs-site/content/docs/reference/functions/math/sec.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5407e175299d7fe4f191f30241f062f7a0c44a6f1e6e8933ff342f2a9a89df13"
+    "date": "2026-11-21",
+    "sha256": "add2a57eac6d053c6d90dd38dad0ab33c0b759b108848a7f1bcc9db51ac1c635"
   },
   "docs-site/content/docs/reference/functions/math/sech.mdx": {
-    "date": "2026-11-18",
-    "sha256": "831cdcb023b1e77c4e7830a792a8b0f573d01bbfa1beb422281f078958a2845f"
+    "date": "2026-11-21",
+    "sha256": "c4076be08b56d87c842deb3d4e8d50e80a025aa0ae5c5b9039129b9447d72aac"
   },
   "docs-site/content/docs/reference/functions/math/seriessum.mdx": {
-    "date": "2026-11-18",
-    "sha256": "be38b9e0855f526173ed88b40db1f3a21e5503e4aacab7b63e812194592a53b9"
+    "date": "2026-11-21",
+    "sha256": "9b2ca883538cbdea11dac7b35149c6a2663c2b78e30b48d2f98e5ec9765749a3"
   },
   "docs-site/content/docs/reference/functions/math/sign.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0bea79b458e89bb69c0bad6fc9c8819ea0a5c8782633c98c50e2ad7005c2ea3f"
+    "date": "2026-11-21",
+    "sha256": "fc7e1d0f75a579d65b20d682c9b7b31e20b6c10e83419ff188cf4e6f7edc0453"
   },
   "docs-site/content/docs/reference/functions/math/sin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "18afc14b725b4dc3458432153e7ac9588eba046270a4304ddc4e3e54f8123a64"
+    "date": "2026-11-21",
+    "sha256": "bb84b4cb0312d01d2ae53d6a2399241ddbd76be9d2e79181f6db54ade6ef5fa8"
   },
   "docs-site/content/docs/reference/functions/math/sinh.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f48f62fec33cf626c47eb88db8a996db2416146a95ba2a0380ff3ade2c4b1c28"
+    "date": "2026-11-21",
+    "sha256": "734ec52daeafc9fc8353367e88071482acb0255adaedf11ec7b48f3de9e36e31"
   },
   "docs-site/content/docs/reference/functions/math/sqrt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5082e8350b9385b7b5a4603e4bfe3e052950ca0d518d200f456da68fa4710555"
+    "date": "2026-11-21",
+    "sha256": "da6489c448e7af1213efab14e5c338bdce1811dbc7e2cf4473fb19a42100212b"
   },
   "docs-site/content/docs/reference/functions/math/sqrtpi.mdx": {
-    "date": "2026-11-18",
-    "sha256": "106aa4298a8ff78fe5c69c254aa72dd753a90c5d4f1270072045abbe1a149899"
+    "date": "2026-11-21",
+    "sha256": "e3c3e7e7b1dff2ba0f65b850861145f9b1db30a0dbc64f7f5c05dfa2ecb7d1bf"
   },
   "docs-site/content/docs/reference/functions/math/subtotal.mdx": {
-    "date": "2026-11-18",
-    "sha256": "36c63c96c3edb83093ec41a18ce578897499da65de9a42a85d9a10644dc07423"
+    "date": "2026-11-21",
+    "sha256": "fca9297fb6754617c68681ab61ba25ace7714f44b9ab67168f04bfa85bc55341"
   },
   "docs-site/content/docs/reference/functions/math/sum.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b003f54dd4d4b1e4387de8ffed9222758287b13c985bab909da938f993cf897b"
+    "date": "2026-11-21",
+    "sha256": "a9c572c365ef1e98600a44fa9912e019454085088582fd1fac46d68915cc2b84"
   },
   "docs-site/content/docs/reference/functions/math/sumif.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d930c2d971abc19309deb75172d16c4075f649561b6a0f5952ccb810c3b4df60"
+    "date": "2026-11-21",
+    "sha256": "6763d5037ce3aaa34f6c3731eab76f40a268d3ebfdc3cf4685b4b08c350892da"
   },
   "docs-site/content/docs/reference/functions/math/sumifs.mdx": {
-    "date": "2026-11-18",
-    "sha256": "fb9933d8ff92699bab80fa3fba61976c146f73583f1e4af88995e374813fee42"
+    "date": "2026-11-21",
+    "sha256": "98bf334f374c6eedf602081ed8aac7daa988b224e47ff1f556b6524eba29d231"
   },
   "docs-site/content/docs/reference/functions/math/sumproduct.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c82e189c88cba85b848ac474413b2b042c86b6cb27062df8d71b2132e2ea6a2c"
+    "date": "2026-11-21",
+    "sha256": "c50072b904e8d7b55ab2039bc3523ec3d12c8379bb015b945acb19cbbd78f0b4"
   },
   "docs-site/content/docs/reference/functions/math/sumsq.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6034528a4ae4f63b0ea05ad2da2366d38720df8ff9d5d374f07fdb5884e0fd56"
+    "date": "2026-11-21",
+    "sha256": "514cefa7656691f0453915cf5b721e76820c470232fe1db7a3e096974c80b642"
   },
   "docs-site/content/docs/reference/functions/math/sumx2my2.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9fe55013f14feb587765a288d5f5aff14fc093e19704eaa16aae1e503438a553"
+    "date": "2026-11-21",
+    "sha256": "9fa33cdf91ac8ae14b41c3308da787cbf6e017fe5e6db12b49d33d4d79fbb3ba"
   },
   "docs-site/content/docs/reference/functions/math/sumx2py2.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9f3ee5d4c703f4c5b8f82b5f3a3a6666a4ea4ec6c0efd5bb3a7d3445f33b5a56"
+    "date": "2026-11-21",
+    "sha256": "d2991cac97f6de831083d9bb657c5b1f6091d4a1d5f5a0e15dbcdd54587c064e"
   },
   "docs-site/content/docs/reference/functions/math/sumxmy2.mdx": {
-    "date": "2026-11-18",
-    "sha256": "30d7c1b6fcc21eabc8c6b1b3fec9024e101d85ce7e50455cf8d759d84704d1a8"
+    "date": "2026-11-21",
+    "sha256": "30654c58f650346e6b405554698705ecb65788fc7f48b20b494845dd987f692c"
   },
   "docs-site/content/docs/reference/functions/math/tan.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4cdc74f171d4d890707644425773f6df87bd91d6719e997fd676c5f97cdd22f3"
+    "date": "2026-11-21",
+    "sha256": "1a4e54ed580af6c61136fd221fe2754b0a316b41093802aafc94fc321d92f77f"
   },
   "docs-site/content/docs/reference/functions/math/tanh.mdx": {
-    "date": "2026-11-18",
-    "sha256": "72d4a5ea2046e5062f4e9a4f274b22c48cc5c836529edf4df6ab103022e2d22f"
+    "date": "2026-11-21",
+    "sha256": "86990821cb0058263c60079979c104793161da8d30b7b636fabd23cc2b478161"
   },
   "docs-site/content/docs/reference/functions/math/trunc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4b03f4068c99e1fdc0d21f886e12d8e07b6a74e2fa1a58ca4ec95213e1fc0d96"
+    "date": "2026-11-21",
+    "sha256": "0aecee22cc863b51b6ae93cb1807005f1ccada8e075b32db0e1cd7d07d021199"
   },
   "docs-site/content/docs/reference/functions/meta.json": {
     "date": "2026-11-18",
@@ -1360,644 +1360,644 @@
     "sha256": "89f7f97a33cf54c0d3f0ce01924b53d8b9f89d5ba9661739233a636fd11e4007"
   },
   "docs-site/content/docs/reference/functions/random/rand.mdx": {
-    "date": "2026-11-18",
-    "sha256": "70ed33c67460e5af66cd4c4d1cf885ab641a875f70df3f154753ce47e6472177"
+    "date": "2026-11-21",
+    "sha256": "aa29911f68d409eccc8219facc48894ca2a551b8b463eb663f2a172c2c0983b0"
   },
   "docs-site/content/docs/reference/functions/random/randbetween.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d60098dd714444bff5edfd99e4e6cba911a0585ad315b9d1e7f7736dd01f7d41"
+    "date": "2026-11-21",
+    "sha256": "cdb7bffc3635b023072f30085688b5c4e05b130c7a88917731eac533224c9231"
   },
   "docs-site/content/docs/reference/functions/reference-fns/anchorarray.mdx": {
-    "date": "2026-11-18",
-    "sha256": "34e349cdc069685427cdf1c240cf6b6ff26a3b5459a220837354ec06e57b3ca8"
+    "date": "2026-11-21",
+    "sha256": "92bbe0ccab21c7b71f40afd032c7814f22e89cb53f7e26a107e4d17901de679c"
   },
   "docs-site/content/docs/reference/functions/reference-fns/hyperlink.mdx": {
-    "date": "2026-11-18",
-    "sha256": "499bc335bb4b07913e9483eb95e59882339e985da2eaa9e453cce613b7d0d528"
+    "date": "2026-11-21",
+    "sha256": "aa0323cbbbab47ebcf0128d732cafdc6d20228c746ef326d92c46d06e96e107b"
   },
   "docs-site/content/docs/reference/functions/reference-fns/index-fn.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5f74dc3928abb41b16ba688e8924cee76fee029ec4bce3966d5b40687b385b27"
+    "date": "2026-11-21",
+    "sha256": "9bb850c8fd83571639e9c6b5f322dd6cc792291e2e63bf8e09bdf333fda4b819"
   },
   "docs-site/content/docs/reference/functions/reference-fns/index.mdx": {
     "date": "2026-11-18",
     "sha256": "e9075a564e5e9af7ea31da92f7f17f206c887cc16e3bb3a989bc6cc77ff7afc2"
   },
   "docs-site/content/docs/reference/functions/reference-fns/indirect.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0592df3968882113b49140ac64561c96936e2489ab2ffc64b80297b6d0e67aec"
+    "date": "2026-11-21",
+    "sha256": "138327ee32ceb37d2fe499fbb5b7540bb19c597903a6d16b38e604e28b5c6844"
   },
   "docs-site/content/docs/reference/functions/reference-fns/meta.json": {
     "date": "2026-11-18",
     "sha256": "b0a869847bdd7af2d44b9aec0c77913acf2946eea1e7ecce1dad01e18f61a909"
   },
   "docs-site/content/docs/reference/functions/reference-fns/offset.mdx": {
-    "date": "2026-11-18",
-    "sha256": "841a29e130dce2c8d9819c303939d7c46d15f9b2188a3372636c35d15d71ad89"
+    "date": "2026-11-21",
+    "sha256": "2d858ed31be75d5b32a7d35e22ef279c8a612d9ec04f353683cf95edbc71f110"
   },
   "docs-site/content/docs/reference/functions/reference-fns/single.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a21d5e82c3e956f04e0f37b9f4d78fa32f6cb425ce753ddc98419e712b79b082"
+    "date": "2026-11-21",
+    "sha256": "9440309b92891b774ed6cd02a095f6c6cdb7e324083cc3e5a2facd237d3bfb5a"
   },
   "docs-site/content/docs/reference/functions/stats/avedev.mdx": {
-    "date": "2026-11-18",
-    "sha256": "86758d9d21978e9f62f0160eab32cb50074fc8bd5543e051f89e361223f37b61"
+    "date": "2026-11-21",
+    "sha256": "f4dc30b7685443bb2e067dd89d4c0b953247692472085524bddd04c4ae95322b"
   },
   "docs-site/content/docs/reference/functions/stats/averagea.mdx": {
-    "date": "2026-11-18",
-    "sha256": "cd28ccececd8f671b6dee186130f9bba54d8c8e99aa7d0f9e6836cdd787aed07"
+    "date": "2026-11-21",
+    "sha256": "5f71b06614bb92474b35a64268a89d0ae0781e2efb113ae5432db648cae59be2"
   },
   "docs-site/content/docs/reference/functions/stats/beta-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c9e41bcc1f9ef52f77a12ffe28d4d686d23a5fdb0f14622cc0a626d22e5f1f9b"
+    "date": "2026-11-21",
+    "sha256": "0220c5f37d83473a287f2ad65468fd9276c3fd61c9fc220b8ce8ff8146f859b5"
   },
   "docs-site/content/docs/reference/functions/stats/beta-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d0a11464967993829e56d07e18258e5565bfa5e0f2908554fc42083784b8be9c"
+    "date": "2026-11-21",
+    "sha256": "cde405bae4febdfd4ca84f59bb6b7338add7a2df364ac0c5e519a39836843711"
   },
   "docs-site/content/docs/reference/functions/stats/betadist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f2d9dd688ae112a1f87afe4b56cbc7dc6a81dd450a1dc4c87c1e76be44b2a8e8"
+    "date": "2026-11-21",
+    "sha256": "c0d9b1fdd970ad5991d84efc459f3e9b7fd38e69a65623fa3dec76f93ad480e4"
   },
   "docs-site/content/docs/reference/functions/stats/betainv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "23a9857aeccf0701668fd6eb31d43f2bf08acafe9812831c742c563cf8c1f92c"
+    "date": "2026-11-21",
+    "sha256": "ab862332210aba4fb838145b03e044a54646ef41a1446c5822942c03452a14cf"
   },
   "docs-site/content/docs/reference/functions/stats/binom-dist-range.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3d4fc7e1eeb61227447980f46c48e1aa0524bb647ca47167542841264221f699"
+    "date": "2026-11-21",
+    "sha256": "0cfbc9a76b7f585cddbf803a9d601431eeb4ec5ab6350fdf53662bd4266cc31d"
   },
   "docs-site/content/docs/reference/functions/stats/binom-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1764758226d773e126373b2221654782c69f204c796ee0f38c557c325592b75f"
+    "date": "2026-11-21",
+    "sha256": "2eb5c0d989ee0fa53625a3ebaa9b64c9c411697a3d238d5b07f787c9fb6489f3"
   },
   "docs-site/content/docs/reference/functions/stats/binom-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f1914aa22c3ee675f6ea1104d0fd6ebf92b8fcb59916ed8579f1a476ebcd1095"
+    "date": "2026-11-21",
+    "sha256": "f1f5a85323a52ab5e383375242904ff33579557cd8fca20bb314068c1fc00805"
   },
   "docs-site/content/docs/reference/functions/stats/chidist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d7e8ed5a80e01a2b59a1097d0b9d8328cf7bf7bbfdb19a93f598f0c1c2628a71"
+    "date": "2026-11-21",
+    "sha256": "cb1b954d379afe9425b42202fd27812bf551c4081d514049367078828c248aba"
   },
   "docs-site/content/docs/reference/functions/stats/chiinv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6158329237fed5075b52d1fb4a90ac8358b5fc9a63191ccf72ebc9a3db2bfb8f"
+    "date": "2026-11-21",
+    "sha256": "2847ca3320e00a78732ee0fc95d22e0db2d6fa3d9dfde08bc9733c028adb7831"
   },
   "docs-site/content/docs/reference/functions/stats/chisq-dist-rt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "8ce1ab1ccbef3ddaec85b1068885ddcaac8a4e4e2e05645ec56b60179de77402"
+    "date": "2026-11-21",
+    "sha256": "b255a6cdb35d71c79a910aafdf4f8c4c280b7f4e5cb11448f139926dee93bdc7"
   },
   "docs-site/content/docs/reference/functions/stats/chisq-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5b0f2f4cf2ed84f7c52f8bbe929bc85a133ce88b59596bc9beca02e8ac457712"
+    "date": "2026-11-21",
+    "sha256": "93357e7e129b53d5e4ce0a0528b1c5848d8c21fc73533f7e04230bb13baacf59"
   },
   "docs-site/content/docs/reference/functions/stats/chisq-inv-rt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "cbda1a75872ef64c4dcfa3da1597d0939031adf2f4688f0ab73b85ec19cc665d"
+    "date": "2026-11-21",
+    "sha256": "d01e050192b3d2cdfb71d41a32447d3ec6765f2df052942bd19cdfb8ed5d7a7d"
   },
   "docs-site/content/docs/reference/functions/stats/chisq-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d5d520fdf96751018e1ff7bf9ef1761a95d37dbe500a434ae254c956d1561d8c"
+    "date": "2026-11-21",
+    "sha256": "ac5a90994405d5ebf103e9d59d277a7e9279e20b6602c0a8484035f99ce28641"
   },
   "docs-site/content/docs/reference/functions/stats/chisq-test.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d5f5837e9559e5196e23bb92b7ea2438d1af2730159f5effa3a50bf491539d6e"
+    "date": "2026-11-21",
+    "sha256": "2e61d53187cea50e8b7927706caeda827e697585d14ad6b7f72ab4785c69002a"
   },
   "docs-site/content/docs/reference/functions/stats/confidence-norm.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3078c6afe6e4830fa4e2268922e88ce177ee4e8ac26acb4b964983e464840d62"
+    "date": "2026-11-21",
+    "sha256": "709661158a90b485eb12a714232e8d8c6d8082cdf41483cf7f992596b42f5e03"
   },
   "docs-site/content/docs/reference/functions/stats/confidence-t.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0c8337112f5f49b1730a652a66b219eb9fd8b84da3149fb8ddf787152660f5a7"
+    "date": "2026-11-21",
+    "sha256": "ff5219b1d5d59abe7d1e908e5f04ddf1333901269fc65d8113ae09fcab5210c5"
   },
   "docs-site/content/docs/reference/functions/stats/correl.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1f69b884d265c579556c7e9ba6563d506d5431fce2ec31fbb12be89e186c4d8d"
+    "date": "2026-11-21",
+    "sha256": "eec16505443b762d12639743c760699b27e66e7ed775059ea2f2dd7b0a8253be"
   },
   "docs-site/content/docs/reference/functions/stats/covariance-p.mdx": {
-    "date": "2026-11-18",
-    "sha256": "00e2af1958e71f7654f06d8c427e4342d494381e85bf2cdc93d249939edfa0da"
+    "date": "2026-11-21",
+    "sha256": "e9d0ad86b2d20d971b55a9ab4d6100f7b1c1e62335cff067758d6cb8b34583cc"
   },
   "docs-site/content/docs/reference/functions/stats/covariance-s.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0744366968553dcf4cf0f3aaf5c0bf19f9d5f3b488c033779b191b8e50657283"
+    "date": "2026-11-21",
+    "sha256": "4ea29728f0f8865c0ee4702bba0ccc0b4c87c811e604451e360db555a33ba546"
   },
   "docs-site/content/docs/reference/functions/stats/devsq.mdx": {
-    "date": "2026-11-18",
-    "sha256": "062258dbfb644826ac722739ae6128b4d71d3e323432203a3181be4050ea5a60"
+    "date": "2026-11-21",
+    "sha256": "6a5e3fa43f18b53b0b79537bdffb983f9b02b9d0863c5270d9bf2dd96648e7d7"
   },
   "docs-site/content/docs/reference/functions/stats/expon-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d91aa887b1e2b7594b60da55ba53d95d2906ff6e716ab562d751804359ad6979"
+    "date": "2026-11-21",
+    "sha256": "1007a3efeb2104f30c005523665d7c0abde849ec473f0414a94c0912aa69b195"
   },
   "docs-site/content/docs/reference/functions/stats/f-dist-rt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b01e6cfadc39ea53584f71ed1fbd25ac6f27818cc26ab9f334aecffc778f65b1"
+    "date": "2026-11-21",
+    "sha256": "6bae3f87682811f47fbd6f038926863163f999ead4b15754894d966f99bfa277"
   },
   "docs-site/content/docs/reference/functions/stats/f-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b927ea9fa9d7acfa038e7cee2cbcedf3ef9daa574acc90d99d1be6c9f3f5032c"
+    "date": "2026-11-21",
+    "sha256": "a0b51cba0691489823d389e751c0f25a09a0c71d71198dc828ca79167b60629e"
   },
   "docs-site/content/docs/reference/functions/stats/f-inv-rt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "af35f50291414285a05a00019335711d396dbffc5a3b9e6bbc764d37db1a8de8"
+    "date": "2026-11-21",
+    "sha256": "29789d7e9f9e7b78290d5290ad3cbf8cfbd4feb7c74fb492af765f5915fde305"
   },
   "docs-site/content/docs/reference/functions/stats/f-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "8d1246a5da0a30a34053762d78d7ba67cb077e000541033b14d67e74dd47acc7"
+    "date": "2026-11-21",
+    "sha256": "df5c0922759fdf9506bca94dd60f15f64e85d4645db43a48ce1eedcb512255e1"
   },
   "docs-site/content/docs/reference/functions/stats/f-test.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3ea0166b9a4442be63dec9de82930d306b1048f47f1056e2de46efbfa5f3f295"
+    "date": "2026-11-21",
+    "sha256": "ef70564dc607f05ee9cfc1cd2e22fbdd4085f4598212b5db2d08c83231d89ccb"
   },
   "docs-site/content/docs/reference/functions/stats/fdist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ba887d8a799270c45766614cb6990f2f20a689d1fd3c845601ff654fed6cdaad"
+    "date": "2026-11-21",
+    "sha256": "c3fc9874aa21ae7920b13405cd0d1f50a9a1da99c605afef6209f9852b5bb9df"
   },
   "docs-site/content/docs/reference/functions/stats/finv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d489ef010d0431e014213a74839ce810c06e4db5a59d390d3e94d038d4997e8b"
+    "date": "2026-11-21",
+    "sha256": "6c2e615a3a50d44b80153bf5a7cf979c9b2abcd6f06f7898cada89f97967a948"
   },
   "docs-site/content/docs/reference/functions/stats/fisher.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7ea227f9ec6bb455b47e22743b11ba6a3c308b4cfa500d9354e30f964f2eed04"
+    "date": "2026-11-21",
+    "sha256": "5c3b8a4e95c48f52afae9e7abf09dce91ec69d66a17cf203fb6c1f6dd83b7002"
   },
   "docs-site/content/docs/reference/functions/stats/fisherinv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2a0d0082b6e072e294ef9f76dd919e6c8a36246b4123dd6c051ba236b838577d"
+    "date": "2026-11-21",
+    "sha256": "80306fdebbdd0e7bc5f7bf8943458e31ad8b7037b49c68e6320511f53f8a53ec"
   },
   "docs-site/content/docs/reference/functions/stats/forecast-linear.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9a4a7a0a32d249d1ce9519807a4a7c7629e02d50668418a22a258c803e692026"
+    "date": "2026-11-21",
+    "sha256": "385c50a47312291606428d03fe43fd1d8cbfab0793938b37917d9321bf3de834"
   },
   "docs-site/content/docs/reference/functions/stats/frequency.mdx": {
-    "date": "2026-11-18",
-    "sha256": "411fb261ff7176294fae3dccd8781ed3fee5fbf39c9f5c07e83971b21f0e1d05"
+    "date": "2026-11-21",
+    "sha256": "ce632385d141bae31f1bb362c988dbb0e253381b6236eb04c0fe3ca27fc2c579"
   },
   "docs-site/content/docs/reference/functions/stats/gamma-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "811d8f524e50f8b19cc4518c77531d41dff75dc3b350195dccc8d783ebab022b"
+    "date": "2026-11-21",
+    "sha256": "ae9317448ecd8edcdd7091490f301f539a787854fdb9628e03d0b22fd4aa2ace"
   },
   "docs-site/content/docs/reference/functions/stats/gamma-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "51c6a080cc4ada8c4c4a202e39eeb435b91dc634a5274686d56d3b009b86391d"
+    "date": "2026-11-21",
+    "sha256": "811edb9f961c0d99074ae9fb29d4a73645aa8541e76da072905c41f2d8a31d63"
   },
   "docs-site/content/docs/reference/functions/stats/gamma.mdx": {
-    "date": "2026-11-18",
-    "sha256": "9a3c31527d044075d9e7032819de527a83854fb0c7e6f263dbb25bc73bfed063"
+    "date": "2026-11-21",
+    "sha256": "28bd6691cace4d5ab5c08e7e6490dfc8d976df7061e856d0a19aa5536ead1a3d"
   },
   "docs-site/content/docs/reference/functions/stats/gammaln-precise.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6a2768f709871c850e811a70b65c8d3dbd830c4f457b082f590eb8a6a20f5357"
+    "date": "2026-11-21",
+    "sha256": "f8a6ff01e545bdba37599d1bac78a8dd845d4f5b5917ecc586860d828661e93a"
   },
   "docs-site/content/docs/reference/functions/stats/gammaln.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ff83dd742cc6ad6e0c5d1e2009103dcb655a61275cc9e2cd7c67089cca15ae5b"
+    "date": "2026-11-21",
+    "sha256": "7e321544b2efe391a8dab7c5bfe5f43c6c6a93eb9f48816e64785a8bcbeee408"
   },
   "docs-site/content/docs/reference/functions/stats/gauss.mdx": {
-    "date": "2026-11-18",
-    "sha256": "06ce37c6a33d5948f01e0dcbbcd14b44fd5195a8fd2e35923b5f66d85dad077b"
+    "date": "2026-11-21",
+    "sha256": "c72714856c43a961024c9b52c1a56ce4f05193ca34fd5249e5c33049676285a3"
   },
   "docs-site/content/docs/reference/functions/stats/geomean.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0f0ac5833771c3f6a93ee97a9f8df6f039c1033025b6576d2b95d7cd0b5a0b6b"
+    "date": "2026-11-21",
+    "sha256": "dfd6af5c9a59748b734553b5ca740fe5f2567402e2546b7d93a197ba2df47a47"
   },
   "docs-site/content/docs/reference/functions/stats/growth.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a6c2567cbab163f67d7afb5fcfb831cabfc7fff2e31bd305701c70ba3c394450"
+    "date": "2026-11-21",
+    "sha256": "a64bb70a0c724a8f76b76e9bd92f18692bb5c5afee924e51b7192c9a04aa6a83"
   },
   "docs-site/content/docs/reference/functions/stats/harmean.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6684f43e25cb70b5d2645309ee013bec411ca8c80935c289e77b2794967b1339"
+    "date": "2026-11-21",
+    "sha256": "98009481696fa12a302a0b482ed1ed1371401a7d9ad04f401f842bc62238cb7f"
   },
   "docs-site/content/docs/reference/functions/stats/hypgeom-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "63432ff65d962ae65c77e5f7388cc649e35a63b1eeb5880cbec8ce4db3c9ec7a"
+    "date": "2026-11-21",
+    "sha256": "6674baa70f3f446262e66ba907ebf91107b202c0bc67d71fdaea36fd8a144cc9"
   },
   "docs-site/content/docs/reference/functions/stats/hypgeomdist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "81225b0711b133c12ae77dcfa7d7948aa9df8ef4fae5e3e470eaa17dbc2251c6"
+    "date": "2026-11-21",
+    "sha256": "3623c1f180fc6cabef5b1d78d546cbab24cd307689dfe5bcd01aeba55c27c05a"
   },
   "docs-site/content/docs/reference/functions/stats/index.mdx": {
     "date": "2026-11-18",
     "sha256": "b2d5f1c178a726227ef9afac3b727d3a1945801671c6d1da9824b3adeb64ffb0"
   },
   "docs-site/content/docs/reference/functions/stats/intercept.mdx": {
-    "date": "2026-11-18",
-    "sha256": "607f0a99fd30dc65a1ffc4a11c730d4a3e1cb27597aed2fc226dc1b33ff3e1f2"
+    "date": "2026-11-21",
+    "sha256": "0e01aab2027b9f2c91f611bbb74a8782831166d907e4683e02d3d2e0a183ed09"
   },
   "docs-site/content/docs/reference/functions/stats/kurt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "bcfe96b74776024ce980f452f44b162f2347c0a1303aa2b541f77cead93ec54c"
+    "date": "2026-11-21",
+    "sha256": "cf20a2708d5dccbb5c0d9b3ef1a8c066d6e5779e32677b85eb78a10e73128b22"
   },
   "docs-site/content/docs/reference/functions/stats/large.mdx": {
-    "date": "2026-11-18",
-    "sha256": "887c3fab8b78eca59e081d5e86f3285dd6a8f6a2dbc76bb64119c3473cfb46c1"
+    "date": "2026-11-21",
+    "sha256": "08fa862d820441a8fd9c555f5ef5077e766973c017a307c55afb219c06fbd0a7"
   },
   "docs-site/content/docs/reference/functions/stats/linest.mdx": {
-    "date": "2026-11-18",
-    "sha256": "775fd28e5a114333ab25001dd3a72b2c5ff41335a354d424e74701303522511a"
+    "date": "2026-11-21",
+    "sha256": "72946efbf1780592b8c51541bda13892e71c024cd0f7e603eed39dafdff0850d"
   },
   "docs-site/content/docs/reference/functions/stats/logest.mdx": {
-    "date": "2026-11-18",
-    "sha256": "10cbdeee492bed3c6180e2f9336191f0702166d209ef4ab34242efdf9041a904"
+    "date": "2026-11-21",
+    "sha256": "03ee5d2959786c1a46d11bf2dfc7d61567b71fc757d0e21dac943bfab825bcad"
   },
   "docs-site/content/docs/reference/functions/stats/lognorm-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f4cb075a3895b22c8e2bcb2889905038bbc2c9d372e04fb252afb29ee7546803"
+    "date": "2026-11-21",
+    "sha256": "0c14c60acc6a5817c1511c59df0dd283770e590aa0b8876c9b68f63fbed1e2ac"
   },
   "docs-site/content/docs/reference/functions/stats/lognorm-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "06a2023c2e96f433e9769ff57c4456acc856e27a4855c22942fd1f7bad32bcda"
+    "date": "2026-11-21",
+    "sha256": "f3c0928a8e258ec1184c7f3159afe4d25bf1a04cf88a0004054e6b185b07c36a"
   },
   "docs-site/content/docs/reference/functions/stats/lognormdist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "862c1f68c3d0e3120ff2cd39f562e81c95efd5ae882ca40c97bbb1b4939a5dd0"
+    "date": "2026-11-21",
+    "sha256": "6439ff4350c6d352cb1c346888358c0ad317d2c55faab00f9e5beeccb6b50e62"
   },
   "docs-site/content/docs/reference/functions/stats/maxa.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2dd75a918deb05cce97d3a68baace1dead44d55939a4d5ea1c9b0706828d14fe"
+    "date": "2026-11-21",
+    "sha256": "ce5504cf8d93fec7ef0ee11b2b42099b2007c044f54f6a4a7193bcd9154b0102"
   },
   "docs-site/content/docs/reference/functions/stats/maxifs.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e5daad30c231bd80a5fe494f48006327bf8f1eb63c9e75cf9f2a787fbdd2bed5"
+    "date": "2026-11-21",
+    "sha256": "7fc340bef311f5495faeefdb3e6f8f0b8a67c7cff4472ce3ed495ce4f89afc29"
   },
   "docs-site/content/docs/reference/functions/stats/median.mdx": {
-    "date": "2026-11-18",
-    "sha256": "98f9e881822c0124f15a4bc14a1df9fe0bbe8d4f6b1e19ccacde30a9ca16cd88"
+    "date": "2026-11-21",
+    "sha256": "3764bc0295b4071259747cfec4eda05bc5fef7daeabfef3c7205e97fa2e819ab"
   },
   "docs-site/content/docs/reference/functions/stats/meta.json": {
     "date": "2026-11-18",
     "sha256": "bb0d845150074eb530f6f2f285ef9235e3f4c8fb36d1d22ba0bcc1ebad6448ec"
   },
   "docs-site/content/docs/reference/functions/stats/mina.mdx": {
-    "date": "2026-11-18",
-    "sha256": "bcf06cff7c1350dd8c58fee8f13f8f5e451b1acb39619e462d40b8d80c345d78"
+    "date": "2026-11-21",
+    "sha256": "e8c18673b045d968a123d55e9493a9cf749048bf5b73de51adde95342df97967"
   },
   "docs-site/content/docs/reference/functions/stats/minifs.mdx": {
-    "date": "2026-11-18",
-    "sha256": "38716274246461ac3f573b15309c1b5c05ea3d00b111bce13a1c029f31309aa6"
+    "date": "2026-11-21",
+    "sha256": "5dd40e72e405f117fdebf332e63d15134068a9d3b86350d5eba4a4dfa24325f9"
   },
   "docs-site/content/docs/reference/functions/stats/mode-mult.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3e7304078103e9fddacf776b36a22b76cbf04ed1d70e2693bd9025d2b720b23d"
+    "date": "2026-11-21",
+    "sha256": "40823cccccb5cfc343526c61f08e17320fc4d875dc87306559213677595eeae4"
   },
   "docs-site/content/docs/reference/functions/stats/mode-sngl.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f2d2ab13efc68501560bcf97b90aa293545b7f477c7163ee4603e3e2c762ba99"
+    "date": "2026-11-21",
+    "sha256": "0b9b7255dc40ee2d99054b6ea0675715d3c3902830d5aeeb8e4a0fe8bd47ca89"
   },
   "docs-site/content/docs/reference/functions/stats/negbinom-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "933ea995a318c5a04e71ea06c4aa65457a56acf126f6d8afc2f67b955bda5bef"
+    "date": "2026-11-21",
+    "sha256": "54627fd35a51e27ed96fcc733274df85b26c69e7ff539e88198037f1aa399870"
   },
   "docs-site/content/docs/reference/functions/stats/negbinomdist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "00e3310e39ed517f5ea3db9f7faadff86fdcc763a6e1956394a6cb0e2769f3b2"
+    "date": "2026-11-21",
+    "sha256": "b10454e39f3cf95fc10b301c3e37b7deadd5096da62cf57fdf764c4eb284ebc4"
   },
   "docs-site/content/docs/reference/functions/stats/norm-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1425b6eae994d469a1d1a3611e666b2d2b4a0dff36556f43af2db77c195e0807"
+    "date": "2026-11-21",
+    "sha256": "031856c09ce037c2630617f78e5b26131f039eaeac2b2c1b4025e0d7026dda05"
   },
   "docs-site/content/docs/reference/functions/stats/norm-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1aadec98b9c7d9d5960e2673f7231faa616bdcc55ce11d985c85429fc9ca191d"
+    "date": "2026-11-21",
+    "sha256": "4468acafcf4ada67887c52160ca8021e6946e5a8e4b38aa65d7a0d888d040820"
   },
   "docs-site/content/docs/reference/functions/stats/norm-s-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "637e9762db43a8c03cdc2eca19abdff7f3efd11c52cd9416b5dc89d9f6dba85a"
+    "date": "2026-11-21",
+    "sha256": "2001238caf848d5a6cec765d7a7bc5bc058d3ae4a607f7b5b75ffeef7dfbf471"
   },
   "docs-site/content/docs/reference/functions/stats/norm-s-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "bd36b22fbec57cc293cb8d66b213bf122c9024996c12c5ed47d329ffdf3435a5"
+    "date": "2026-11-21",
+    "sha256": "040c57fe18e211e6f313f6272ce60f2b71b1c324259204ed05641c41722faec1"
   },
   "docs-site/content/docs/reference/functions/stats/normsdist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5dc7fd2a5c3388ad7766fe54c5808f0cb685ee40260100467b6fd2a91023f7f0"
+    "date": "2026-11-21",
+    "sha256": "b9a55a5019a480a3c0a16fce942d74ae4e3d1099bfcee735c9a7b7b069d5cc92"
   },
   "docs-site/content/docs/reference/functions/stats/pearson.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7588cdb8551917933b0ce0338165f868a57ac09043c164b0ab7b576ef51840a5"
+    "date": "2026-11-21",
+    "sha256": "0c9e83a5bd32bbe6bf7f64fe4ef8e4aecd81d5d095dc4cecfc3dae1a2c373dcb"
   },
   "docs-site/content/docs/reference/functions/stats/percentile-exc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f253408882bea62b0770e5ae10b037d1c09a74f0ce652e1b10a7cb52bdaf2b06"
+    "date": "2026-11-21",
+    "sha256": "28bac5bfa2cbf162a8b1db2901114498d2d90b6336f3995619cf6c4247e842fb"
   },
   "docs-site/content/docs/reference/functions/stats/percentile-inc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6675c92e411c10a6f610459436be0f80f174bb5846446c42c09777218a9f1475"
+    "date": "2026-11-21",
+    "sha256": "651dea3c74072f5601efad701e16b6e431912ef58df63294f0fc43b9f1fe6d7d"
   },
   "docs-site/content/docs/reference/functions/stats/percentrank-exc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c6d8a4027e6722e0e8fead538b23e092d2f41b4fea9acf9dfb1d7deaae9aba8c"
+    "date": "2026-11-21",
+    "sha256": "95efd8555445424bb8c6105c40b1addf589d0f92d4288f6b91a490e32fe6afa2"
   },
   "docs-site/content/docs/reference/functions/stats/percentrank-inc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1af89bbc03e8f7a1134a868b2f52a4a89ffcfca51f5e3cb7f95c2fef4c99627c"
+    "date": "2026-11-21",
+    "sha256": "47417abef9792374429c46e23efa20a99215c6fe558a8bbc7e5c03082d8758e7"
   },
   "docs-site/content/docs/reference/functions/stats/phi.mdx": {
-    "date": "2026-11-18",
-    "sha256": "fec54cdd3019923e7be75eaaad03de5519f0ba481e35a1f1c37160e567ef98c8"
+    "date": "2026-11-21",
+    "sha256": "47d19833e310183daff0956a071148a2cbd0eb221556c15c12bbab1319770a88"
   },
   "docs-site/content/docs/reference/functions/stats/poisson-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ae31eb79daf6e3b763e93cad4b5eb053aad67015ddaaf0d8f621e0ea93b3dab2"
+    "date": "2026-11-21",
+    "sha256": "f3366f2ebfe62fc24e0804b857b37726383a0b896d13d5ffaef222b402eb701c"
   },
   "docs-site/content/docs/reference/functions/stats/product.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e7c693661041138a0924c991dcbde9b8be1f9f99183093eb5658302274810232"
+    "date": "2026-11-21",
+    "sha256": "90546054a5261ae7fde4b99ea6b8bbdda7b1849a58744090233731055c5da08d"
   },
   "docs-site/content/docs/reference/functions/stats/quartile-exc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5ebf86c41a170bf3e27b59bd0057965caee5c7ab7bf2dec4ae82decd5888ac48"
+    "date": "2026-11-21",
+    "sha256": "514c9b7aa8d04a604ff3c14eabb7a8598050e9fe5c5ad0790f18017f22459400"
   },
   "docs-site/content/docs/reference/functions/stats/quartile-inc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f19e246ecfd06aefd22f6c5e0d39b793d9afdffb2b37f279fb84e6eda355f1b6"
+    "date": "2026-11-21",
+    "sha256": "1219cbb2510fcecac4c8bf31d9f31d9674486b864d02597631133601fa917607"
   },
   "docs-site/content/docs/reference/functions/stats/rank-avg.mdx": {
-    "date": "2026-11-18",
-    "sha256": "59f6a0cd63699e10eba2d82b246e1afd2863fc3bb36596f95e298ff16ac3fb28"
+    "date": "2026-11-21",
+    "sha256": "cf1406ce93adfac91da1aa20ef8b68438c7f0c32e7da9c71ec6a3136aa878bbe"
   },
   "docs-site/content/docs/reference/functions/stats/rank-eq.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a2cc8b169644be873962e80c926674803f750a21840b6bef16d20bdcd93ddffb"
+    "date": "2026-11-21",
+    "sha256": "98da8987f7e02c3d96b6f90e9c813ab7428c762d90efe74ccdab2ebfb1638ec5"
   },
   "docs-site/content/docs/reference/functions/stats/rsq.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e0071b1cc7b61af8c4dfc8167c61e89ab32a477ddcdc26d0f38a452d0ce81dfb"
+    "date": "2026-11-21",
+    "sha256": "bf1058e0bb5689cb0e3f2c2c1acfbb04f77fd61e5cc92133642c03a0c463e5a0"
   },
   "docs-site/content/docs/reference/functions/stats/skew-p.mdx": {
-    "date": "2026-11-18",
-    "sha256": "deb1e4438e0649eed387a561c9e1f6437bc6d2a005d8cf31c61b27e258953b86"
+    "date": "2026-11-21",
+    "sha256": "34d4bb688a609525b001bfdfa2f192703a6734e273a67e4a755431e43a13126a"
   },
   "docs-site/content/docs/reference/functions/stats/skew.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d7bcbd0d48c2b545677f0461a6339b2f2a65b5bd0e38ce93f63c705aef4d0306"
+    "date": "2026-11-21",
+    "sha256": "7015b11a0870e774974946b93d4f7db560424ab69abd04cd30675dd0727348ac"
   },
   "docs-site/content/docs/reference/functions/stats/slope.mdx": {
-    "date": "2026-11-18",
-    "sha256": "67d2a9d2b6ef9355202fe4e4fba4bfbf26bf43e4dd64e31431310d7a705bbd33"
+    "date": "2026-11-21",
+    "sha256": "32f99448e37909a118a15b25caae0cb6c33ee8ef94a33efde4191bdf582c7d7c"
   },
   "docs-site/content/docs/reference/functions/stats/small.mdx": {
-    "date": "2026-11-18",
-    "sha256": "089e009ff93109c79321e07fa540986328801f79e3931cb4018ebe1cb0571cc8"
+    "date": "2026-11-21",
+    "sha256": "8b1d87246632c042217dd3ba0691f73b1cf815d5732b81ec7c111dd117b407fe"
   },
   "docs-site/content/docs/reference/functions/stats/standardize.mdx": {
-    "date": "2026-11-18",
-    "sha256": "132be010d79c0399231d1c3998bf945c4a1a3e138fc63c09afd160e5fd96de7f"
+    "date": "2026-11-21",
+    "sha256": "61b30f68ef99cdff711bcbb4194b042326d327f7e0de432dc461b9de8097ee10"
   },
   "docs-site/content/docs/reference/functions/stats/stdev-p.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4eb38b372bd792f896bdcbbf9947f28a598009b624a6ba04008a623a1631d452"
+    "date": "2026-11-21",
+    "sha256": "7518268d2490de7a64371a1040aa4fa7defadac3d66ffb489fe86815a0b02b73"
   },
   "docs-site/content/docs/reference/functions/stats/stdev-s.mdx": {
-    "date": "2026-11-18",
-    "sha256": "6a3ee191c3213a2fd5ad5e098be532f1c4624dc95851862655821644bf2664fb"
+    "date": "2026-11-21",
+    "sha256": "6321bc80036d99029a56c1424f1e5d58c40763b608158cc9dccf2a482e0a558b"
   },
   "docs-site/content/docs/reference/functions/stats/stdeva.mdx": {
-    "date": "2026-11-18",
-    "sha256": "832cbb56ec8dc44bb97088e7b3513536df775c1e31fe9358f139f90bc491d64f"
+    "date": "2026-11-21",
+    "sha256": "4af7c9a155368ed2f12ba6390a122f66d804df162217862fd1c0ed3c58d05f8b"
   },
   "docs-site/content/docs/reference/functions/stats/stdevpa.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0d66749a921b4817fac244f059f481624fbf7714a0d25bc22ab2ebed0a682ee5"
+    "date": "2026-11-21",
+    "sha256": "27f749114442aed02a5836c2da715bbddcff3ed4760ddb49faa492de6eec139b"
   },
   "docs-site/content/docs/reference/functions/stats/steyx.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3e132ed5b9ab317469a73c592444f205c36a6ae5dc3ededb711ccb1c7f52bfef"
+    "date": "2026-11-21",
+    "sha256": "cf69c7f952ce416ede4cc536bcc0d9c89e9f0fcf2d1d1d3bf4186b08bd7cfe7a"
   },
   "docs-site/content/docs/reference/functions/stats/t-dist-2t.mdx": {
-    "date": "2026-11-18",
-    "sha256": "02cfda4af05073cabcb59b75af7b11570cdaf89eac238b3358503bce11c24241"
+    "date": "2026-11-21",
+    "sha256": "6a2a3efaca7f0271217139d238b677e0f10bbed4eac4de0a0ea86085cfff4d41"
   },
   "docs-site/content/docs/reference/functions/stats/t-dist-rt.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e9ea78630d8d4257abc5981c4d618ee76d7d630f82653f435dd4820e7a664d3a"
+    "date": "2026-11-21",
+    "sha256": "ebca17fb935a5548ed99972ba1151a1fe11be70bbf76a99ec9d473181023faf2"
   },
   "docs-site/content/docs/reference/functions/stats/t-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ed5eecbbdff326c34f842b87b7cc7584e2994ab460ebba00f4c71cc19d8e8e70"
+    "date": "2026-11-21",
+    "sha256": "2318ef335fdddb221dc0241e02270f3b4e79140ba15d0bcd0672c7517f243318"
   },
   "docs-site/content/docs/reference/functions/stats/t-inv-2t.mdx": {
-    "date": "2026-11-18",
-    "sha256": "10c3a215967e26c16d19ad980eef9a1016cc666727417abf4f8ed78eadd71aec"
+    "date": "2026-11-21",
+    "sha256": "aa4bfd0ffd3e08d88fba0bc5cffbab09c1724b993a4d07046ac659dd13c54fc8"
   },
   "docs-site/content/docs/reference/functions/stats/t-inv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "93bb686aa8fd0d6ba6356e3d13de089e01bedbc963994350a0baa2b7b506d374"
+    "date": "2026-11-21",
+    "sha256": "c072ed6409715e1bf259a6d8826f690c2db9b3cf96611241f1250a33dcd90739"
   },
   "docs-site/content/docs/reference/functions/stats/t-test.mdx": {
-    "date": "2026-11-18",
-    "sha256": "240c27dd18b064bf966d3c78c26749f6040e7df0bc5077157770d8890b29b774"
+    "date": "2026-11-21",
+    "sha256": "6feca6eeee7d93b941adf15453db27ef455426190b27ced5dc008645920ee456"
   },
   "docs-site/content/docs/reference/functions/stats/tdist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "11b9feda0edb34fe718c73e5aebd14d6a9907e82e12eaf573749235cdbeb5d2a"
+    "date": "2026-11-21",
+    "sha256": "bc364db166ff98af228373a7682f3b10eb7a032a3d064211174d66b87cc5ef1e"
   },
   "docs-site/content/docs/reference/functions/stats/tinv.mdx": {
-    "date": "2026-11-18",
-    "sha256": "05e5f5d544c302222b7b4109c1f68285333f423cd73ffee86615781536ed9d06"
+    "date": "2026-11-21",
+    "sha256": "3123a59a99c2cb65920e1025a34632df721bdb7ac92f7515376098ecbe4abd1b"
   },
   "docs-site/content/docs/reference/functions/stats/trend.mdx": {
-    "date": "2026-11-18",
-    "sha256": "32894e42fc75d7a096c53da3c7f26e41ef31c844bd911c97e7379b2417173f28"
+    "date": "2026-11-21",
+    "sha256": "c9a35a61026db2c33b60133258c5ce532d5fc1420649158e1d60f5c725a36e96"
   },
   "docs-site/content/docs/reference/functions/stats/trimmean.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0209f51fdbf5984cf3da71a7b964a53b7fae792d0d06df26b032c6fa9825f983"
+    "date": "2026-11-21",
+    "sha256": "d95af3149f4322d2e8dec43ecf6303759aaaf417135e878564e52e959d5526da"
   },
   "docs-site/content/docs/reference/functions/stats/var-p.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d9e27a42b4340e7d7f258cdf9f83b8f85994798478bcdf37b359f29ed2239ece"
+    "date": "2026-11-21",
+    "sha256": "1cf56e0e1b4289b8faae318e12fe4d4683e82bf9a73c33f1720e7127abf65336"
   },
   "docs-site/content/docs/reference/functions/stats/var-s.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5087d12492b0e0042bdcff138f39aab6712baecb6ab512d821fcaaf63ccdbc28"
+    "date": "2026-11-21",
+    "sha256": "5a6f3c28e227df2c6fb08808d734d9eaeeb66666229a2d292b5894ac9fd315ef"
   },
   "docs-site/content/docs/reference/functions/stats/vara.mdx": {
-    "date": "2026-11-18",
-    "sha256": "444218263a295f17f3b5844d682a07fe20ecb6afaf41048cc3a4626150b1974d"
+    "date": "2026-11-21",
+    "sha256": "2178954009e7de2313c3481fbc8d03d1aed3b4f175871ff0af6848b0e5a36ac9"
   },
   "docs-site/content/docs/reference/functions/stats/varpa.mdx": {
-    "date": "2026-11-18",
-    "sha256": "aedf5cd45ce4ea719d5f29c3d66ff5d0ac32ecec5a5300df78b9f306950da86d"
+    "date": "2026-11-21",
+    "sha256": "a188b6e99f6b20e495c8e8f84b793a27feb1f8ac56655073a62cbb07aa6c519f"
   },
   "docs-site/content/docs/reference/functions/stats/weibull-dist.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4a98b2d907f36f9a81da69c74f519dd0e13197ef6cdfc6939aad5cc90b7bb4bc"
+    "date": "2026-11-21",
+    "sha256": "3b778b5bcc6c9ff069d272625613a4d3a99d399cb2aa4f6ff7922368b8bfb9b8"
   },
   "docs-site/content/docs/reference/functions/stats/z-test.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7e39b34a2e2c7f8ef70314658412f378154aec0424cf9421b250340b4dc9fe20"
+    "date": "2026-11-21",
+    "sha256": "8e0cf956d8bcffc7a473e58baeeaa45f5190548af824666945eb5ac0375a7fca"
   },
   "docs-site/content/docs/reference/functions/text/arraytotext.mdx": {
-    "date": "2026-11-18",
-    "sha256": "fd49a848b845af6b01c659178bff67e48e770604d0282edd7703bde46469a31e"
+    "date": "2026-11-21",
+    "sha256": "8d2a5564a33adf51a62da5db9405bb72e06a93c4a58224f39658a1c67529f9b1"
   },
   "docs-site/content/docs/reference/functions/text/asc.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1a93b3fd8f00d4ff67b90b92475e8979a55dea94374d4bc9fb3708f795721a0a"
+    "date": "2026-11-21",
+    "sha256": "fd5723753cac28f36823a9ed2e6c0e5eae5d192d1b29826d138933d0c1368d0f"
   },
   "docs-site/content/docs/reference/functions/text/char.mdx": {
-    "date": "2026-11-18",
-    "sha256": "79eeaff03cded1538ff3934678a2cafe1c3811c629de7a78eaaeb8da2d60dead"
+    "date": "2026-11-21",
+    "sha256": "b2b266327c56372c18d5b832b482186ec8e11db8c0d8b9a056763fbd2d8e9b07"
   },
   "docs-site/content/docs/reference/functions/text/clean.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e5dec2809bdb3e09801bf56ec53cfedcf86b5c3e4e9d1292ce913bff945e4fd6"
+    "date": "2026-11-21",
+    "sha256": "8461bad98317fb088e5eec65dad48420538776d80ba7fc3fd006c4b0d3083e49"
   },
   "docs-site/content/docs/reference/functions/text/code.mdx": {
-    "date": "2026-11-18",
-    "sha256": "392e36a8004d078166b3f68802e8e3d495a6f1ef951d960105d0cb8d57a98e2e"
+    "date": "2026-11-21",
+    "sha256": "49425943a72d8d44e7c19a1d667b21f6f21829948d7a3c7afaa69ce644243a5e"
   },
   "docs-site/content/docs/reference/functions/text/concat.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e29dd9278d3ee684fa8e495f160778977ca3c652c92fa08aa75bce8b0e74df6b"
+    "date": "2026-11-21",
+    "sha256": "6e0a70a67ba879a400727f9a9e0a73a816098346411fe58ecd9ee16771665b4e"
   },
   "docs-site/content/docs/reference/functions/text/concatenate.mdx": {
-    "date": "2026-11-18",
-    "sha256": "12fe4c385a790a5dd8230b6d1249b3ea01f7750c37785d75740f044c831b6971"
+    "date": "2026-11-21",
+    "sha256": "815223fe46a34d68c47a9a6268296833cc5c58617421e8739204ae01a8e5822c"
   },
   "docs-site/content/docs/reference/functions/text/dollar.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ece9f52f7c37c1a93f6712c29860b64aa7d04f5a8872a0bd9354eb2a75adfe26"
+    "date": "2026-11-21",
+    "sha256": "0b8606501c724d53b917f96771199371e0453bf91efb5318c6ac76ec9aa76a77"
   },
   "docs-site/content/docs/reference/functions/text/exact.mdx": {
-    "date": "2026-11-18",
-    "sha256": "40c7e81654e2b6d5b695a0ad6a761d5acfccf05107e58f51f0ed4cdcf76b785d"
+    "date": "2026-11-21",
+    "sha256": "93146d73a5b06fcf5bd4cd838f04e6c22e078176b4a6fb08bbbb5d9a67d4f55b"
   },
   "docs-site/content/docs/reference/functions/text/find.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1f76da0cc375441bfe83a6c1f49d742ecb5c99307a4ee987ad30e290405abf09"
+    "date": "2026-11-21",
+    "sha256": "c2732da5f5acc4603e5f9bcbc45086bd63d9c633e25fd66f477870876be75b18"
   },
   "docs-site/content/docs/reference/functions/text/findb.mdx": {
-    "date": "2026-11-18",
-    "sha256": "ca086e1c87f0eb37c42315fef16dc6b43bbff0834fa8af3b2f01831cf34d47c7"
+    "date": "2026-11-21",
+    "sha256": "116c10cc5c64a4a3b7630fe3a56beec264e2892594d44567cdc588f1a24be330"
   },
   "docs-site/content/docs/reference/functions/text/fixed.mdx": {
-    "date": "2026-11-18",
-    "sha256": "2679a07894696b3ff7504b9a20009f8c4aa042e68d108dc6944a0cd4dcfa9547"
+    "date": "2026-11-21",
+    "sha256": "aa7b30df783e8d6329a3b588df9cb422e91d7c73dadb1583185fad9359fb950e"
   },
   "docs-site/content/docs/reference/functions/text/index.mdx": {
     "date": "2026-11-18",
     "sha256": "50bffdce6de31f7fe2fc6e3e276d001aea48fb016dabaed0c621fac20f651b9b"
   },
   "docs-site/content/docs/reference/functions/text/left.mdx": {
-    "date": "2026-11-18",
-    "sha256": "bb3e22b9c63d4731d08e2a5bcf8f7980c20e24cc7df6e5a58f333ee95a3e50fe"
+    "date": "2026-11-21",
+    "sha256": "18ae5d9da30a5668b96577713d8b1dc9ebcc30a7b16bb57dee30f6a943a7e253"
   },
   "docs-site/content/docs/reference/functions/text/leftb.mdx": {
-    "date": "2026-11-18",
-    "sha256": "bebd6287957fb145048dde8866a1d4d5ead44b6a6a7b3ecd08c17a93a6b61641"
+    "date": "2026-11-21",
+    "sha256": "0b04a2ca09b96d80f949ea6a9ae3aa1ddec161f5839f532cabf9be5e1728edf3"
   },
   "docs-site/content/docs/reference/functions/text/len.mdx": {
-    "date": "2026-11-18",
-    "sha256": "e3a5f7b1f88c3107393784518ab50abdb50c03658ce568d2235f55b0aae2fd55"
+    "date": "2026-11-21",
+    "sha256": "31004bb306f4582ceb2eb7e0ef11808ac578ab50852a8105b5b89741ea8a53e8"
   },
   "docs-site/content/docs/reference/functions/text/lenb.mdx": {
-    "date": "2026-11-18",
-    "sha256": "edbf5a63a3fea522adb11cfdcab99a040050755bd7ef6742c23ea460cb3d9b81"
+    "date": "2026-11-21",
+    "sha256": "b545471805e98e3678c90a327b7a0287fa0e89122b37d9c021dd58c4faefd52a"
   },
   "docs-site/content/docs/reference/functions/text/lower.mdx": {
-    "date": "2026-11-18",
-    "sha256": "c7145bb90fbf148b73f178b6cdb6fd4a841d8a706e28911a71d68b23d7cbe02d"
+    "date": "2026-11-21",
+    "sha256": "3ec6b6ba2096ef7d2817077ffd7100fd777e86254d734cfb1f3fb183b4bc60b2"
   },
   "docs-site/content/docs/reference/functions/text/meta.json": {
     "date": "2026-05-19",
     "sha256": "209ba7395c314f78b50ea5d1bd953ad89874c081112b95500cb98b1242c0ba4e"
   },
   "docs-site/content/docs/reference/functions/text/mid.mdx": {
-    "date": "2026-11-18",
-    "sha256": "5a72658704f2b50bc921219dd3467a8eb3403bb1a068d8933a1504c17dd1ecac"
+    "date": "2026-11-21",
+    "sha256": "e0b9562e61276dbdf3875581ece45f6ec7b10c9f7680369fee6f76094e471223"
   },
   "docs-site/content/docs/reference/functions/text/midb.mdx": {
-    "date": "2026-11-18",
-    "sha256": "f854330db71bdf29e216f9077e2cf0cee653fdd6c8f78c25c93f38c3e4d908c0"
+    "date": "2026-11-21",
+    "sha256": "a43247a3e00b5ff4efd2b545a1e4045db7142303d76b3e3136b5039e1e7309c3"
   },
   "docs-site/content/docs/reference/functions/text/numbervalue.mdx": {
-    "date": "2026-11-18",
-    "sha256": "24db7e0d0c795ae8cb3226d6e88e921c65eccb597d455552d8f4eaf4401cb8f0"
+    "date": "2026-11-21",
+    "sha256": "8f7ef662d59d82d203a2fbaa2abd2cf1727429f8e2bdfd51a66b19572b4cf242"
   },
   "docs-site/content/docs/reference/functions/text/proper.mdx": {
-    "date": "2026-11-18",
-    "sha256": "819a6601fc81b75c7d94727e32194e308e20227fe6b547149b47e40b55f4d918"
+    "date": "2026-11-21",
+    "sha256": "a181b4eef3674446a6db12aefc04d57a5e3eff002860d822b3ae8c914b33513d"
   },
   "docs-site/content/docs/reference/functions/text/replace.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0a11fa58d2405be37827ac2feb900821c0bc29032560ae9392ef3703a6e81fbb"
+    "date": "2026-11-21",
+    "sha256": "efee75c1ba1bbba1c8d1aa560226bfc8441d56398abe4eaaabebc6407b431697"
   },
   "docs-site/content/docs/reference/functions/text/replaceb.mdx": {
-    "date": "2026-11-18",
-    "sha256": "7b61881982b27cb9e8cce2d9c502ec8c36d6412b2668a17d77d9539a00c68735"
+    "date": "2026-11-21",
+    "sha256": "fd8ca097ac468134e9412faa9529607d8d73551f4926cc4c6d878b01aba8ef07"
   },
   "docs-site/content/docs/reference/functions/text/rept.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a1d25fd064234d016843e2cad6929b96ad99aac675fb81ecd18c9b4d8cda8cce"
+    "date": "2026-11-21",
+    "sha256": "8828cb0e93b933d13de6ed0e6ac4f77319f07a770103fb13a6cf6dec20419ea4"
   },
   "docs-site/content/docs/reference/functions/text/right.mdx": {
-    "date": "2026-11-18",
-    "sha256": "4eb45d500b654c16a6aaaa991ddb227522c64601b3e1fd2d1c0ea69aff1c9009"
+    "date": "2026-11-21",
+    "sha256": "77d224609e0cbe031aacce95fcdb18fd4f573f7b8d36bca7e0131f548e8845f0"
   },
   "docs-site/content/docs/reference/functions/text/rightb.mdx": {
-    "date": "2026-11-18",
-    "sha256": "839581b26691088cb05b7e059468c4a97d37eb9f6b7636d114ea2e5f488b402a"
+    "date": "2026-11-21",
+    "sha256": "6d230c025fee66714bbede9b7164a0af2712e314e4d3c7a6d78aa4e32a06ec2a"
   },
   "docs-site/content/docs/reference/functions/text/search.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d1ad9f51da887141b4a6aaba1fb097c945815ecc1291ae56a741ea9c1b188112"
+    "date": "2026-11-21",
+    "sha256": "e00b4b71fc5cae533764ce30ef3234bcd70027213a35ff5f2cc6e93834c1f49e"
   },
   "docs-site/content/docs/reference/functions/text/searchb.mdx": {
-    "date": "2026-11-18",
-    "sha256": "0c8f9ae3b716da5e28e2016e794c14150bdf7c975c2facaaf2817e5bad56fca7"
+    "date": "2026-11-21",
+    "sha256": "9fd2435464046a012c67421edc78f4ba2acef95516bdb130a5a0acad8d724618"
   },
   "docs-site/content/docs/reference/functions/text/substitute.mdx": {
-    "date": "2026-11-18",
-    "sha256": "a99a4f4033f078be985fe630e44e470ef055bf31393d4c226ce0264171078587"
+    "date": "2026-11-21",
+    "sha256": "1875615a3e24cce849ebfe6bab6eecfeeb3baaa50646914ab9143757ae7f209e"
   },
   "docs-site/content/docs/reference/functions/text/text.mdx": {
-    "date": "2026-11-18",
-    "sha256": "24f7194bb833e5241b53193187c5786d9ae76b40aba6610f37f92c4e3623a21e"
+    "date": "2026-11-21",
+    "sha256": "376547e295cdf322899544520ba209bf79322651f47a0bb4d3a38e433c03989b"
   },
   "docs-site/content/docs/reference/functions/text/textafter.mdx": {
-    "date": "2026-11-18",
-    "sha256": "b960739df19c67e7ba9590ef6cbe5aec207e6cac98c0d686796daf6189ac8c85"
+    "date": "2026-11-21",
+    "sha256": "67ddaee39f425308eb76c0995677ced12d9213b1db49fbada21c7d5de8d10991"
   },
   "docs-site/content/docs/reference/functions/text/textbefore.mdx": {
-    "date": "2026-11-18",
-    "sha256": "3f1ffe81a547f726ab822d67bfa4f5d786193808f98a622e367493c0934ff806"
+    "date": "2026-11-21",
+    "sha256": "077f48cdad9fbb547acd8d1f2af04963de595e2fca42fee37c832c377ed4636b"
   },
   "docs-site/content/docs/reference/functions/text/textjoin.mdx": {
-    "date": "2026-11-18",
-    "sha256": "946d294d840f4373244de8cc7a41bebc1ba07055590b7482b253b3e72fb724f7"
+    "date": "2026-11-21",
+    "sha256": "7544d98ffef279d393a5dc94ecc0d3643a933f754bc454126b1a917b1d72584b"
   },
   "docs-site/content/docs/reference/functions/text/textsplit.mdx": {
-    "date": "2026-11-18",
-    "sha256": "14f50add925bfa7b1f5c20dbb8616d0a08aeccd70ed0a1eeef005f92a6c3a8e7"
+    "date": "2026-11-21",
+    "sha256": "c7e446d8cea5667b32e112079cf79f47923e020de3189c411a4c1e6a56049cc5"
   },
   "docs-site/content/docs/reference/functions/text/trim.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1c72615069bc35713b70c46314bb8e268d02220a1ffc269ec045c972d416a1e7"
+    "date": "2026-11-21",
+    "sha256": "c1516a174c4b603b8757576f04f9208751255668a2f3bae1159def1c529a4f00"
   },
   "docs-site/content/docs/reference/functions/text/unichar.mdx": {
-    "date": "2026-11-18",
-    "sha256": "15135aeef2b422277d94dd46f02d4bba9d6f56018a647bcec0e33138916a6757"
+    "date": "2026-11-21",
+    "sha256": "48fb721b015d6009f0e573f2c4fb6ef29583b3c15802686bd93d9dd9e141937a"
   },
   "docs-site/content/docs/reference/functions/text/unicode.mdx": {
-    "date": "2026-11-18",
-    "sha256": "92ddfc77d0a8e4b4f979c770f94b90d458e28a6dd7072e8b4302948cc869afe4"
+    "date": "2026-11-21",
+    "sha256": "8d0cac00d15c1f98b21ae32857257e587c5c4fbcd3806d94f908839d8ac1660c"
   },
   "docs-site/content/docs/reference/functions/text/upper.mdx": {
-    "date": "2026-11-18",
-    "sha256": "d3f43ab6d1011c28c8438bf24daa5af80ba36650170e6de2bc83d85668a51e8b"
+    "date": "2026-11-21",
+    "sha256": "3693743bea381cd58bc8b0a99a128292a4925b774f3da57088e72acc030a3f96"
   },
   "docs-site/content/docs/reference/functions/text/value.mdx": {
-    "date": "2026-11-18",
-    "sha256": "646d1bd7ef897389bd294eefd94cdd2bb735d52cbf6e2948544a40625435ab86"
+    "date": "2026-11-21",
+    "sha256": "9525ff4764ea718b2021bf533f3db47fb05a6212dbd93b48ae0661a3a2852cc0"
   },
   "docs-site/content/docs/reference/functions/text/valuetotext.mdx": {
-    "date": "2026-11-18",
-    "sha256": "1d9577305b2a4682d8ab08d8c0c211cd3df029b6e547a805f66ea2399a17972b"
+    "date": "2026-11-21",
+    "sha256": "c1091064700a0cc51879faa410c8ccc2b1d5b4ed87f479aebaeccfbb86bc7a10"
   },
   "docs-site/content/docs/reference/index.mdx": {
     "date": "2026-06-10",

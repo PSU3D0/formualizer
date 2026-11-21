@@ -8,7 +8,7 @@ Returns the interest-only component of a payment for a specific period.
 
 Use this with `PMT` or `PPMT` to break a fixed payment into interest and principal pieces.
 
-The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+The Formualizer engine in this repository at 0.15.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
 
 ## Syntax
 
@@ -24,10 +24,6 @@ The Formualizer engine in this repository at 0.14.0 plus unreleased changes comp
 | `pv` | number | Required | — |
 | `fv` | number | Optional | — |
 | `type` | number | Optional | — |
-
-## Differences from Excel
-
-For some payments at the start of the period (type 1), Formualizer overstates the interest charge compared with Excel. For example, with a rate of 0.05/12, 24 payments, a principal of 5,000 and a zero future balance, the engine returns the same period-2 interest for types 0 and 1.
 
 ## Remarks
  - `rate` is the interest rate per payment period.

@@ -1348,7 +1348,7 @@
     "shortSummary": "Returns the number of weekday business days between two dates, inclusive.",
     "signature": "=NETWORKDAYS(start_date, end_date, [holidays])",
     "typeName": "NetworkdaysFn",
-    "uniqueShare": 0.5113636363636364,
+    "uniqueShare": 0.5947136563876652,
     "variadic": false
   },
   "datetime/networkdays-intl": {
@@ -1424,7 +1424,7 @@
     "shortSummary": "Returns the number of working days between two dates with configurable weekends.",
     "signature": "=NETWORKDAYS.INTL(start_date, end_date, [weekend], [holidays])",
     "typeName": "NetworkdaysIntlFn",
-    "uniqueShare": 0.34108527131782945,
+    "uniqueShare": 0.39819004524886875,
     "variadic": false
   },
   "datetime/now": {
@@ -1750,7 +1750,7 @@
     "shortSummary": "Returns the date serial that is a given number of weekdays from a start date.",
     "signature": "=WORKDAY(start_date, days, [holidays])",
     "typeName": "WorkdayFn",
-    "uniqueShare": 0.5,
+    "uniqueShare": 0.5852534562211982,
     "variadic": false
   },
   "datetime/workday-intl": {
@@ -1826,7 +1826,7 @@
     "shortSummary": "Returns the date serial that is a given number of workdays from a start date, with configurable weekends.",
     "signature": "=WORKDAY.INTL(start_date, days, [weekend], [holidays])",
     "typeName": "WorkdayIntlFn",
-    "uniqueShare": 0.40213523131672596,
+    "uniqueShare": 0.46311475409836067,
     "variadic": false
   },
   "datetime/year": {
@@ -5126,7 +5126,7 @@
     "shortSummary": "Returns the interest-only component of a payment for a specific period.",
     "signature": "=IPMT(rate, per, nper, pv, [fv], [type])",
     "typeName": "IpmtFn",
-    "uniqueShare": 0.5447761194029851,
+    "uniqueShare": 0.46396396396396394,
     "variadic": false
   },
   "financial/irr": {
@@ -5768,7 +5768,7 @@
     "shortSummary": "Returns the principal component of a payment for a specific period.",
     "signature": "=PPMT(rate, per, nper, pv, [fv], [type])",
     "typeName": "PpmtFn",
-    "uniqueShare": 0.39303482587064675,
+    "uniqueShare": 0.3081395348837209,
     "variadic": false
   },
   "financial/price": {

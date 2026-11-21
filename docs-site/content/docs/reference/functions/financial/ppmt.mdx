@@ -8,7 +8,7 @@ Returns the principal component of a payment for a specific period.
 
 `PPMT` is computed as `PMT - IPMT` using the same rate, timing, and sign convention.
 
-The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+The Formualizer engine in this repository at 0.15.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
 
 ## Syntax
 
@@ -24,10 +24,6 @@ The Formualizer engine in this repository at 0.14.0 plus unreleased changes comp
 | `pv` | number | Required | — |
 | `fv` | number | Optional | — |
 | `type` | number | Optional | — |
-
-## Differences from Excel
-
-For some payments at the start of the period (type 1), Formualizer uses a different interest amount than Excel when splitting the payment into interest and principal.
 
 ## Remarks
  - `rate` is the interest rate per payment period.
