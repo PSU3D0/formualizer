@@ -8,8 +8,8 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::builtins::lookup::lookup_utils::{
-    SearchedVector, binary_search_f64_slice, binary_search_text_slice, cmp_f64_lookup,
-    cmp_for_lookup, fold_text_boxed, try_parse_f64_fast, value_to_f64_lenient,
+    binary_search_f64_slice, binary_search_text_slice, cmp_f64_lookup, cmp_for_lookup,
+    fold_text_boxed, is_searchable_for_approximate, try_parse_f64_fast, value_to_f64_lenient,
 };
 use crate::engine::{DateSystem, range_view::RangeView};
 
@@ -484,6 +484,8 @@ struct ApproxTextProjection {
     positions: Option<Box<[usize]>>,
     sorted_asc: bool,
     sorted_desc: bool,
+    lex_sorted_asc: bool,
+    lex_sorted_desc: bool,
     bytes: usize,
 }
 
@@ -493,6 +495,8 @@ impl ApproxTextProjection {
         let mut positions: Option<Vec<usize>> = None;
         let mut sorted_asc = true;
         let mut sorted_desc = true;
+        let mut lex_sorted_asc = true;
+        let mut lex_sorted_desc = true;
         let mut prev_num: Option<f64> = None;
         let mut text_bytes = 0usize;
 
@@ -502,9 +506,16 @@ impl ApproxTextProjection {
                 text_bytes = text_bytes.saturating_add(curr_folded.len());
                 let curr_num = try_parse_f64_fast(s);
                 if let Some(prev_folded) = folded.last() {
+                    let lex_ord = prev_folded.as_ref().cmp(curr_folded.as_ref());
+                    if lex_ord == std::cmp::Ordering::Greater {
+                        lex_sorted_asc = false;
+                    }
+                    if lex_ord == std::cmp::Ordering::Less {
+                        lex_sorted_desc = false;
+                    }
                     let c = match (prev_num, curr_num) {
                         (Some(x), Some(y)) => cmp_f64_lookup(x, y),
-                        _ => match prev_folded.as_ref().cmp(curr_folded.as_ref()) {
+                        _ => match lex_ord {
                             std::cmp::Ordering::Less => -1,
                             std::cmp::Ordering::Equal => 0,
                             std::cmp::Ordering::Greater => 1,
@@ -545,6 +556,8 @@ impl ApproxTextProjection {
             positions,
             sorted_asc,
             sorted_desc,
+            lex_sorted_asc,
+            lex_sorted_desc,
             bytes,
         }
     }
@@ -559,17 +572,41 @@ impl ApproxTextProjection {
 
     #[inline]
     fn search(&self, needle_str: &str, mode: i32) -> Option<usize> {
-        let is_sorted = match mode {
-            1 => self.sorted_asc,
-            -1 => self.sorted_desc,
+        let (is_sorted, is_lex_sorted) = match mode {
+            1 => (self.sorted_asc, self.lex_sorted_asc),
+            -1 => (self.sorted_desc, self.lex_sorted_desc),
             _ => return None,
         };
         if !is_sorted {
             return None;
         }
         let needle_folded = fold_text_boxed(needle_str);
-        binary_search_text_slice(&self.folded, &needle_folded, mode)
-            .map(|i| self.original_position(i))
+        if is_lex_sorted {
+            return binary_search_text_slice(&self.folded, &needle_folded, mode)
+                .map(|i| self.original_position(i));
+        }
+        // Mixed numeric-text + non-numeric-text ranges can satisfy numeric
+        // sortedness (`"2" < "10"`) while breaking lexicographic order
+        // (`"10" < "1a" < "2"`). Match `approximate_search_in_view` linearly.
+        let needle_ref = needle_folded.as_ref();
+        if mode == 1 {
+            self.folded
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, item)| item.as_ref() <= needle_ref)
+                .map(|(i, _)| self.original_position(i))
+        } else {
+            let mut best: Option<usize> = None;
+            for (i, item) in self.folded.iter().enumerate() {
+                match item.as_ref().cmp(needle_ref) {
+                    std::cmp::Ordering::Equal => return Some(self.original_position(i)),
+                    std::cmp::Ordering::Greater => best = Some(self.original_position(i)),
+                    std::cmp::Ordering::Less => {}
+                }
+            }
+            best
+        }
     }
 }
 
@@ -798,84 +835,90 @@ impl LookupIndex {
                     if let Some(proj) = proj_opt {
                         proj.search(s, mode)
                     } else {
-                        let searched =
-                            SearchedVector::new(&self.cell_values, needle, self.date_system)
-                                .ok()?;
-                        let is_sorted = if mode == 1 {
-                            searched.is_sorted_ascending()
-                        } else {
-                            searched.is_sorted_descending()
-                        };
-                        if !is_sorted || searched.is_empty() {
-                            return None;
+                        // Tight-budget fallback: single-pass over cell_values matching
+                        // `approximate_search_in_view` without allocating a projection.
+                        let needle_folded = fold_text_boxed(s);
+                        let mut prev_folded: Option<Box<str>> = None;
+                        let mut prev_num: Option<f64> = None;
+                        let mut best: Option<usize> = None;
+                        let mut found_exact_desc = false;
+                        for (idx, cell) in self.cell_values.iter().enumerate() {
+                            let LiteralValue::Text(cell_str) = cell else {
+                                continue;
+                            };
+                            let curr_folded = fold_text_boxed(cell_str);
+                            let curr_num = try_parse_f64_fast(cell_str);
+                            if let Some(pf) = prev_folded.as_ref() {
+                                let c = match (prev_num, curr_num) {
+                                    (Some(x), Some(y)) => cmp_f64_lookup(x, y),
+                                    _ => match pf.as_ref().cmp(curr_folded.as_ref()) {
+                                        std::cmp::Ordering::Less => -1,
+                                        std::cmp::Ordering::Equal => 0,
+                                        std::cmp::Ordering::Greater => 1,
+                                    },
+                                };
+                                if (mode == 1 && c > 0) || (mode == -1 && c < 0) {
+                                    return None;
+                                }
+                            }
+                            if mode == 1 {
+                                if curr_folded.as_ref() <= needle_folded.as_ref() {
+                                    best = Some(idx);
+                                }
+                            } else if !found_exact_desc {
+                                match curr_folded.as_ref().cmp(needle_folded.as_ref()) {
+                                    std::cmp::Ordering::Equal => {
+                                        best = Some(idx);
+                                        found_exact_desc = true;
+                                    }
+                                    std::cmp::Ordering::Greater => {
+                                        best = Some(idx);
+                                    }
+                                    std::cmp::Ordering::Less => {}
+                                }
+                            }
+                            prev_folded = Some(curr_folded);
+                            prev_num = curr_num;
                         }
-                        Self::binary_search_searched_fallback(
-                            &searched,
-                            needle,
-                            mode,
-                            self.date_system,
-                        )
-                        .map(|i| searched.original_position(i))
+                        best
                     }
                 } else {
                     // Rare numeric-text needle compares with both numbers and text;
-                    // reuse the exact SearchedVector semantics over cached cell_values.
-                    let searched =
-                        SearchedVector::new(&self.cell_values, needle, self.date_system).ok()?;
-                    let is_sorted = if mode == 1 {
-                        searched.is_sorted_ascending()
-                    } else {
-                        searched.is_sorted_descending()
-                    };
-                    if !is_sorted || searched.is_empty() {
-                        return None;
+                    // match `approximate_search_in_view` in one pass without allocation.
+                    let mut prev: Option<&LiteralValue> = None;
+                    let mut best: Option<usize> = None;
+                    let mut found_exact_desc = false;
+                    for (idx, val) in self.cell_values.iter().enumerate() {
+                        if !is_searchable_for_approximate(val, needle, self.date_system) {
+                            continue;
+                        }
+                        if let Some(p) = prev {
+                            let ok = cmp_for_lookup(p, val, self.date_system)
+                                .is_some_and(|c| if mode == 1 { c <= 0 } else { c >= 0 });
+                            if !ok {
+                                return None;
+                            }
+                        }
+                        if let Some(c) = cmp_for_lookup(val, needle, self.date_system) {
+                            if mode == 1 {
+                                if c <= 0 {
+                                    best = Some(idx);
+                                }
+                            } else if !found_exact_desc {
+                                if c == 0 {
+                                    best = Some(idx);
+                                    found_exact_desc = true;
+                                } else if c > 0 {
+                                    best = Some(idx);
+                                }
+                            }
+                        }
+                        prev = Some(val);
                     }
-                    Self::binary_search_searched_fallback(&searched, needle, mode, self.date_system)
-                        .map(|i| searched.original_position(i))
+                    best
                 }
             }
             _ => None,
-        }
-    }
-
-    fn binary_search_searched_fallback(
-        searched: &SearchedVector<'_>,
-        needle: &LiteralValue,
-        mode: i32,
-        date_system: DateSystem,
-    ) -> Option<usize> {
-        if mode == 1 {
-            let mut lo = 0usize;
-            let mut hi = searched.len();
-            while lo < hi {
-                let mid = lo + (hi - lo) / 2;
-                match cmp_for_lookup(searched.get(mid), needle, date_system) {
-                    Some(c) if c > 0 => hi = mid,
-                    Some(_) => lo = mid + 1,
-                    None => return None,
-                }
-            }
-            if lo == 0 { None } else { Some(lo - 1) }
-        } else {
-            let mut lo = 0usize;
-            let mut hi = searched.len();
-            while lo < hi {
-                let mid = lo + (hi - lo) / 2;
-                match cmp_for_lookup(searched.get(mid), needle, date_system) {
-                    Some(c) if c > 0 => lo = mid + 1,
-                    Some(_) => hi = mid,
-                    None => return None,
-                }
-            }
-            if lo < searched.len()
-                && cmp_for_lookup(searched.get(lo), needle, date_system) == Some(0)
-            {
-                Some(lo)
-            } else if lo > 0 {
-                Some(lo - 1)
-            } else {
-                None
-            }
         }
     }
 }
@@ -1619,5 +1662,101 @@ mod tests {
             .unwrap(),
             Some(5)
         );
+    }
+
+    #[test]
+    fn approx_text_projection_matches_uncached_on_mixed_numeric_text_ranges() {
+        use crate::builtins::lookup::lookup_utils::approximate_search_in_view;
+
+        let asc_values = vec![
+            LiteralValue::Text("2".into()),
+            LiteralValue::Text("3".into()),
+            LiteralValue::Text("4".into()),
+            LiteralValue::Text("10".into()),
+            LiteralValue::Text("z".into()),
+        ];
+        let asc_view = RangeView::from_owned_rows(
+            asc_values.into_iter().map(|v| vec![v]).collect(),
+            DateSystem::Excel1900,
+        );
+        let BuildOutcome::Built(asc_idx) = LookupIndex::build(
+            &asc_view,
+            LookupAxis::ColumnInView(0),
+            DateSystem::Excel1900,
+        )
+        .unwrap() else {
+            panic!("expected built asc index");
+        };
+
+        let pure_text = [
+            LiteralValue::Text("alpha".into()),
+            LiteralValue::Text("beta".into()),
+            LiteralValue::Text("gamma".into()),
+        ];
+        let pure_proj = ApproxTextProjection::build(&pure_text);
+        assert!(pure_proj.sorted_asc);
+        assert!(pure_proj.lex_sorted_asc);
+        assert!(!pure_proj.sorted_desc);
+        assert!(!pure_proj.lex_sorted_desc);
+
+        let mixed_proj = ApproxTextProjection::build(&asc_idx.cell_values);
+        assert!(mixed_proj.sorted_asc);
+        assert!(!mixed_proj.lex_sorted_asc);
+
+        for needle_str in ["1", "1a", "2", "3", "5", "10", "10a", "z", "zz"] {
+            let needle = LiteralValue::Text(needle_str.into());
+            let expected = approximate_search_in_view(
+                &asc_view,
+                LookupAxis::ColumnInView(0),
+                &needle,
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap();
+            assert_eq!(
+                asc_idx.find_approximate(&needle, 1),
+                expected,
+                "ascending mode=1 mismatch for needle {needle_str:?}"
+            );
+        }
+
+        let desc_values = vec![
+            LiteralValue::Text("z".into()),
+            LiteralValue::Text("20".into()),
+            LiteralValue::Text("10".into()),
+            LiteralValue::Text("4".into()),
+            LiteralValue::Text("3".into()),
+            LiteralValue::Text("2".into()),
+            LiteralValue::Text("0".into()),
+        ];
+        let desc_view = RangeView::from_owned_rows(
+            desc_values.into_iter().map(|v| vec![v]).collect(),
+            DateSystem::Excel1900,
+        );
+        let BuildOutcome::Built(desc_idx) = LookupIndex::build(
+            &desc_view,
+            LookupAxis::ColumnInView(0),
+            DateSystem::Excel1900,
+        )
+        .unwrap() else {
+            panic!("expected built desc index");
+        };
+
+        for needle_str in ["zz", "z", "20", "15", "10", "1a", "3", "0", "-1"] {
+            let needle = LiteralValue::Text(needle_str.into());
+            let expected = approximate_search_in_view(
+                &desc_view,
+                LookupAxis::ColumnInView(0),
+                &needle,
+                -1,
+                DateSystem::Excel1900,
+            )
+            .unwrap();
+            assert_eq!(
+                desc_idx.find_approximate(&needle, -1),
+                expected,
+                "descending mode=-1 mismatch for needle {needle_str:?}"
+            );
+        }
     }
 }

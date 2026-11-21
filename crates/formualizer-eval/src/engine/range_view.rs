@@ -864,6 +864,16 @@ impl<'a> RangeView<'a> {
             .is_some_and(CancelToken::is_cancelled)
     }
 
+    #[inline]
+    fn poll_axis_cancelled(&self, step: usize) -> Result<(), ExcelError> {
+        if step & 4095 == 0 && self.criteria_cache_cancelled() {
+            return Err(ExcelError::new(
+                formualizer_common::ExcelErrorKind::Cancelled,
+            ));
+        }
+        Ok(())
+    }
+
     pub fn sheet(&self) -> &arrow_store::ArrowSheet {
         match &self.backing {
             RangeBacking::Borrowed(s) => s,
@@ -1575,6 +1585,7 @@ impl<'a> RangeView<'a> {
                         continue;
                     };
                     while next_idx < seg.row_start {
+                        self.poll_axis_cancelled(next_idx)?;
                         if let ControlFlow::Break(()) = f(next_idx, LiteralValue::Empty) {
                             return Ok(true);
                         }
@@ -1582,6 +1593,7 @@ impl<'a> RangeView<'a> {
                     }
                     let Some(ch) = col_ref.and_then(|c| c.chunk(chunk_idx)) else {
                         for k in 0..seg.row_len {
+                            self.poll_axis_cancelled(k)?;
                             if let ControlFlow::Break(()) =
                                 f(seg.row_start + k, LiteralValue::Empty)
                             {
@@ -1605,6 +1617,7 @@ impl<'a> RangeView<'a> {
                         cascade.has_any_in_range(chunk_offset..chunk_offset + seg.row_len);
 
                     for k in 0..seg.row_len {
+                        self.poll_axis_cancelled(k)?;
                         let in_off = chunk_offset + k;
                         let val = Self::read_chunk_cell(
                             ch,
@@ -1624,6 +1637,7 @@ impl<'a> RangeView<'a> {
                     next_idx = seg.row_start + seg.row_len;
                 }
                 while next_idx < self.rows {
+                    self.poll_axis_cancelled(next_idx)?;
                     if let ControlFlow::Break(()) = f(next_idx, LiteralValue::Empty) {
                         return Ok(true);
                     }
@@ -1757,6 +1771,7 @@ impl<'a> RangeView<'a> {
                         emit_uniform_span(ar, self.rows, tail_val, f);
                     } else {
                         for r in 0..ar {
+                            self.poll_axis_cancelled(r)?;
                             if let Some(n) = tail.right_tail.get(r).and_then(extract_lit)
                                 && let ControlFlow::Break(()) = f(r, n)
                             {
@@ -1783,6 +1798,7 @@ impl<'a> RangeView<'a> {
                         emit_uniform_span(ac, self.cols, tail_val, f);
                     } else {
                         for c in 0..ac {
+                            self.poll_axis_cancelled(c)?;
                             if let Some(n) = tail.bottom_tail.get(c).and_then(extract_lit)
                                 && let ControlFlow::Break(()) = f(c, n)
                             {
@@ -1872,6 +1888,7 @@ impl<'a> RangeView<'a> {
                             let dt_tag = arrow_store::TypeTag::DateTime as u8;
                             let dur_tag = arrow_store::TypeTag::Duration as u8;
                             for k in 0..seg.row_len {
+                                self.poll_axis_cancelled(k)?;
                                 let in_off = chunk_offset + k;
                                 let t = tags[in_off];
                                 if (t == num_tag || t == dt_tag || t == dur_tag)
@@ -1884,6 +1901,7 @@ impl<'a> RangeView<'a> {
                             continue;
                         }
                         for k in 0..seg.row_len {
+                            self.poll_axis_cancelled(k)?;
                             let in_off = chunk_offset + k;
                             let val = match arrow_store::TypeTag::from_u8(tags[in_off]) {
                                 arrow_store::TypeTag::Number
@@ -1909,6 +1927,7 @@ impl<'a> RangeView<'a> {
                         }
                     } else {
                         for k in 0..seg.row_len {
+                            self.poll_axis_cancelled(k)?;
                             let in_off = chunk_offset + k;
                             let val = if let Some(ov) = cascade.get_scalar(in_off) {
                                 extract_overlay(&ov)
@@ -2053,6 +2072,7 @@ impl<'a> RangeView<'a> {
                         emit_uniform_span(ar, self.rows, tail_val, f);
                     } else {
                         for r in 0..ar {
+                            self.poll_axis_cancelled(r)?;
                             if let Some(LiteralValue::Text(s)) = tail.right_tail.get(r)
                                 && let ControlFlow::Break(()) = f(r, s.as_str())
                             {
@@ -2079,6 +2099,7 @@ impl<'a> RangeView<'a> {
                         emit_uniform_span(ac, self.cols, tail_val, f);
                     } else {
                         for c in 0..ac {
+                            self.poll_axis_cancelled(c)?;
                             if let Some(LiteralValue::Text(s)) = tail.bottom_tail.get(c)
                                 && let ControlFlow::Break(()) = f(c, s.as_str())
                             {
@@ -2144,6 +2165,7 @@ impl<'a> RangeView<'a> {
                         let tags = ch.type_tag.values();
                         if sa.null_count() == 0 {
                             for k in 0..seg.row_len {
+                                self.poll_axis_cancelled(k)?;
                                 let in_off = chunk_offset + k;
                                 if tags[in_off] == text_tag
                                     && let ControlFlow::Break(()) =
@@ -2154,6 +2176,7 @@ impl<'a> RangeView<'a> {
                             }
                         } else {
                             for k in 0..seg.row_len {
+                                self.poll_axis_cancelled(k)?;
                                 let in_off = chunk_offset + k;
                                 if tags[in_off] == text_tag
                                     && !sa.is_null(in_off)
@@ -2167,6 +2190,7 @@ impl<'a> RangeView<'a> {
                     } else {
                         let tags = ch.type_tag.values();
                         for k in 0..seg.row_len {
+                            self.poll_axis_cancelled(k)?;
                             let in_off = chunk_offset + k;
                             let ov_opt = cascade.get_scalar(in_off);
                             let val = if let Some(ov) = ov_opt.as_ref() {
@@ -4344,5 +4368,92 @@ mod bounded_projection_tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn axis_visitors_poll_cancellation_in_column_and_tail_loops() {
+        use crate::engine::lookup_index_cache::LookupAxis;
+        use std::ops::ControlFlow;
+
+        let token = CancelToken::new();
+        token.cancel();
+
+        let num_view = RangeView::from_owned_rows(
+            vec![vec![LiteralValue::Number(1.0)]; 8],
+            DateSystem::Excel1900,
+        )
+        .with_cancel_token(Some(token.clone()));
+        assert_eq!(
+            num_view
+                .visit_axis_values(LookupAxis::ColumnInView(0), &mut |_, _| {
+                    ControlFlow::Continue(())
+                })
+                .unwrap_err()
+                .kind,
+            ExcelErrorKind::Cancelled
+        );
+        assert_eq!(
+            num_view
+                .visit_axis_approx_numeric(LookupAxis::ColumnInView(0), &mut |_, _| {
+                    ControlFlow::Continue(())
+                })
+                .unwrap_err()
+                .kind,
+            ExcelErrorKind::Cancelled
+        );
+
+        let text_view = RangeView::from_owned_rows(
+            vec![vec![LiteralValue::Text("a".into())]; 8],
+            DateSystem::Excel1900,
+        )
+        .with_cancel_token(Some(token.clone()));
+        assert_eq!(
+            text_view
+                .visit_axis_approx_text(LookupAxis::ColumnInView(0), &mut |_, _| {
+                    ControlFlow::Continue(())
+                })
+                .unwrap_err()
+                .kind,
+            ExcelErrorKind::Cancelled
+        );
+
+        let core = RangeView::from_owned_rows(
+            vec![
+                vec![LiteralValue::Number(1.0)],
+                vec![LiteralValue::Number(2.0)],
+            ],
+            DateSystem::Excel1900,
+        );
+        let tailed = RangeView::from_core_and_tail(
+            8,
+            2,
+            2,
+            1,
+            Arc::new(core.sheet().clone()),
+            vec![LiteralValue::Number(3.0), LiteralValue::Text("x".into())],
+            vec![LiteralValue::Empty],
+            LiteralValue::Empty,
+            None,
+            1_000_000,
+        )
+        .with_cancel_token(Some(token));
+        assert_eq!(
+            tailed
+                .visit_axis_approx_numeric(LookupAxis::ColumnInView(1), &mut |_, _| {
+                    ControlFlow::Continue(())
+                })
+                .unwrap_err()
+                .kind,
+            ExcelErrorKind::Cancelled
+        );
+        assert_eq!(
+            tailed
+                .visit_axis_approx_text(LookupAxis::ColumnInView(1), &mut |_, _| {
+                    ControlFlow::Continue(())
+                })
+                .unwrap_err()
+                .kind,
+            ExcelErrorKind::Cancelled
+        );
     }
 }

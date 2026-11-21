@@ -2209,3 +2209,136 @@ fn issue_414_volatile_outside_table_still_caches_while_inside_skips() {
     assert_eq!(report.builds, 0, "{report:?}");
     assert!(report.skipped_volatile > 0, "{report:?}");
 }
+
+#[test]
+fn issue_414_mixed_numeric_text_approx_cache_matches_uncached_across_calls() {
+    let run = |max_bytes: usize| -> Vec<Vec<Option<LiteralValue>>> {
+        let mut engine = engine_with_config(EvalConfig {
+            lookup_index_cache_max_bytes: max_bytes,
+            ..EvalConfig::default()
+        });
+
+        // Ascending column D1:D68: ["2", "3", "4", "10", "z", "z", ...]
+        text(&mut engine, "Sheet1", 1, 4, "2");
+        text(&mut engine, "Sheet1", 2, 4, "3");
+        text(&mut engine, "Sheet1", 3, 4, "4");
+        text(&mut engine, "Sheet1", 4, 4, "10");
+        for row in 5..=68u32 {
+            text(&mut engine, "Sheet1", row, 4, "z");
+        }
+
+        // Descending mirror column E1:E68: ["z", ..., "z", "10", "4", "3", "2"]
+        for row in 1..=64u32 {
+            text(&mut engine, "Sheet1", row, 5, "z");
+        }
+        text(&mut engine, "Sheet1", 65, 5, "10");
+        text(&mut engine, "Sheet1", 66, 5, "4");
+        text(&mut engine, "Sheet1", 67, 5, "3");
+        text(&mut engine, "Sheet1", 68, 5, "2");
+
+        // Descending mixed column F1:F68: ["z", ..., "z", "20", "10", "2", "0"]
+        for row in 1..=64u32 {
+            text(&mut engine, "Sheet1", row, 6, "z");
+        }
+        text(&mut engine, "Sheet1", 65, 6, "20");
+        text(&mut engine, "Sheet1", 66, 6, "10");
+        text(&mut engine, "Sheet1", 67, 6, "2");
+        text(&mut engine, "Sheet1", 68, 6, "0");
+
+        let queries = [
+            // Non-numeric-text needles (calls 1..=6 warm ApproxTextProjection on call 4+)
+            "=MATCH(\"1a\", Sheet1!$D$1:$D$68, 1)",
+            // Numeric-text needles on ascending range
+            "=MATCH(\"5\", Sheet1!$D$1:$D$68, 1)",
+            "=MATCH(\"10\", Sheet1!$D$1:$D$68, 1)",
+            // Non-numeric-text needles on descending mirror
+            "=MATCH(\"1a\", Sheet1!$E$1:$E$68, -1)",
+            // Numeric-text needles on descending mirror
+            "=MATCH(\"5\", Sheet1!$E$1:$E$68, -1)",
+            // Non-numeric-text needle on descending mixed column where "10" < "1a" < "2"
+            "=MATCH(\"1a\", Sheet1!$F$1:$F$68, -1)",
+        ];
+
+        for (q_idx, expr) in queries.iter().enumerate() {
+            let col = (q_idx + 1) as u32;
+            for call in 1..=6u32 {
+                formula(&mut engine, "Out", call, col, expr);
+            }
+        }
+
+        engine.evaluate_all().unwrap();
+        if max_bytes > 0 {
+            let report = engine.last_lookup_index_cache_report();
+            assert!(report.builds >= 3, "expected warmed caches: {report:?}");
+            assert!(report.hits >= 3, "expected cache hits: {report:?}");
+        }
+
+        (0..queries.len())
+            .map(|q_idx| {
+                let col = (q_idx + 1) as u32;
+                (1..=6u32)
+                    .map(|call| engine.get_cell_value("Out", call, col))
+                    .collect()
+            })
+            .collect()
+    };
+
+    let uncached = run(0);
+    let cached = run(EvalConfig::default().lookup_index_cache_max_bytes);
+    assert_eq!(cached, uncached);
+
+    // Every query must return the exact same value on calls 1..=6.
+    for (q_idx, calls) in cached.iter().enumerate() {
+        for (call_idx, val) in calls.iter().enumerate() {
+            assert_eq!(
+                val,
+                &calls[0],
+                "query {q_idx} call {} differed from call 1",
+                call_idx + 1
+            );
+        }
+    }
+
+    // Verify expected semantics for key cases:
+    // "1a" on ["2","3","4","10","z",...] -> "10" is at 1-based position 4.
+    assert_eq!(cached[0][0], Some(LiteralValue::Number(4.0)));
+    // "5" on ["2","3","4","10","z",...] -> "4" is at 1-based position 3.
+    assert_eq!(cached[1][0], Some(LiteralValue::Number(3.0)));
+    // "10" on ["2","3","4","10","z",...] -> "10" is at 1-based position 4.
+    assert_eq!(cached[2][0], Some(LiteralValue::Number(4.0)));
+    // "1a" on ["z", ..., "z", "10", "4", "3", "2"] -> "2" is at 1-based position 68.
+    assert_eq!(cached[3][0], Some(LiteralValue::Number(68.0)));
+    // "5" on ["z", ..., "z", "10", "4", "3", "2"] -> "10" is at 1-based position 65.
+    assert_eq!(cached[4][0], Some(LiteralValue::Number(65.0)));
+    // "1a" on ["z", ..., "z", "20", "10", "2", "0"] -> "2" is at 1-based position 67.
+    assert_eq!(cached[5][0], Some(LiteralValue::Number(67.0)));
+}
+
+#[test]
+fn issue_414_deleted_volatile_vertex_restores_has_volatile_in_range_and_caching() {
+    let mut engine = repeated_vlookup_engine(EvalConfig::default());
+    formula(&mut engine, "Sheet1", 50, 4, "=NOW()");
+    engine.evaluate_all().unwrap();
+    let report = engine.last_lookup_index_cache_report();
+    assert_eq!(report.builds, 0, "{report:?}");
+    assert!(report.skipped_volatile > 0, "{report:?}");
+
+    let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
+    let addr = engine.graph.make_cell_ref("Sheet1", 50, 4);
+    let vid = engine.graph.get_vertex_for_cell(&addr).unwrap();
+    assert!(engine.graph.has_volatile_in_range(sheet_id, 0, 99, 3, 4));
+
+    // Tombstone the volatile vertex without manually removing from `volatile_vertices`.
+    engine.graph.mark_deleted(vid, true);
+    engine.mark_topology_edited();
+
+    assert!(
+        !engine.graph.has_volatile_in_range(sheet_id, 0, 99, 3, 4),
+        "deleted/tombstoned volatile vertex must not keep has_volatile_in_range true"
+    );
+
+    engine.evaluate_all().unwrap();
+    let report = engine.last_lookup_index_cache_report();
+    assert_eq!(report.builds, 1, "{report:?}");
+    assert_eq!(report.skipped_volatile, 0, "{report:?}");
+}

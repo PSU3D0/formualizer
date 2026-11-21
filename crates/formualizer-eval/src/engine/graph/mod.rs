@@ -5906,6 +5906,9 @@ impl DependencyGraph {
             return true;
         };
         for &vid in &self.volatile_vertices {
+            if self.store.is_deleted(vid) {
+                continue;
+            }
             if self.store.sheet_id(vid) != sheet_id {
                 continue;
             }
