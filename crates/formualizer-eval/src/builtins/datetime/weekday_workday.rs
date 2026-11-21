@@ -6,7 +6,8 @@ use crate::traits::{ArgumentHandle, CalcValue, FunctionContext};
 use arrow_array::Array;
 use chrono::{Datelike, NaiveDate, Weekday};
 use formualizer_common::{
-    DateSystem, ExcelError, LiteralValue, date_to_serial_for, try_serial_to_date_for,
+    DateSystem, ExcelError, ExcelErrorKind, LiteralValue, date_to_serial_for,
+    try_serial_to_date_for,
 };
 use formualizer_macros::func_caps;
 
@@ -630,78 +631,119 @@ fn is_weekend_masked(date: &NaiveDate, mask: &WeekendMask) -> bool {
 }
 
 /// Collect holiday dates from argument(s) starting at `arg_start`.
-/// Handles scalars, inline arrays, and range references. Date text
-/// (`'10/27/1999`) is a holiday, as in Excel; other text and empty cells are
-/// skipped.
+/// Handles scalars (including format-annotated date scalars), inline arrays,
+/// and range references. Date text (`'10/27/1999`) is a holiday, as in Excel;
+/// other text, booleans, and empty cells are skipped; errors are propagated.
 fn collect_holidays(
     args: &[ArgumentHandle],
     arg_start: usize,
     system: DateSystem,
-) -> Vec<NaiveDate> {
+) -> Result<Vec<NaiveDate>, ExcelError> {
     let mut holidays = Vec::new();
     for arg in args.iter().skip(arg_start) {
-        match arg.value() {
-            Ok(CalcValue::Scalar(lit)) => {
-                collect_holidays_from_literal(&lit, &mut holidays, system)
+        if arg.is_omitted() {
+            continue;
+        }
+        match arg.value()? {
+            CalcValue::Scalar(lit) | CalcValue::AnnotatedScalar(lit, _) => {
+                collect_holidays_from_literal(&lit, &mut holidays, system)?;
             }
-            Ok(CalcValue::Range(rv)) => {
-                if let Ok(slices) = rv.numbers_slices().collect::<Result<Vec<_>, _>>() {
-                    for (_row_start, _row_len, cols) in slices {
-                        for col in cols {
-                            let len = col.len();
-                            let values = col.values();
-                            for i in 0..len {
-                                if !col.is_null(i)
-                                    && let Ok(d) = try_serial_to_date_for(system, values[i])
-                                {
-                                    holidays.push(d);
-                                }
+            CalcValue::Range(rv) => {
+                let mut first_err: Option<ExcelError> = None;
+                rv.try_for_each_error_piece(4096, &mut |col| {
+                    if col.null_count() < col.len() {
+                        for i in 0..col.len() {
+                            if !col.is_null(i) {
+                                first_err = Some(ExcelError::new(
+                                    crate::arrow_store::unmap_error_code(col.value(i)),
+                                ));
+                                return Ok(true);
+                            }
+                        }
+                    }
+                    Ok(false)
+                })?;
+                if let Some(err) = first_err {
+                    return Err(err);
+                }
+
+                for slice in rv.numbers_slices() {
+                    let (_row_start, _row_len, cols) = slice?;
+                    for col in cols {
+                        let len = col.len();
+                        let values = col.values();
+                        for i in 0..len {
+                            if !col.is_null(i)
+                                && let Ok(d) = try_serial_to_date_for(system, values[i])
+                            {
+                                holidays.push(d);
                             }
                         }
                     }
                 }
-                if let Ok(slices) = rv.text_slices().collect::<Result<Vec<_>, _>>() {
-                    for (_row_start, _row_len, cols) in slices {
-                        for col in cols {
-                            let Some(text) =
-                                col.as_any().downcast_ref::<arrow_array::StringArray>()
-                            else {
-                                continue;
-                            };
-                            for i in 0..text.len() {
-                                if !text.is_null(i)
-                                    && let Some(d) = date_text_to_date(text.value(i), system)
-                                {
-                                    holidays.push(d);
-                                }
+                for slice in rv.text_slices() {
+                    let (_row_start, _row_len, cols) = slice?;
+                    for col in cols {
+                        let Some(text) = col.as_any().downcast_ref::<arrow_array::StringArray>()
+                        else {
+                            continue;
+                        };
+                        for i in 0..text.len() {
+                            if !text.is_null(i)
+                                && let Some(d) = date_text_to_date(text.value(i), system)
+                            {
+                                holidays.push(d);
                             }
                         }
                     }
                 }
             }
-            _ => {}
+            CalcValue::Callable(_) => {
+                return Err(ExcelError::new(ExcelErrorKind::Calc)
+                    .with_message("LAMBDA value must be invoked"));
+            }
         }
     }
     holidays.sort_unstable();
     holidays.dedup();
-    holidays
+    Ok(holidays)
 }
 
-fn collect_holidays_from_literal(lit: &LiteralValue, out: &mut Vec<NaiveDate>, system: DateSystem) {
+/// Convert `collect_holidays` errors into a scalar error value while keeping
+/// cancellation as an `Err`.
+fn collect_holidays_or_scalar_error(
+    args: &[ArgumentHandle],
+    arg_start: usize,
+    system: DateSystem,
+) -> Result<Result<Vec<NaiveDate>, CalcValue<'static>>, ExcelError> {
+    match collect_holidays(args, arg_start, system) {
+        Ok(holidays) => Ok(Ok(holidays)),
+        Err(e) if e.kind == ExcelErrorKind::Cancelled => Err(e),
+        Err(e) => Ok(Err(CalcValue::Scalar(LiteralValue::Error(e)))),
+    }
+}
+
+fn collect_holidays_from_literal(
+    lit: &LiteralValue,
+    out: &mut Vec<NaiveDate>,
+    system: DateSystem,
+) -> Result<(), ExcelError> {
     match lit {
         LiteralValue::Array(rows) => {
             for row in rows {
                 for cell in row {
-                    collect_holidays_from_literal(cell, out, system);
+                    collect_holidays_from_literal(cell, out, system)?;
                 }
             }
         }
+        LiteralValue::Error(e) => return Err(e.clone()),
         _ => {
             if let Some(d) = literal_to_date(lit, system) {
                 out.push(d);
             }
         }
     }
+    Ok(())
 }
 
 fn literal_to_date(lit: &LiteralValue, system: DateSystem) -> Option<NaiveDate> {
@@ -800,7 +842,10 @@ impl Function for NetworkdaysFn {
         let start_date = try_serial_to_date_for(system, start_serial)?;
         let end_date = try_serial_to_date_for(system, end_serial)?;
 
-        let holidays = collect_holidays(args, 2, system);
+        let holidays = match collect_holidays_or_scalar_error(args, 2, system)? {
+            Ok(h) => h,
+            Err(err_val) => return Ok(err_val),
+        };
 
         let (start, end, sign) = if start_date <= end_date {
             (start_date, end_date, 1i64)
@@ -899,7 +944,10 @@ impl Function for WorkdayFn {
 
         let start_date = try_serial_to_date_for(system, start_serial)?;
 
-        let holidays = collect_holidays(args, 2, system);
+        let holidays = match collect_holidays_or_scalar_error(args, 2, system)? {
+            Ok(h) => h,
+            Err(err_val) => return Ok(err_val),
+        };
 
         let mut current = start_date;
         let mut remaining = days.abs();
@@ -1028,7 +1076,10 @@ impl Function for NetworkdaysIntlFn {
             DEFAULT_WEEKEND_MASK
         };
 
-        let holidays = collect_holidays(args, 3, system);
+        let holidays = match collect_holidays_or_scalar_error(args, 3, system)? {
+            Ok(h) => h,
+            Err(err_val) => return Ok(err_val),
+        };
 
         let (start, end, sign) = if start_date <= end_date {
             (start_date, end_date, 1i64)
@@ -1154,7 +1205,10 @@ impl Function for WorkdayIntlFn {
             DEFAULT_WEEKEND_MASK
         };
 
-        let holidays = collect_holidays(args, 3, system);
+        let holidays = match collect_holidays_or_scalar_error(args, 3, system)? {
+            Ok(h) => h,
+            Err(err_val) => return Ok(err_val),
+        };
 
         let mut current = start_date;
         let mut remaining = days.abs();
@@ -1747,5 +1801,404 @@ mod tests {
             eval_weekday_formula(DateSystem::Excel1904, "=WEEKNUM(0,21)"),
             LiteralValue::Int(53)
         );
+    }
+
+    #[test]
+    fn holiday_date_cells_single_and_range_593() {
+        use crate::engine::{Engine, EvalConfig};
+        use formualizer_parse::parser::parse;
+
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        // Formula-produced date cells: A1 = 2024-01-08 (Mon), A2 = 2024-01-03 (Wed)
+        engine
+            .set_cell_formula("Sheet1", 1, 1, parse("=DATE(2024,1,8)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 2, 1, parse("=DATE(2024,1,3)").unwrap())
+            .unwrap();
+        // Stored LiteralValue::Date and DateTime cells: B1 = 2024-01-08, B2 = 2024-01-03 14:30
+        engine
+            .set_cell_value(
+                "Sheet1",
+                1,
+                2,
+                LiteralValue::Date(NaiveDate::from_ymd_opt(2024, 1, 8).unwrap()),
+            )
+            .unwrap();
+        engine
+            .set_cell_value(
+                "Sheet1",
+                2,
+                2,
+                LiteralValue::DateTime(
+                    NaiveDate::from_ymd_opt(2024, 1, 3)
+                        .unwrap()
+                        .and_hms_opt(14, 30, 0)
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+
+        let cases = [
+            // WORKDAY: 2024-01-05 (Fri) + 1 workday, skipping Mon 2024-01-08 => Tue 2024-01-09 (45300)
+            ("=WORKDAY(DATE(2024,1,5),1,A1)", 45300.0),
+            ("=WORKDAY(DATE(2024,1,5),1,A1:A1)", 45300.0),
+            ("=WORKDAY(DATE(2024,1,5),1,B1)", 45300.0),
+            ("=WORKDAY(DATE(2024,1,5),1,B1:B1)", 45300.0),
+            ("=WORKDAY(DATE(2024,1,5),1,DATE(2024,1,8))", 45300.0),
+            // WORKDAY.INTL: weekend=11 (Sun only). 2024-01-05 (Fri) + 2 workdays: Sat (1), Mon holiday skipped, Tue (2) => 45300
+            ("=WORKDAY.INTL(DATE(2024,1,5),2,11,A1)", 45300.0),
+            ("=WORKDAY.INTL(DATE(2024,1,5),2,11,A1:A1)", 45300.0),
+            ("=WORKDAY.INTL(DATE(2024,1,5),2,11,B1)", 45300.0),
+            ("=WORKDAY.INTL(DATE(2024,1,5),2,11,DATE(2024,1,8))", 45300.0),
+            // NETWORKDAYS: 2024-01-01..2024-01-07 (5 weekdays), minus Wed 2024-01-03 => 4
+            ("=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),A2)", 4.0),
+            ("=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),A2:A2)", 4.0),
+            ("=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),B2)", 4.0),
+            ("=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),B2:B2)", 4.0),
+            (
+                "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),DATE(2024,1,3))",
+                4.0,
+            ),
+            // NETWORKDAYS.INTL: weekend=11 (Sun only, 6 workdays), minus Wed 2024-01-03 => 5
+            (
+                "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),11,A2)",
+                5.0,
+            ),
+            (
+                "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),11,A2:A2)",
+                5.0,
+            ),
+            (
+                "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),11,B2)",
+                5.0,
+            ),
+            (
+                "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),11,DATE(2024,1,3))",
+                5.0,
+            ),
+        ];
+
+        for (idx, (formula, _)) in cases.iter().enumerate() {
+            engine
+                .set_cell_formula("Sheet1", idx as u32 + 1, 5, parse(formula).unwrap())
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+
+        for (idx, (formula, expected)) in cases.iter().enumerate() {
+            assert_eq!(
+                engine.get_cell_value("Sheet1", idx as u32 + 1, 5),
+                Some(LiteralValue::Number(*expected)),
+                "{formula}"
+            );
+        }
+    }
+
+    #[test]
+    fn holiday_scalar_date_and_datetime_literals_work() {
+        let wb = TestWorkbook::new()
+            .with_function(std::sync::Arc::new(WorkdayFn))
+            .with_function(std::sync::Arc::new(WorkdayIntlFn))
+            .with_function(std::sync::Arc::new(NetworkdaysFn))
+            .with_function(std::sync::Arc::new(NetworkdaysIntlFn));
+        let ctx = interp(&wb);
+
+        let fri = lit(LiteralValue::Date(
+            NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(),
+        ));
+        let mon_date = lit(LiteralValue::Date(
+            NaiveDate::from_ymd_opt(2024, 1, 8).unwrap(),
+        ));
+        let mon_dt = lit(LiteralValue::DateTime(
+            NaiveDate::from_ymd_opt(2024, 1, 8)
+                .unwrap()
+                .and_hms_opt(15, 45, 0)
+                .unwrap(),
+        ));
+        let one = lit(LiteralValue::Int(1));
+        let two = lit(LiteralValue::Int(2));
+        let wk11 = lit(LiteralValue::Int(11));
+
+        let workday = ctx.context.get_function("", "WORKDAY").unwrap();
+        assert_eq!(
+            workday
+                .dispatch(
+                    &[
+                        ArgumentHandle::new(&fri, &ctx),
+                        ArgumentHandle::new(&one, &ctx),
+                        ArgumentHandle::new(&mon_date, &ctx),
+                    ],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(45300.0)
+        );
+        assert_eq!(
+            workday
+                .dispatch(
+                    &[
+                        ArgumentHandle::new(&fri, &ctx),
+                        ArgumentHandle::new(&one, &ctx),
+                        ArgumentHandle::new(&mon_dt, &ctx),
+                    ],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(45300.0)
+        );
+
+        let workday_intl = ctx.context.get_function("", "WORKDAY.INTL").unwrap();
+        assert_eq!(
+            workday_intl
+                .dispatch(
+                    &[
+                        ArgumentHandle::new(&fri, &ctx),
+                        ArgumentHandle::new(&two, &ctx),
+                        ArgumentHandle::new(&wk11, &ctx),
+                        ArgumentHandle::new(&mon_dt, &ctx),
+                    ],
+                    &ctx.function_context(None),
+                )
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(45300.0)
+        );
+    }
+
+    #[test]
+    fn holiday_mixed_ranges_and_error_propagation() {
+        use crate::engine::{Engine, EvalConfig};
+        use formualizer_parse::parser::parse;
+
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        // A1:A7 mixed holiday range for Jan 1..Jan 7 2024 (5 weekdays):
+        // A1: numeric serial for 2024-01-01 (Mon)
+        // A2: LiteralValue::Date for 2024-01-02 (Tue)
+        // A3: =DATE(2024,1,3) (Wed)
+        // A4: LiteralValue::DateTime for 2024-01-04 09:15 (Thu)
+        // A5: date text "2024-01-05" (Fri) -> actually test non-date text below too
+        // Let's keep Fri 2024-01-05 working so mixed range leaves 1 workday:
+        // A5: non-date text "holiday label" (skipped)
+        // A6: Empty (skipped)
+        // A7: Boolean TRUE (skipped)
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Number(45292.0))
+            .unwrap();
+        engine
+            .set_cell_value(
+                "Sheet1",
+                2,
+                1,
+                LiteralValue::Date(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()),
+            )
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 3, 1, parse("=DATE(2024,1,3)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_value(
+                "Sheet1",
+                4,
+                1,
+                LiteralValue::DateTime(
+                    NaiveDate::from_ymd_opt(2024, 1, 4)
+                        .unwrap()
+                        .and_hms_opt(9, 15, 0)
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 5, 1, LiteralValue::Text("not a date".into()))
+            .unwrap();
+        // A6 intentionally blank
+        engine
+            .set_cell_value("Sheet1", 7, 1, LiteralValue::Boolean(true))
+            .unwrap();
+        // A8: date text "2024-01-05"
+        engine
+            .set_cell_value("Sheet1", 8, 1, LiteralValue::Text("2024-01-05".into()))
+            .unwrap();
+
+        // Error cells in column B
+        engine
+            .set_cell_formula("Sheet1", 1, 2, parse("=DATE(2024,1,3)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_formula("Sheet1", 2, 2, parse("=1/0").unwrap())
+            .unwrap();
+        engine
+            .set_cell_value(
+                "Sheet1",
+                3,
+                2,
+                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Na)),
+            )
+            .unwrap();
+
+        let formulas = [
+            // A1:A7 excludes Mon..Thu, leaves Fri => 1 workday
+            (
+                "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),A1:A7)",
+                LiteralValue::Number(1.0),
+            ),
+            // A1:A8 also excludes Fri via date text => 0 workdays
+            (
+                "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),A1:A8)",
+                LiteralValue::Number(0.0),
+            ),
+            // WORKDAY from 2024-01-01 by 1 workday over A1:A7 => skips Mon..Thu, lands on Fri 2024-01-05 (45296)
+            // Wait: 2024-01-01 is start date (not counted in stepping), step 1 checks Tue(hol), Wed(hol), Thu(hol), Fri(ok=45296)
+            (
+                "=WORKDAY(DATE(2024,1,1),1,A1:A7)",
+                LiteralValue::Number(45296.0),
+            ),
+            // WORKDAY.INTL with Sat+Sun off over A1:A8 => skips Mon..Sun, lands on Mon 2024-01-08 (45299)
+            (
+                "=WORKDAY.INTL(DATE(2024,1,1),1,\"0000011\",A1:A8)",
+                LiteralValue::Number(45299.0),
+            ),
+            // Error propagation from holiday range (formula error =1/0)
+            (
+                "=WORKDAY(DATE(2024,1,5),1,B1:B2)",
+                LiteralValue::Error(ExcelError::new_div()),
+            ),
+            // Error propagation from stored error in holiday range (#N/A)
+            (
+                "=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),B3:B3)",
+                LiteralValue::Error(ExcelError::new_na()),
+            ),
+            // Error propagation from scalar error holiday cell
+            (
+                "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),11,B2)",
+                LiteralValue::Error(ExcelError::new_div()),
+            ),
+            // Error propagation from inline array containing an error
+            (
+                "=WORKDAY.INTL(DATE(2024,1,5),1,1,{45299,#N/A})",
+                LiteralValue::Error(ExcelError::new_na()),
+            ),
+            // Invalid sheet reference in holiday arg
+            (
+                "=WORKDAY(DATE(2024,1,5),1,NoSuchSheet!A1)",
+                LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)),
+            ),
+        ];
+
+        for (idx, (formula, _)) in formulas.iter().enumerate() {
+            engine
+                .set_cell_formula("Sheet1", idx as u32 + 1, 5, parse(formula).unwrap())
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+
+        for (idx, (formula, expected)) in formulas.iter().enumerate() {
+            let actual = engine.get_cell_value("Sheet1", idx as u32 + 1, 5);
+            match (actual, expected) {
+                (Some(LiteralValue::Error(a)), LiteralValue::Error(b)) => {
+                    assert_eq!(a.kind, b.kind, "{formula}");
+                }
+                (Some(a), b) => assert_eq!(&a, b, "{formula}"),
+                (None, b) => panic!("{formula}: expected {b:?}, got None"),
+            }
+        }
+    }
+
+    #[test]
+    fn holiday_date_cells_follow_1904_date_system() {
+        use crate::engine::{Engine, EvalConfig};
+        use formualizer_parse::parser::parse;
+
+        let mut engine = Engine::new(
+            TestWorkbook::new(),
+            EvalConfig::default().with_date_system(DateSystem::Excel1904),
+        );
+
+        let jan3 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        let jan8 = NaiveDate::from_ymd_opt(2024, 1, 8).unwrap();
+        let jan9 = NaiveDate::from_ymd_opt(2024, 1, 9).unwrap();
+        let jan9_serial_1904 = date_to_serial_for(DateSystem::Excel1904, &jan9);
+        assert_eq!(jan9_serial_1904, 43838.0);
+
+        // A1: =DATE(2024,1,8) (Mon)
+        // A2: LiteralValue::Date(2024-01-03) (Wed)
+        // A3: LiteralValue::DateTime(2024-01-04 12:00) (Thu)
+        // A4: date text "2024-01-05" (Fri)
+        engine
+            .set_cell_formula("Sheet1", 1, 1, parse("=DATE(2024,1,8)").unwrap())
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 2, 1, LiteralValue::Date(jan3))
+            .unwrap();
+        engine
+            .set_cell_value(
+                "Sheet1",
+                3,
+                1,
+                LiteralValue::DateTime(
+                    NaiveDate::from_ymd_opt(2024, 1, 4)
+                        .unwrap()
+                        .and_hms_opt(12, 0, 0)
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 4, 1, LiteralValue::Text("2024-01-05".into()))
+            .unwrap();
+        // B1: numeric serial in 1904 system for 2024-01-08 (43837)
+        engine
+            .set_cell_value(
+                "Sheet1",
+                1,
+                2,
+                LiteralValue::Number(date_to_serial_for(DateSystem::Excel1904, &jan8)),
+            )
+            .unwrap();
+
+        let cases = [
+            // Single-cell formula date A1 -> 2024-01-09 (43838 in 1904)
+            ("=WORKDAY(DATE(2024,1,5),1,A1)", jan9_serial_1904),
+            ("=WORKDAY(DATE(2024,1,5),1,A1:A1)", jan9_serial_1904),
+            ("=WORKDAY(DATE(2024,1,5),1,B1)", jan9_serial_1904),
+            (
+                "=WORKDAY(DATE(2024,1,5),1,DATE(2024,1,8))",
+                jan9_serial_1904,
+            ),
+            ("=WORKDAY.INTL(DATE(2024,1,5),2,11,A1)", jan9_serial_1904),
+            ("=WORKDAY.INTL(DATE(2024,1,5),2,11,A1:A1)", jan9_serial_1904),
+            // NETWORKDAYS with LiteralValue::Date A2 (Wed) => 4
+            ("=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),A2)", 4.0),
+            ("=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),A2:A2)", 4.0),
+            // NETWORKDAYS across mixed range A2:A4 (Wed, Thu, Fri) => 2 (Mon, Tue)
+            ("=NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),A2:A4)", 2.0),
+            // NETWORKDAYS.INTL across A1:A4 (Mon, Wed, Thu, Fri; Jan 8 is outside Jan 1..7) with Sun-only off => 3 (Mon 1, Tue 2, Sat 6)
+            (
+                "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),11,A1:A4)",
+                3.0,
+            ),
+            (
+                "=NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),11,A2)",
+                5.0,
+            ),
+        ];
+
+        for (idx, (formula, _)) in cases.iter().enumerate() {
+            engine
+                .set_cell_formula("Sheet1", idx as u32 + 1, 5, parse(formula).unwrap())
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+
+        for (idx, (formula, expected)) in cases.iter().enumerate() {
+            assert_eq!(
+                engine.get_cell_value("Sheet1", idx as u32 + 1, 5),
+                Some(LiteralValue::Number(*expected)),
+                "{formula}"
+            );
+        }
     }
 }
