@@ -3,14 +3,17 @@ use crate::test_workbook::TestWorkbook;
 use formualizer_parse::parser::{ASTNode, ASTNodeType};
 use std::sync::Arc;
 
-fn evaluate(name: &str, values: [f64; 6]) -> LiteralValue {
+fn evaluate_slice(name: &str, values: &[f64]) -> LiteralValue {
     let wb = TestWorkbook::new()
+        .with_function(Arc::new(PmtFn))
+        .with_function(Arc::new(IpmtFn))
+        .with_function(Arc::new(PpmtFn))
         .with_function(Arc::new(CumipmtFn))
         .with_function(Arc::new(CumprincFn));
     let ctx = wb.interpreter();
     let nodes: Vec<_> = values
-        .into_iter()
-        .map(|v| ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(v)), None))
+        .iter()
+        .map(|&v| ASTNode::new(ASTNodeType::Literal(LiteralValue::Number(v)), None))
         .collect();
     let args: Vec<_> = nodes.iter().map(|n| ArgumentHandle::new(n, &ctx)).collect();
     ctx.context
@@ -21,11 +24,19 @@ fn evaluate(name: &str, values: [f64; 6]) -> LiteralValue {
         .into_literal()
 }
 
-fn amount(name: &str, values: [f64; 6]) -> f64 {
-    match evaluate(name, values) {
+fn evaluate(name: &str, values: [f64; 6]) -> LiteralValue {
+    evaluate_slice(name, &values)
+}
+
+fn amount_slice(name: &str, values: &[f64]) -> f64 {
+    match evaluate_slice(name, values) {
         LiteralValue::Number(v) => v,
         other => panic!("{name}: expected number, got {other:?}"),
     }
+}
+
+fn amount(name: &str, values: [f64; 6]) -> f64 {
+    amount_slice(name, &values)
 }
 
 fn close(actual: f64, expected: f64) {
@@ -183,4 +194,123 @@ fn cumulative_loan_invalid_domains() {
             );
         }
     }
+}
+
+#[test]
+fn ipmt_ppmt_type1_annuity_due_repro() {
+    let rate = 0.05 / 12.0;
+    let nper = 24.0;
+    let pv = 5000.0;
+
+    // Period 1 with type=1 has zero interest; full payment goes to principal.
+    close(amount("IPMT", [rate, 1.0, nper, pv, 0.0, 1.0]), 0.0);
+    let pmt_t1 = amount_slice("PMT", &[rate, nper, pv, 0.0, 1.0]);
+    close(amount("PPMT", [rate, 1.0, nper, pv, 0.0, 1.0]), pmt_t1);
+
+    // Period 2 with type=1 must deduct period 1's payment from the balance.
+    close(
+        amount("IPMT", [rate, 2.0, nper, pv, 0.0, 1.0]),
+        -19.923138525572575,
+    );
+    close(
+        amount("PPMT", [rate, 2.0, nper, pv, 0.0, 1.0]),
+        -198.52361533700965,
+    );
+
+    // Matches CUMIPMT / CUMPRINC single-period values for type=1.
+    for per in 1..=24 {
+        let p = per as f64;
+        close(
+            amount("IPMT", [rate, p, nper, pv, 0.0, 1.0]),
+            amount("CUMIPMT", [rate, nper, pv, p, p, 1.0]),
+        );
+        close(
+            amount("PPMT", [rate, p, nper, pv, 0.0, 1.0]),
+            amount("CUMPRINC", [rate, nper, pv, p, p, 1.0]),
+        );
+    }
+}
+
+#[test]
+fn ipmt_ppmt_identities_type0_and_type1() {
+    let cases = [
+        (0.05 / 12.0, 24usize, 5000.0, 0.0),
+        (0.1, 4, 1000.0, -500.0),
+        (0.05 / 12.0, 24, 5000.0, -1000.0),
+        (-0.02, 12, 1000.0, 0.0),
+        (-0.02, 12, 1000.0, -250.0),
+        (0.0, 12, 1000.0, 0.0),
+        (0.0, 12, 1000.0, -200.0),
+    ];
+
+    for (rate, nper, pv, fv) in cases {
+        let nper_f = nper as f64;
+        for pmt_type in [0.0, 1.0] {
+            let pmt = amount_slice("PMT", &[rate, nper_f, pv, fv, pmt_type]);
+            let mut sum_ppmt = 0.0;
+
+            for per in 1..=nper {
+                let p = per as f64;
+                let ipmt = amount("IPMT", [rate, p, nper_f, pv, fv, pmt_type]);
+                let ppmt = amount("PPMT", [rate, p, nper_f, pv, fv, pmt_type]);
+
+                // IPMT + PPMT == PMT
+                close(ipmt + ppmt, pmt);
+
+                if pmt_type == 1.0 {
+                    if per == 1 {
+                        assert_eq!(ipmt, 0.0);
+                    } else if rate != 0.0 {
+                        // Exact Excel identity: IPMT(type=1) = IPMT(type=0) / (1 + rate)
+                        let ipmt_t0 = amount("IPMT", [rate, p, nper_f, pv, fv, 0.0]);
+                        close(ipmt, ipmt_t0 / (1.0 + rate));
+                    } else {
+                        assert_eq!(ipmt, 0.0);
+                    }
+                } else if rate == 0.0 {
+                    assert_eq!(ipmt, 0.0);
+                }
+
+                sum_ppmt += ppmt;
+            }
+
+            // Sum of principal payments over 1..=nper:
+            // For type=0 (or rate=0), ending balance at t=nper is -fv, so sum(PPMT) == -pv - fv.
+            // For type=1 with rate != 0, payments stop at t=nper-1 and fv compounds one more
+            // period to t=nper, so balance after the final payment is -fv / (1 + rate).
+            let expected_principal_sum = if pmt_type == 1.0 && rate != 0.0 {
+                -pv - fv / (1.0 + rate)
+            } else {
+                -pv - fv
+            };
+            close(sum_ppmt, expected_principal_sum);
+        }
+    }
+}
+
+#[test]
+fn ipmt_ppmt_non_zero_fv_and_negative_rate_values() {
+    // Verified against LibreOffice Calc
+    close(amount("IPMT", [0.1, 1.0, 4.0, 1000.0, -500.0, 1.0]), 0.0);
+    close(
+        amount("IPMT", [0.1, 2.0, 4.0, 1000.0, -500.0, 1.0]),
+        -81.1149634679047,
+    );
+    close(
+        amount("IPMT", [0.1, 4.0, 4.0, 1000.0, -500.0, 1.0]),
+        -58.4905290787644,
+    );
+    close(
+        amount("PPMT", [0.1, 2.0, 4.0, 1000.0, -500.0, 1.0]),
+        -107.735401853049,
+    );
+    close(
+        amount("IPMT", [-0.02, 2.0, 12.0, 1000.0, 0.0, 1.0]),
+        18.5122274899544,
+    );
+    assert_eq!(amount("IPMT", [0.0, 2.0, 12.0, 1000.0, -200.0, 1.0]), 0.0);
+    close(
+        amount("PPMT", [0.0, 2.0, 12.0, 1000.0, -200.0, 1.0]),
+        -800.0 / 12.0,
+    );
 }
