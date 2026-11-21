@@ -353,39 +353,61 @@ pub(super) fn scan(
                                     .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
 
                             // Excel saves the other cells of a volatile array formula as an empty
-                            // `<f ca="1"/>`. It is not a formula: keep the cell's cached value,
-                            // which the array formula then fills.
-                            if matches!(t, None | Some(b"normal")) && text.trim().is_empty() {
+                            // `<f ca="1"/>`, and some producers emit `<f t="array"/>` without `ref`
+                            // on array follower cells. None of these is a formula: keep the cell's
+                            // cached value, which the array formula then fills.
+                            if text.trim().is_empty()
+                                && (matches!(t, None | Some(b"normal"))
+                                    || (t == Some(b"array") && range.is_none()))
+                            {
                                 continue;
                             }
+
+                            // Per ECMA-376 §18.3.1.4, `c/@cm` defaults to 0 (no cell metadata).
+                            // Non-zero or malformed `cm` indicates metadata is present or unknown.
+                            let cm_index =
+                                cm.and_then(|raw| atoi_simd::parse::<u32, true, false>(raw).ok());
+                            let has_cm = cm.is_some() && cm_index != Some(0);
 
                             // Ordinary OOXML formulas retain scalar legacy semantics without
                             // relying on optional calculation-chain evidence. Arrays keep
                             // their expression and fixed/dynamic ownership separately.
                             if t != Some(b"array")
-                                && cm.is_none()
+                                && !has_cm
                                 && let Some(lowerer) = &mut sink.lowerer
                             {
                                 text = lowerer.evaluation_text(&text).into_owned();
                             }
-                            if t == Some(b"array")
-                                && let Some(range) = range
-                                && let Ok(range_text) = std::str::from_utf8(range)
-                            {
-                                let dynamic = cm
-                                    .and_then(|raw| atoi_simd::parse::<u32, true, false>(raw).ok())
+                            if t == Some(b"array") {
+                                let dynamic = cm_index
+                                    .filter(|&cm| cm > 0)
                                     .and_then(|cm| sink.dynamic.and_then(|m| m.resolve(cm).ok()));
                                 // Unknown metadata is not evidence for a static CSE array.
-                                if (cm.is_none() || dynamic.is_some())
-                                    && let Some(array) =
-                                        crate::legacy_formula::arrays::ArrayFormula::from_range(
-                                            pos.0 + 1,
-                                            pos.1 + 1,
-                                            range_text,
-                                            dynamic.is_some(),
-                                        )
-                                {
-                                    sink.arrays.push(array);
+                                if !has_cm || dynamic.is_some() {
+                                    let array = match range {
+                                        Some(range) => std::str::from_utf8(range).ok().and_then(
+                                            |range_text| {
+                                                crate::legacy_formula::arrays::ArrayFormula::from_range(
+                                                    pos.0 + 1,
+                                                    pos.1 + 1,
+                                                    range_text,
+                                                    dynamic.is_some(),
+                                                )
+                                            },
+                                        ),
+                                        // Single-cell CSE formulas may omit `ref` per ECMA-376 §18.3.1.40.
+                                        None if !has_cm => Some(
+                                            crate::legacy_formula::arrays::ArrayFormula::single(
+                                                pos.0 + 1,
+                                                pos.1 + 1,
+                                                false,
+                                            ),
+                                        ),
+                                        None => None,
+                                    };
+                                    if let Some(array) = array {
+                                        sink.arrays.push(array);
+                                    }
                                 }
                             }
                             let sequence = sink.record_count as u64;

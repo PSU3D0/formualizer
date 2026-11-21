@@ -138,3 +138,30 @@ fn refuses_child_formula_and_over_cap() {
     let error = recalculate_xlsx_bytes(&source("SEQUENCE(3)", "B1:B3", ""), options).unwrap_err();
     assert!(error.to_string().contains("cap"));
 }
+
+#[test]
+fn horizontal_cse_with_cached_follower_and_downstream_recalculates() {
+    let bytes = pack(&without_metadata(package(
+        "A1:D2",
+        concat!(
+            "<row r=\"1\">",
+            "<c r=\"A1\"><v>10</v></c>",
+            "<c r=\"C1\"><f t=\"array\" ref=\"C1:D1\">TRANSPOSE(A1:A2)</f><v>99</v></c>",
+            "<c r=\"D1\"><v>88</v></c>",
+            "</row>",
+            "<row r=\"2\">",
+            "<c r=\"A2\"><v>20</v></c>",
+            "<c r=\"C2\"><f>C1+D1</f><v>77</v></c>",
+            "</row>",
+        ),
+        "",
+    )));
+    let out = recalculate_xlsx_bytes(&bytes, Default::default()).unwrap();
+    let sheet = parse_sheet(&sheet_xml(&out.bytes));
+    assert_eq!(sheet.cell("C1").v.as_deref(), Some("10"));
+    assert_eq!(sheet.cell("D1").v.as_deref(), Some("20"));
+    assert_eq!(sheet.cell("C2").v.as_deref(), Some("30"));
+    let again = recalculate_xlsx_bytes(&out.bytes, Default::default()).unwrap();
+    assert_eq!(again.bytes, out.bytes);
+    assert_eq!(again.cache_cells_changed, 0);
+}

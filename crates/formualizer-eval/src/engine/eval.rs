@@ -6515,6 +6515,9 @@ where
             if clear_only && cell != first && self.read_cell_formula_ast(&sheet, r, c).is_some() {
                 continue;
             }
+            if !clear_only {
+                self.clear_delta_overlay_cell(&sheet, r, c);
+            }
             let out = if clear_only {
                 LiteralValue::Empty
             } else {
@@ -19274,12 +19277,12 @@ impl ShimSpillManager {
                     .cloned()
                     .unwrap_or(LiteralValue::Empty);
                 let sheet_name = engine.graph.sheet_name(cell.sheet_id).to_string();
-                engine.mirror_value_to_computed_overlay(
-                    &sheet_name,
-                    cell.coord.row() + 1,
-                    cell.coord.col() + 1,
-                    &v,
-                );
+                let row = cell.coord.row() + 1;
+                let col = cell.coord.col() + 1;
+                // A cleared cell may retain an explicit Empty entry in the delta overlay
+                // (when compaction did not run); remove it so the spilled computed value is visible.
+                engine.clear_delta_overlay_cell(&sheet_name, row, col);
+                engine.mirror_value_to_computed_overlay(&sheet_name, row, col, &v);
             }
         }
         Ok(())
@@ -21985,12 +21988,12 @@ where
                 let c_off = idx % width;
                 let v = rows[r_off][c_off].clone();
                 let sheet_name = self.graph.sheet_name(cell.sheet_id).to_string();
-                self.mirror_value_to_computed_overlay(
-                    &sheet_name,
-                    cell.coord.row() + 1,
-                    cell.coord.col() + 1,
-                    &v,
-                );
+                let row = cell.coord.row() + 1;
+                let col = cell.coord.col() + 1;
+                // A cleared cell may retain an explicit Empty entry in the delta overlay
+                // (when compaction did not run); remove it so the spilled computed value is visible.
+                self.clear_delta_overlay_cell(&sheet_name, row, col);
+                self.mirror_value_to_computed_overlay(&sheet_name, row, col, &v);
             }
         }
         Ok(())
