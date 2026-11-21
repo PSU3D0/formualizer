@@ -72,6 +72,309 @@ pub fn text_equal_ci(a: &str, b: &str) -> bool {
     a.to_lowercase() == b.to_lowercase()
 }
 
+/// Fast numeric comparison matching [`cmp_for_lookup`]'s `1e-12` tolerance and `NaN` behavior.
+#[inline]
+pub(crate) fn cmp_f64_lookup(x: f64, y: f64) -> i32 {
+    if (x - y).abs() < 1e-12 {
+        0
+    } else if x < y {
+        -1
+    } else {
+        1
+    }
+}
+
+/// Fast `str::parse::<f64>()` with a 1-byte prefix filter to skip non-numeric strings.
+#[inline]
+pub(crate) fn try_parse_f64_fast(s: &str) -> Option<f64> {
+    let b = *s.as_bytes().first()?;
+    if b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'.' | b'i' | b'I' | b'n' | b'N') {
+        s.parse::<f64>().ok()
+    } else {
+        None
+    }
+}
+
+/// Lowercase `s` into a boxed string, taking an ASCII fast path when possible.
+#[inline]
+pub(crate) fn fold_text_boxed(s: &str) -> Box<str> {
+    if s.is_ascii() {
+        if !s.bytes().any(|b| b.is_ascii_uppercase()) {
+            Box::from(s)
+        } else {
+            s.to_ascii_lowercase().into_boxed_str()
+        }
+    } else {
+        s.to_lowercase().into_boxed_str()
+    }
+}
+
+/// Lowercase `src` into a reusable UTF-8 byte buffer without per-call heap allocations.
+#[inline]
+pub(crate) fn fold_into_bytes(src: &str, dst: &mut Vec<u8>) {
+    dst.clear();
+    if src.is_ascii() {
+        dst.extend(src.bytes().map(|b| b.to_ascii_lowercase()));
+    } else {
+        for ch in src.chars() {
+            let mut utf8 = [0u8; 4];
+            for lc in ch.to_lowercase() {
+                dst.extend_from_slice(lc.encode_utf8(&mut utf8).as_bytes());
+            }
+        }
+    }
+}
+
+/// Binary search over a sorted numeric slice for approximate `MATCH`/`VLOOKUP`/`HLOOKUP`.
+///
+/// - `mode == 1` (ascending): largest value `<= needle` (last index among ties).
+/// - `mode == -1` (descending): smallest value `>= needle` (first index of an exact-match
+///   run if present, else last index `> needle`).
+#[inline]
+pub(crate) fn binary_search_f64_slice(values: &[f64], needle: f64, mode: i32) -> Option<usize> {
+    if values.is_empty() {
+        return None;
+    }
+    if mode == 1 {
+        let mut lo = 0usize;
+        let mut hi = values.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if cmp_f64_lookup(values[mid], needle) > 0 {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        if lo == 0 { None } else { Some(lo - 1) }
+    } else if mode == -1 {
+        let mut lo = 0usize;
+        let mut hi = values.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if cmp_f64_lookup(values[mid], needle) > 0 {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo < values.len() && cmp_f64_lookup(values[lo], needle) == 0 {
+            Some(lo)
+        } else if lo > 0 {
+            Some(lo - 1)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Binary search over a sorted, pre-lowercased text slice for approximate lookups.
+#[inline]
+pub(crate) fn binary_search_text_slice(
+    folded: &[Box<str>],
+    needle_folded: &str,
+    mode: i32,
+) -> Option<usize> {
+    if folded.is_empty() {
+        return None;
+    }
+    if mode == 1 {
+        let mut lo = 0usize;
+        let mut hi = folded.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if folded[mid].as_ref() > needle_folded {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        if lo == 0 { None } else { Some(lo - 1) }
+    } else if mode == -1 {
+        let mut lo = 0usize;
+        let mut hi = folded.len();
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if folded[mid].as_ref() > needle_folded {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        if lo < folded.len() && folded[lo].as_ref() == needle_folded {
+            Some(lo)
+        } else if lo > 0 {
+            Some(lo - 1)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Single-pass, zero-materialization approximate lookup over a 1D `RangeView` axis.
+///
+/// Validates sortedness (returning `Ok(None)` immediately on an unsorted pair, matching
+/// the #283/#399 guard) and computes the approximate match in one streaming pass over
+/// Arrow chunks without allocating a `Vec<LiteralValue>`.
+pub(crate) fn approximate_search_in_view(
+    view: &RangeView<'_>,
+    axis: crate::engine::lookup_index_cache::LookupAxis,
+    needle: &LiteralValue,
+    mode: i32,
+    date_system: DateSystem,
+) -> Result<Option<usize>, ExcelError> {
+    use std::ops::ControlFlow;
+
+    if mode != 1 && mode != -1 {
+        return Ok(None);
+    }
+
+    match needle {
+        LiteralValue::Number(_)
+        | LiteralValue::Int(_)
+        | LiteralValue::Boolean(_)
+        | LiteralValue::Empty
+        | LiteralValue::Date(_)
+        | LiteralValue::DateTime(_)
+        | LiteralValue::Time(_) => {
+            let Some(nn) = value_to_f64_lenient(needle, date_system) else {
+                return Ok(None);
+            };
+            let mut prev: Option<f64> = None;
+            let mut best: Option<usize> = None;
+            let mut found_exact_desc = false;
+            let mut unsorted = false;
+
+            view.visit_axis_approx_numeric(axis, &mut |idx, val| {
+                if let Some(p) = prev {
+                    let c = cmp_f64_lookup(p, val);
+                    if (mode == 1 && c > 0) || (mode == -1 && c < 0) {
+                        unsorted = true;
+                        return ControlFlow::Break(());
+                    }
+                }
+                prev = Some(val);
+                if mode == 1 {
+                    if val <= nn + 1e-12 && cmp_f64_lookup(val, nn) <= 0 {
+                        best = Some(idx);
+                    }
+                } else if !found_exact_desc {
+                    let c = cmp_f64_lookup(val, nn);
+                    if c == 0 {
+                        best = Some(idx);
+                        found_exact_desc = true;
+                    } else if c > 0 {
+                        best = Some(idx);
+                    }
+                }
+                ControlFlow::Continue(())
+            })?;
+
+            if unsorted { Ok(None) } else { Ok(best) }
+        }
+        LiteralValue::Text(s) => {
+            if try_parse_f64_fast(s).is_none() {
+                // Non-numeric text needle: only text cells are comparable.
+                let mut needle_folded = Vec::with_capacity(s.len());
+                fold_into_bytes(s, &mut needle_folded);
+                let mut prev_folded: Vec<u8> = Vec::new();
+                let mut curr_folded: Vec<u8> = Vec::new();
+                let mut has_prev = false;
+                let mut prev_num: Option<f64> = None;
+                let mut best: Option<usize> = None;
+                let mut found_exact_desc = false;
+                let mut unsorted = false;
+
+                view.visit_axis_approx_text(axis, &mut |idx, text| {
+                    fold_into_bytes(text, &mut curr_folded);
+                    let curr_num = try_parse_f64_fast(text);
+                    if has_prev {
+                        let c = match (prev_num, curr_num) {
+                            (Some(x), Some(y)) => cmp_f64_lookup(x, y),
+                            _ => match prev_folded.cmp(&curr_folded) {
+                                std::cmp::Ordering::Less => -1,
+                                std::cmp::Ordering::Equal => 0,
+                                std::cmp::Ordering::Greater => 1,
+                            },
+                        };
+                        if (mode == 1 && c > 0) || (mode == -1 && c < 0) {
+                            unsorted = true;
+                            return ControlFlow::Break(());
+                        }
+                    }
+                    if mode == 1 {
+                        if curr_folded.as_slice() <= needle_folded.as_slice() {
+                            best = Some(idx);
+                        }
+                    } else if !found_exact_desc {
+                        match curr_folded.as_slice().cmp(needle_folded.as_slice()) {
+                            std::cmp::Ordering::Equal => {
+                                best = Some(idx);
+                                found_exact_desc = true;
+                            }
+                            std::cmp::Ordering::Greater => {
+                                best = Some(idx);
+                            }
+                            std::cmp::Ordering::Less => {}
+                        }
+                    }
+                    std::mem::swap(&mut prev_folded, &mut curr_folded);
+                    prev_num = curr_num;
+                    has_prev = true;
+                    ControlFlow::Continue(())
+                })?;
+
+                if unsorted { Ok(None) } else { Ok(best) }
+            } else {
+                // Rare numeric-text needle (e.g. "42"): compares numerically against
+                // numeric-lenient cells and lexicographically against non-numeric text.
+                // Stream directly without materializing a column Vec.
+                let mut prev: Option<LiteralValue> = None;
+                let mut best: Option<usize> = None;
+                let mut found_exact_desc = false;
+                let mut unsorted = false;
+
+                view.visit_axis_values(axis, &mut |idx, val| {
+                    if !is_searchable_for_approximate(&val, needle, date_system) {
+                        return ControlFlow::Continue(());
+                    }
+                    if let Some(p) = prev.as_ref() {
+                        let ok = cmp_for_lookup(p, &val, date_system)
+                            .is_some_and(|c| if mode == 1 { c <= 0 } else { c >= 0 });
+                        if !ok {
+                            unsorted = true;
+                            return ControlFlow::Break(());
+                        }
+                    }
+                    if let Some(c) = cmp_for_lookup(&val, needle, date_system) {
+                        if mode == 1 {
+                            if c <= 0 {
+                                best = Some(idx);
+                            }
+                        } else if !found_exact_desc {
+                            if c == 0 {
+                                best = Some(idx);
+                                found_exact_desc = true;
+                            } else if c > 0 {
+                                best = Some(idx);
+                            }
+                        }
+                    }
+                    prev = Some(val);
+                    ControlFlow::Continue(())
+                })?;
+
+                if unsorted { Ok(None) } else { Ok(best) }
+            }
+        }
+        _ => Ok(None),
+    }
+}
+
 /// Compare two values for ordering using lenient numeric coercion first, fallback to case-insensitive text.
 /// Returns Some(ordering) where ordering <0, 0, >0 similar to cmp, or None if incomparable.
 pub fn cmp_for_lookup(a: &LiteralValue, b: &LiteralValue, date_system: DateSystem) -> Option<i32> {

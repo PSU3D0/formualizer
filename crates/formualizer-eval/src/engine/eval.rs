@@ -4525,29 +4525,13 @@ where
     }
 
     fn lookup_view_contains_volatile(&self, view: &RangeView<'_>, sheet_id: SheetId) -> bool {
-        let start_row = view.start_row();
-        let end_row = view.end_row();
-        let start_col = view.start_col();
-        let end_col = view.end_col();
-        for row in start_row..=end_row {
-            let Ok(row_u32) = u32::try_from(row) else {
-                return true;
-            };
-            for col in start_col..=end_col {
-                let Ok(col_u32) = u32::try_from(col) else {
-                    return true;
-                };
-                let cell_ref = self
-                    .graph
-                    .make_cell_ref_internal(sheet_id, row_u32, col_u32);
-                if let Some(vertex_id) = self.graph.get_vertex_id_for_address(&cell_ref)
-                    && self.graph.is_volatile(vertex_id)
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.graph.has_volatile_in_range(
+            sheet_id,
+            view.start_row(),
+            view.end_row(),
+            view.start_col(),
+            view.end_col(),
+        )
     }
 
     fn build_lookup_index_impl(
@@ -4555,6 +4539,9 @@ where
         view: &RangeView<'_>,
         axis: LookupAxis,
     ) -> Option<Arc<LookupIndex>> {
+        if view.tail().is_some() {
+            return None;
+        }
         let (rows, cols) = view.dims();
         if rows == 0 || cols == 0 {
             self.lookup_index_cache.note_skipped_tiny();
