@@ -1,17 +1,35 @@
 ---
 title: "FORMULATEXT"
-description: "FORMULATEXT: Returns the formula text stored in the referenced cell."
+seoTitle: "FORMULATEXT function: formula syntax and examples"
+description: "Returns the formula text stored in the referenced cell. =FORMULATEXT(reference)"
 ---
 
-<FunctionPageSchema id="info/formulatext" />
-
-## Summary
+Returns the formula text stored in the referenced cell.
 
 Retrieves formula source text for a single referenced cell without evaluating
  that cell's value.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FORMULATEXT(reference)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `reference` | any | Required | — |
+
+## Return type
+
+Text
+
+## Differences from Excel
+
+Formualizer returns normalized formula text and can add spaces. Excel preserves the text as entered.
+
 ## Remarks
- - Returns `#N/A` if the reference does not point at a formula cell.
  - Staged formula text is preferred when present; otherwise canonical formula text is returned.
 
 
@@ -20,13 +38,38 @@ Retrieves formula source text for a single referenced cell without evaluating
 
 Returns the formula text stored in the referenced cell.
 
+## Error cases
+
+ - Returns `#N/A` if the reference does not point at a formula cell.
+
 ## Examples
 
-<FunctionSandbox
-  title="Formula text"
-  formula={`=FORMULATEXT(A1)`}
+<FunctionExample
+  title={"Read an arithmetic formula as text without returning the calculated sum."}
+  formula={"=FORMULATEXT(A1)"}
   grid={{"A1":"=1+2"}}
   expected={"=1 + 2"}
+/>
+
+<FunctionExample
+  title={"Retrieve a formula that contains a function call."}
+  formula={"=FORMULATEXT(B1)"}
+  grid={{"B1":"=SUM(1,2)"}}
+  expected={"=SUM(1, 2)"}
+/>
+
+<FunctionExample
+  title={"A formula consisting of a single literal still has formula text."}
+  formula={"=FORMULATEXT(A2)"}
+  grid={{"A2":"=42"}}
+  expected={"=42"}
+/>
+
+<FunctionExample
+  title={"A value stored directly in a cell has no formula text to return."}
+  formula={"=FORMULATEXT(A3)"}
+  grid={{"A3":"42"}}
+  expected={"#N/A"}
 />
 
 ## Related functions
@@ -34,17 +77,12 @@ Returns the formula text stored in the referenced cell.
 - [ISFORMULA](/docs/reference/functions/info/isformula)
 - [ISREF](/docs/reference/functions/info/isref)
 - [SHEET](/docs/reference/functions/info/sheet)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [ISBLANK](/docs/reference/functions/info/isblank)
-- [ISERR](/docs/reference/functions/info/iserr)
 
 ## FAQ
 
 ### Does FORMULATEXT evaluate the referenced formula?
 No. It retrieves formula provenance/source text only.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/formulatext" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

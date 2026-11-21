@@ -1,58 +1,85 @@
 ---
 title: "IMAGINARY"
-description: "Returns the imaginary coefficient of a complex number."
+seoTitle: "IMAGINARY function: formula syntax and examples"
+description: "Returns the imaginary coefficient of a complex number. =IMAGINARY(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imaginary" />
-
-## Summary
+Returns the imaginary coefficient of a complex number.
 
 Accepts complex text (for example `a+bi`) or numeric values.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMAGINARY(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## How it works
+
+For z = a + bi, the result is b, the signed imaginary coefficient. A purely real input has imaginary coefficient zero.
 
 ## Remarks
  - Inputs are coerced to complex-number text before parsing.
  - Purely real values return `0`.
+
+## Error cases
+
  - Invalid complex text returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Imaginary part from a+bi", "Imaginary part with j suffix"]}>
-<Tab value="Imaginary part from a+bi">
-<FunctionSandbox
-  title="Imaginary part from a+bi"
-  formula={`=IMAGINARY("3+4i")`}
+<FunctionExample
+  title={"Read the imaginary coefficient of 3 + 4i."}
+  formula={"=IMAGINARY(\"3+4i\")"}
   grid={{}}
   expected={"4"}
 />
-</Tab>
 
-<Tab value="Imaginary part with j suffix">
-<FunctionSandbox
-  title="Imaginary part with j suffix"
-  formula={`=IMAGINARY("-2j")`}
+<FunctionExample
+  title={"Extract the signed coefficient of j from 3 − 4j."}
+  formula={"=IMAGINARY(\"3-4j\")"}
+  grid={{}}
+  expected={"-4"}
+/>
+
+<FunctionExample
+  title={"A purely real input has imaginary coefficient zero."}
+  formula={"=IMAGINARY(\"1\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to extract the imaginary coefficient."}
+  formula={"=IMAGINARY(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Imaginary part with j suffix"}
+  formula={"=IMAGINARY(\"-2j\")"}
   grid={{}}
   expected={"-2"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [IMREAL](/docs/reference/functions/engineering/imreal)
 - [COMPLEX](/docs/reference/functions/engineering/complex)
 - [IMABS](/docs/reference/functions/engineering/imabs)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### What does `IMAGINARY` return for a real-only input?
 It returns `0` because there is no imaginary component.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imaginary" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

@@ -1,58 +1,89 @@
 ---
 title: "BITXOR"
-description: "BITXOR: Returns the bitwise exclusive OR of two non-negative integers."
+seoTitle: "BITXOR function: formula syntax and examples"
+description: "Returns the bitwise exclusive OR of two non-negative integers. =BITXOR(number1, number2)"
 ---
 
-<FunctionPageSchema id="engineering/bitxor" />
-
-## Summary
+Returns the bitwise exclusive OR of two non-negative integers.
 
 Keeps bits that differ between the two inputs.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BITXOR(number1, number2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number | Required | — |
+| `number2` | number | Required | — |
+
 ## Remarks
  - Arguments are coerced to numbers and must be whole numbers in the range `[0, 2^48)`.
- - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
  - Propagates input errors.
+
+## Error cases
+
+ - Returns `#NUM!` for negative values, fractional values, or out-of-range values.
 
 ## Examples
 
-<Tabs items={["Highlight differing bits", "XOR identical values"]}>
-<Tab value="Highlight differing bits">
-<FunctionSandbox
-  title="Highlight differing bits"
-  formula={`=BITXOR(13,10)`}
+<FunctionExample
+  title={"Combine two integers whose binary representations partly overlap."}
+  formula={"=BITXOR(12,10)"}
   grid={{}}
-  expected={"7"}
+  expected={"6"}
 />
-</Tab>
 
-<Tab value="XOR identical values">
-<FunctionSandbox
-  title="XOR identical values"
-  formula={`=BITXOR(5,5)`}
+<FunctionExample
+  title={"Compare the result when both operands have identical bits."}
+  formula={"=BITXOR(12,12)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Apply the bit operation to two zero operands."}
+  formula={"=BITXOR(0,0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Negative operands are outside the supported integer domain."}
+  formula={"=BITXOR(-1,10)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Highlight differing bits"}
+  formula={"=BITXOR(13,10)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"XOR identical values"}
+  formula={"=BITXOR(5,5)"}
+  grid={{}}
+  expected={"0"}
+/>
 
 ## Related functions
 
 - [BITAND](/docs/reference/functions/engineering/bitand)
 - [BITOR](/docs/reference/functions/engineering/bitor)
 - [BITLSHIFT](/docs/reference/functions/engineering/bitlshift)
-- [BITRSHIFT](/docs/reference/functions/engineering/bitrshift)
-- [BESSELI](/docs/reference/functions/engineering/besseli)
-- [BESSELJ](/docs/reference/functions/engineering/besselj)
 
 ## FAQ
 
 ### Why does `BITXOR(x, x)` return `0`?
 XOR keeps only differing bits; identical operands cancel every bit position.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/bitxor" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

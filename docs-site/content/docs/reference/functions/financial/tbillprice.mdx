@@ -1,28 +1,72 @@
 ---
 title: "TBILLPRICE"
-description: "TBILLPRICE: Returns price per $100 face value for a US Treasury bill."
+seoTitle: "TBILLPRICE function: formula syntax and examples"
+description: "Returns price per $100 face value for a US Treasury bill. =TBILLPRICE(settlement, maturity, discount)"
 ---
 
-<FunctionPageSchema id="financial/tbillprice" />
-
-## Summary
+Returns price per $100 face value for a US Treasury bill.
 
 `TBILLPRICE` computes the dollar price from a discount rate using
  `price = 100 * (1 - discount * DSM / 360)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TBILLPRICE(settlement, maturity, discount)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `settlement` | number | Required | — |
+| `maturity` | number | Required | — |
+| `discount` | number | Required | — |
 
 ## Remarks
  - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
  - The T-bill must mature within one year of settlement (DSM &lt;= 365).
  - `discount` is a decimal discount rate; must be positive.
+
+## Error cases
+
  - Returns `#NUM!` for invalid dates, non-positive discount, or DSM out of range.
 
 ## Examples
 
-<FunctionSandbox
-  title="Price a 91-day T-bill"
-  formula={`=TBILLPRICE(DATE(2024,1,1), DATE(2024,4,1), 0.038)`}
+<FunctionExample
+  title={"Evaluate a treasury bill with a five-percent discount."}
+  formula={"=TBILLPRICE(DATE(2024,1,1),DATE(2024,4,1),0.05)"}
   grid={{}}
-  expected={"99.03944444444444"}
+  expected={"98.7361111111111"}
+/>
+
+<FunctionExample
+  title={"Compare the result for a later maturity."}
+  formula={"=TBILLPRICE(DATE(2024,1,1),DATE(2024,7,1),0.05)"}
+  grid={{}}
+  expected={"97.4722222222222"}
+/>
+
+<FunctionExample
+  title={"Evaluate the bill at a one-day term."}
+  formula={"=TBILLPRICE(DATE(2024,1,1),DATE(2024,1,2),0.05)"}
+  grid={{}}
+  expected={"99.9861111111111"}
+/>
+
+<FunctionExample
+  title={"Maturity must follow settlement."}
+  formula={"=TBILLPRICE(DATE(2024,4,1),DATE(2024,1,1),0.05)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Price a 91-day T-bill"}
+  formula={"=TBILLPRICE(DATE(2024,1,1), DATE(2024,4,1), 0.038)"}
+  grid={{}}
+  expected={"99.0394444444444"}
 />
 
 ## Related functions
@@ -30,17 +74,12 @@ description: "TBILLPRICE: Returns price per $100 face value for a US Treasury bi
 - [TBILLEQ](/docs/reference/functions/financial/tbilleq)
 - [TBILLYIELD](/docs/reference/functions/financial/tbillyield)
 - [PRICE](/docs/reference/functions/financial/price)
-- [MIRR](/docs/reference/functions/financial/mirr)
-- [PDURATION](/docs/reference/functions/financial/pduration)
-- [RRI](/docs/reference/functions/financial/rri)
 
 ## FAQ
 
 ### What does TBILLPRICE quote?
 The result is the dollar price per 100 of face value, following Excel's Treasury-bill convention.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/tbillprice" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/bonds.rs)

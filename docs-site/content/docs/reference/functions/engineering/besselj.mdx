@@ -1,59 +1,92 @@
 ---
 title: "BESSELJ"
-description: "BESSELJ: Returns the Bessel function Jn(x)."
+seoTitle: "BESSELJ function: formula syntax and examples"
+description: "Returns the Bessel function Jn(x). =BESSELJ(x, n)"
 ---
 
-<FunctionPageSchema id="engineering/besselj" />
-
-## Summary
+Returns the Bessel function Jn(x).
 
 Computes the Bessel function of the first kind for a real value `x` and a
  non-negative integer order `n`. The order is truncated toward zero.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BESSELJ(x, n)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | any | Required | — |
+| `n` | any | Required | — |
+
 ## Remarks
  - Arguments are supplied as `BESSELJ(x, n)`.
- - Negative orders return `#NUM!` in the public spreadsheet function.
  - Results are approximate floating-point values.
+
+## Error cases
+
+ - Recurrence work above order 1,000,000 returns `#NUM!`; existing constant-time
+   special-value, tiny-argument and huge-argument paths are handled first.
+ - Negative orders return `#NUM!` in the public spreadsheet function.
 
 ## Examples
 
-<Tabs items={["Third-order Bessel J", "Zero input for positive order"]}>
-<Tab value="Third-order Bessel J">
-<FunctionSandbox
-  title="Third-order Bessel J"
-  formula={`=BESSELJ(0.5,3)`}
+<FunctionExample
+  title={"Evaluate the Bessel function at x = 2 and order one."}
+  formula={"=BESSELJ(2,1)"}
   grid={{}}
-  expected={"0.002563729994587244"}
+  expected={"0.576724807756873"}
 />
-</Tab>
 
-<Tab value="Zero input for positive order">
-<FunctionSandbox
-  title="Zero input for positive order"
-  formula={`=BESSELJ(0,7)`}
+<FunctionExample
+  title={"Keep x fixed and compare the result at order two."}
+  formula={"=BESSELJ(2,2)"}
+  grid={{}}
+  expected={"0.352834028615638"}
+/>
+
+<FunctionExample
+  title={"Evaluate the order-zero function at the origin."}
+  formula={"=BESSELJ(0,0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative order is outside the supported domain."}
+  formula={"=BESSELJ(2,-1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Third-order Bessel J"}
+  formula={"=BESSELJ(0.5,3)"}
+  grid={{}}
+  expected={"0.00256372999458724"}
+/>
+
+<FunctionExample
+  title={"Zero input for positive order"}
+  formula={"=BESSELJ(0,7)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [BESSELI](/docs/reference/functions/engineering/besseli)
 - [BESSELK](/docs/reference/functions/engineering/besselk)
 - [BESSELY](/docs/reference/functions/engineering/bessely)
-- [IMDIV](/docs/reference/functions/engineering/imdiv)
-- [IMPOWER](/docs/reference/functions/engineering/impower)
-- [IMSUB](/docs/reference/functions/engineering/imsub)
 
 ## FAQ
 
 ### Are negative public orders supported?
 No. Negative order arguments return #NUM! for Excel compatibility.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/besselj" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

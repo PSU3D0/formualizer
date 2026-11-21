@@ -1,58 +1,101 @@
 ---
 title: "IMDIV"
-description: "IMDIV: Returns the quotient of two complex numbers."
+seoTitle: "IMDIV function: formula syntax and examples"
+description: "Returns the quotient of two complex numbers. =IMDIV(inumber1, inumber2)"
 ---
 
-<FunctionPageSchema id="engineering/imdiv" />
-
-## Summary
+Returns the quotient of two complex numbers.
 
 Divides the first complex value by the second.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMDIV(inumber1, inumber2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber1` | any | Required | — |
+| `inumber2` | any | Required | — |
+
+## Return type
+
+Can return text.
+
+## How it works
+
+Dividing z by w is equivalent to multiplying z by the conjugate of w and dividing by |w|². A zero denominator is undefined.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
+
 ## Remarks
  - Inputs are coerced to complex-number text before parsing.
+
+## Error cases
+
  - Returns `#DIV/0!` when the divisor is `0+0i`.
  - Invalid complex text returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Divide complex numbers", "Division by zero complex"]}>
-<Tab value="Divide complex numbers">
-<FunctionSandbox
-  title="Divide complex numbers"
-  formula={`=IMDIV("3+4i","1-i")`}
+<FunctionExample
+  title={"Divide by a complex value with both coefficients present."}
+  formula={"=IMDIV(\"3+4i\",\"1+i\")"}
   grid={{}}
-  expected={"-0.5+3.5i"}
+  expected={"3.5+0.5i"}
 />
-</Tab>
 
-<Tab value="Division by zero complex">
-<FunctionSandbox
-  title="Division by zero complex"
-  formula={`=IMDIV("2+i","0")`}
+<FunctionExample
+  title={"Use a purely real divisor with a j-suffixed numerator."}
+  formula={"=IMDIV(\"3+4j\",\"2\")"}
+  grid={{}}
+  expected={"1.5+2j"}
+/>
+
+<FunctionExample
+  title={"Divide a zero numerator by a nonzero complex number."}
+  formula={"=IMDIV(\"0\",\"1+i\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A zero complex divisor is undefined."}
+  formula={"=IMDIV(\"3+4i\",\"0\")"}
   grid={{}}
   expected={"#DIV/0!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Divide complex numbers"}
+  formula={"=IMDIV(\"3+4i\",\"1-i\")"}
+  grid={{}}
+  expected={"-0.5+3.5i"}
+/>
+
+<FunctionExample
+  title={"Division by zero complex"}
+  formula={"=IMDIV(\"2+i\",\"0\")"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
 
 ## Related functions
 
 - [IMPRODUCT](/docs/reference/functions/engineering/improduct)
 - [IMSUB](/docs/reference/functions/engineering/imsub)
 - [IMCONJUGATE](/docs/reference/functions/engineering/imconjugate)
-- [BESSELI](/docs/reference/functions/engineering/besseli)
-- [BESSELJ](/docs/reference/functions/engineering/besselj)
-- [BESSELK](/docs/reference/functions/engineering/besselk)
 
 ## FAQ
 
 ### When does `IMDIV` return `#DIV/0!`?
 If the divisor is `0+0i` (denominator magnitude near zero), division is undefined and returns `#DIV/0!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imdiv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

@@ -1,51 +1,88 @@
 ---
 title: "AVERAGE"
-description: "AVERAGE: Returns the arithmetic mean of numeric values across scalars and ranges."
+seoTitle: "AVERAGE function: formula syntax and examples"
+description: "Returns the arithmetic mean of numeric values across scalars and ranges. =AVERAGE(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="math/average" />
-
-## Summary
+Returns the arithmetic mean of numeric values across scalars and ranges.
 
 `AVERAGE` sums numeric inputs and divides by the count of numeric values that participated.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=AVERAGE(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Return type
+
+Number
+
+## Differences from Excel
+
+Formualizer ignores unparseable text supplied directly. Excel returns `#VALUE!`. If there are no numbers to average, Formualizer returns `#DIV/0!`.
 
 ## Remarks
  - Errors in any scalar argument or referenced range propagate immediately.
  - In ranges, only numeric/date-time serial values are included; text and blanks are ignored.
  - Scalar arguments use lenient number coercion with locale support.
+
+## Error cases
+
  - If no numeric values are found, `AVERAGE` returns `#DIV/0!`.
 
 ## Examples
 
-<Tabs items={["Average of scalar values", "Average over a mixed range", "No numeric values returns divide-by-zero"]}>
-<Tab value="Average of scalar values">
-<FunctionSandbox
-  title="Average of scalar values"
-  formula={`=AVERAGE(10, 20, 5)`}
+<FunctionExample
+  title={"Find the arithmetic mean of 4, 8 and 12."}
+  formula={"=AVERAGE(4,8,12)"}
   grid={{}}
-  expected={"11.666666666666666"}
+  expected={"8"}
 />
-</Tab>
 
-<Tab value="Average over a mixed range">
-<FunctionSandbox
-  title="Average over a mixed range"
-  formula={`=AVERAGE(A1:A3)`}
-  grid={{"A1":"10","A2":"x","A3":"20"}}
-  expected={"15"}
+<FunctionExample
+  title={"Pass one three-element array to compute the arithmetic mean."}
+  formula={"=AVERAGE({4,8,12})"}
+  grid={{}}
+  expected={"8"}
 />
-</Tab>
 
-<Tab value="No numeric values returns divide-by-zero">
-<FunctionSandbox
-  title="No numeric values returns divide-by-zero"
-  formula={`=AVERAGE("x", "")`}
+<FunctionExample
+  title={"The average of the lone observation is 7."}
+  formula={"=AVERAGE(7)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the arithmetic mean."}
+  formula={"=AVERAGE(4,1/0,12)"}
   grid={{}}
   expected={"#DIV/0!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Average of scalar values"}
+  formula={"=AVERAGE(10, 20, 5)"}
+  grid={{}}
+  expected={"11.6666666666667"}
+/>
+
+<FunctionExample
+  title={"Average over a mixed range"}
+  formula={"=AVERAGE(A1:A3)"}
+  grid={{"A1":"10","A2":"\"x\"","A3":"20"}}
+  expected={"15"}
+/>
 
 ## Related functions
 
@@ -54,7 +91,6 @@ description: "AVERAGE: Returns the arithmetic mean of numeric values across scal
 - [AVERAGEIF](/docs/reference/functions/math/averageif)
 - [AVERAGEIFS](/docs/reference/functions/math/averageifs)
 - [MEDIAN](/docs/reference/functions/stats/median)
-- [MAX](/docs/reference/functions/math/max)
 
 ## FAQ
 
@@ -64,8 +100,6 @@ It returns #DIV/0! when no numeric values are found after filtering/coercion.
 ### Do text cells in ranges affect the denominator?
 No. Only numeric values are counted toward the divisor.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/average" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/aggregate.rs)

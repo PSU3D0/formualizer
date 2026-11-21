@@ -1,14 +1,27 @@
 ---
 title: "TBILLEQ"
-description: "TBILLEQ: Returns bond-equivalent yield for a US Treasury bill."
+seoTitle: "TBILLEQ function: formula syntax and examples"
+description: "Returns bond-equivalent yield for a US Treasury bill. =TBILLEQ(settlement, maturity, discount)"
 ---
 
-<FunctionPageSchema id="financial/tbilleq" />
-
-## Summary
+Returns bond-equivalent yield for a US Treasury bill.
 
 `TBILLEQ` converts a T-bill discount rate into an annualized bond-equivalent yield
  so it can be compared with coupon-bearing securities.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TBILLEQ(settlement, maturity, discount)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `settlement` | number | Required | — |
+| `maturity` | number | Required | — |
+| `discount` | number | Required | — |
 
 ## Remarks
  - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
@@ -16,15 +29,46 @@ description: "TBILLEQ: Returns bond-equivalent yield for a US Treasury bill."
  - `discount` is the T-bill discount rate as a decimal (e.g. `0.09` for 9%).
  - For bills with DSM &lt;= 182: `yield = 365 * discount / (360 - discount * DSM)`.
  - For bills with DSM &gt; 182 a quadratic coupon-equivalent formula is used.
+
+## Error cases
+
  - Returns `#NUM!` for invalid dates, non-positive discount, or DSM out of range.
 
 ## Examples
 
-<FunctionSandbox
-  title="Short bill bond-equivalent yield"
-  formula={`=TBILLEQ(DATE(2024,1,1), DATE(2024,4,1), 0.038)`}
+<FunctionExample
+  title={"Evaluate a treasury bill with a five-percent discount."}
+  formula={"=TBILLEQ(DATE(2024,1,1),DATE(2024,4,1),0.05)"}
   grid={{}}
-  expected={"0.03890144779577161"}
+  expected={"0.051343367562245"}
+/>
+
+<FunctionExample
+  title={"Compare the result for a later maturity."}
+  formula={"=TBILLEQ(DATE(2024,1,1),DATE(2024,7,1),0.05)"}
+  grid={{}}
+  expected={"0.0520091194072385"}
+/>
+
+<FunctionExample
+  title={"Evaluate the bill at a one-day term."}
+  formula={"=TBILLEQ(DATE(2024,1,1),DATE(2024,1,2),0.05)"}
+  grid={{}}
+  expected={"0.0507014863175441"}
+/>
+
+<FunctionExample
+  title={"Maturity must follow settlement."}
+  formula={"=TBILLEQ(DATE(2024,4,1),DATE(2024,1,1),0.05)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Short bill bond-equivalent yield"}
+  formula={"=TBILLEQ(DATE(2024,1,1), DATE(2024,4,1), 0.038)"}
+  grid={{}}
+  expected={"0.0389014477957716"}
 />
 
 ## Related functions
@@ -32,17 +76,12 @@ description: "TBILLEQ: Returns bond-equivalent yield for a US Treasury bill."
 - [TBILLPRICE](/docs/reference/functions/financial/tbillprice)
 - [TBILLYIELD](/docs/reference/functions/financial/tbillyield)
 - [YIELD](/docs/reference/functions/financial/yield)
-- [MIRR](/docs/reference/functions/financial/mirr)
-- [PDURATION](/docs/reference/functions/financial/pduration)
-- [RRI](/docs/reference/functions/financial/rri)
 
 ## FAQ
 
 ### Why does TBILLEQ differ from the discount rate?
 TBILLEQ annualizes the bill using a bond-equivalent convention so it can be compared with coupon-bearing yields.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/tbilleq" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/bonds.rs)

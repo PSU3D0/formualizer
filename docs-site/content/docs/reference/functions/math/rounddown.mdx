@@ -1,13 +1,23 @@
 ---
 title: "ROUNDDOWN"
-description: "ROUNDDOWN: Rounds a number toward zero to a specified number of digits."
+seoTitle: "ROUNDDOWN function: formula syntax and examples"
+description: "Rounds a number toward zero to a specified number of digits. =ROUNDDOWN(number, num_digits)"
 ---
 
-<FunctionPageSchema id="math/rounddown" />
-
-## Summary
-
 Rounds a number toward zero to a specified number of digits.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ROUNDDOWN(number, num_digits)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `num_digits` | number | Required | — |
 
 ## Remarks
  - Positive `num_digits` affects decimals; negative values affect digits left of the decimal.
@@ -16,43 +26,59 @@ Rounds a number toward zero to a specified number of digits.
 
 ## Examples
 
-<Tabs items={["Trim decimals without rounding up", "Round down a negative value at the hundreds place"]}>
-<Tab value="Trim decimals without rounding up">
-<FunctionSandbox
-  title="Trim decimals without rounding up"
-  formula={`=ROUNDDOWN(3.14159,3)`}
+<FunctionExample
+  title={"Round to two places to the right of the decimal point."}
+  formula={"=ROUNDDOWN(12.345,2)"}
+  grid={{}}
+  expected={"12.34"}
+/>
+
+<FunctionExample
+  title={"Round to a place left of the decimal point."}
+  formula={"=ROUNDDOWN(127,-1)"}
+  grid={{}}
+  expected={"120"}
+/>
+
+<FunctionExample
+  title={"Select zero decimal places to return an integer."}
+  formula={"=ROUNDDOWN(12.345,0)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"The number cannot be read from nonnumeric text."}
+  formula={"=ROUNDDOWN(\"invalid\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Trim decimals without rounding up"}
+  formula={"=ROUNDDOWN(3.14159,3)"}
   grid={{}}
   expected={"3.141"}
 />
-</Tab>
 
-<Tab value="Round down a negative value at the hundreds place">
-<FunctionSandbox
-  title="Round down a negative value at the hundreds place"
-  formula={`=ROUNDDOWN(-987.65,-2)`}
+<FunctionExample
+  title={"Round down a negative value at the hundreds place"}
+  formula={"=ROUNDDOWN(-987.65,-2)"}
   grid={{}}
   expected={"-900"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [ROUND](/docs/reference/functions/math/round)
 - [ROUNDUP](/docs/reference/functions/math/roundup)
 - [TRUNC](/docs/reference/functions/math/trunc)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
 
 ## FAQ
 
 ### Does ROUNDDOWN always move toward negative infinity?
 No. It moves toward zero, which is different from FLOOR-style behavior on negatives.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/rounddown" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

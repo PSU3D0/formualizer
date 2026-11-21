@@ -1,58 +1,93 @@
 ---
 title: "OCT2BIN"
-description: "OCT2BIN: Converts an octal text value to binary text."
+seoTitle: "OCT2BIN function: formula syntax and examples"
+description: "Converts an octal text value to binary text. =OCT2BIN(number, [places])"
 ---
 
-<FunctionPageSchema id="engineering/oct2bin" />
-
-## Summary
+Converts an octal text value to binary text.
 
 Supports optional left-padding through the `places` argument.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=OCT2BIN(number, [places])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `places` | number | Optional | — |
+
+## Return type
+
+Can return text.
+
 ## Remarks
  - Input must be octal text up to 10 digits and may be signed two's-complement.
- - Converted values must fall in `[-512, 511]`, or the function returns `#NUM!`.
  - `places` must be at least the output width and at most `10`, or `#NUM!` is returned.
+
+## Error cases
+
+ - Converted values must fall in `[-512, 511]`, or the function returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Convert octal to binary", "Convert signed octal"]}>
-<Tab value="Convert octal to binary">
-<FunctionSandbox
-  title="Convert octal to binary"
-  formula={`=OCT2BIN("77")`}
+<FunctionExample
+  title={"Convert octal 36 with no output padding."}
+  formula={"=OCT2BIN(\"36\")"}
+  grid={{}}
+  expected={"11110"}
+/>
+
+<FunctionExample
+  title={"Use eight output characters to preserve leading zeros."}
+  formula={"=OCT2BIN(\"36\",8)"}
+  grid={{}}
+  expected={"00011110"}
+/>
+
+<FunctionExample
+  title={"Convert zero with a one-place width."}
+  formula={"=OCT2BIN(\"0\",1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The input contains a digit outside base eight."}
+  formula={"=OCT2BIN(\"8\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert octal to binary"}
+  formula={"=OCT2BIN(\"77\")"}
   grid={{}}
   expected={"111111"}
 />
-</Tab>
 
-<Tab value="Convert signed octal">
-<FunctionSandbox
-  title="Convert signed octal"
-  formula={`=OCT2BIN("7777777777")`}
+<FunctionExample
+  title={"Convert signed octal"}
+  formula={"=OCT2BIN(\"7777777777\")"}
   grid={{}}
   expected={"1111111111"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
 - [OCT2DEC](/docs/reference/functions/engineering/oct2dec)
 - [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
-- [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
 
 ## FAQ
 
 ### Why does `OCT2BIN` return `#NUM!` for some octal inputs?
 After decoding, the value must be within `[-512, 511]` to be representable in Excel-style binary output.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/oct2bin" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

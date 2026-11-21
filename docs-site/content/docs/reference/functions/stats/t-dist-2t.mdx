@@ -1,54 +1,69 @@
 ---
 title: "T.DIST.2T"
-description: "T.DIST.2T: Returns the two-tailed Student's t probability beyond `x`."
+seoTitle: "T.DIST.2T function: formula syntax and examples"
+description: "Returns the two-tailed Student's t probability beyond x. =T.DIST.2T(x, deg_freedom)"
 ---
 
-<FunctionPageSchema id="stats/t-dist-2t" />
-
-## Summary
+Returns the two-tailed Student's t probability beyond `x`.
 
 `T.DIST.2T` computes `P(|T| &gt; x)` for the specified degrees of freedom.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=T.DIST.2T(x, deg_freedom)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+
+## How it works
+
+For nonnegative x, returns P(|T| ≥ x), twice the right-tail probability of a Student t variate. Degrees of freedom must be positive. At x = 0 the two tails cover all outcomes.
 
 ## Remarks
  - Requires `x &gt;= 0` and `deg_freedom &gt;= 1`.
  - Represents a two-sided tail area.
- - Returns `#NUM!` when arguments are outside valid ranges.
  - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Error cases
+
+ - Returns `#NUM!` when arguments are outside valid ranges.
 
 ## Examples
 
-<Tabs items={["Two-tailed t probability at zero", "Two-tailed t probability at x=2"]}>
-<Tab value="Two-tailed t probability at zero">
-<FunctionSandbox
-  title="Two-tailed t probability at zero"
-  formula={`=T.DIST.2T(0,10)`}
+<FunctionExample
+  title={"Find the probability outside the interval from −2 to 2 for ten degrees of freedom."}
+  formula={"=T.DIST.2T(2,10)"}
+  grid={{}}
+  expected={"0.0733880347707403"}
+/>
+
+<FunctionExample
+  title={"Keep the two cutoffs fixed and increase the degrees of freedom."}
+  formula={"=T.DIST.2T(2,30)"}
+  grid={{}}
+  expected={"0.0546250449629833"}
+/>
+
+<FunctionExample
+  title={"At x = 0 the two tails together cover the whole distribution."}
+  formula={"=T.DIST.2T(0,10)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Two-tailed t probability at x=2">
-<FunctionSandbox
-  title="Two-tailed t probability at x=2"
-  formula={`=T.DIST.2T(2,10)`}
+<FunctionExample
+  title={"Degrees of freedom must be positive."}
+  formula={"=T.DIST.2T(2,0)"}
   grid={{}}
-  expected={"0.0733880342639167"}
+  expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [T.INV](/docs/reference/functions/stats/t-inv)
-- [T.INV.2T](/docs/reference/functions/stats/t-inv-2t)
-- [T.DIST.RT](/docs/reference/functions/stats/t-dist-rt)
-- [T.DIST](/docs/reference/functions/stats/t-dist)
-- [T.TEST](/docs/reference/functions/stats/t-test)
-- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/t-dist-2t" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

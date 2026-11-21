@@ -1,16 +1,35 @@
 ---
 title: "MINIFS"
-description: "MINIFS: Returns the minimum numeric value in a range that meets all criteria."
+seoTitle: "MINIFS function: formula syntax and examples"
+description: "Returns the minimum numeric value in a range that meets all criteria. =MINIFS(min_range, criteria_range1, criteria1, [(criteria_range2, criteria2), ...])"
 ---
 
-<FunctionPageSchema id="stats/minifs" />
-
-## Summary
+Returns the minimum numeric value in a range that meets all criteria.
 
 `MINIFS` evaluates one or more `(criteria_range, criteria)` pairs and returns the smallest
  matching numeric value.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MINIFS(min_range, criteria_range1, criteria1, [(criteria_range2, criteria2), ...])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `min_range` | any | Required | — |
+| `criteria_range1` | any | Required | — |
+| `criteria1` | any | Required | — |
+| `criteria_range2` | any | Optional | — |
+| `criteria2` | any | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 3.
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - Arguments must be `target_range` plus one or more criteria pairs.
  - Criteria are combined with logical AND.
  - Returns `0` when no cells satisfy all criteria.
@@ -18,43 +37,52 @@ description: "MINIFS: Returns the minimum numeric value in a range that meets al
 
 ## Examples
 
-<Tabs items={["Minimum value for one condition", "Minimum value with two criteria"]}>
-<Tab value="Minimum value for one condition">
-<FunctionSandbox
-  title="Minimum value for one condition"
-  formula={`=MINIFS(A1:A3,B1:B3,"East")`}
-  grid={{"A1":"10","A2":"20","A3":"15","B1":"East","B2":"West","B3":"East"}}
+<FunctionExample
+  title={"Aggregate numbers from only the East records."}
+  formula={"=MINIFS(A1:A3,B1:B3,\"East\")"}
+  grid={{"A1":"10","A2":"50","A3":"20","B1":"\"East\"","B2":"\"West\"","B3":"\"East\""}}
   expected={"10"}
 />
-</Tab>
 
-<Tab value="Minimum value with two criteria">
-<FunctionSandbox
-  title="Minimum value with two criteria"
-  formula={`=MINIFS(A1:A4,B1:B4,"B",C1:C4,"Q1")`}
-  grid={{"A1":"100","A2":"80","A3":"90","A4":"70","B1":"A","B2":"A","B3":"B","B4":"B","C1":"Q1","C2":"Q2","C3":"Q1","C4":"Q1"}}
+<FunctionExample
+  title={"Add a second criterion so both conditions must hold."}
+  formula={"=MINIFS(A1:A3,B1:B3,\"East\",C1:C3,\">3\")"}
+  grid={{"A1":"10","A2":"50","A3":"20","B1":"\"East\"","B2":"\"West\"","B3":"\"East\"","C1":"2","C2":"4","C3":"6"}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Aggregate the only row in a single-row data set."}
+  formula={"=MINIFS(A1:A1,B1:B1,\"East\",C1:C1,2)"}
+  grid={{"A1":"10","B1":"\"East\"","C1":"2"}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"Minimum value for one condition"}
+  formula={"=MINIFS(A1:A3,B1:B3,\"East\")"}
+  grid={{"A1":"10","A2":"20","A3":"15","B1":"\"East\"","B2":"\"West\"","B3":"\"East\""}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"Minimum value with two criteria"}
+  formula={"=MINIFS(A1:A4,B1:B4,\"B\",C1:C4,\"Q1\")"}
+  grid={{"A1":"100","A2":"80","A3":"90","A4":"70","B1":"\"A\"","B2":"\"A\"","B3":"\"B\"","B4":"\"B\"","C1":"\"Q1\"","C2":"\"Q2\"","C3":"\"Q1\"","C4":"\"Q1\""}}
   expected={"70"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [MAXIFS](/docs/reference/functions/stats/maxifs)
 - [MIN](/docs/reference/functions/math/min)
 - [SUMIFS](/docs/reference/functions/math/sumifs)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [AVERAGEA](/docs/reference/functions/stats/averagea)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
 
 ## FAQ
 
 ### How does MINIFS treat non-numeric target cells?
 Non-numeric target cells are ignored; only numeric matches are eligible.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/minifs" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

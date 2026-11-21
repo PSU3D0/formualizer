@@ -1,0 +1,86 @@
+---
+title: "ANCHORARRAY"
+seoTitle: "ANCHORARRAY function: formula syntax and examples"
+description: "Returns the current spill range of a dynamic-array anchor cell. =ANCHORARRAY(anchor)"
+---
+
+Returns the current spill range of a dynamic-array anchor cell.
+
+`ANCHORARRAY(A1)` is the stored form of the spill-range operator `A1#`
+ (files written by Excel store `_xlfn.ANCHORARRAY(A1)`). Both evaluate to
+ the rectangle that the formula in the anchor cell currently spills into,
+ as a reference, so range consumers such as `SUM`, `ROWS` and `INDEX` read
+ it like any other range.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ANCHORARRAY(anchor)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `anchor` | range (range) | Required | — |
+
+## Return type
+
+Can return a reference when evaluated in a reference context.
+
+## Remarks
+ - The argument must be written as a single-cell reference (optionally on
+   another sheet) or a defined name that refers to one cell.
+ - Formualizer policy: `#REF!` when the argument is anything else, and when
+   the anchor has no current spill (a value, an empty cell, a scalar
+   result, or a blocked or oversized spill). A formula whose result is a
+   single value, including a 1x1 array such as `SEQUENCE(1)`, is stored as a
+   scalar and has no spill range.
+
+## Examples
+
+<FunctionExample
+  title={"Resolve the spill that starts at A1."}
+  formula={"=ANCHORARRAY(A1)"}
+  grid={{"A1":"=SEQUENCE(3)"}}
+  expected={"{1; 2; 3}"}
+/>
+
+<FunctionExample
+  title={"Resolve a spill with more than one column."}
+  formula={"=ANCHORARRAY(B1)"}
+  grid={{"B1":"=SEQUENCE(2,2)"}}
+  expected={"{1, 2; 3, 4}"}
+/>
+
+<FunctionExample
+  title={"Resolve the spill of a one-row sequence."}
+  formula={"=ANCHORARRAY(F1)"}
+  grid={{"F1":"=SEQUENCE(1,2)"}}
+  expected={"{1, 2}"}
+/>
+
+<FunctionExample
+  title={"A numeric input cell has no spill range to resolve."}
+  formula={"=ANCHORARRAY(E1)"}
+  grid={{"E1":"42"}}
+  expected={"#REF!"}
+/>
+
+## Related functions
+
+- [INDEX](/docs/reference/functions/reference-fns/index-fn)
+- [OFFSET](/docs/reference/functions/reference-fns/offset)
+- [SEQUENCE](/docs/reference/functions/lookup/sequence)
+
+## FAQ
+
+### How does ANCHORARRAY relate to the # operator?
+They are the same reference: A1# is written as _xlfn.ANCHORARRAY(A1) in stored files, and both resolve to the anchor's current spill range.
+
+### When does ANCHORARRAY return #REF!?
+When its argument is not a single-cell reference or single-cell name, or when the anchor cell has no current spill.
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/reference_fns.rs)

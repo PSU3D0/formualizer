@@ -1,58 +1,85 @@
 ---
 title: "TANH"
-description: "TANH: Returns the hyperbolic tangent of a number."
+seoTitle: "TANH function: formula syntax and examples"
+description: "Returns the hyperbolic tangent of a number. =TANH(number)"
 ---
 
-<FunctionPageSchema id="math/tanh" />
-
-## Summary
+Returns the hyperbolic tangent of a number.
 
 `TANH` computes `SINH(x) / COSH(x)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TANH(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Hyperbolic tangent is sinh(x) / cosh(x). Since cosh(x) is positive for real x, the ratio is defined everywhere on the real line and stays between −1 and 1.
 
 ## Remarks
  - Domain: accepts any real number.
  - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+
+## Error cases
+
  - Errors: no function-specific domain errors are produced.
 
 ## Examples
 
-<Tabs items={["Hyperbolic tangent at zero", "Hyperbolic tangent at two"]}>
-<Tab value="Hyperbolic tangent at zero">
-<FunctionSandbox
-  title="Hyperbolic tangent at zero"
-  formula={`=TANH(0)`}
+<FunctionExample
+  title={"Divide sinh(0.5) by cosh(0.5)."}
+  formula={"=TANH(0.5)"}
+  grid={{}}
+  expected={"0.46211715726001"}
+/>
+
+<FunctionExample
+  title={"The numerator changes sign and the denominator stays positive."}
+  formula={"=TANH(-0.5)"}
+  grid={{}}
+  expected={"-0.46211715726001"}
+/>
+
+<FunctionExample
+  title={"At zero the hyperbolic tangent vanishes."}
+  formula={"=TANH(0)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Hyperbolic tangent at two">
-<FunctionSandbox
-  title="Hyperbolic tangent at two"
-  formula={`=TANH(2)`}
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the hyperbolic tangent."}
+  formula={"=TANH(\"invalid\")"}
   grid={{}}
-  expected={"0.9640275800758169"}
+  expected={"#VALUE!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Hyperbolic tangent at two"}
+  formula={"=TANH(2)"}
+  grid={{}}
+  expected={"0.964027580075817"}
+/>
 
 ## Related functions
 
 - [ATANH](/docs/reference/functions/math/atanh)
 - [SINH](/docs/reference/functions/math/sinh)
 - [COSH](/docs/reference/functions/math/cosh)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### What output range should TANH produce?
 For real inputs, TANH stays strictly between -1 and 1.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/tanh" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

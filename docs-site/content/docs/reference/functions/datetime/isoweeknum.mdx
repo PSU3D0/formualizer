@@ -1,58 +1,85 @@
 ---
 title: "ISOWEEKNUM"
-description: "ISOWEEKNUM: Returns the ISO 8601 week number (`1` to `53`) for a date serial."
+seoTitle: "ISOWEEKNUM function: formula syntax and examples"
+description: "Returns the ISO 8601 week number (1 to 53) for a date serial. =ISOWEEKNUM(serial_number)"
 ---
-
-<FunctionPageSchema id="datetime/isoweeknum" />
-
-## Summary
 
 Returns the ISO 8601 week number (`1` to `53`) for a date serial.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISOWEEKNUM(serial_number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `serial_number` | number | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Weeks start on Monday and week 1 is the week containing the first Thursday of the year.
  - Input serials are truncated to whole dates before evaluation.
- - Serials are read using the Excel 1900 date mapping.
+ - Serials are read using the workbook's date system (Excel 1900 or Excel 1904).
 
 ## Examples
 
-<Tabs items={["ISO week at year start", "ISO week crossing year boundary"]}>
-<Tab value="ISO week at year start">
-<FunctionSandbox
-  title="ISO week at year start"
-  formula={`=ISOWEEKNUM(45292)`}
+<FunctionExample
+  title={"Find the ISO week for the second Monday in January."}
+  formula={"=ISOWEEKNUM(DATE(2024,1,8))"}
   grid={{}}
-  expected={"1"}
+  expected={"2"}
 />
-</Tab>
 
-<Tab value="ISO week crossing year boundary">
-<FunctionSandbox
-  title="ISO week crossing year boundary"
-  formula={`=ISOWEEKNUM(42370)`}
+<FunctionExample
+  title={"An early January date can belong to the previous ISO week-year."}
+  formula={"=ISOWEEKNUM(DATE(2021,1,1))"}
   grid={{}}
   expected={"53"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The first Monday of 2021 starts ISO week one."}
+  formula={"=ISOWEEKNUM(DATE(2021,1,4))"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"An invalid date cannot be placed in an ISO week."}
+  formula={"=ISOWEEKNUM(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"ISO week at year start"}
+  formula={"=ISOWEEKNUM(45292)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"ISO week crossing year boundary"}
+  formula={"=ISOWEEKNUM(42370)"}
+  grid={{}}
+  expected={"53"}
+/>
 
 ## Related functions
 
 - [WEEKNUM](/docs/reference/functions/datetime/weeknum)
 - [WEEKDAY](/docs/reference/functions/datetime/weekday)
 - [DATE](/docs/reference/functions/datetime/date)
-- [DAY](/docs/reference/functions/datetime/day)
-- [HOUR](/docs/reference/functions/datetime/hour)
-- [MINUTE](/docs/reference/functions/datetime/minute)
 
 ## FAQ
 
 ### Can early-January dates return week 52 or 53?
 Yes. ISO week numbering can place dates near New Year in the prior ISO week-year.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/isoweeknum" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_parts.rs)

@@ -1,59 +1,91 @@
 ---
 title: "WEEKNUM"
-description: "WEEKNUM: Returns the week number of the year for a date serial."
+seoTitle: "WEEKNUM function: formula syntax and examples"
+description: "Returns the week number of the year for a date serial. =WEEKNUM(serial_number, [return_type])"
 ---
-
-<FunctionPageSchema id="datetime/weeknum" />
-
-## Summary
 
 Returns the week number of the year for a date serial.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=WEEKNUM(serial_number, [return_type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `serial_number` | number | Required | — |
+| `return_type` | number | Optional | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Default `return_type` is `1` (week starts on Sunday).
  - Supported `return_type` values are `1`, `2`, `11`-`17`, and `21` (ISO week numbering).
+ - Input serials are interpreted using the workbook's date system (Excel 1900 or Excel 1904);
+   week boundaries differ between the systems because their epochs are 1462 days apart.
+
+## Error cases
+
  - Unsupported `return_type` values return `#NUM!`.
- - Input serials are interpreted using Excel 1900 date mapping rather than workbook `1904` interpretation.
 
 ## Examples
 
-<Tabs items={["Default week numbering", "ISO week numbering"]}>
-<Tab value="Default week numbering">
-<FunctionSandbox
-  title="Default week numbering"
-  formula={`=WEEKNUM(45292)`}
+<FunctionExample
+  title={"The first Sunday starts week two with the default Sunday start."}
+  formula={"=WEEKNUM(DATE(2024,1,7))"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"With Monday starts, the same Sunday is still in week one."}
+  formula={"=WEEKNUM(DATE(2024,1,7),2)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="ISO week numbering">
-<FunctionSandbox
-  title="ISO week numbering"
-  formula={`=WEEKNUM(42370, 21)`}
+<FunctionExample
+  title={"January 1 belongs to the first week in this numbering mode."}
+  formula={"=WEEKNUM(DATE(2024,1,1),2)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"An unsupported return type cannot define a week numbering rule."}
+  formula={"=WEEKNUM(DATE(2024,1,1),99)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Default week numbering"}
+  formula={"=WEEKNUM(45292)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"ISO week numbering"}
+  formula={"=WEEKNUM(42370, 21)"}
   grid={{}}
   expected={"53"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [WEEKDAY](/docs/reference/functions/datetime/weekday)
 - [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
 - [DATE](/docs/reference/functions/datetime/date)
-- [DAYS360](/docs/reference/functions/datetime/days360)
-- [NETWORKDAYS](/docs/reference/functions/datetime/networkdays)
-- [NETWORKDAYS.INTL](/docs/reference/functions/datetime/networkdays-intl)
 
 ## FAQ
 
 ### What is special about return_type 21 in WEEKNUM?
 return_type=21 switches to ISO week numbering, matching ISOWEEKNUM behavior.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/weeknum" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/weekday_workday.rs)

@@ -1,23 +1,59 @@
 ---
 title: "SKEW.P"
-description: "SKEW.P: Returns the population skewness of a numeric data set."
+seoTitle: "SKEW.P function: formula syntax and examples"
+description: "Returns the population skewness of a numeric data set. =SKEW.P(number1, [number2], ...)"
 ---
-
-<FunctionPageSchema id="stats/skew-p" />
-
-## Summary
 
 Returns the population skewness of a numeric data set.
 
-## returns: 0
- =SKEW.P(1,2,3)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SKEW.P(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
 
 ## Examples
 
-<FunctionSandbox
-  title="Symmetric data has zero skew"
-  formula={`=SKEW.P(1,2,3)`}
+<FunctionExample
+  title={"Measure the skew of five observations."}
+  formula={"=SKEW.P(1,2,4,6,8)"}
+  grid={{}}
+  expected={"0.205692271755725"}
+/>
+
+<FunctionExample
+  title={"Supply the observations as one array."}
+  formula={"=SKEW.P({1,2,4,6,8})"}
+  grid={{}}
+  expected={"0.205692271755725"}
+/>
+
+<FunctionExample
+  title={"Evaluate the skew of a short, nonsymmetric series."}
+  formula={"=SKEW.P(1,2,9)"}
+  grid={{}}
+  expected={"0.665468866123835"}
+/>
+
+<FunctionExample
+  title={"Identical observations have no spread to normalize."}
+  formula={"=SKEW.P(1,1,1)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Symmetric data has zero skew"}
+  formula={"=SKEW.P(1,2,3)"}
   grid={{}}
   expected={"0"}
 />
@@ -27,17 +63,12 @@ Returns the population skewness of a numeric data set.
 - [SKEW](/docs/reference/functions/stats/skew)
 - [KURT](/docs/reference/functions/stats/kurt)
 - [AVERAGE](/docs/reference/functions/math/average)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### When does SKEW.P return #DIV/0!?
 It returns #DIV/0! when fewer than three numeric values are available or the population standard deviation is zero.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/skew-p" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

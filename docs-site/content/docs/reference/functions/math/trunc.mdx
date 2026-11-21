@@ -1,58 +1,87 @@
 ---
 title: "TRUNC"
-description: "Truncates a number toward zero, optionally at a specified digit position."
+seoTitle: "TRUNC function: formula syntax and examples"
+description: "Truncates a number toward zero, optionally at a specified digit position. =TRUNC(number, [num_digits])"
 ---
 
-<FunctionPageSchema id="math/trunc" />
-
-## Summary
-
 Truncates a number toward zero, optionally at a specified digit position.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TRUNC(number, [num_digits])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `num_digits` | number | Optional | — |
 
 ## Remarks
  - If `num_digits` is omitted, truncation is to an integer.
  - Positive `num_digits` keeps decimal places; negative values zero places to the left.
+
+## Error cases
+
  - Passing more than two arguments returns `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Truncate to two decimal places", "Truncate toward zero at the hundreds place"]}>
-<Tab value="Truncate to two decimal places">
-<FunctionSandbox
-  title="Truncate to two decimal places"
-  formula={`=TRUNC(12.3456,2)`}
+<FunctionExample
+  title={"Omit the precision to truncate at the decimal point."}
+  formula={"=TRUNC(12.345)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Retain two places to the right of the decimal point."}
+  formula={"=TRUNC(12.345,2)"}
   grid={{}}
   expected={"12.34"}
 />
-</Tab>
 
-<Tab value="Truncate toward zero at the hundreds place">
-<FunctionSandbox
-  title="Truncate toward zero at the hundreds place"
-  formula={`=TRUNC(-987.65,-2)`}
+<FunctionExample
+  title={"Truncate to a place left of the decimal point."}
+  formula={"=TRUNC(127,-1)"}
+  grid={{}}
+  expected={"120"}
+/>
+
+<FunctionExample
+  title={"The number argument cannot be read from nonnumeric text."}
+  formula={"=TRUNC(\"invalid\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Truncate to two decimal places"}
+  formula={"=TRUNC(12.3456,2)"}
+  grid={{}}
+  expected={"12.34"}
+/>
+
+<FunctionExample
+  title={"Truncate toward zero at the hundreds place"}
+  formula={"=TRUNC(-987.65,-2)"}
   grid={{}}
   expected={"-900"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [INT](/docs/reference/functions/math/int)
 - [ROUND](/docs/reference/functions/math/round)
 - [ROUNDDOWN](/docs/reference/functions/math/rounddown)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING](/docs/reference/functions/math/ceiling)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 
 ## FAQ
 
 ### How does TRUNC differ from INT for negative numbers?
 TRUNC removes digits toward zero, while INT floors toward negative infinity.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/trunc" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

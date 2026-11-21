@@ -1,25 +1,65 @@
 ---
 title: "MINA"
-description: "MINA: Returns the smallest value after applying A-variant coercion rules."
+seoTitle: "MINA function: formula syntax and examples"
+description: "Returns the smallest value after applying A-variant coercion rules. =MINA(value1, [value2], ...)"
 ---
-
-<FunctionPageSchema id="stats/mina" />
-
-## Summary
 
 Returns the smallest value after applying A-variant coercion rules.
 
-## returns: -2
- =MINA(TRUE,-2,"x")
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MINA(value1, [value2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value1` | number (range) | Required | — |
+| `value2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Differences from Excel
+
+Formualizer accepts calls such as `(TRUE,2,"x")`. Excel returns `#VALUE!` for the unparseable text supplied directly.
 
 ## Examples
 
-<FunctionSandbox
-  title="Minimum with logical and text coercion"
-  formula={`=MINA(TRUE,-2,"x")`}
+<FunctionExample
+  title={"Find the minimum with logical and text coercion of 4, 8 and 12."}
+  formula={"=MINA(4,8,12)"}
   grid={{}}
-  expected={"-2"}
+  expected={"4"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the minimum with logical and text coercion."}
+  formula={"=MINA({4,8,12})"}
+  grid={{}}
+  expected={"4"}
+/>
+
+<FunctionExample
+  title={"With no other values to coerce, 7 is the minimum."}
+  formula={"=MINA(7)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the minimum with logical and text coercion."}
+  formula={"=MINA(4,1/0,12)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Find the minimum of 4, TRUE and Pending. The text contributes 0 and wins."}
+  formula={"=MINA(A1:A3)"}
+  grid={{"A1":"4","A2":"TRUE","A3":"\"Pending\""}}
+  expected={"0"}
 />
 
 ## Related functions
@@ -27,17 +67,12 @@ Returns the smallest value after applying A-variant coercion rules.
 - [MIN](/docs/reference/functions/math/min)
 - [MAXA](/docs/reference/functions/stats/maxa)
 - [AVERAGEA](/docs/reference/functions/stats/averagea)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### Do text values affect MINA?
 Yes. Text is coerced to 0, so it can become the minimum when all numeric inputs are positive.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/mina" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

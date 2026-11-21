@@ -1,58 +1,82 @@
 ---
 title: "SEC"
-description: "Returns the secant of an angle, defined as `1 / COS(angle)`."
+seoTitle: "SEC function: formula syntax and examples"
+description: "Returns the secant of an angle, defined as 1 / COS(angle). =SEC(number)"
 ---
 
-<FunctionPageSchema id="math/sec" />
-
-## Summary
+Returns the secant of an angle, defined as `1 / COS(angle)`.
 
 Use `SEC` for reciprocal-cosine calculations in radian-based formulas.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SEC(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Secant is 1 / cos(x) for a radian angle x. Its poles are π/2 plus integer multiples of π.
+
+## Differences from Excel
+
+At `PI()/2`, Formualizer reports `#DIV/0!` and Excel returns a finite approximation of about 1.63312E+16.
 
 ## Remarks
  - Domain: valid for all real angles except where `COS(angle) = 0`.
  - Radians: input is interpreted in radians.
+
+## Error cases
+
  - Errors: returns `#DIV/0!` near odd multiples of `PI()/2`.
 
 ## Examples
 
-<Tabs items={["Secant at zero", "Singularity at PI over 2"]}>
-<Tab value="Secant at zero">
-<FunctionSandbox
-  title="Secant at zero"
-  formula={`=SEC(0)`}
+<FunctionExample
+  title={"Invert the cosine of half a radian."}
+  formula={"=SEC(0.5)"}
+  grid={{}}
+  expected={"1.13949392732455"}
+/>
+
+<FunctionExample
+  title={"Opposite angles have the same secant because cosine is even."}
+  formula={"=SEC(-0.5)"}
+  grid={{}}
+  expected={"1.13949392732455"}
+/>
+
+<FunctionExample
+  title={"At zero radians, the reciprocal of cosine is one."}
+  formula={"=SEC(0)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Singularity at PI over 2">
-<FunctionSandbox
-  title="Singularity at PI over 2"
-  formula={`=SEC(PI()/2)`}
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the secant."}
+  formula={"=SEC(\"invalid\")"}
   grid={{}}
-  expected={"#DIV/0!"}
+  expected={"#VALUE!"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [COS](/docs/reference/functions/math/cos)
 - [COT](/docs/reference/functions/math/cot)
 - [CSC](/docs/reference/functions/math/csc)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### When does SEC return #DIV/0!?
 SEC returns #DIV/0! when COS(angle) is effectively zero.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sec" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

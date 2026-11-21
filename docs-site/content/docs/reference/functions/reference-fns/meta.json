@@ -3,10 +3,12 @@
   "defaultOpen": false,
   "pages": [
     "index",
+    "anchorarray",
     "hyperlink",
     "index-fn",
     "indirect",
-    "offset"
+    "offset",
+    "single"
   ],
   "title": "Reference Functions"
 }

@@ -1,19 +1,57 @@
 ---
 title: "SUMX2MY2"
-description: "SUMX2MY2: Returns the sum of squares of values in one array minus the squares in another."
+seoTitle: "SUMX2MY2 function: formula syntax and examples"
+description: "Returns the sum of squares of values in one array minus the squares in another. =SUMX2MY2(array1, array2)"
 ---
-
-<FunctionPageSchema id="math/sumx2my2" />
-
-## Summary
 
 Returns the sum of squares of values in one array minus the squares in another.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SUMX2MY2(array1, array2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array1` | number (range) | Required | — |
+| `array2` | number (range) | Required | — |
+
 ## Examples
 
-<FunctionSandbox
-  title="Pairwise squared difference of squares"
-  formula={`=SUMX2MY2({2,3},{1,4})`}
+<FunctionExample
+  title={"Pair three observations by position before evaluating the squared terms."}
+  formula={"=SUMX2MY2({1,2,3},{4,6,8})"}
+  grid={{}}
+  expected={"-102"}
+/>
+
+<FunctionExample
+  title={"Include negative observations to see how signed inputs affect the terms."}
+  formula={"=SUMX2MY2({1,-2,3},{4,6,-8})"}
+  grid={{}}
+  expected={"-102"}
+/>
+
+<FunctionExample
+  title={"Evaluate a single pair of equal observations."}
+  formula={"=SUMX2MY2({4},{4})"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The arrays must have an equal number of observations."}
+  formula={"=SUMX2MY2({1,2,3},{4,6})"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Pairwise squared difference of squares"}
+  formula={"=SUMX2MY2({2,3},{1,4})"}
   grid={{}}
   expected={"-4"}
 />
@@ -22,18 +60,12 @@ Returns the sum of squares of values in one array minus the squares in another.
 
 - [SUMX2PY2](/docs/reference/functions/math/sumx2py2)
 - [SUMXMY2](/docs/reference/functions/math/sumxmy2)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
-- [DECIMAL](/docs/reference/functions/math/decimal)
 
 ## FAQ
 
 ### What happens when the arrays have different sizes?
 SUMX2MY2 returns #N/A when the two inputs do not contain the same number of values.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sumx2my2" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

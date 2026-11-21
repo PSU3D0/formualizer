@@ -266,12 +266,16 @@ pub struct LambdaFn;
 /// - Invocation arity must exactly match the declared parameter count.
 /// - Returning an uninvoked lambda as a final cell value yields a `#CALC!` in evaluation.
 ///
+/// # Differences from Excel
+/// Excel-style immediate invocation, such as `LAMBDA(x,x+1)(1)`, returns `#N/IMPL!` in
+/// Formualizer. Bind the LAMBDA to a name with LET before invoking it.
+///
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Inline lambda invocation"
+/// title: "Inline invocation returns an unsupported operation error"
 /// formula: "=LAMBDA(x,x+1)(41)"
-/// expected: 42
+/// expected: "#N/IMPL!"
 /// ```
 ///
 /// ```yaml,sandbox
@@ -293,7 +297,7 @@ pub struct LambdaFn;
 ///   - SUM
 /// faq:
 ///   - q: "Why does =LAMBDA(x,x+1) return #CALC! instead of a number?"
-///     a: "LAMBDA returns a callable value. In a cell result position, it must be invoked, for example =LAMBDA(x,x+1)(1)."
+///     a: "LAMBDA returns a callable value. In a cell result position, invoke a local binding such as =LET(inc,LAMBDA(x,x+1),inc(1))."
 ///   - q: "Does a LAMBDA read outer LET variables at call time or definition time?"
 ///     a: "Definition time. The closure captures its lexical environment when created."
 ///   - q: "Can I call a LAMBDA with fewer or extra arguments?"

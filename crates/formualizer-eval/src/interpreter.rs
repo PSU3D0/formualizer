@@ -1568,7 +1568,9 @@ impl<'a> Interpreter<'a> {
                             sheet_registry,
                         );
                         let v = match self.effective_reference(&reference) {
-                            Ok(reference) => self.implicit_intersection_from_reference(&reference),
+                            Ok(reference) => {
+                                self.implicit_intersection_of_written_reference(&reference)
+                            }
                             Err(e) => LiteralValue::Error(e),
                         };
                         return Ok(crate::traits::CalcValue::Scalar(v));
@@ -1897,7 +1899,7 @@ impl<'a> Interpreter<'a> {
         if op == UnaryOperator::ImplicitIntersection {
             if let ASTNodeType::Reference { reference, .. } = &expr.node_type {
                 let reference = self.effective_reference(reference)?;
-                return Ok(self.implicit_intersection_from_reference(&reference));
+                return Ok(self.implicit_intersection_of_written_reference(&reference));
             }
 
             let cv = self.evaluate_ast_uncached(expr)?;
@@ -2005,6 +2007,34 @@ impl<'a> Interpreter<'a> {
             crate::traits::CalcValue::Callable(_) => LiteralValue::Error(
                 ExcelError::new(ExcelErrorKind::Calc).with_message("LAMBDA value must be invoked"),
             ),
+        }
+    }
+
+    /// `@` applied to a reference written in the formula. A LET/LAMBDA local
+    /// shadows a workbook name of the same spelling, as it does everywhere else:
+    /// a local bound to a reference intersects that reference, and any other
+    /// local is reduced like a computed value. `SINGLE` gets the same result
+    /// through `ArgumentHandle::implicit_intersection`.
+    fn implicit_intersection_of_written_reference(
+        &self,
+        reference: &ReferenceType,
+    ) -> LiteralValue {
+        let local = match reference {
+            ReferenceType::NamedRange(name) => self.local_env.lookup(name),
+            _ => None,
+        };
+        match local {
+            // Already placed when it was bound: no offset is applied again.
+            Some(LocalBinding::ValueWithReference { reference, .. }) => {
+                self.implicit_intersection_from_reference(&reference)
+            }
+            Some(LocalBinding::Value(value)) => {
+                self.eval_implicit_intersection_calc(crate::traits::CalcValue::Scalar(value))
+            }
+            Some(LocalBinding::Callable(callable)) => {
+                self.eval_implicit_intersection_calc(crate::traits::CalcValue::Callable(callable))
+            }
+            None => self.implicit_intersection_from_reference(reference),
         }
     }
 

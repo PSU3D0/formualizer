@@ -1,0 +1,77 @@
+---
+title: "NEGBINOMDIST"
+seoTitle: "NEGBINOMDIST function: formula syntax and examples"
+description: "Returns the negative binomial probability of number_f failures (legacy name). =NEGBINOMDIST(number_f, number_s, probability_s)"
+---
+
+Returns the negative binomial probability of `number_f` failures (legacy name).
+
+`NEGBINOMDIST(number_f, number_s, probability_s)` is the probability mass form of
+ `NEGBINOM.DIST`: the chance of exactly `number_f` failures before the `number_s`-th success.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NEGBINOMDIST(number_f, number_s, probability_s)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number_f` | number | Required | — |
+| `number_s` | number | Required | — |
+| `probability_s` | number | Required | — |
+
+## How it works
+
+Maps to NEGBINOM.DIST with cumulative set to FALSE. The result at f failures before the rth success is the binomial coefficient C(f+r−1,f) times pʳ(1−p)ᶠ. Counts require f ≥ 0 and r ≥ 1, with probability in [0,1].
+
+## Remarks
+ - `number_f` and `number_s` are truncated to integers.
+
+## Error cases
+
+ - Returns `#NUM!` when `probability_s &lt; 0`, `probability_s &gt; 1`, `number_f &lt; 0`, or
+   `number_s &lt; 1`.
+
+## Examples
+
+<FunctionExample
+  title={"Find the probability for three failures before the fourth success."}
+  formula={"=NEGBINOMDIST(3,4,0.5)"}
+  grid={{}}
+  expected={"0.15625"}
+/>
+
+<FunctionExample
+  title={"Compare the chance of five failures at a lower per-trial success probability."}
+  formula={"=NEGBINOMDIST(5,4,0.45)"}
+  grid={{}}
+  expected={"0.115571707453125"}
+/>
+
+<FunctionExample
+  title={"Evaluate the probability of four successes without any failure."}
+  formula={"=NEGBINOMDIST(0,4,0.5)"}
+  grid={{}}
+  expected={"0.0625"}
+/>
+
+<FunctionExample
+  title={"The failure count cannot be negative."}
+  formula={"=NEGBINOMDIST(-1,4,0.5)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the chance of ten failures before the fifth success at a 25% per-trial success rate."}
+  formula={"=NEGBINOMDIST(10,5,0.25)"}
+  grid={{}}
+  expected={"0.0550486603751779"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

@@ -1,23 +1,63 @@
 ---
 title: "BINOM.DIST.RANGE"
-description: "BINOM.DIST.RANGE: Returns the probability that a binomial random variable falls within a range of successes."
+seoTitle: "BINOM.DIST.RANGE function: formula syntax and examples"
+description: "Returns the probability that a binomial random variable falls within a range of successes. =BINOM.DIST.RANGE(trials, probability_s, number_s, [number_s2])"
 ---
-
-<FunctionPageSchema id="stats/binom-dist-range" />
-
-## Summary
 
 Returns the probability that a binomial random variable falls within a range of successes.
 
-## returns: 0.1171875
- =BINOM.DIST.RANGE(10,0.5,3,3)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BINOM.DIST.RANGE(trials, probability_s, number_s, [number_s2])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `trials` | number | Required | — |
+| `probability_s` | number | Required | — |
+| `number_s` | number | Required | — |
+| `number_s2` | number | Optional | — |
+
+## How it works
+
+Adds binomial point masses from the first success count through the last inclusive. Each term is C(n,k) pᵏ(1−p)ⁿ⁻ᵏ. Both counts must lie between 0 and n in ascending order.
 
 ## Examples
 
-<FunctionSandbox
-  title="Probability of exactly three successes"
-  formula={`=BINOM.DIST.RANGE(10,0.5,3,3)`}
+<FunctionExample
+  title={"Find the probability of exactly three successes."}
+  formula={"=BINOM.DIST.RANGE(8,0.4,3)"}
+  grid={{}}
+  expected={"0.27869184"}
+/>
+
+<FunctionExample
+  title={"Add the probabilities of three and four successes."}
+  formula={"=BINOM.DIST.RANGE(8,0.4,3,4)"}
+  grid={{}}
+  expected={"0.510935040000002"}
+/>
+
+<FunctionExample
+  title={"Include the entire possible range of outcomes."}
+  formula={"=BINOM.DIST.RANGE(8,0.4,0,8)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The last success count must be at least the first."}
+  formula={"=BINOM.DIST.RANGE(8,0.4,5,3)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Probability of exactly three successes"}
+  formula={"=BINOM.DIST.RANGE(10,0.5,3,3)"}
   grid={{}}
   expected={"0.1171875"}
 />
@@ -27,17 +67,12 @@ Returns the probability that a binomial random variable falls within a range of 
 - [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
 - [BINOM.INV](/docs/reference/functions/stats/binom-inv)
 - [POISSON.DIST](/docs/reference/functions/stats/poisson-dist)
-- [BETA.INV](/docs/reference/functions/stats/beta-inv)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [AVERAGEA](/docs/reference/functions/stats/averagea)
 
 ## FAQ
 
 ### What happens if the upper bound is omitted?
 The function treats the lower and upper bounds as the same value, yielding the probability of exactly that many successes.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/binom-dist-range" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

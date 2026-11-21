@@ -1,58 +1,88 @@
 ---
 title: "EXP"
-description: "EXP: Returns Euler's number `e` raised to the given power."
+seoTitle: "EXP function: formula syntax and examples"
+description: "Returns Euler's number e raised to the given power. =EXP(number)"
 ---
 
-<FunctionPageSchema id="math/exp" />
-
-## Summary
+Returns Euler's number `e` raised to the given power.
 
 `EXP` is the inverse of `LN` for positive-domain values.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=EXP(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
 ## Remarks
  - Computes `e^x` using floating-point math.
- - Very large positive inputs may overflow to infinity.
  - Input errors are propagated.
+
+## Error cases
+
+ - Finite inputs that overflow floating-point range return `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Compute e to the first power", "Invert LN"]}>
-<Tab value="Compute e to the first power">
-<FunctionSandbox
-  title="Compute e to the first power"
-  formula={`=EXP(1)`}
+<FunctionExample
+  title={"Raise the base of the natural logarithm to a positive power."}
+  formula={"=EXP(2)"}
   grid={{}}
-  expected={"2.718281828459045"}
+  expected={"7.38905609893065"}
 />
-</Tab>
 
-<Tab value="Invert LN">
-<FunctionSandbox
-  title="Invert LN"
-  formula={`=EXP(LN(5))`}
+<FunctionExample
+  title={"A negative exponent gives the reciprocal."}
+  formula={"=EXP(-2)"}
+  grid={{}}
+  expected={"0.135335283236613"}
+/>
+
+<FunctionExample
+  title={"Raising the base to zero gives one."}
+  formula={"=EXP(0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The exponent must resolve to a number."}
+  formula={"=EXP(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Compute e to the first power"}
+  formula={"=EXP(1)"}
+  grid={{}}
+  expected={"2.71828182845905"}
+/>
+
+<FunctionExample
+  title={"Invert LN"}
+  formula={"=EXP(LN(5))"}
   grid={{}}
   expected={"5"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [LN](/docs/reference/functions/math/ln)
 - [LOG](/docs/reference/functions/math/log)
 - [LOG10](/docs/reference/functions/math/log10)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
 
 ## FAQ
 
 ### Can EXP overflow?
-Yes. Very large positive inputs can overflow floating-point range.
+Yes. Very large finite positive inputs return #NUM! on overflow.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/exp" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

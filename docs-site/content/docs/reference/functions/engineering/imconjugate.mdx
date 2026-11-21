@@ -1,58 +1,93 @@
 ---
 title: "IMCONJUGATE"
-description: "IMCONJUGATE: Returns the complex conjugate of a complex number."
+seoTitle: "IMCONJUGATE function: formula syntax and examples"
+description: "Returns the complex conjugate of a complex number. =IMCONJUGATE(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imconjugate" />
-
-## Summary
+Returns the complex conjugate of a complex number.
 
 Negates the imaginary coefficient and keeps the real coefficient unchanged.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMCONJUGATE(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## Return type
+
+Can return text.
+
+## How it works
+
+Conjugation reflects a + bi across the real axis to a − bi. Real inputs are unchanged.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
 
 ## Remarks
  - Inputs are coerced to complex-number text before parsing.
  - Preserves the original suffix style (`i` or `j`) when possible.
+
+## Error cases
+
  - Invalid complex text returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Conjugate with i suffix", "Conjugate with j suffix"]}>
-<Tab value="Conjugate with i suffix">
-<FunctionSandbox
-  title="Conjugate with i suffix"
-  formula={`=IMCONJUGATE("3+4i")`}
+<FunctionExample
+  title={"Reflect 3 + 4i to 3 − 4i across the real axis."}
+  formula={"=IMCONJUGATE(\"3+4i\")"}
   grid={{}}
   expected={"3-4i"}
 />
-</Tab>
 
-<Tab value="Conjugate with j suffix">
-<FunctionSandbox
-  title="Conjugate with j suffix"
-  formula={`=IMCONJUGATE("-2j")`}
+<FunctionExample
+  title={"Flip the sign of the j coefficient and keep the j suffix."}
+  formula={"=IMCONJUGATE(\"3-4j\")"}
+  grid={{}}
+  expected={"3+4j"}
+/>
+
+<FunctionExample
+  title={"The conjugate of a real unit is unchanged."}
+  formula={"=IMCONJUGATE(\"1\")"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to take the conjugate."}
+  formula={"=IMCONJUGATE(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Conjugate with j suffix"}
+  formula={"=IMCONJUGATE(\"-2j\")"}
   grid={{}}
   expected={"2j"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [IMSUB](/docs/reference/functions/engineering/imsub)
 - [IMPRODUCT](/docs/reference/functions/engineering/improduct)
 - [IMDIV](/docs/reference/functions/engineering/imdiv)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### Does `IMCONJUGATE` keep the `i`/`j` suffix style?
 Yes. It negates only the imaginary coefficient and preserves the parsed suffix form.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imconjugate" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

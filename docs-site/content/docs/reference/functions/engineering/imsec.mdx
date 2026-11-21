@@ -1,19 +1,66 @@
 ---
 title: "IMSEC"
-description: "IMSEC: Returns the secant of a complex number."
+seoTitle: "IMSEC function: formula syntax and examples"
+description: "Returns the secant of a complex number. =IMSEC(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imsec" />
-
-## Summary
+Returns the secant of a complex number.
 
 Computes `1 / IMCOS(inumber)` for an Excel-style complex number string.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMSEC(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## How it works
+
+The complex secant is 1 / cos(z). Its poles are π/2 plus integer multiples of π.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
+
 ## Examples
 
-<FunctionSandbox
-  title="Secant of zero"
-  formula={`=IMSEC("0")`}
+<FunctionExample
+  title={"Invert the complex cosine at 3 + 4i."}
+  formula={"=IMSEC(\"3+4i\")"}
+  grid={{}}
+  expected={"-0.0362534969158689+0.00516434460775318i"}
+/>
+
+<FunctionExample
+  title={"Conjugate the secant by reversing the imaginary part of the input."}
+  formula={"=IMSEC(\"3-4j\")"}
+  grid={{}}
+  expected={"-0.0362534969158689-0.00516434460775318j"}
+/>
+
+<FunctionExample
+  title={"A real input of one radian gives the ordinary real secant."}
+  formula={"=IMSEC(\"1\")"}
+  grid={{}}
+  expected={"1.85081571768093"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to take the complex secant."}
+  formula={"=IMSEC(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Secant of zero"}
+  formula={"=IMSEC(\"0\")"}
   grid={{}}
   expected={"1"}
 />
@@ -23,17 +70,12 @@ Computes `1 / IMCOS(inumber)` for an Excel-style complex number string.
 - [IMCOS](/docs/reference/functions/engineering/imcos)
 - [IMSECH](/docs/reference/functions/engineering/imsech)
 - [IMCSC](/docs/reference/functions/engineering/imcsc)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### How are poles represented?
 Inputs that lead to non-finite results return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imsec" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

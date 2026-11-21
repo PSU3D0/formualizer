@@ -1,31 +1,72 @@
 ---
 title: "AGGREGATE"
-description: "Reference for the AGGREGATE function."
+seoTitle: "AGGREGATE function: formula syntax and examples"
+description: "Aggregates references with options for hidden rows, errors and nested totals. =AGGREGATE(function_num, options, ref1, [ref2], ...)"
 ---
 
-<FunctionPageSchema id="math/aggregate" />
+Aggregates references with options for hidden rows, errors and nested totals.
 
-## Summary
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
 
-Reference for the AGGREGATE function.
+## Syntax
 
-## Formula example
+`=AGGREGATE(function_num, options, ref1, [ref2], ...)`
 
-```text
-=AGGREGATE(A1, B1)
-```
+## Arguments
 
-## Related functions
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `function_num` | number (range) | Required | — |
+| `options` | number (range) | Required | — |
+| `ref1` | number (range) | Required | — |
+| `ref2` | number (range) | Optional | — |
 
-- [SUBTOTAL](/docs/reference/functions/math/subtotal)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [COUNT](/docs/reference/functions/math/count)
-- [SUM](/docs/reference/functions/math/sum)
-- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
-- [MAX](/docs/reference/functions/math/max)
+Accepts a variable number of arguments. Minimum: 3.
 
-## Runtime metadata
+## Remarks
+ - Function numbers `1` through `11` select the same operations as SUBTOTAL.
+ - Options `0` through `7` control whether to include hidden rows, errors, and nested SUBTOTAL or AGGREGATE results.
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/aggregate" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Differences from Excel
+ Excel's function numbers `12` through `19`, including the array form that takes a rank or percentile, return `#N/IMPL!` in Formualizer for otherwise valid inputs.
+
+## Examples
+
+<FunctionExample
+  title={"Sum a range while ignoring its error cell."}
+  formula={"=AGGREGATE(9,6,A1:A4)"}
+  grid={{"A1":"20","A2":"=1/0","A3":"10","A4":"30"}}
+  expected={"60"}
+/>
+
+<FunctionExample
+  title={"Calculate the average over the same range while ignoring error cells."}
+  formula={"=AGGREGATE(1,6,A1:A4)"}
+  grid={{"A1":"20","A2":"=1/0","A3":"10","A4":"30"}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Add the values of two individual references."}
+  formula={"=AGGREGATE(9,6,A3,A1)"}
+  grid={{"A1":"20","A3":"10"}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"An unknown function number cannot select an aggregation."}
+  formula={"=AGGREGATE(99,6,A1:A4)"}
+  grid={{"A1":"20","A2":"=1/0","A3":"10","A4":"30"}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Excel supports a rank argument for operation 14. That operation is currently unavailable in Formualizer."}
+  formula={"=AGGREGATE(14,6,A1:A4,2)"}
+  grid={{"A1":"20","A2":"=1/0","A3":"10","A4":"30"}}
+  expected={"#N/IMPL!"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/aggregate.rs)

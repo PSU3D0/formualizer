@@ -1,13 +1,27 @@
 ---
 title: "EXACT"
-description: "Compares two text values for exact equality."
+seoTitle: "EXACT function: formula syntax and examples"
+description: "Compares two text values for exact equality. =EXACT(text1, text2)"
 ---
 
-<FunctionPageSchema id="text/exact" />
-
-## Summary
-
 Compares two text values for exact equality.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=EXACT(text1, text2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text1` | any | Required | — |
+| `text2` | any | Required | — |
+
+## Return type
+
+Can return a logical value (TRUE or FALSE).
 
 ## Remarks
  - Comparison is case-sensitive.
@@ -17,43 +31,59 @@ Compares two text values for exact equality.
 
 ## Examples
 
-<Tabs items={["Exact same text", "Case difference is not equal"]}>
-<Tab value="Exact same text">
-<FunctionSandbox
-  title="Exact same text"
-  formula={`=EXACT("Form", "Form")`}
+<FunctionExample
+  title={"Compare two identical text values."}
+  formula={"=EXACT(\"Team\",\"Team\")"}
   grid={{}}
-  expected={"true"}
+  expected={"TRUE"}
 />
-</Tab>
 
-<Tab value="Case difference is not equal">
-<FunctionSandbox
-  title="Case difference is not equal"
-  formula={`=EXACT("Form", "form")`}
+<FunctionExample
+  title={"Change letter case while leaving the characters otherwise equal."}
+  formula={"=EXACT(\"Team\",\"team\")"}
   grid={{}}
-  expected={"false"}
+  expected={"FALSE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Two zero-length strings compare equal."}
+  formula={"=EXACT(\"\",\"\")"}
+  grid={{}}
+  expected={"TRUE"}
+/>
+
+<FunctionExample
+  title={"An error in a comparison input propagates."}
+  formula={"=EXACT(\"Team\",1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Exact same text"}
+  formula={"=EXACT(\"Form\", \"Form\")"}
+  grid={{}}
+  expected={"TRUE"}
+/>
+
+<FunctionExample
+  title={"Case difference is not equal"}
+  formula={"=EXACT(\"Form\", \"form\")"}
+  grid={{}}
+  expected={"FALSE"}
+/>
 
 ## Related functions
 
 - [FIND](/docs/reference/functions/text/find)
 - [SEARCH](/docs/reference/functions/text/search)
 - [UPPER](/docs/reference/functions/text/upper)
-- [TEXT](/docs/reference/functions/text/text)
-- [REPT](/docs/reference/functions/text/rept)
-- [TEXTAFTER](/docs/reference/functions/text/textafter)
 
 ## FAQ
 
 ### Does EXACT perform case-sensitive comparison?
 Yes. EXACT compares the resulting text values with exact case and character equality.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/exact" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/find_search_exact.rs)

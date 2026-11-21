@@ -6,6 +6,7 @@
   "scripts": {
     "build": "next build && node scripts/emit-docs-mdx.mjs",
     "check:export": "node scripts/check-export.mjs",
+    "check:wasm-examples": "node --experimental-wasm-modules scripts/check-wasm-examples.mjs",
     "dev": "next dev",
     "start": "next start",
     "deploy": "pnpm run build && wrangler deploy",
@@ -15,12 +16,12 @@
     "format": "biome format --write"
   },
   "dependencies": {
-    "formualizer": "^0.6.0",
+    "formualizer": "0.14.0",
     "fumadocs-core": "16.15.4",
     "fumadocs-mdx": "15.0.13",
     "fumadocs-ui": "16.15.4",
     "lucide-react": "^0.570.0",
-    "next": "16.4.3",
+    "next": "16.4.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "tailwind-merge": "^3.5.0"

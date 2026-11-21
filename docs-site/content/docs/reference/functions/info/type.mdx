@@ -1,58 +1,69 @@
 ---
 title: "TYPE"
-description: "Returns an Excel TYPE code describing the value category."
+seoTitle: "TYPE function: formula syntax and examples"
+description: "Returns an Excel TYPE code describing the value category. =TYPE(value)"
 ---
-
-<FunctionPageSchema id="info/type" />
-
-## Summary
 
 Returns an Excel TYPE code describing the value category.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TYPE(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
 ## Remarks
- - Codes: `1` number, `2` text, `4` logical, `64` array.
- - Errors are propagated unchanged instead of returning `16`.
+ - Codes: `1` number, `2` text, `4` logical, `16` error, `64` array.
+ - Spreadsheet errors return `16`; operation failures still propagate.
  - Blank values map to numeric code `1` in this implementation.
 
 ## Examples
 
-<Tabs items={["Text type code", "Boolean type code"]}>
-<Tab value="Text type code">
-<FunctionSandbox
-  title="Text type code"
-  formula={`=TYPE("abc")`}
+<FunctionExample
+  title={"Read the type code of a numeric value."}
+  formula={"=TYPE(7)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Read the different type code for text with the same displayed character."}
+  formula={"=TYPE(\"7\")"}
   grid={{}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Boolean type code">
-<FunctionSandbox
-  title="Boolean type code"
-  formula={`=TYPE(TRUE)`}
+<FunctionExample
+  title={"Read the type code for a logical value."}
+  formula={"=TYPE(TRUE)"}
   grid={{}}
   expected={"4"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Text type code"}
+  formula={"=TYPE(\"abc\")"}
+  grid={{}}
+  expected={"2"}
+/>
 
 ## Related functions
 
 - [ISNUMBER](/docs/reference/functions/info/isnumber)
 - [ISTEXT](/docs/reference/functions/info/istext)
 - [ISLOGICAL](/docs/reference/functions/info/islogical)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
 ### How are errors handled by TYPE?
-Errors are propagated unchanged instead of returning Excel's error type code 16.
+Spreadsheet errors return Excel's error type code 16.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/type" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

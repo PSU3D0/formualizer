@@ -1,13 +1,26 @@
 ---
 title: "ISLOGICAL"
-description: "ISLOGICAL: Returns TRUE when the value is a boolean."
+seoTitle: "ISLOGICAL function: formula syntax and examples"
+description: "Returns TRUE when the value is a boolean. =ISLOGICAL(value)"
 ---
 
-<FunctionPageSchema id="info/islogical" />
-
-## Summary
-
 Returns TRUE when the value is a boolean.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISLOGICAL(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
+## Return type
+
+Logical (TRUE or FALSE)
 
 ## Remarks
  - Only logical TRUE/FALSE values return TRUE.
@@ -16,43 +29,45 @@ Returns TRUE when the value is a boolean.
 
 ## Examples
 
-<Tabs items={["Boolean input", "Numeric input"]}>
-<Tab value="Boolean input">
-<FunctionSandbox
-  title="Boolean input"
-  formula={`=ISLOGICAL(TRUE)`}
+<FunctionExample
+  title={"Test how the predicate classifies a logical value."}
+  formula={"=ISLOGICAL(TRUE)"}
   grid={{}}
-  expected={"true"}
+  expected={"TRUE"}
 />
-</Tab>
 
-<Tab value="Numeric input">
-<FunctionSandbox
-  title="Numeric input"
-  formula={`=ISLOGICAL(1)`}
+<FunctionExample
+  title={"Test numeric-looking text without converting it to a number."}
+  formula={"=ISLOGICAL(\"123\")"}
   grid={{}}
-  expected={"false"}
+  expected={"FALSE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Test an empty string, which still has a text type."}
+  formula={"=ISLOGICAL(\"\")"}
+  grid={{}}
+  expected={"FALSE"}
+/>
+
+<FunctionExample
+  title={"Numeric input"}
+  formula={"=ISLOGICAL(1)"}
+  grid={{}}
+  expected={"FALSE"}
+/>
 
 ## Related functions
 
 - [TRUE](/docs/reference/functions/logical/true)
 - [FALSE](/docs/reference/functions/logical/false)
 - [TYPE](/docs/reference/functions/info/type)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
 ### Do truthy numbers count as logical values?
 No. ISLOGICAL returns TRUE only for actual boolean TRUE/FALSE values.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/islogical" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

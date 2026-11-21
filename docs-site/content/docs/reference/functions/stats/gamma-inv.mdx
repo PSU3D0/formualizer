@@ -1,25 +1,64 @@
 ---
 title: "GAMMA.INV"
-description: "GAMMA.INV: Returns the inverse cumulative gamma distribution."
+seoTitle: "GAMMA.INV function: formula syntax and examples"
+description: "Returns the inverse cumulative gamma distribution. =GAMMA.INV(probability, alpha, beta)"
 ---
-
-<FunctionPageSchema id="stats/gamma-inv" />
-
-## Summary
 
 Returns the inverse cumulative gamma distribution.
 
-## returns: 0.6931471805599453
- =GAMMA.INV(0.5,1,1)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GAMMA.INV(probability, alpha, beta)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `alpha` | number | Required | — |
+| `beta` | number | Required | — |
+
+## How it works
+
+Takes a probability and solves for the nonnegative x whose gamma CDF equals that probability at the chosen positive shape and scale. Zero probability gives zero.
 
 ## Examples
 
-<FunctionSandbox
-  title="Exponential special case"
-  formula={`=GAMMA.INV(0.5,1,1)`}
+<FunctionExample
+  title={"Find the gamma median for shape three and scale two."}
+  formula={"=GAMMA.INV(0.5,3,2)"}
   grid={{}}
-  expected={"0.6931471805599453"}
+  expected={"5.34812062744713"}
+/>
+
+<FunctionExample
+  title={"Find the quantile nearer the upper tail."}
+  formula={"=GAMMA.INV(0.9,3,2)"}
+  grid={{}}
+  expected={"10.6446406756684"}
+/>
+
+<FunctionExample
+  title={"Evaluate the lower probability endpoint."}
+  formula={"=GAMMA.INV(0,3,2)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A probability above one does not specify a gamma quantile."}
+  formula={"=GAMMA.INV(1.1,3,2)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Exponential special case"}
+  formula={"=GAMMA.INV(0.5,1,1)"}
+  grid={{}}
+  expected={"0.693147180559945"}
 />
 
 ## Related functions
@@ -27,17 +66,12 @@ Returns the inverse cumulative gamma distribution.
 - [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
 - [GAMMA](/docs/reference/functions/stats/gamma)
 - [BETA.INV](/docs/reference/functions/stats/beta-inv)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
 
 ## FAQ
 
 ### Is GAMMAINV supported?
 Yes. GAMMAINV is registered as an alias of GAMMA.INV.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/gamma-inv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

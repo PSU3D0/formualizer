@@ -1,28 +1,70 @@
 ---
 title: "PDURATION"
-description: "PDURATION: Returns the number of periods required for an investment to reach a specified future value at a constant interest rate."
+seoTitle: "PDURATION function: formula syntax and examples"
+description: "Returns the number of periods required for an investment to reach a specified future value at a constant interest rate. =PDURATION(rate, pv, fv)"
 ---
 
-<FunctionPageSchema id="financial/pduration" />
-
-## Summary
-
 Returns the number of periods required for an investment to reach a specified future value at a constant interest rate.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PDURATION(rate, pv, fv)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `pv` | number | Required | — |
+| `fv` | number | Required | — |
 
 ## Remarks
  - `rate` is the interest rate per compounding period; must be positive.
  - `pv` and `fv` must be positive and `fv &gt; pv` (growth scenario) or
    `fv &lt; pv` is valid as long as both are positive.
  - Formula: `(ln(fv) - ln(pv)) / ln(1 + rate)`.
+
+## Error cases
+
  - Returns `#NUM!` when `rate &lt;= 0`, or `pv` or `fv` are non-positive.
 
 ## Examples
 
-<FunctionSandbox
-  title="Time to double at ten percent"
-  formula={`=PDURATION(0.10, 1000, 2000)`}
+<FunctionExample
+  title={"Find the time required for 100 to grow to 150."}
+  formula={"=PDURATION(0.05,100,150)"}
   grid={{}}
-  expected={"7.272540897341713"}
+  expected={"8.31038622252055"}
+/>
+
+<FunctionExample
+  title={"Compare the duration under a higher growth rate."}
+  formula={"=PDURATION(0.1,100,150)"}
+  grid={{}}
+  expected={"4.25416370990588"}
+/>
+
+<FunctionExample
+  title={"The target has already been met when current and future values agree."}
+  formula={"=PDURATION(0.05,100,100)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The duration formula requires a positive growth rate."}
+  formula={"=PDURATION(0,100,150)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Time to double at ten percent"}
+  formula={"=PDURATION(0.10, 1000, 2000)"}
+  grid={{}}
+  expected={"7.27254089734171"}
 />
 
 ## Related functions
@@ -30,17 +72,12 @@ Returns the number of periods required for an investment to reach a specified fu
 - [NPER](/docs/reference/functions/financial/nper)
 - [RRI](/docs/reference/functions/financial/rri)
 - [FV](/docs/reference/functions/financial/fv)
-- [MIRR](/docs/reference/functions/financial/mirr)
-- [SLN](/docs/reference/functions/financial/sln)
-- [TBILLEQ](/docs/reference/functions/financial/tbilleq)
 
 ## FAQ
 
 ### Does PDURATION require growth?
 It requires positive present and future values plus a positive rate; the logarithmic formula then returns the compounding periods needed to move between them.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/pduration" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

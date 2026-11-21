@@ -1,0 +1,70 @@
+{
+  "version": "0.14.0",
+  "unavailableFunctions": [
+    "SINGLE"
+  ],
+  "mismatches": [
+    {
+      "name": "YEAR",
+      "formula": "=YEAR(A1)",
+      "grid": {
+        "A1": "\"10/26/1999\""
+      },
+      "native": "1999",
+      "wasm": "#VALUE!"
+    },
+    {
+      "name": "COUNTIF",
+      "formula": "=COUNTIF(A1:A3, \"10/26/1999\")",
+      "grid": {
+        "A1": "\"10/26/1999\"",
+        "A2": "\"1999-10-27\"",
+        "A3": "36459"
+      },
+      "native": "2",
+      "wasm": "1"
+    },
+    {
+      "name": "SINGLE",
+      "formula": "=SINGLE(A100)",
+      "grid": {
+        "A100": "42"
+      },
+      "native": "42",
+      "wasm": "#NAME?"
+    },
+    {
+      "name": "SINGLE",
+      "formula": "=SINGLE(42)",
+      "grid": {},
+      "native": "42",
+      "wasm": "#NAME?"
+    },
+    {
+      "name": "SINGLE",
+      "formula": "=SINGLE(A100:A101)",
+      "grid": {
+        "A100": "42"
+      },
+      "native": "42",
+      "wasm": "#NAME?"
+    },
+    {
+      "name": "SINGLE",
+      "formula": "=SINGLE(A1:A2)",
+      "grid": {
+        "A1": "10",
+        "A2": "20"
+      },
+      "native": "#VALUE!",
+      "wasm": "#NAME?"
+    },
+    {
+      "name": "SINGLE",
+      "formula": "=SINGLE({1,2;3,4})",
+      "grid": {},
+      "native": "1",
+      "wasm": "#NAME?"
+    }
+  ]
+}

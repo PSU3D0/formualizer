@@ -1,13 +1,29 @@
 ---
 title: "DEC2BIN"
-description: "DEC2BIN: Converts a decimal integer to binary text."
+seoTitle: "DEC2BIN function: formula syntax and examples"
+description: "Converts a decimal integer to binary text. =DEC2BIN(number, [places])"
 ---
 
-<FunctionPageSchema id="engineering/dec2bin" />
-
-## Summary
+Converts a decimal integer to binary text.
 
 Optionally pads the result with leading zeros using `places`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DEC2BIN(number, [places])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `places` | number | Optional | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - `number` is coerced to an integer and must be in `[-512, 511]`.
@@ -16,43 +32,59 @@ Optionally pads the result with leading zeros using `places`.
 
 ## Examples
 
-<Tabs items={["Convert a positive integer", "Pad binary output"]}>
-<Tab value="Convert a positive integer">
-<FunctionSandbox
-  title="Convert a positive integer"
-  formula={`=DEC2BIN(42)`}
+<FunctionExample
+  title={"Convert a decimal integer using the shortest output."}
+  formula={"=DEC2BIN(30)"}
+  grid={{}}
+  expected={"11110"}
+/>
+
+<FunctionExample
+  title={"Request eight characters to see the leading-zero padding."}
+  formula={"=DEC2BIN(30,8)"}
+  grid={{}}
+  expected={"00011110"}
+/>
+
+<FunctionExample
+  title={"Convert a negative value to its signed representation."}
+  formula={"=DEC2BIN(-1)"}
+  grid={{}}
+  expected={"1111111111"}
+/>
+
+<FunctionExample
+  title={"A nonzero value cannot fit in a zero-place output."}
+  formula={"=DEC2BIN(30,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert a positive integer"}
+  formula={"=DEC2BIN(42)"}
   grid={{}}
   expected={"101010"}
 />
-</Tab>
 
-<Tab value="Pad binary output">
-<FunctionSandbox
-  title="Pad binary output"
-  formula={`=DEC2BIN(5,8)`}
+<FunctionExample
+  title={"Pad binary output"}
+  formula={"=DEC2BIN(5,8)"}
   grid={{}}
   expected={"00000101"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 - [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [BIN2OCT](/docs/reference/functions/engineering/bin2oct)
-- [DELTA](/docs/reference/functions/engineering/delta)
 
 ## FAQ
 
 ### What limits apply to `DEC2BIN`?
 `number` must be in `[-512, 511]`, and optional `places` must be between output width and `10`, else `#NUM!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/dec2bin" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

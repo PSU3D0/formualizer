@@ -1,14 +1,27 @@
 ---
 title: "TOROW"
-description: "TOROW: Converts an array or range into a single row."
+seoTitle: "TOROW function: formula syntax and examples"
+description: "Converts an array or range into a single row. =TOROW(array, [ignore], [scan_by_column])"
 ---
 
-<FunctionPageSchema id="lookup/torow" />
-
-## Summary
+Converts an array or range into a single row.
 
 Flattens input values into one row, with options to ignore blanks/errors and
  to scan by row or by column.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TOROW(array, [ignore], [scan_by_column])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | range or any (range) | Required | — |
+| `ignore` | number | Optional | `0` |
+| `scan_by_column` | logical or number | Optional | `false` |
 
 ## Remarks
  - `ignore` values are `0` keep all, `1` ignore blanks, `2` ignore errors, `3` ignore both.
@@ -16,43 +29,45 @@ Flattens input values into one row, with options to ignore blanks/errors and
 
 ## Examples
 
-<Tabs items={["Flatten to row", "Scan by column"]}>
-<Tab value="Flatten to row">
-<FunctionSandbox
-  title="Flatten to row"
-  formula={`=TOROW({1,2;3,4})`}
+<FunctionExample
+  title={"Flatten a rectangular array with the default scanning order."}
+  formula={"=TOROW({1,2;3,4})"}
   grid={{}}
-  expected={"[[1,2,3,4]]"}
+  expected={"{1, 2, 3, 4}"}
 />
-</Tab>
 
-<Tab value="Scan by column">
-<FunctionSandbox
-  title="Scan by column"
-  formula={`=TOROW({1,2;3,4},0,TRUE)`}
+<FunctionExample
+  title={"Scan down each column before advancing to the next."}
+  formula={"=TOROW({1,2;3,4},0,TRUE)"}
   grid={{}}
-  expected={"[[1,3,2,4]]"}
+  expected={"{1, 3, 2, 4}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Flatten an array containing just one value."}
+  formula={"=TOROW({42})"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"An unsupported ignore code cannot select a filtering rule."}
+  formula={"=TOROW({1,2;3,4},9)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
 ## Related functions
 
 - [TOCOL](/docs/reference/functions/lookup/tocol)
 - [HSTACK](/docs/reference/functions/lookup/hstack)
 - [VSTACK](/docs/reference/functions/lookup/vstack)
-- [SORT](/docs/reference/functions/lookup/sort)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 
 ## FAQ
 
 ### Does TOROW preserve row order by default?
 Yes. The default scan order is row-major.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/torow" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/array_shape.rs)

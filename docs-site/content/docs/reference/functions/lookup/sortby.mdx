@@ -1,52 +1,90 @@
 ---
 title: "SORTBY"
-description: "SORTBY: Sorts an array based on one or more aligned sort-by arrays."
+seoTitle: "SORTBY function: formula syntax and examples"
+description: "Sorts an array based on one or more aligned sort-by arrays. =SORTBY(array, by_array1, [sort_order1], [(by_array2, [sort_order2]), ...])"
 ---
 
-<FunctionPageSchema id="lookup/sortby" />
-
-## Summary
+Sorts an array based on one or more aligned sort-by arrays.
 
 `SORTBY` separates what is returned (`array`) from what determines ordering (`by_array`).
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SORTBY(array, by_array1, [sort_order1], [(by_array2, [sort_order2]), ...])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | range (range) | Required | — |
+| `by_array1` | range (range) | Required | — |
+| `sort_order1` | number | Optional | `1` |
+| `by_array2` | value | Optional | — |
+| `sort_order2` | value | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 2.
+
 ## Remarks
- - Requires at least one `by_array` aligned to the row count of `array`.
- - `sort_order` defaults to ascending when omitted.
+ - Column criteria sort rows; row criteria sort columns. All criteria must use the same axis.
+ - `sort_order` must be `1` or `-1` and defaults to ascending when omitted.
  - Additional `by_array`/`sort_order` criteria are processed left-to-right.
- - Shape mismatches or invalid criteria return `#VALUE!`.
  - Returns a spilled sorted array.
+
+## Error cases
+
+ - Shape mismatches or invalid criteria return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Sort names by score", "Sort descending by key"]}>
-<Tab value="Sort names by score">
-<FunctionSandbox
-  title="Sort names by score"
-  formula={`=SORTBY(A1:A3,B1:B3)`}
-  grid={{"A1":"Charlie","A2":"Alice","A3":"Bob","B1":"3","B2":"1","B3":"2"}}
-  expected={"[[\"Alice\"],[\"Bob\"],[\"Charlie\"]]"}
+<FunctionExample
+  title={"Sort names by a separate list of numbers."}
+  formula={"=SORTBY({\"Cy\";\"Ana\";\"Bo\"},{30;10;20})"}
+  grid={{}}
+  expected={"{\"Ana\"; \"Bo\"; \"Cy\"}"}
 />
-</Tab>
 
-<Tab value="Sort descending by key">
-<FunctionSandbox
-  title="Sort descending by key"
-  formula={`=SORTBY(A1:A3,B1:B3,-1)`}
-  grid={{"A1":"Q1","A2":"Q2","A3":"Q3","B1":"100","B2":"300","B3":"200"}}
-  expected={"[[\"Q2\"],[\"Q3\"],[\"Q1\"]]"}
+<FunctionExample
+  title={"Sort ascending by the first numeric key, then break ties with a descending second key."}
+  formula={"=SORTBY({\"Cy\";\"Ana\";\"Bo\"},{20;10;20},1,{3;1;2},-1)"}
+  grid={{}}
+  expected={"{\"Ana\"; \"Cy\"; \"Bo\"}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Sort a one-item array with one corresponding key."}
+  formula={"=SORTBY({\"Ana\"},{10})"}
+  grid={{}}
+  expected={"Ana"}
+/>
+
+<FunctionExample
+  title={"The sort-key array must align with the sorted data."}
+  formula={"=SORTBY({\"Cy\";\"Ana\";\"Bo\"},{30;10})"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Sort names by score"}
+  formula={"=SORTBY(A1:A3,B1:B3)"}
+  grid={{"A1":"\"Charlie\"","A2":"\"Alice\"","A3":"\"Bob\"","B1":"3","B2":"1","B3":"2"}}
+  expected={"{\"Alice\"; \"Bob\"; \"Charlie\"}"}
+/>
+
+<FunctionExample
+  title={"Sort descending by key"}
+  formula={"=SORTBY(A1:A3,B1:B3,-1)"}
+  grid={{"A1":"\"Q1\"","A2":"\"Q2\"","A3":"\"Q3\"","B1":"100","B2":"300","B3":"200"}}
+  expected={"{\"Q2\"; \"Q3\"; \"Q1\"}"}
+/>
 
 ## Related functions
 
 - [SORT](/docs/reference/functions/lookup/sort)
 - [UNIQUE](/docs/reference/functions/lookup/unique)
 - [FILTER](/docs/reference/functions/lookup/filter)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
-- [DROP](/docs/reference/functions/lookup/drop)
 
 ## FAQ
 
@@ -54,10 +92,8 @@ description: "SORTBY: Sorts an array based on one or more aligned sort-by arrays
 SORTBY evaluates criteria left-to-right, using later by_array values only when earlier criteria compare equal.
 
 ### Why do I get #VALUE! with SORTBY?
-Each by_array must be one-dimensional and aligned to the primary array row count; mismatched shapes return #VALUE!.
+Each by_array must be one-dimensional and aligned to the same row or column axis; mismatched shapes return #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/sortby" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

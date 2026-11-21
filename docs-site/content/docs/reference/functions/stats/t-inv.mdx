@@ -1,54 +1,83 @@
 ---
 title: "T.INV"
-description: "T.INV: Returns the t-value whose left-tail probability equals `probability`."
+seoTitle: "T.INV function: formula syntax and examples"
+description: "Returns the t-value whose left-tail probability equals probability. =T.INV(probability, deg_freedom)"
 ---
 
-<FunctionPageSchema id="stats/t-inv" />
-
-## Summary
+Returns the t-value whose left-tail probability equals `probability`.
 
 `T.INV` is the inverse of `T.DIST(x, deg_freedom, TRUE)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=T.INV(probability, deg_freedom)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+
+## How it works
+
+Solves P(T ≤ q) = probability for a Student t variate with positive degrees of freedom. Probabilities below one half return a negative quantile.
 
 ## Remarks
  - `probability` must be strictly between `0` and `1`.
  - `deg_freedom` must be at least `1`.
- - Returns `#NUM!` for out-of-range probability or invalid degrees of freedom.
  - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Error cases
+
+ - Returns `#NUM!` for out-of-range probability or invalid degrees of freedom.
 
 ## Examples
 
-<Tabs items={["Median t quantile", "Upper-tail critical value"]}>
-<Tab value="Median t quantile">
-<FunctionSandbox
-  title="Median t quantile"
-  formula={`=T.INV(0.5,10)`}
+<FunctionExample
+  title={"Find the negative Student t quartile with lower-tail probability one quarter."}
+  formula={"=T.INV(0.25,10)"}
+  grid={{}}
+  expected={"-0.699812061312429"}
+/>
+
+<FunctionExample
+  title={"Move to the symmetric positive quartile at lower-tail probability three quarters."}
+  formula={"=T.INV(0.75,10)"}
+  grid={{}}
+  expected={"0.699812061312429"}
+/>
+
+<FunctionExample
+  title={"At probability one half, the t quantile is zero for one degree of freedom."}
+  formula={"=T.INV(0.5,1)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Upper-tail critical value">
-<FunctionSandbox
-  title="Upper-tail critical value"
-  formula={`=T.INV(0.975,10)`}
+<FunctionExample
+  title={"A probability above one cannot identify a t statistic."}
+  formula={"=T.INV(1.1,10)"}
   grid={{}}
-  expected={"2.228138851986273"}
+  expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Median t quantile"}
+  formula={"=T.INV(0.5,10)"}
+  grid={{}}
+  expected={"0"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"Upper-tail critical value"}
+  formula={"=T.INV(0.975,10)"}
+  grid={{}}
+  expected={"2.22813885198627"}
+/>
 
-- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
-- [T.DIST.RT](/docs/reference/functions/stats/t-dist-rt)
-- [T.DIST](/docs/reference/functions/stats/t-dist)
-- [T.INV.2T](/docs/reference/functions/stats/t-inv-2t)
-- [T.TEST](/docs/reference/functions/stats/t-test)
-- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
+## Implementation
 
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/t-inv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,24 +1,64 @@
 ---
 title: "MAXA"
-description: "MAXA: Returns the largest value after applying A-variant coercion rules."
+seoTitle: "MAXA function: formula syntax and examples"
+description: "Returns the largest value after applying A-variant coercion rules. =MAXA(value1, [value2], ...)"
 ---
-
-<FunctionPageSchema id="stats/maxa" />
-
-## Summary
 
 Returns the largest value after applying A-variant coercion rules.
 
-## returns: 1
- =MAXA(TRUE,-2,"x")
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MAXA(value1, [value2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value1` | number (range) | Required | — |
+| `value2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Differences from Excel
+
+Formualizer accepts calls such as `(TRUE,2,"x")`. Excel returns `#VALUE!` for the unparseable text supplied directly.
 
 ## Examples
 
-<FunctionSandbox
-  title="Maximum with logical and text coercion"
-  formula={`=MAXA(TRUE,-2,"x")`}
+<FunctionExample
+  title={"Find the maximum with logical and text coercion of 4, 8 and 12."}
+  formula={"=MAXA(4,8,12)"}
   grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the maximum with logical and text coercion."}
+  formula={"=MAXA({4,8,12})"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"With no other values to coerce, 7 is the maximum."}
+  formula={"=MAXA(7)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the maximum with logical and text coercion."}
+  formula={"=MAXA(4,1/0,12)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Find the maximum of −4, TRUE and Pending. TRUE contributes 1 and wins."}
+  formula={"=MAXA(A1:A3)"}
+  grid={{"A1":"-4","A2":"TRUE","A3":"\"Pending\""}}
   expected={"1"}
 />
 
@@ -27,17 +67,12 @@ Returns the largest value after applying A-variant coercion rules.
 - [MAX](/docs/reference/functions/math/max)
 - [MINA](/docs/reference/functions/stats/mina)
 - [AVERAGEA](/docs/reference/functions/stats/averagea)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### What do text values contribute to MAXA?
 Text contributes 0, so negative numeric inputs can still be smaller than text in the aggregate.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/maxa" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

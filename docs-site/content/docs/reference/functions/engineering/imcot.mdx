@@ -1,22 +1,62 @@
 ---
 title: "IMCOT"
-description: "IMCOT: Returns the cotangent of a complex number."
+seoTitle: "IMCOT function: formula syntax and examples"
+description: "Returns the cotangent of a complex number. =IMCOT(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imcot" />
-
-## Summary
+Returns the cotangent of a complex number.
 
 Computes the reciprocal of the complex tangent for an Excel-style complex
  number string.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMCOT(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## How it works
+
+The complex cotangent is cos(z) / sin(z). It has poles at integer multiples of π, including zero.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
+
 ## Examples
 
-<FunctionSandbox
-  title="Cotangent of one"
-  formula={`=IMCOT("1")`}
+<FunctionExample
+  title={"Divide complex cosine by complex sine at 3 + 4i."}
+  formula={"=IMCOT(\"3+4i\")"}
   grid={{}}
-  expected={"0.6420926159343306"}
+  expected={"-0.000187587737983679-1.00064439247156i"}
+/>
+
+<FunctionExample
+  title={"Reflect the input across the real axis to reflect the cotangent."}
+  formula={"=IMCOT(\"3-4j\")"}
+  grid={{}}
+  expected={"-0.000187587737983679+1.00064439247156j"}
+/>
+
+<FunctionExample
+  title={"For a real radian angle of one, this returns the ordinary cotangent."}
+  formula={"=IMCOT(\"1\")"}
+  grid={{}}
+  expected={"0.642092615934331"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to take the complex cotangent."}
+  formula={"=IMCOT(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
 />
 
 ## Related functions
@@ -24,17 +64,12 @@ Computes the reciprocal of the complex tangent for an Excel-style complex
 - [IMTAN](/docs/reference/functions/engineering/imtan)
 - [IMCOS](/docs/reference/functions/engineering/imcos)
 - [IMSIN](/docs/reference/functions/engineering/imsin)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### What happens at undefined inputs?
 Inputs that produce non-finite reciprocal results return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imcot" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

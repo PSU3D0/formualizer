@@ -107,7 +107,7 @@ impl Function for FactFn {
 
 #[derive(Debug)]
 pub struct GcdFn;
-/// Returns the greatest common divisor of one or more integers.
+/// Returns the greatest common divisor of one or two integers.
 ///
 /// `GCD` truncates each argument toward zero before calculating the divisor.
 ///
@@ -125,8 +125,8 @@ pub struct GcdFn;
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Variadic and fractional arguments"
-/// formula: "=GCD(18.9, 6, 30)"
+/// title: "Fractional arguments are truncated"
+/// formula: "=GCD(18.9, 6)"
 /// expected: 6
 /// ```
 ///
@@ -216,7 +216,7 @@ pub struct LcmFn;
 
 /// Excel returns #NUM! when the least common multiple reaches 2^53.
 const MAX_LCM_EXCLUSIVE: u64 = 1 << 53;
-/// Returns the least common multiple of one or more integers.
+/// Returns the least common multiple of one or two integers.
 ///
 /// `LCM` truncates fractional arguments toward zero and combines values iteratively.
 ///

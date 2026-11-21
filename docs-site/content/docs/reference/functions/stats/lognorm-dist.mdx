@@ -1,54 +1,83 @@
 ---
 title: "LOGNORM.DIST"
-description: "LOGNORM.DIST: Returns the log-normal probability at `x` as either a cumulative value or density."
+seoTitle: "LOGNORM.DIST function: formula syntax and examples"
+description: "Returns the log-normal probability at x as either a cumulative value or density. =LOGNORM.DIST(x, mean, standard_dev, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/lognorm-dist" />
-
-## Summary
+Returns the log-normal probability at `x` as either a cumulative value or density.
 
 `LOGNORM.DIST` models positive-valued variables where `ln(X)` follows a normal distribution.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LOGNORM.DIST(x, mean, standard_dev, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `mean` | number | Required | — |
+| `standard_dev` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+Standardize ln(x) to z = (ln(x) − mean) / standard_dev. The cumulative probability is Φ(z) and the density is φ(z) / (x × standard_dev). Both x and the standard deviation must be positive.
 
 ## Remarks
  - Set `cumulative` to non-zero for CDF mode; set it to `0` for PDF mode.
  - Requires `x &gt; 0` and `standard_dev &gt; 0`.
- - Returns `#NUM!` when `x &lt;= 0` or `standard_dev &lt;= 0`.
  - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Error cases
+
+ - Returns `#NUM!` when `x &lt;= 0` or `standard_dev &lt;= 0`.
 
 ## Examples
 
-<Tabs items={["Log-normal CDF at x = 1", "Log-normal PDF at x = 1"]}>
-<Tab value="Log-normal CDF at x = 1">
-<FunctionSandbox
-  title="Log-normal CDF at x = 1"
-  formula={`=LOGNORM.DIST(1,0,1,TRUE)`}
+<FunctionExample
+  title={"Use ln(2) as the normal z score to find the cumulative probability."}
+  formula={"=LOGNORM.DIST(2,0,1,TRUE)"}
+  grid={{}}
+  expected={"0.755891404214417"}
+/>
+
+<FunctionExample
+  title={"Evaluate the lognormal density at two with log-scale mean zero and deviation one."}
+  formula={"=LOGNORM.DIST(2,0,1,FALSE)"}
+  grid={{}}
+  expected={"0.156874019278981"}
+/>
+
+<FunctionExample
+  title={"The observation one has a log of zero, giving cumulative probability one half."}
+  formula={"=LOGNORM.DIST(1,0,1,TRUE)"}
   grid={{}}
   expected={"0.5"}
 />
-</Tab>
 
-<Tab value="Log-normal PDF at x = 1">
-<FunctionSandbox
-  title="Log-normal PDF at x = 1"
-  formula={`=LOGNORM.DIST(1,0,1,FALSE)`}
+<FunctionExample
+  title={"The standard deviation must be positive."}
+  formula={"=LOGNORM.DIST(2,0,0,TRUE)"}
   grid={{}}
-  expected={"0.3989422804014327"}
+  expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Log-normal PDF at x = 1"}
+  formula={"=LOGNORM.DIST(1,0,1,FALSE)"}
+  grid={{}}
+  expected={"0.398942280401433"}
+/>
 
 ## Related functions
 
 - [LOGNORM.INV](/docs/reference/functions/stats/lognorm-inv)
 - [NORM.DIST](/docs/reference/functions/stats/norm-dist)
-- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
-- [F.DIST](/docs/reference/functions/stats/f-dist)
-- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
-- [NEGBINOM.DIST](/docs/reference/functions/stats/negbinom-dist)
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/lognorm-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

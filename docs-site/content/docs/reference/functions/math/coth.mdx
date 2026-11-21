@@ -1,58 +1,92 @@
 ---
 title: "COTH"
-description: "COTH: Returns the hyperbolic cotangent of a number, defined as `COSH(x) / SINH(x)`."
+seoTitle: "COTH function: formula syntax and examples"
+description: "Returns the hyperbolic cotangent of a number, defined as COSH(x) / SINH(x). =COTH(number)"
 ---
 
-<FunctionPageSchema id="math/coth" />
-
-## Summary
+Returns the hyperbolic cotangent of a number, defined as `COSH(x) / SINH(x)`.
 
 `COTH` is the reciprocal of `TANH` where defined.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COTH(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Hyperbolic cotangent is cosh(x) / sinh(x). The denominator is zero at x = 0, its only real pole.
 
 ## Remarks
  - Domain: valid for all real numbers except `0`.
  - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+
+## Error cases
+
  - Errors: returns `#DIV/0!` when `SINH(x)` is zero (at `x = 0`).
 
 ## Examples
 
-<Tabs items={["Hyperbolic cotangent at one", "Division by zero at origin"]}>
-<Tab value="Hyperbolic cotangent at one">
-<FunctionSandbox
-  title="Hyperbolic cotangent at one"
-  formula={`=COTH(1)`}
+<FunctionExample
+  title={"Divide cosh by sinh at one half."}
+  formula={"=COTH(0.5)"}
   grid={{}}
-  expected={"1.3130352854993312"}
+  expected={"2.16395341373865"}
 />
-</Tab>
 
-<Tab value="Division by zero at origin">
-<FunctionSandbox
-  title="Division by zero at origin"
-  formula={`=COTH(0)`}
+<FunctionExample
+  title={"Reflect the input to change the sign of the hyperbolic cotangent."}
+  formula={"=COTH(-0.5)"}
+  grid={{}}
+  expected={"-2.16395341373865"}
+/>
+
+<FunctionExample
+  title={"Near zero on the positive side, the denominator sinh(0.01) is small."}
+  formula={"=COTH(0.01)"}
+  grid={{}}
+  expected={"100.003333311111"}
+/>
+
+<FunctionExample
+  title={"Nonnumeric text cannot be used as the input."}
+  formula={"=COTH(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Hyperbolic cotangent at one"}
+  formula={"=COTH(1)"}
+  grid={{}}
+  expected={"1.31303528549933"}
+/>
+
+<FunctionExample
+  title={"Division by zero at origin"}
+  formula={"=COTH(0)"}
   grid={{}}
   expected={"#DIV/0!"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [TANH](/docs/reference/functions/math/tanh)
 - [CSCH](/docs/reference/functions/math/csch)
 - [SECH](/docs/reference/functions/math/sech)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### Why is COTH undefined at zero?
 COTH divides by SINH(x), and SINH(0) is zero, so #DIV/0! is returned.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/coth" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

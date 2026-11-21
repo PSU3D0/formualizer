@@ -1,55 +1,88 @@
 ---
 title: "BETA.DIST"
-description: "BETA.DIST: Returns the beta-distribution probability for `x`, with optional lower/upper bounds."
+seoTitle: "BETA.DIST function: formula syntax and examples"
+description: "Returns the beta-distribution probability for x, with optional lower/upper bounds. =BETA.DIST(x, alpha, beta, cumulative, [a], [b])"
 ---
 
-<FunctionPageSchema id="stats/beta-dist" />
-
-## Summary
+Returns the beta-distribution probability for `x`, with optional lower/upper bounds.
 
 `BETA.DIST` can evaluate either the cumulative probability or density on `[A, B]` (default
  `[0, 1]`).
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BETA.DIST(x, alpha, beta, cumulative, [a], [b])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `alpha` | number | Required | — |
+| `beta` | number | Required | — |
+| `cumulative` | number | Required | — |
+| `a` | number | Optional | — |
+| `b` | number | Optional | — |
+
+## How it works
+
+With t = (x − A)/(B − A), the density on [A,B] is proportional to t raised to alpha − 1 times (1 − t) raised to beta − 1. Both shapes must be positive, B must exceed A, and x must lie within the closed interval. The cumulative switch integrates that density from A to x.
 
 ## Remarks
  - Requires `alpha &gt; 0`, `beta &gt; 0`, and `A &lt; B`.
  - `x` must lie within the inclusive interval `[A, B]`.
  - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
+
+## Error cases
+
  - Returns `#NUM!` for invalid bounds, parameters, or out-of-range `x`.
 
 ## Examples
 
-<Tabs items={["Uniform beta CDF on [0,1]", "Uniform beta PDF on [0,1]"]}>
-<Tab value="Uniform beta CDF on [0,1]">
-<FunctionSandbox
-  title="Uniform beta CDF on [0,1]"
-  formula={`=BETA.DIST(0.3,1,1,TRUE)`}
+<FunctionExample
+  title={"Evaluate the cumulative beta probability below 0.32."}
+  formula={"=BETA.DIST(0.32,2,3,TRUE)"}
   grid={{}}
-  expected={"0.3"}
+  expected={"0.383713279999999"}
 />
-</Tab>
 
-<Tab value="Uniform beta PDF on [0,1]">
-<FunctionSandbox
-  title="Uniform beta PDF on [0,1]"
-  formula={`=BETA.DIST(0.3,1,1,FALSE)`}
+<FunctionExample
+  title={"Evaluate density on a rescaled interval from zero to ten."}
+  formula={"=BETA.DIST(4,2,3,FALSE,0,10)"}
+  grid={{}}
+  expected={"0.1728"}
+/>
+
+<FunctionExample
+  title={"Evaluate at the upper endpoint of the default interval."}
+  formula={"=BETA.DIST(1,2,3,TRUE)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A value above the upper endpoint is outside the distribution."}
+  formula={"=BETA.DIST(1.1,2,3,TRUE)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"Uniform beta CDF on [0,1]"}
+  formula={"=BETA.DIST(0.3,1,1,TRUE)"}
+  grid={{}}
+  expected={"0.3"}
+/>
 
-- [BETA.INV](/docs/reference/functions/stats/beta-inv)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [AVERAGEA](/docs/reference/functions/stats/averagea)
-- [BINOM.DIST.RANGE](/docs/reference/functions/stats/binom-dist-range)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
+<FunctionExample
+  title={"Uniform beta PDF on [0,1]"}
+  formula={"=BETA.DIST(0.3,1,1,FALSE)"}
+  grid={{}}
+  expected={"1"}
+/>
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/beta-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

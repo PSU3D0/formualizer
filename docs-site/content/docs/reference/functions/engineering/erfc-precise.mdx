@@ -1,14 +1,29 @@
 ---
 title: "ERFC.PRECISE"
-description: "ERFC.PRECISE: Returns the complementary error function of a number."
+seoTitle: "ERFC.PRECISE function: formula syntax and examples"
+description: "Returns the complementary error function of a number. =ERFC.PRECISE(x)"
 ---
 
-<FunctionPageSchema id="engineering/erfc-precise" />
-
-## Summary
+Returns the complementary error function of a number.
 
 Computes `1 - ERF(x)` using the same one-argument precise behavior as Excel
  `ERFC.PRECISE`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ERFC.PRECISE(x)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | any | Required | — |
+
+## How it works
+
+Evaluates 1 minus the error function at x, equivalently the Gaussian integral from x to infinity scaled by 2 / √π. It is defined for real x and tends to zero as x grows.
 
 ## Remarks
  - Accepts one numeric argument.
@@ -17,43 +32,45 @@ Computes `1 - ERF(x)` using the same one-argument precise behavior as Excel
 
 ## Examples
 
-<Tabs items={["Complement at one", "Complement at zero"]}>
-<Tab value="Complement at one">
-<FunctionSandbox
-  title="Complement at one"
-  formula={`=ERFC.PRECISE(1)`}
+<FunctionExample
+  title={"Find the complementary Gaussian integral above one."}
+  formula={"=ERFC.PRECISE(1)"}
   grid={{}}
-  expected={"0.1572992070502851"}
+  expected={"0.157299207050285"}
 />
-</Tab>
 
-<Tab value="Complement at zero">
-<FunctionSandbox
-  title="Complement at zero"
-  formula={`=ERFC.PRECISE(0)`}
+<FunctionExample
+  title={"The integral above −1 includes more area than the integral above 1."}
+  formula={"=ERFC.PRECISE(-1)"}
+  grid={{}}
+  expected={"1.84270079294971"}
+/>
+
+<FunctionExample
+  title={"At the origin the complementary integral equals one."}
+  formula={"=ERFC.PRECISE(0)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The input must be numeric."}
+  formula={"=ERFC.PRECISE(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
 ## Related functions
 
 - [ERFC](/docs/reference/functions/engineering/erfc)
 - [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
 - [ERF](/docs/reference/functions/engineering/erf)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
-- [IMABS](/docs/reference/functions/engineering/imabs)
 
 ## FAQ
 
 ### How is ERFC.PRECISE different from ERFC?
 It exposes the precise one-argument complement form; numerically it matches ERFC(x) in this implementation.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/erfc-precise" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

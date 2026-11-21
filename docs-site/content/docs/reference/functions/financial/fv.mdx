@@ -1,43 +1,82 @@
 ---
 title: "FV"
-description: "FV: Calculates future value from a fixed periodic rate and payment stream."
+seoTitle: "FV function: formula syntax and examples"
+description: "Calculates future value from a fixed periodic rate and payment stream. =FV(rate, nper, pmt, [pv], [type])"
 ---
 
-<FunctionPageSchema id="financial/fv" />
-
-## Summary
+Calculates future value from a fixed periodic rate and payment stream.
 
 Use this to project an ending balance after compounding a present value and periodic payments.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FV(rate, nper, pmt, [pv], [type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `nper` | number | Required | — |
+| `pmt` | number | Required | — |
+| `pv` | number | Optional | — |
+| `type` | number | Optional | — |
 
 ## Remarks
  - `rate` is the interest rate per period.
  - Cash-flow sign convention: payments you make are negative; receipts are positive.
  - `type = 0` models end-of-period payments; `type != 0` models beginning-of-period payments.
  - When `rate` is zero, result is linear (`-pv - pmt * nper`).
+
+## Error cases
+
  - Returns argument-related errors if coercion fails or an input is an error value.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=FV(0.04/12, 120, -200)`}
+<FunctionExample
+  title={"Find the accumulated value of two years of monthly deposits."}
+  formula={"=FV(0.05/12,24,-100)"}
   grid={{}}
-  expected={"null"}
+  expected={"2518.59205339984"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=FV(0, 24, -150, 1000)`}
+<FunctionExample
+  title={"Add an opening deposit and move the monthly deposits to the start of each period."}
+  formula={"=FV(0.05/12,24,-100,-500,1)"}
   grid={{}}
-  expected={"null"}
+  expected={"3081.55685473484"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"With no interest each deposit contributes only its principal."}
+  formula={"=FV(0,24,-100)"}
+  grid={{}}
+  expected={"2400"}
+/>
+
+<FunctionExample
+  title={"The interest rate must be a number."}
+  formula={"=FV(\"rate\",24,-100)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Project the balance after ten years of 200 monthly deposits at 4% annual interest."}
+  formula={"=FV(0.04/12, 120, -200)"}
+  grid={{}}
+  expected={"29449.9609450957"}
+/>
+
+<FunctionExample
+  title={"Accumulate two years of 150 monthly deposits at zero interest while offsetting an initial 1,000 receipt."}
+  formula={"=FV(0, 24, -150, 1000)"}
+  grid={{}}
+  expected={"2600"}
+/>
 
 ## Related functions
 
@@ -45,16 +84,12 @@ Use this to project an ending balance after compounding a present value and peri
 - [PMT](/docs/reference/functions/financial/pmt)
 - [NPER](/docs/reference/functions/financial/nper)
 - [RATE](/docs/reference/functions/financial/rate)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 
 ## FAQ
 
 ### What happens when `rate` is zero in `FV`?
 It falls back to linear accumulation: `-pv - pmt * nper` with no compounding.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/fv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

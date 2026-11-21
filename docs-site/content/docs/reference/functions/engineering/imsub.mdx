@@ -1,58 +1,94 @@
 ---
 title: "IMSUB"
-description: "IMSUB: Returns the difference between two complex numbers."
+seoTitle: "IMSUB function: formula syntax and examples"
+description: "Returns the difference between two complex numbers. =IMSUB(inumber1, inumber2)"
 ---
 
-<FunctionPageSchema id="engineering/imsub" />
-
-## Summary
+Returns the difference between two complex numbers.
 
 Subtracts the second complex value from the first.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMSUB(inumber1, inumber2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber1` | any | Required | — |
+| `inumber2` | any | Required | — |
+
+## Return type
+
+Can return text.
+
+## How it works
+
+Subtract corresponding components to get (a − c) + (b − d)i. Subtraction is defined for every pair of complex numbers.
+
+## Differences from Excel
+
+When the first operand is purely real and the second uses a j suffix, Formualizer uses i in the result where Excel preserves j. The examples display each coefficient to at most 15 significant digits.
+
 ## Remarks
  - Inputs are coerced to complex-number text before parsing.
- - Output keeps the suffix style from the parsed inputs.
+ - The output uses the suffix style of the first argument, defaulting to `i` for a purely real first argument.
+
+## Error cases
+
  - Invalid complex text returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Subtract a+bi values", "Subtract pure imaginary from real"]}>
-<Tab value="Subtract a+bi values">
-<FunctionSandbox
-  title="Subtract a+bi values"
-  formula={`=IMSUB("5+3i","2+i")`}
+<FunctionExample
+  title={"Subtract the real and imaginary components of two complex numbers."}
+  formula={"=IMSUB(\"3+4i\",\"1+i\")"}
+  grid={{}}
+  expected={"2+3i"}
+/>
+
+<FunctionExample
+  title={"Subtract a purely real value from a j-suffixed complex value."}
+  formula={"=IMSUB(\"3+4j\",\"2\")"}
+  grid={{}}
+  expected={"1+4j"}
+/>
+
+<FunctionExample
+  title={"Equal complex values cancel both coefficients."}
+  formula={"=IMSUB(\"1+i\",\"1+i\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The second argument cannot be parsed as a complex value."}
+  formula={"=IMSUB(\"1+i\",\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Subtract a+bi values"}
+  formula={"=IMSUB(\"5+3i\",\"2+i\")"}
   grid={{}}
   expected={"3+2i"}
 />
-</Tab>
-
-<Tab value="Subtract pure imaginary from real">
-<FunctionSandbox
-  title="Subtract pure imaginary from real"
-  formula={`=IMSUB("4","7j")`}
-  grid={{}}
-  expected={"4-7j"}
-/>
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [IMSUM](/docs/reference/functions/engineering/imsum)
 - [IMDIV](/docs/reference/functions/engineering/imdiv)
 - [COMPLEX](/docs/reference/functions/engineering/complex)
-- [BESSELI](/docs/reference/functions/engineering/besseli)
-- [BESSELJ](/docs/reference/functions/engineering/besselj)
-- [BESSELK](/docs/reference/functions/engineering/besselk)
 
 ## FAQ
 
 ### How is subtraction ordered in `IMSUB`?
 It always computes `inumber1 - inumber2`; swapping arguments changes the sign of the result.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imsub" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

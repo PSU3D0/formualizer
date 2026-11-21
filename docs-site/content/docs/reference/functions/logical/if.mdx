@@ -1,59 +1,101 @@
 ---
 title: "IF"
-description: "IF: Returns one value when a condition is TRUE and another when FALSE."
+seoTitle: "IF function: formula syntax and examples"
+description: "Returns one value when a condition is TRUE and another when FALSE. =IF(logical_test, value_if_true, [value_if_false])"
 ---
 
-<FunctionPageSchema id="logical/if" />
-
-## Summary
+Returns one value when a condition is TRUE and another when FALSE.
 
 `IF(condition, value_if_true, [value_if_false])` supports two or three arguments.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IF(logical_test, value_if_true, [value_if_false])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `logical_test` | any | Required | — |
+| `value_if_true` | any | Required | — |
+| `value_if_false` | any | Optional | — |
+
+## Return type
+
+Can return a reference when evaluated in a reference context.
 
 ## Remarks
  - Condition coercion: booleans are used directly, numbers use `0` as FALSE and non-zero as TRUE.
  - A blank condition is treated as FALSE.
- - Text or other non-numeric/non-boolean conditions return `#VALUE!`.
  - With only two arguments, the FALSE branch defaults to logical `FALSE`.
+ - Array and range conditions select elementwise. Scalar branches and singleton
+   axes broadcast; incompatible non-singleton dimensions return `#VALUE!`.
+ - Each needed branch evaluates once; an unused branch is not evaluated and
+   does not contribute to the result shape. Condition errors remain positional.
+ - Generated arrays use the shared size cap (`#NUM!`); cancellation and
+   resource failures abort evaluation rather than becoming array elements.
+
+## Error cases
+
+ - Text or other non-numeric/non-boolean conditions return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Numeric condition", "Two-argument IF defaults false branch"]}>
-<Tab value="Numeric condition">
-<FunctionSandbox
-  title="Numeric condition"
-  formula={`=IF(2, "yes", "no")`}
+<FunctionExample
+  title={"Choose between two text values with a numeric comparison."}
+  formula={"=IF(2>1,\"Large\",\"Small\")"}
+  grid={{}}
+  expected={"Large"}
+/>
+
+<FunctionExample
+  title={"Omit the value for a false comparison."}
+  formula={"=IF(2>1,\"Large\")"}
+  grid={{}}
+  expected={"Large"}
+/>
+
+<FunctionExample
+  title={"Equal values make the strict greater-than comparison false."}
+  formula={"=IF(2>2,\"Large\",\"Small\")"}
+  grid={{}}
+  expected={"Small"}
+/>
+
+<FunctionExample
+  title={"The selected result expression divides by zero."}
+  formula={"=IF(2>1,1/0,0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Numeric condition"}
+  formula={"=IF(2, \"yes\", \"no\")"}
   grid={{}}
   expected={"yes"}
 />
-</Tab>
 
-<Tab value="Two-argument IF defaults false branch">
-<FunctionSandbox
-  title="Two-argument IF defaults false branch"
-  formula={`=IF(0, 10)`}
+<FunctionExample
+  title={"Two-argument IF defaults false branch"}
+  formula={"=IF(0, 10)"}
   grid={{}}
-  expected={"false"}
+  expected={"FALSE"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [IFS](/docs/reference/functions/logical-ext/ifs)
 - [IFERROR](/docs/reference/functions/logical-ext/iferror)
 - [IFNA](/docs/reference/functions/logical-ext/ifna)
-- [AND](/docs/reference/functions/logical/and)
-- [OR](/docs/reference/functions/logical/or)
-- [FALSE](/docs/reference/functions/logical/false)
 
 ## FAQ
 
 ### What is returned when IF has only two arguments and condition is FALSE?
 The false branch defaults to logical FALSE when value_if_false is omitted.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="logical/if" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/logical.rs)

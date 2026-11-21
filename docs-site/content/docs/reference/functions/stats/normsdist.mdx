@@ -1,0 +1,71 @@
+---
+title: "NORMSDIST"
+seoTitle: "NORMSDIST function: formula syntax and examples"
+description: "Returns the standard normal cumulative distribution at z (legacy name). =NORMSDIST(z)"
+---
+
+Returns the standard normal cumulative distribution at `z` (legacy name).
+
+`NORMSDIST(z)` is `NORM.S.DIST(z, TRUE)`: the compatibility form has no
+ `cumulative` argument and always returns the cumulative probability.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NORMSDIST(z)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `z` | number | Required | — |
+
+## How it works
+
+Maps to NORM.S.DIST with cumulative set to TRUE. Integrates the standard normal density from negative infinity to z, for any real z.
+
+## Error cases
+
+ - A non-numeric `z` returns `#VALUE!`.
+
+## Examples
+
+<FunctionExample
+  title={"Use the legacy name to integrate standard-normal density up to 0.5."}
+  formula={"=NORMSDIST(0.5)"}
+  grid={{}}
+  expected={"0.691462461274013"}
+/>
+
+<FunctionExample
+  title={"Move the cutoff up to 0.75 standard deviations above the center."}
+  formula={"=NORMSDIST(0.75)"}
+  grid={{}}
+  expected={"0.773372647623132"}
+/>
+
+<FunctionExample
+  title={"At 0.01 the lower-tail area slightly exceeds one half."}
+  formula={"=NORMSDIST(0.01)"}
+  grid={{}}
+  expected={"0.503989356314632"}
+/>
+
+<FunctionExample
+  title={"The input must be numeric."}
+  formula={"=NORMSDIST(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Find the cumulative standard normal probability at z = 1.333333."}
+  formula={"=NORMSDIST(1.333333)"}
+  grid={{}}
+  expected={"0.908788725604095"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

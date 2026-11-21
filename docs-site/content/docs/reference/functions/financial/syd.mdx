@@ -1,51 +1,86 @@
 ---
 title: "SYD"
-description: "SYD: Returns sum-of-years'-digits depreciation for a requested period."
+seoTitle: "SYD function: formula syntax and examples"
+description: "Returns sum-of-years'-digits depreciation for a requested period. =SYD(cost, salvage, life, per)"
 ---
 
-<FunctionPageSchema id="financial/syd" />
-
-## Summary
+Returns sum-of-years'-digits depreciation for a requested period.
 
 `SYD` applies accelerated depreciation by weighting earlier periods more heavily.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SYD(cost, salvage, life, per)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `cost` | number | Required | — |
+| `salvage` | number | Required | — |
+| `life` | number | Required | — |
+| `per` | number | Required | — |
+
 ## Remarks
  - Formula: `(cost - salvage) * (life - per + 1) / (life * (life + 1) / 2)`.
- - `life` and `per` must satisfy: `life &gt; 0`, `per &gt; 0`, and `per &lt;= life`; otherwise returns `#NUM!`.
  - The function uses the provided numeric values directly (no integer-only enforcement).
  - Result sign follows `(cost - salvage)`: positive for typical depreciation expense, negative if `salvage &gt; cost`.
 
+## Error cases
+
+ - `life` and `per` must satisfy: `life &gt; 0`, `per &gt; 0`, and `per &lt;= life`; otherwise returns `#NUM!`.
+
 ## Examples
 
-<Tabs items={["First SYD period", "Final SYD period"]}>
-<Tab value="First SYD period">
-<FunctionSandbox
-  title="First SYD period"
-  formula={`=SYD(10000, 1000, 5, 1)`}
+<FunctionExample
+  title={"Calculate depreciation in period two using the sum of the years' digits."}
+  formula={"=SYD(1000,100,5,2)"}
+  grid={{}}
+  expected={"240"}
+/>
+
+<FunctionExample
+  title={"Compare the first period, which has the largest weight."}
+  formula={"=SYD(1000,100,5,1)"}
+  grid={{}}
+  expected={"300"}
+/>
+
+<FunctionExample
+  title={"Evaluate the last allowed period."}
+  formula={"=SYD(1000,100,5,5)"}
+  grid={{}}
+  expected={"60"}
+/>
+
+<FunctionExample
+  title={"The period cannot exceed the asset's useful life."}
+  formula={"=SYD(1000,100,5,6)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"First SYD period"}
+  formula={"=SYD(10000, 1000, 5, 1)"}
   grid={{}}
   expected={"3000"}
 />
-</Tab>
 
-<Tab value="Final SYD period">
-<FunctionSandbox
-  title="Final SYD period"
-  formula={`=SYD(10000, 1000, 5, 5)`}
+<FunctionExample
+  title={"Final SYD period"}
+  formula={"=SYD(10000, 1000, 5, 5)"}
   grid={{}}
   expected={"600"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SLN](/docs/reference/functions/financial/sln)
 - [DB](/docs/reference/functions/financial/db)
 - [DDB](/docs/reference/functions/financial/ddb)
-- [ISPMT](/docs/reference/functions/financial/ispmt)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
-- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
 
 ## FAQ
 
@@ -55,8 +90,6 @@ No strict integer check is enforced; it uses provided numeric values directly af
 ### Which period values are valid?
 `per` must satisfy `0 &lt; per &lt;= life`, and `life` must be positive; otherwise `#NUM!` is returned.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/syd" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/depreciation.rs)

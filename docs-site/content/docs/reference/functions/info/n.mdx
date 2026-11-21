@@ -1,13 +1,22 @@
 ---
 title: "N"
-description: "Converts a value to its numeric representation."
+seoTitle: "N function: formula syntax and examples"
+description: "Converts a value to its numeric representation. =N(value)"
 ---
 
-<FunctionPageSchema id="info/n" />
-
-## Summary
-
 Converts a value to its numeric representation.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=N(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
 
 ## Remarks
  - Numbers pass through unchanged; booleans convert to `1`/`0`.
@@ -17,43 +26,52 @@ Converts a value to its numeric representation.
 
 ## Examples
 
-<Tabs items={["Boolean to number", "Text to zero"]}>
-<Tab value="Boolean to number">
-<FunctionSandbox
-  title="Boolean to number"
-  formula={`=N(TRUE)`}
+<FunctionExample
+  title={"Convert a logical value to its numeric equivalent."}
+  formula={"=N(TRUE)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Text to zero">
-<FunctionSandbox
-  title="Text to zero"
-  formula={`=N("hello")`}
+<FunctionExample
+  title={"Test the numeric-looking text case."}
+  formula={"=N(\"17\")"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Convert the false logical value at the zero boundary."}
+  formula={"=N(FALSE)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Preserve the error already present in the input."}
+  formula={"=N(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Text to zero"}
+  formula={"=N(\"hello\")"}
+  grid={{}}
+  expected={"0"}
+/>
 
 ## Related functions
 
 - [VALUE](/docs/reference/functions/text/value)
 - [T](/docs/reference/functions/info/t)
 - [TYPE](/docs/reference/functions/info/type)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
 ### What does N do with text and blanks?
 Text and blank values convert to 0, while existing errors are passed through.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/n" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

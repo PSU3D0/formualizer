@@ -1,57 +1,85 @@
 ---
 title: "SQRT"
-description: "SQRT: Returns the positive square root of a number."
+seoTitle: "SQRT function: formula syntax and examples"
+description: "Returns the positive square root of a number. =SQRT(number)"
 ---
-
-<FunctionPageSchema id="math/sqrt" />
-
-## Summary
 
 Returns the positive square root of a number.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SQRT(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
 ## Remarks
  - Input must be greater than or equal to zero.
+
+## Error cases
+
  - Negative input returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Square root of a perfect square", "Square root from a reference"]}>
-<Tab value="Square root of a perfect square">
-<FunctionSandbox
-  title="Square root of a perfect square"
-  formula={`=SQRT(144)`}
+<FunctionExample
+  title={"Evaluate the square-root calculation on a positive number."}
+  formula={"=SQRT(4)"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Use a fractional input that does not produce an integer result."}
+  formula={"=SQRT(2.5)"}
+  grid={{}}
+  expected={"1.58113883008419"}
+/>
+
+<FunctionExample
+  title={"Evaluate the calculation at its lower boundary."}
+  formula={"=SQRT(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A negative input has no real square root."}
+  formula={"=SQRT(-1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Square root of a perfect square"}
+  formula={"=SQRT(144)"}
   grid={{}}
   expected={"12"}
 />
-</Tab>
 
-<Tab value="Square root from a reference">
-<FunctionSandbox
-  title="Square root from a reference"
-  formula={`=SQRT(A1)`}
+<FunctionExample
+  title={"Square root from a reference"}
+  formula={"=SQRT(A1)"}
   grid={{"A1":"2"}}
-  expected={"1.4142135623730951"}
+  expected={"1.4142135623731"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [POWER](/docs/reference/functions/math/power)
 - [SQRTPI](/docs/reference/functions/math/sqrtpi)
 - [EXP](/docs/reference/functions/math/exp)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
 
 ## FAQ
 
 ### When does SQRT return #NUM!?
 It returns #NUM! for negative inputs because real square roots are undefined there.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sqrt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

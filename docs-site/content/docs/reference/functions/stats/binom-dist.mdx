@@ -1,55 +1,87 @@
 ---
 title: "BINOM.DIST"
-description: "BINOM.DIST: Returns the binomial probability for a count of successes across independent trials."
+seoTitle: "BINOM.DIST function: formula syntax and examples"
+description: "Returns the binomial probability for a count of successes across independent trials. =BINOM.DIST(number_s, trials, probability_s, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/binom-dist" />
-
-## Summary
+Returns the binomial probability for a count of successes across independent trials.
 
 Use `BINOM.DIST` to evaluate either exact-success probability (PMF) or cumulative probability
  up to a success count (CDF).
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BINOM.DIST(number_s, trials, probability_s, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number_s` | number | Required | — |
+| `trials` | number | Required | — |
+| `probability_s` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+For k successes in n independent trials, the point mass is C(n,k) pᵏ(1−p)ⁿ⁻ᵏ. The cumulative mode sums point masses from zero through k. Valid counts satisfy 0 ≤ k ≤ n and p is between zero and one.
 
 ## Remarks
  - `number_s` and `trials` are truncated to integers.
  - Requires `0 &lt;= number_s &lt;= trials`, `trials &gt;= 0`, and `0 &lt;= probability_s &lt;= 1`.
  - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
+ - Alias `BINOMDIST` (the Excel 2007 compatibility name) is supported.
+
+## Error cases
+
  - Returns `#NUM!` for invalid count or probability ranges.
 
 ## Examples
 
-<Tabs items={["Binomial PMF for exactly 3 successes", "Binomial CDF for at most 3 successes"]}>
-<Tab value="Binomial PMF for exactly 3 successes">
-<FunctionSandbox
-  title="Binomial PMF for exactly 3 successes"
-  formula={`=BINOM.DIST(3,10,0.5,FALSE)`}
+<FunctionExample
+  title={"Compute the probability of exactly three successes in eight trials."}
+  formula={"=BINOM.DIST(3,8,0.4,FALSE)"}
+  grid={{}}
+  expected={"0.27869184"}
+/>
+
+<FunctionExample
+  title={"Compute the probability of three or fewer successes."}
+  formula={"=BINOM.DIST(3,8,0.4,TRUE)"}
+  grid={{}}
+  expected={"0.5940864"}
+/>
+
+<FunctionExample
+  title={"Find the point probability at the lower success-count boundary."}
+  formula={"=BINOM.DIST(0,8,0.4,FALSE)"}
+  grid={{}}
+  expected={"0.01679616"}
+/>
+
+<FunctionExample
+  title={"The number of successes cannot exceed the number of trials."}
+  formula={"=BINOM.DIST(9,8,0.4,FALSE)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Binomial PMF for exactly 3 successes"}
+  formula={"=BINOM.DIST(3,10,0.5,FALSE)"}
   grid={{}}
   expected={"0.1171875"}
 />
-</Tab>
 
-<Tab value="Binomial CDF for at most 3 successes">
-<FunctionSandbox
-  title="Binomial CDF for at most 3 successes"
-  formula={`=BINOM.DIST(3,10,0.5,TRUE)`}
+<FunctionExample
+  title={"Binomial CDF for at most 3 successes"}
+  formula={"=BINOM.DIST(3,10,0.5,TRUE)"}
   grid={{}}
   expected={"0.171875"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [BINOM.DIST.RANGE](/docs/reference/functions/stats/binom-dist-range)
-- [F.DIST](/docs/reference/functions/stats/f-dist)
-- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
-- [LOGNORM.DIST](/docs/reference/functions/stats/lognorm-dist)
-- [NEGBINOM.DIST](/docs/reference/functions/stats/negbinom-dist)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/binom-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

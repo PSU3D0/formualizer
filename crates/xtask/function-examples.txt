@@ -1,0 +1,2188 @@
+# Authored examples are added in function groups.
+
+# Grid values use JSON types. A leading "=" in a grid string marks a formula.
+# <FUNCTION> expands to each name in a group. Cases never store a result.
+
+DAVERAGE:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Average the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same average for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | With the West filter, only the score of 3 contributes to the average.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the average for East.
+
+DCOUNT:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Count the numeric values in the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same numeric count for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | With the West filter, only the score of 3 contributes to the numeric count.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the numeric count for East.
+
+DCOUNTA:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Count the populated values in the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same populated count for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | With the West filter, only the score of 3 contributes to the populated count.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the populated count for East.
+
+DMAX:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Find the largest value in the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same maximum for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | With the West filter, only the score of 3 contributes to the maximum.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the maximum for East.
+
+DMIN:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Find the smallest value in the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same minimum for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | With the West filter, only the score of 3 contributes to the minimum.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the minimum for East.
+
+DPRODUCT:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Multiply the values in the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same product for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | With the West filter, only the score of 3 contributes to the product.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the product for East.
+
+DSTDEV:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Estimate the sample standard deviation of the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same sample standard deviation for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | The one West record cannot supply a sample standard deviation, so IFERROR returns the fallback.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the sample standard deviation for East.
+
+DSTDEVP:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Calculate the population standard deviation of the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same population standard deviation for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | The population standard deviation of the sole West score is zero.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the population standard deviation for East.
+
+DSUM:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Add the values in the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same sum for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | With the West filter, only the score of 3 contributes to the sum.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the sum for East.
+
+DVAR:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Estimate the sample variance of the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same sample variance for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | The West sample has only one record, so IFERROR handles the undefined sample variance.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the sample variance for East.
+
+DVARP:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West"}
+ordinary | =<FUNCTION>(A1:B4,"Score",D1:D2) | Calculate the population variance of the Score column for the two East records.
+expected-equal | =<FUNCTION>(A1:B4,2,D1:D2) | Use field number 2 to get the same population variance for East.
+boundary | =IFERROR(<FUNCTION>(A1:B4,"Score",E1:E2),"Insufficient data") | With one matching West score, its population variance is zero.
+error | =<FUNCTION>(A1:B4,"Missing",D1:D2) | The missing field header prevents calculating the population variance for East.
+
+DGET:
+grid {"A1":"Team","B1":"Score","A2":"East","B2":8,"A3":"West","B3":3,"A4":"East","B4":10,"D1":"Team","D2":"East","E1":"Team","E2":"West","F1":"Team","F2":"North"}
+ordinary | =DGET(A1:B4,"Score",E1:E2) | Retrieve the Score from the only West record.
+expected-equal | =DGET(A1:B4,2,E1:E2) | Select the same field by numeric position.
+boundary | =DGET(A1:B4,"Team",E1:E2) | Return a text field from the matching record.
+error | =DGET(A1:B4,"Score",D1:D2) | The East criterion matches two rows, so there is no single record to retrieve.
+error | =DGET(A1:B4,"Score",F1:F2) | The North criterion matches no records.
+
+DATE:
+ordinary | =DATE(2024,2,29) | Construct a leap-day date from separate year, month and day numbers.
+alternate | =DATE(2024,13,1) | Normalize month 13 to January of the following year.
+boundary | =DATE(2024,3,0) | Use day zero to find the final day of the preceding month.
+error | =DATE("year",2,29) | The year argument must resolve to a number.
+
+DATEDIF:
+ordinary | =DATEDIF(DATE(2024,1,1),DATE(2024,2,15),"d") | Count elapsed days across a month boundary.
+alternate | =DATEDIF(DATE(2024,1,1),DATE(2024,2,15),"m") | Count complete months between the same dates.
+boundary | =DATEDIF(DATE(2024,1,1),DATE(2024,1,1),"d") | The elapsed interval between identical dates is zero.
+error | =DATEDIF(DATE(2024,2,15),DATE(2024,1,1),"d") | A start date after the end date falls outside the supported interval.
+
+DATEVALUE:
+ordinary | =DATEVALUE("2024-02-29") | Convert an ISO date string to a date serial.
+expected-equal | =DATEVALUE("2/29/2024") | Parse a slash-delimited date string.
+boundary | =DATEVALUE("1900-01-01") | Convert the first day of the 1900 date system.
+error | =DATEVALUE("not a date") | Text in an unrecognized date format cannot produce a serial.
+
+YEAR:
+ordinary | =<FUNCTION>(DATE(2024,2,29)) | Extract the date component from a leap-day date.
+expected-equal | =<FUNCTION>(DATE(2024,12,31)+0.75) | Read the date component from a serial that also contains a time fraction.
+boundary | =<FUNCTION>(1) | Read the component of the first day of the 1900 date system.
+error | =<FUNCTION>("not a date") | An unrecognized date string cannot be interpreted as a serial.
+
+DAY MONTH:
+ordinary | =<FUNCTION>(DATE(2024,2,29)) | Extract the date component from a leap-day date.
+alternate | =<FUNCTION>(DATE(2024,12,31)+0.75) | Read the date component from a serial that also contains a time fraction.
+boundary | =<FUNCTION>(1) | Read the component of the first day of the 1900 date system.
+error | =<FUNCTION>("not a date") | An unrecognized date string cannot be interpreted as a serial.
+
+DAYS:
+ordinary | =DAYS(DATE(2024,3,1),DATE(2024,2,28)) | Count the days across February 29 in a leap year.
+alternate | =DAYS(DATE(2024,2,28),DATE(2024,3,1)) | Reverse the order to get a signed day difference.
+boundary | =DAYS(45000,45000) | Identical serials have no elapsed days.
+error | =DAYS("invalid",45000) | The end date cannot be read from this text.
+
+DAYS360:
+ordinary | =DAYS360(DATE(2024,1,1),DATE(2024,3,1)) | Measure two full months on the 360-day financial calendar.
+alternate | =DAYS360(DATE(2024,2,29),DATE(2024,3,31),TRUE) | Select the European convention for the month-end adjustment.
+boundary | =DAYS360(DATE(2024,1,1),DATE(2024,1,1)) | A zero-length interval at the start of a month counts as zero.
+error | =DAYS360("invalid",45000) | The start date must be a valid serial or supported date string.
+
+EOMONTH:
+ordinary | =<FUNCTION>(DATE(2024,1,31),1) | Move forward one month from January 31 into leap-year February.
+expected-equal | =<FUNCTION>(DATE(2024,3,15),-1) | Use a negative month offset to go backward.
+boundary | =<FUNCTION>(DATE(2024,2,15),0) | Apply a zero-month offset in the middle of February.
+error | =<FUNCTION>(DATE(2024,2,15),"one") | The month offset must be numeric.
+
+EDATE:
+ordinary | =<FUNCTION>(DATE(2024,1,31),1) | Move forward one month from January 31 into leap-year February.
+alternate | =<FUNCTION>(DATE(2024,3,15),-1) | Use a negative month offset to go backward.
+boundary | =<FUNCTION>(DATE(2024,2,15),0) | Apply a zero-month offset in the middle of February.
+error | =<FUNCTION>(DATE(2024,2,15),"one") | The month offset must be numeric.
+
+HOUR MINUTE SECOND:
+ordinary | =<FUNCTION>(TIME(14,35,27)) | Extract the component from a time with nonzero hours, minutes and seconds.
+expected-equal | =<FUNCTION>(DATE(2024,2,29)+TIME(14,35,27)) | Read the time component from a serial that also includes a date.
+boundary | =<FUNCTION>(0) | Read the component at midnight.
+error | =<FUNCTION>("not a time") | An unrecognized time string cannot be converted to a serial.
+
+ISOWEEKNUM:
+ordinary | =ISOWEEKNUM(DATE(2024,1,8)) | Find the ISO week for the second Monday in January.
+alternate | =ISOWEEKNUM(DATE(2021,1,1)) | An early January date can belong to the previous ISO week-year.
+boundary | =ISOWEEKNUM(DATE(2021,1,4)) | The first Monday of 2021 starts ISO week one.
+error | =ISOWEEKNUM("invalid") | An invalid date cannot be placed in an ISO week.
+
+NETWORKDAYS:
+grid {"A1":45294}
+ordinary | =NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7)) | Count working days across a full Monday-to-Sunday week.
+alternate | =NETWORKDAYS(DATE(2024,1,1),DATE(2024,1,7),A1) | Remove the Wednesday holiday from the weekday count.
+boundary | =NETWORKDAYS(DATE(2024,1,6),DATE(2024,1,6)) | A single Saturday contributes no working days.
+error | =NETWORKDAYS("invalid",DATE(2024,1,7)) | The start of the interval must be a date.
+
+NETWORKDAYS.INTL:
+grid {"A1":45294}
+ordinary | =NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7)) | Count working days using the default weekend.
+alternate | =NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),1,A1) | Select the Saturday–Sunday weekend and exclude Wednesday’s holiday.
+boundary | =NETWORKDAYS.INTL(DATE(2024,1,7),DATE(2024,1,7),11) | A single Sunday contributes no working days with the selected weekend.
+error | =NETWORKDAYS.INTL(DATE(2024,1,1),DATE(2024,1,7),99) | Weekend code 99 is outside the supported settings.
+
+NOW:
+ordinary | =NOW() | Read the current date and time as a spreadsheet serial.
+alternate | =TODAY()+MOD(NOW(),1) | Combine today's date with the fractional time returned by NOW.
+boundary | =INT(NOW()) | Strip the fractional time and inspect the whole-day portion of the serial.
+
+TODAY:
+ordinary | =TODAY() | Read the current date as a whole-day serial.
+alternate | =TODAY()+7 | Compute the date seven days from recalculation.
+boundary | =MOD(TODAY(),1) | Check the fractional part of today's date serial.
+
+TIME:
+ordinary | =TIME(14,35,27) | Build a time fraction from separate hour, minute and second values.
+alternate | =TIME(1,90,0) | Carry excess minutes into the hour.
+boundary | =TIME(0,0,0) | Midnight is the zero point of the time fraction.
+error | =TIME("hour",0,0) | The hour argument cannot be read from nonnumeric text.
+
+TIMEVALUE:
+ordinary | =TIMEVALUE("14:35:27") | Parse a time written with a 24-hour clock.
+alternate | =TIMEVALUE("2:35 PM") | Parse a time that uses an afternoon marker.
+boundary | =TIMEVALUE("00:00:00") | Parse midnight at the start of a day.
+error | =TIMEVALUE("later") | The input must use a recognized time format.
+
+WEEKDAY:
+ordinary | =WEEKDAY(DATE(2024,1,1)) | Find the day number using the default Sunday-first convention.
+alternate | =WEEKDAY(DATE(2024,1,1),2) | Switch to Monday-first numbering.
+boundary | =WEEKDAY(DATE(2024,1,7),2) | Sunday is the final day under Monday-first numbering.
+error | =WEEKDAY(DATE(2024,1,1),99) | Return type 99 is outside the supported numbering codes.
+
+WEEKNUM:
+ordinary | =WEEKNUM(DATE(2024,1,7)) | The first Sunday starts week two with the default Sunday start.
+alternate | =WEEKNUM(DATE(2024,1,7),2) | With Monday starts, the same Sunday is still in week one.
+boundary | =WEEKNUM(DATE(2024,1,1),2) | January 1 belongs to the first week in this numbering mode.
+error | =WEEKNUM(DATE(2024,1,1),99) | An unsupported return type cannot define a week numbering rule.
+
+WORKDAY:
+grid {"A1":45299}
+ordinary | =WORKDAY(DATE(2024,1,5),1) | Advance one working day from a Friday across the weekend.
+alternate | =WORKDAY(DATE(2024,1,5),1,A1) | Skip Monday as a holiday as well as skipping the weekend.
+boundary | =WORKDAY(DATE(2024,1,5),0) | A zero-day offset preserves the working start date.
+error | =WORKDAY(DATE(2024,1,5),"tomorrow") | The offset must be a number of working days.
+
+WORKDAY.INTL:
+grid {"A1":45299}
+ordinary | =WORKDAY.INTL(DATE(2024,1,5),1) | Advance one workday from Friday with the default weekend.
+alternate | =WORKDAY.INTL(DATE(2024,1,5),2,11,A1) | Count Saturday as the first workday and skip the Sunday weekend and Monday holiday to reach Tuesday.
+boundary | =WORKDAY.INTL(DATE(2024,1,5),0,11) | A zero-day offset returns the start date.
+error | =WORKDAY.INTL(DATE(2024,1,5),1,99) | A weekend code outside the supported range cannot define a working week.
+
+YEARFRAC:
+ordinary | =YEARFRAC(DATE(2024,1,1),DATE(2024,7,1)) | Measure half a calendar year using the default financial convention.
+alternate | =YEARFRAC(DATE(2024,1,1),DATE(2024,7,1),3) | Use actual elapsed days and a 365-day denominator.
+boundary | =YEARFRAC(45000,45000) | Identical dates have a year fraction of zero.
+error | =YEARFRAC(45000,45100,99) | Basis 99 is outside the supported day-count conventions.
+
+BESSELI BESSELJ:
+ordinary | =<FUNCTION>(2,1) | Evaluate the Bessel function at x = 2 and order one.
+alternate | =<FUNCTION>(2,2) | Keep x fixed and compare the result at order two.
+boundary | =<FUNCTION>(0,0) | Evaluate the order-zero function at the origin.
+error | =<FUNCTION>(2,-1) | A negative order is outside the supported domain.
+
+BESSELK BESSELY:
+ordinary | =<FUNCTION>(2,1) | Evaluate the Bessel function at x = 2 and order one.
+alternate | =<FUNCTION>(2,2) | Keep x fixed and compare the result at order two.
+boundary | =<FUNCTION>(0.1,0) | Evaluate the order-zero function near the positive edge of its domain.
+error | =<FUNCTION>(0,0) | The function is undefined at zero.
+
+BIN2DEC:
+ordinary | =<FUNCTION>("1010") | Convert a binary string into a decimal number.
+alternate | =<FUNCTION>("1111111111") | Read the signed value represented by ten set bits.
+boundary | =<FUNCTION>("0") | Convert the all-zero value.
+error | =<FUNCTION>("102") | The digit 2 is outside base two.
+
+HEX2DEC:
+ordinary | =<FUNCTION>("2A") | Convert hexadecimal digits into a decimal number.
+alternate | =<FUNCTION>("FFFFFFFFFF") | Read a signed ten-digit hexadecimal value.
+boundary | =<FUNCTION>("0") | Convert the base-sixteen representation of zero.
+error | =<FUNCTION>("G") | The character G is not a hexadecimal digit.
+
+OCT2DEC:
+ordinary | =<FUNCTION>("52") | Convert two octal digits into a decimal number.
+alternate | =<FUNCTION>("7777777777") | Read a signed ten-digit octal value.
+boundary | =<FUNCTION>("0") | Convert the base-eight representation of zero.
+error | =<FUNCTION>("8") | The digit 8 is outside base eight.
+
+BIN2HEX BIN2OCT:
+ordinary | =<FUNCTION>("1010") | Convert a binary value using the shortest output.
+alternate | =<FUNCTION>("1010",5) | Ask for five output places, padding on the left.
+boundary | =<FUNCTION>("0",1) | Convert zero with a one-place width.
+error | =<FUNCTION>("102") | The input contains a digit outside base two.
+
+HEX2BIN HEX2OCT:
+ordinary | =<FUNCTION>("1E") | Convert hexadecimal 1E with no output padding.
+alternate | =<FUNCTION>("1E",8) | Use eight output characters to preserve leading zeros.
+boundary | =<FUNCTION>("0",1) | Convert zero with a one-place width.
+error | =<FUNCTION>("G") | The input contains an invalid hexadecimal digit.
+
+OCT2BIN OCT2HEX:
+ordinary | =<FUNCTION>("36") | Convert octal 36 with no output padding.
+alternate | =<FUNCTION>("36",8) | Use eight output characters to preserve leading zeros.
+boundary | =<FUNCTION>("0",1) | Convert zero with a one-place width.
+error | =<FUNCTION>("8") | The input contains a digit outside base eight.
+
+DEC2BIN DEC2HEX DEC2OCT:
+ordinary | =<FUNCTION>(30) | Convert a decimal integer using the shortest output.
+alternate | =<FUNCTION>(30,8) | Request eight characters to see the leading-zero padding.
+boundary | =<FUNCTION>(-1) | Convert a negative value to its signed representation.
+error | =<FUNCTION>(30,0) | A nonzero value cannot fit in a zero-place output.
+
+BITAND BITOR BITXOR:
+ordinary | =<FUNCTION>(12,10) | Combine two integers whose binary representations partly overlap.
+alternate | =<FUNCTION>(12,12) | Compare the result when both operands have identical bits.
+boundary | =<FUNCTION>(0,0) | Apply the bit operation to two zero operands.
+error | =<FUNCTION>(-1,10) | Negative operands are outside the supported integer domain.
+
+BITLSHIFT BITRSHIFT:
+ordinary | =<FUNCTION>(12,2) | Move the bits of 12 by two positions.
+alternate | =<FUNCTION>(12,-2) | A negative shift reverses the direction of the operation.
+boundary | =<FUNCTION>(12,0) | A zero-position shift leaves the bits in place.
+error | =<FUNCTION>(-1,2) | Negative operands are outside the supported integer domain.
+
+COMPLEX:
+ordinary | =<FUNCTION>(3,4) | Build complex text with nonzero real and imaginary coefficients.
+alternate | =<FUNCTION>(3,4,"j") | Use j as the imaginary-unit suffix.
+boundary | =<FUNCTION>(0,0) | Combine two zero coefficients.
+error | =<FUNCTION>(3,4,"k") | Only supported imaginary-unit suffixes can be used.
+
+CONVERT:
+ordinary | =<FUNCTION>(2,"km","m") | Convert kilometers to meters within the distance unit family.
+alternate | =<FUNCTION>(32,"F","C") | Convert temperature units using an offset as well as a scale factor.
+boundary | =<FUNCTION>(0,"m","km") | A linear distance conversion preserves zero.
+error | =<FUNCTION>(2,"m","s") | Distance and time are incompatible unit families.
+
+DELTA:
+ordinary | =<FUNCTION>(4,4) | Test whether two equal numbers match.
+alternate | =<FUNCTION>(4,5) | Compare unequal numbers.
+boundary | =<FUNCTION>(0) | Omit the second argument to compare the first number against zero.
+error | =<FUNCTION>("invalid",4) | A nonnumeric argument cannot be compared as a number.
+
+ERF:
+ordinary | =<FUNCTION>(1) | Evaluate the error function from zero to the supplied limit.
+alternate | =<FUNCTION>(0.5,1) | Evaluate the error function over an interval with a nonzero lower limit.
+boundary | =<FUNCTION>(0) | Evaluate the error function at zero.
+error | =<FUNCTION>("invalid") | The limit must be numeric.
+
+ERF.PRECISE:
+ordinary | =<FUNCTION>(1) | Integrate the scaled Gaussian from zero to one.
+alternate | =<FUNCTION>(-1) | Reverse the orientation of the integral using a negative limit.
+boundary | =<FUNCTION>(0) | The integral from zero to zero vanishes.
+error | =<FUNCTION>("invalid") | The input must be numeric.
+
+ERFC:
+ordinary | =<FUNCTION>(1) | Evaluate one minus the error function at one.
+alternate | =<FUNCTION>(-1) | At negative one the error function is negative, so its complement exceeds one.
+boundary | =<FUNCTION>(0) | The error function vanishes at zero, giving a complement of one.
+error | =<FUNCTION>("invalid") | The input must be numeric.
+
+ERFC.PRECISE:
+ordinary | =<FUNCTION>(1) | Find the complementary Gaussian integral above one.
+alternate | =<FUNCTION>(-1) | The integral above −1 includes more area than the integral above 1.
+boundary | =<FUNCTION>(0) | At the origin the complementary integral equals one.
+error | =<FUNCTION>("invalid") | The input must be numeric.
+
+GESTEP:
+ordinary | =<FUNCTION>(4,3) | Test whether a number reaches a lower threshold.
+expected-equal | =<FUNCTION>(3,3) | Test equality at the inclusive threshold.
+boundary | =<FUNCTION>(0) | Omit the threshold to test against zero.
+error | =<FUNCTION>("invalid",3) | A nonnumeric value cannot be tested against a threshold.
+
+IMABS:
+ordinary | =<FUNCTION>("3+4i") | Find the distance from 3 + 4i to zero.
+expected-equal | =<FUNCTION>("3-4j") | Changing the sign of the imaginary component preserves the magnitude.
+boundary | =<FUNCTION>("1") | A real unit has magnitude one.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the modulus.
+
+IMREAL:
+ordinary | =<FUNCTION>("3+4i") | Read the real coefficient of 3 + 4i.
+expected-equal | =<FUNCTION>("3-4j") | The real coefficient stays three when the imaginary part changes sign.
+boundary | =<FUNCTION>("1") | Read the coefficient of a purely real value.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to extract the real coefficient.
+
+IMAGINARY:
+ordinary | =<FUNCTION>("3+4i") | Read the imaginary coefficient of 3 + 4i.
+alternate | =<FUNCTION>("3-4j") | Extract the signed coefficient of j from 3 − 4j.
+boundary | =<FUNCTION>("1") | A purely real input has imaginary coefficient zero.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to extract the imaginary coefficient.
+
+IMARGUMENT:
+ordinary | =<FUNCTION>("3+4i") | Find the first-quadrant angle of 3 + 4i.
+alternate | =<FUNCTION>("3-4j") | Reflect the vector into the fourth quadrant to get a negative angle.
+boundary | =<FUNCTION>("1") | The positive real axis has angle zero.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to find the argument.
+
+IMCONJUGATE:
+ordinary | =<FUNCTION>("3+4i") | Reflect 3 + 4i to 3 − 4i across the real axis.
+alternate | =<FUNCTION>("3-4j") | Flip the sign of the j coefficient and keep the j suffix.
+boundary | =<FUNCTION>("1") | The conjugate of a real unit is unchanged.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the conjugate.
+
+IMCOS:
+ordinary | =<FUNCTION>("3+4i") | Calculate cosine with real angle 3 and imaginary part 4.
+alternate | =<FUNCTION>("3-4j") | Change the sign of the imaginary part to conjugate the cosine.
+boundary | =<FUNCTION>("1") | At a purely real angle of one radian this reduces to real cosine.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the complex cosine.
+
+IMCOSH:
+ordinary | =<FUNCTION>("3+4i") | Compute hyperbolic cosine at 3 + 4i by averaging opposite exponentials.
+alternate | =<FUNCTION>("3-4j") | Conjugating the input conjugates its hyperbolic cosine.
+boundary | =<FUNCTION>("1") | On the real axis, use the hyperbolic cosine of one.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the hyperbolic cosine.
+
+IMCOT:
+ordinary | =<FUNCTION>("3+4i") | Divide complex cosine by complex sine at 3 + 4i.
+alternate | =<FUNCTION>("3-4j") | Reflect the input across the real axis to reflect the cotangent.
+boundary | =<FUNCTION>("1") | For a real radian angle of one, this returns the ordinary cotangent.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the complex cotangent.
+
+IMCSC:
+ordinary | =<FUNCTION>("3+4i") | Take the reciprocal of the complex sine of 3 + 4i.
+alternate | =<FUNCTION>("3-4j") | Use the conjugate input to reverse the imaginary part of the reciprocal.
+boundary | =<FUNCTION>("1") | For one real radian, take the reciprocal of the ordinary sine.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the complex cosecant.
+
+IMCSCH:
+ordinary | =<FUNCTION>("3+4i") | Take the reciprocal of the hyperbolic sine of 3 + 4i.
+alternate | =<FUNCTION>("3-4j") | Reverse the sign of the imaginary coefficient before computing the reciprocal.
+boundary | =<FUNCTION>("1") | At real one, the result is the reciprocal of sinh(1).
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the hyperbolic cosecant.
+
+IMEXP:
+ordinary | =<FUNCTION>("3+4i") | Scale a rotation of four radians by exp(3).
+alternate | =<FUNCTION>("3-4j") | Reverse the rotation while leaving its magnitude unchanged.
+boundary | =<FUNCTION>("1") | At real one the result reduces to the constant e.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to exponentiate.
+
+IMLN:
+ordinary | =<FUNCTION>("3+4i") | For 3 + 4i, combine the natural logarithm of its magnitude five with its angle.
+alternate | =<FUNCTION>("3-4j") | A negative angle changes the imaginary term of the principal logarithm.
+boundary | =<FUNCTION>("1") | The natural logarithm of a positive real unit is zero.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the natural logarithm.
+
+IMLOG10:
+ordinary | =<FUNCTION>("3+4i") | Compute the complex logarithm at 3 + 4i on a base-ten scale.
+alternate | =<FUNCTION>("3-4j") | Reflect the input while keeping the base-ten logarithm of its magnitude fixed.
+boundary | =<FUNCTION>("1") | The base-ten logarithm of real one is zero.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the base-ten logarithm.
+
+IMLOG2:
+ordinary | =<FUNCTION>("3+4i") | Compute the complex logarithm at 3 + 4i on a base-two scale.
+alternate | =<FUNCTION>("3-4j") | Change the sign of the angle term scaled by ln(2).
+boundary | =<FUNCTION>("1") | On the positive real axis, one has base-two logarithm zero.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the base-two logarithm.
+
+IMSEC:
+ordinary | =<FUNCTION>("3+4i") | Invert the complex cosine at 3 + 4i.
+alternate | =<FUNCTION>("3-4j") | Conjugate the secant by reversing the imaginary part of the input.
+boundary | =<FUNCTION>("1") | A real input of one radian gives the ordinary real secant.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the complex secant.
+
+IMSECH:
+ordinary | =<FUNCTION>("3+4i") | Invert the complex hyperbolic cosine at 3 + 4i.
+alternate | =<FUNCTION>("3-4j") | Reflect the input to change the sign of the secant’s imaginary component.
+boundary | =<FUNCTION>("1") | At real one, the result is the reciprocal of cosh(1).
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the hyperbolic secant.
+
+IMSIN:
+ordinary | =<FUNCTION>("3+4i") | Compute the complex sine at real angle three with imaginary component four.
+alternate | =<FUNCTION>("3-4j") | Keep the real angle and reverse the imaginary component of the sine.
+boundary | =<FUNCTION>("1") | With a real angle of one radian the imaginary part vanishes.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the complex sine.
+
+IMSINH:
+ordinary | =<FUNCTION>("3+4i") | Take half the difference of the opposite complex exponentials.
+alternate | =<FUNCTION>("3-4j") | Compare hyperbolic sine below the real axis.
+boundary | =<FUNCTION>("1") | A real input of one reduces the formula to the ordinary hyperbolic sine.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the hyperbolic sine.
+
+IMSQRT:
+ordinary | =<FUNCTION>("3+4i") | Find the principal square root of 3 + 4i, with magnitude √5.
+alternate | =<FUNCTION>("3-4j") | Reflect the principal root into the lower half-plane.
+boundary | =<FUNCTION>("1") | Real one has principal square root one.
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the principal square root.
+
+IMTAN:
+ordinary | =<FUNCTION>("3+4i") | Divide the complex sine of 3 + 4i by its cosine.
+alternate | =<FUNCTION>("3-4j") | Reflect the input to flip the imaginary sign of the tangent.
+boundary | =<FUNCTION>("1") | With a real argument the result is tan(1).
+error | =<FUNCTION>("invalid") | The text “invalid” has no complex value from which to take the complex tangent.
+
+IMDIV:
+ordinary | =<FUNCTION>("3+4i","1+i") | Divide by a complex value with both coefficients present.
+alternate | =<FUNCTION>("3+4j","2") | Use a purely real divisor with a j-suffixed numerator.
+boundary | =<FUNCTION>("0","1+i") | Divide a zero numerator by a nonzero complex number.
+error | =<FUNCTION>("3+4i","0") | A zero complex divisor is undefined.
+
+IMSUB:
+ordinary | =<FUNCTION>("3+4i","1+i") | Subtract the real and imaginary components of two complex numbers.
+alternate | =<FUNCTION>("3+4j","2") | Subtract a purely real value from a j-suffixed complex value.
+boundary | =<FUNCTION>("1+i","1+i") | Equal complex values cancel both coefficients.
+error | =<FUNCTION>("1+i","invalid") | The second argument cannot be parsed as a complex value.
+
+IMPOWER:
+ordinary | =<FUNCTION>("3+4i",2) | Square a complex number with nonzero real and imaginary parts.
+alternate | =<FUNCTION>("3+4j",-1) | A negative exponent asks for the reciprocal.
+boundary | =<FUNCTION>("3+4i",0) | A nonzero complex base raised to zero gives the multiplicative identity.
+error | =<FUNCTION>("invalid",2) | The base must be a valid complex value.
+
+IMSUM:
+ordinary | =<FUNCTION>("3+4i","1+i") | Add the real and imaginary coefficients of 3 + 4i and 1 + i.
+alternate | =<FUNCTION>("3+4i","1+i","2") | Add two to the real coefficient while leaving the imaginary sum fixed.
+boundary | =<FUNCTION>("3+4i") | With one operand, the sum is the input itself.
+error | =<FUNCTION>("3+4i","invalid") | An operand that cannot be parsed as complex causes an error.
+
+IMPRODUCT:
+ordinary | =<FUNCTION>("3+4i","1+i") | Multiply 3 + 4i by 1 + i using i² = −1.
+alternate | =<FUNCTION>("3+4i","1+i","2") | Multiply both coefficients of the complex product by the real factor two.
+boundary | =<FUNCTION>("3+4i") | With one factor, the product is that factor.
+error | =<FUNCTION>("3+4i","invalid") | An operand that cannot be parsed as complex causes an error.
+
+ABS:
+ordinary | =<FUNCTION>(-4.7) | Evaluate a negative number with a fractional part.
+expected-equal | =<FUNCTION>(4.7) | Compare the result on the positive side of zero.
+boundary | =<FUNCTION>(0) | Evaluate the function at the zero boundary.
+error | =<FUNCTION>("invalid") | A nonnumeric text value cannot be used as the number.
+
+SIGN INT EVEN ODD:
+ordinary | =<FUNCTION>(-4.7) | Evaluate a negative number with a fractional part.
+alternate | =<FUNCTION>(4.7) | Compare the result on the positive side of zero.
+boundary | =<FUNCTION>(0) | Evaluate the function at the zero boundary.
+error | =<FUNCTION>("invalid") | A nonnumeric text value cannot be used as the number.
+
+COS:
+ordinary | =<FUNCTION>(0.5) | Read the unit-circle horizontal coordinate at half a radian.
+expected-equal | =<FUNCTION>(-0.5) | Opposite angles have the same horizontal coordinate.
+boundary | =<FUNCTION>(0) | At zero radians, the horizontal coordinate is one.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the cosine.
+
+COSH:
+ordinary | =<FUNCTION>(0.5) | Average exp(0.5) and exp(−0.5).
+expected-equal | =<FUNCTION>(-0.5) | Negating the argument swaps the terms in the same average.
+boundary | =<FUNCTION>(0) | At zero both exponential terms equal one.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the hyperbolic cosine.
+
+SEC:
+ordinary | =<FUNCTION>(0.5) | Invert the cosine of half a radian.
+expected-equal | =<FUNCTION>(-0.5) | Opposite angles have the same secant because cosine is even.
+boundary | =<FUNCTION>(0) | At zero radians, the reciprocal of cosine is one.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the secant.
+
+SECH:
+ordinary | =<FUNCTION>(0.5) | Take the reciprocal of cosh(0.5).
+expected-equal | =<FUNCTION>(-0.5) | Cosh is the same at both inputs, so the reciprocal is unchanged.
+boundary | =<FUNCTION>(0) | The hyperbolic secant reaches one at zero.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the hyperbolic secant.
+
+SIN:
+ordinary | =<FUNCTION>(0.5) | Read the unit-circle height at half a radian.
+alternate | =<FUNCTION>(-0.5) | Reflect the angle across the horizontal axis to reverse the height.
+boundary | =<FUNCTION>(0) | At zero radians, the unit-circle height is zero.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the sine.
+
+SINH:
+ordinary | =<FUNCTION>(0.5) | Subtract exp(−0.5) from exp(0.5) and halve the difference.
+alternate | =<FUNCTION>(-0.5) | Swapping the two exponentials reverses the sign.
+boundary | =<FUNCTION>(0) | At zero the two exponentials cancel.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the hyperbolic sine.
+
+TAN:
+ordinary | =<FUNCTION>(0.5) | Divide sine by cosine at half a radian.
+alternate | =<FUNCTION>(-0.5) | Negating the angle reverses the sign of the tangent.
+boundary | =<FUNCTION>(0) | A horizontal radius at zero radians has zero slope.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the tangent.
+
+TANH:
+ordinary | =<FUNCTION>(0.5) | Divide sinh(0.5) by cosh(0.5).
+alternate | =<FUNCTION>(-0.5) | The numerator changes sign and the denominator stays positive.
+boundary | =<FUNCTION>(0) | At zero the hyperbolic tangent vanishes.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the hyperbolic tangent.
+
+ASINH:
+ordinary | =<FUNCTION>(0.5) | Find the positive input whose hyperbolic sine is one half.
+alternate | =<FUNCTION>(-0.5) | A negative hyperbolic sine of one half has the opposite inverse.
+boundary | =<FUNCTION>(0) | The inverse hyperbolic sine of zero is zero.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the inverse hyperbolic sine.
+
+ATAN:
+ordinary | =<FUNCTION>(0.5) | Convert a slope of one half to its principal angle.
+alternate | =<FUNCTION>(-0.5) | A slope of negative one half gives an angle below the horizontal.
+boundary | =<FUNCTION>(0) | Zero slope gives a zero angle.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the inverse tangent.
+
+ATANH:
+ordinary | =<FUNCTION>(0.5) | Find the input whose hyperbolic tangent is one half.
+alternate | =<FUNCTION>(-0.5) | Negating the target reverses the inverse hyperbolic tangent.
+boundary | =<FUNCTION>(0) | A hyperbolic tangent of zero comes from input zero.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the inverse hyperbolic tangent.
+
+ASIN:
+ordinary | =<FUNCTION>(0.5) | Find the angle with unit-circle height one half.
+alternate | =<FUNCTION>(-0.5) | A negative height of one half gives the opposite principal angle.
+boundary | =<FUNCTION>(0) | The principal inverse sine of zero is zero.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the inverse sine.
+
+ACOS:
+ordinary | =<FUNCTION>(0.5) | Find the angle with horizontal coordinate one half.
+alternate | =<FUNCTION>(-0.5) | A negative horizontal coordinate of one half gives an obtuse angle.
+boundary | =<FUNCTION>(0) | A zero cosine maps to π/2.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the inverse cosine.
+
+ACOT:
+ordinary | =<FUNCTION>(0.5) | Find the principal angle with cotangent one half.
+alternate | =<FUNCTION>(-0.5) | A negative cotangent of one half selects the obtuse solution.
+boundary | =<FUNCTION>(0) | Cotangent zero occurs at the principal angle π/2.
+error | =<FUNCTION>("invalid") | The text “invalid” cannot be used as the input to the inverse cotangent.
+
+ACOSH:
+ordinary | =<FUNCTION>(2) | Evaluate the inverse hyperbolic cosine above its lower limit.
+alternate | =<FUNCTION>(10) | Compare the result for a larger hyperbolic cosine.
+boundary | =<FUNCTION>(1) | Evaluate at the smallest valid input.
+error | =<FUNCTION>(0.5) | Values below one are outside the real domain.
+
+ACOTH:
+ordinary | =<FUNCTION>(2) | Evaluate the inverse hyperbolic cotangent in its positive domain.
+alternate | =<FUNCTION>(-2) | Evaluate the inverse hyperbolic cotangent in its negative domain.
+boundary | =<FUNCTION>(1.01) | Approach the positive edge of the domain from above.
+error | =<FUNCTION>(0.5) | A value between negative one and one is outside the real domain.
+
+COT:
+ordinary | =<FUNCTION>(0.5) | Divide cosine by sine at one half radian.
+alternate | =<FUNCTION>(-0.5) | Changing the sign of the angle changes the sign of its cotangent.
+boundary | =<FUNCTION>(0.01) | Near zero, a small positive sine makes the cotangent large.
+error | =<FUNCTION>("invalid") | Nonnumeric text cannot be used as the input.
+
+COTH:
+ordinary | =<FUNCTION>(0.5) | Divide cosh by sinh at one half.
+alternate | =<FUNCTION>(-0.5) | Reflect the input to change the sign of the hyperbolic cotangent.
+boundary | =<FUNCTION>(0.01) | Near zero on the positive side, the denominator sinh(0.01) is small.
+error | =<FUNCTION>("invalid") | Nonnumeric text cannot be used as the input.
+
+CSC:
+ordinary | =<FUNCTION>(0.5) | Invert the sine of one half radian.
+alternate | =<FUNCTION>(-0.5) | A negative angle makes the reciprocal of sine negative.
+boundary | =<FUNCTION>(0.01) | Evaluate close to the sine zero at the origin.
+error | =<FUNCTION>("invalid") | Nonnumeric text cannot be used as the input.
+
+CSCH:
+ordinary | =<FUNCTION>(0.5) | Invert the hyperbolic sine of one half.
+alternate | =<FUNCTION>(-0.5) | Negating a real input to sinh negates its reciprocal too.
+boundary | =<FUNCTION>(0.01) | Near zero, sinh grows approximately linearly and its reciprocal is large.
+error | =<FUNCTION>("invalid") | Nonnumeric text cannot be used as the input.
+
+ATAN2:
+ordinary | =<FUNCTION>(3,4) | Measure the angle of a point in the first quadrant.
+alternate | =<FUNCTION>(-3,4) | Move the point to the second quadrant without changing its height.
+boundary | =<FUNCTION>(0,1) | Find the angle of a point on the positive vertical axis.
+error | =<FUNCTION>(0,0) | The origin does not define a direction.
+
+ARABIC:
+ordinary | =<FUNCTION>("XIV") | Convert a Roman numeral that includes subtractive notation.
+expected-equal | =<FUNCTION>("xiv") | Test lowercase Roman letters.
+boundary | =<FUNCTION>("") | Convert a zero-length text input.
+error | =<FUNCTION>("XYZ") | A character outside the Roman alphabet invalidates the input.
+
+BASE:
+ordinary | =<FUNCTION>(31,16) | Convert decimal 31 to a two-digit hexadecimal string.
+alternate | =<FUNCTION>(31,16,5) | Set a minimum width to pad the hexadecimal result.
+boundary | =<FUNCTION>(0,2) | Convert zero in the smallest allowed radix.
+error | =<FUNCTION>(31,1) | Radix one is outside the supported range.
+
+CEILING FLOOR:
+ordinary | =<FUNCTION>(7.2,2) | Round a fractional number to a multiple of two.
+alternate | =<FUNCTION>(7.2,5) | Use a five-unit rounding interval.
+boundary | =<FUNCTION>(8,2) | A number already at a multiple of the significance stays at that multiple.
+error | =<FUNCTION>("invalid",2) | The number argument cannot be read from this text.
+
+CEILING.PRECISE ISO.CEILING:
+ordinary | =<FUNCTION>(7.2,2) | Round a fractional number to a multiple of two.
+expected-equal | =<FUNCTION>(7.2) | Use the default significance.
+boundary | =<FUNCTION>(8,2) | A number already at a multiple of the significance stays at that multiple.
+error | =<FUNCTION>("invalid",2) | The number argument cannot be read from this text.
+
+FLOOR.PRECISE:
+ordinary | =<FUNCTION>(7.2,2) | Round a fractional number to a multiple of two.
+alternate | =<FUNCTION>(7.2) | Use the default significance.
+boundary | =<FUNCTION>(8,2) | A number already at a multiple of the significance stays at that multiple.
+error | =<FUNCTION>("invalid",2) | The number argument cannot be read from this text.
+
+CEILING.MATH FLOOR.MATH:
+ordinary | =<FUNCTION>(7.2,2) | Round a fractional number to a multiple of two.
+alternate | =<FUNCTION>(-7.2,2) | Compare how the default mode rounds negative numbers.
+boundary | =<FUNCTION>(8,2) | A number already at a multiple of the significance stays at that multiple.
+error | =<FUNCTION>("invalid",2) | The number argument cannot be read from this text.
+
+COMBIN COMBINA PERMUT:
+ordinary | =<FUNCTION>(5,2) | Count selections of size two from a population of five.
+alternate | =<FUNCTION>(5,1) | Compare the result when selecting a single member.
+boundary | =<FUNCTION>(5,0) | Count the ways to make an empty selection.
+error | =<FUNCTION>(-1,2) | A negative population size is invalid.
+
+DECIMAL:
+ordinary | =<FUNCTION>("1F",16) | Convert a hexadecimal string to a decimal value.
+alternate | =<FUNCTION>("10101",2) | Parse the same kind of text in base two.
+boundary | =<FUNCTION>("0",2) | A zero digit represents a value of zero at the minimum radix.
+error | =<FUNCTION>("2",2) | The digit 2 cannot appear in a binary number.
+
+DEGREES:
+ordinary | =<FUNCTION>(PI()/2) | Convert a right angle from radians to degrees.
+alternate | =<FUNCTION>(-PI()) | Convert a negative half-turn.
+boundary | =<FUNCTION>(0) | The zero angle stays zero after converting units.
+error | =<FUNCTION>("invalid") | The angle must be numeric.
+
+RADIANS:
+ordinary | =<FUNCTION>(90) | Convert a right angle from degrees to radians.
+alternate | =<FUNCTION>(-180) | Convert a negative half-turn.
+boundary | =<FUNCTION>(0) | The zero angle stays zero after converting units.
+error | =<FUNCTION>("invalid") | The angle must be numeric.
+
+EXP:
+ordinary | =<FUNCTION>(2) | Raise the base of the natural logarithm to a positive power.
+alternate | =<FUNCTION>(-2) | A negative exponent gives the reciprocal.
+boundary | =<FUNCTION>(0) | Raising the base to zero gives one.
+error | =<FUNCTION>("invalid") | The exponent must resolve to a number.
+
+FACT FACTDOUBLE:
+ordinary | =<FUNCTION>(7) | Evaluate the factorial product for a positive odd integer.
+alternate | =<FUNCTION>(6.9) | Pass a fractional value to see how the input is truncated.
+boundary | =<FUNCTION>(0) | Evaluate the product at zero.
+error | =<FUNCTION>(-3) | A negative input is outside the supported domain.
+
+GCD LCM:
+ordinary | =<FUNCTION>(18,24) | Compute the result for two positive integers with common factors.
+expected-equal | =<FUNCTION>(18.7,24.2) | Use fractional inputs to see the effect of truncation.
+boundary | =<FUNCTION>(0,24) | Include a zero as one of the operands.
+error | =<FUNCTION>(-18,24) | A negative operand falls outside the supported domain.
+
+LOG:
+ordinary | =<FUNCTION>(100) | Use the default base to evaluate a power of ten.
+alternate | =<FUNCTION>(32,2) | Supply base two to compute a binary logarithm.
+boundary | =<FUNCTION>(1) | The logarithm of one is zero in any valid base.
+error | =<FUNCTION>(100,1) | A logarithm with base one is undefined.
+
+LN LOG10:
+ordinary | =<FUNCTION>(100) | Evaluate the logarithm of a positive number above one.
+alternate | =<FUNCTION>(0.01) | A positive value below one gives a negative logarithm.
+boundary | =<FUNCTION>(1) | The logarithm of one is zero.
+error | =<FUNCTION>(0) | Zero is outside the real logarithm domain.
+
+MOD QUOTIENT:
+ordinary | =<FUNCTION>(17,5) | Divide two positive integers with a remainder.
+alternate | =<FUNCTION>(-17,5) | Compare the result when the first number is negative.
+boundary | =<FUNCTION>(15,5) | Divide integers with no remainder.
+error | =<FUNCTION>(17,0) | A zero denominator makes the operation undefined.
+
+MROUND:
+ordinary | =<FUNCTION>(17,5) | Round 17 to the nearest multiple of five.
+alternate | =<FUNCTION>(-17,-5) | Use negative inputs on both sides of the rounding calculation.
+boundary | =<FUNCTION>(15,5) | A value already at a multiple stays in place.
+error | =<FUNCTION>(17,-5) | Opposite signs for the number and multiple are rejected.
+
+PI:
+ordinary | =<FUNCTION>() | Return the constant pi at spreadsheet precision.
+alternate | =2*PI()*3 | Use pi in the circumference formula for a circle of radius three.
+boundary | =PI()*0^2 | The area expression for a circle of radius zero evaluates to zero.
+
+POWER:
+ordinary | =<FUNCTION>(2,5) | Raise a positive base to a positive integer power.
+alternate | =<FUNCTION>(2,-5) | A negative exponent gives the reciprocal of the positive power.
+boundary | =<FUNCTION>(2,0) | A nonzero base raised to zero gives one.
+error | =<FUNCTION>(-2,0.5) | A negative base raised to this fractional exponent has no real value.
+
+ROMAN:
+ordinary | =<FUNCTION>(1999) | Convert a decimal integer to the default Roman numeral form.
+alternate | =<FUNCTION>(1999,4) | Choose the shortest supported form.
+boundary | =<FUNCTION>(1) | Convert the smallest positive integer.
+error | =<FUNCTION>(4000) | The input exceeds the supported upper bound.
+
+ROUND ROUNDDOWN ROUNDUP:
+ordinary | =<FUNCTION>(12.345,2) | Round to two places to the right of the decimal point.
+alternate | =<FUNCTION>(127,-1) | Round to a place left of the decimal point.
+boundary | =<FUNCTION>(12.345,0) | Select zero decimal places to return an integer.
+error | =<FUNCTION>("invalid",2) | The number cannot be read from nonnumeric text.
+
+SERIESSUM:
+ordinary | =<FUNCTION>(2,1,1,{1,2,3}) | Sum three terms with powers that increase by one at each coefficient.
+alternate | =<FUNCTION>(2,0,2,{1,2,3}) | Start at the constant term and increase each power by two.
+boundary | =<FUNCTION>(2,0,1,{5}) | Evaluate the series with just one coefficient.
+error | =<FUNCTION>(2,0,1,{1,"invalid",3}) | A nonnumeric coefficient interrupts the series.
+
+SQRT SQRTPI:
+ordinary | =<FUNCTION>(4) | Evaluate the square-root calculation on a positive number.
+alternate | =<FUNCTION>(2.5) | Use a fractional input that does not produce an integer result.
+boundary | =<FUNCTION>(0) | Evaluate the calculation at its lower boundary.
+error | =<FUNCTION>(-1) | A negative input has no real square root.
+
+TRUNC:
+ordinary | =<FUNCTION>(12.345) | Omit the precision to truncate at the decimal point.
+alternate | =<FUNCTION>(12.345,2) | Retain two places to the right of the decimal point.
+boundary | =<FUNCTION>(127,-1) | Truncate to a place left of the decimal point.
+error | =<FUNCTION>("invalid",2) | The number argument cannot be read from nonnumeric text.
+
+ACCRINT:
+ordinary | =<FUNCTION>(DATE(2024,1,1),DATE(2024,7,1),DATE(2024,5,1),0.06,1000,2) | Compute accrued interest between issue and a settlement before the first coupon.
+alternate | =<FUNCTION>(DATE(2024,1,1),DATE(2024,7,1),DATE(2024,5,1),0.06,1000,2,3) | Use an actual-day count and a 365-day year instead of the default basis.
+boundary | =<FUNCTION>(DATE(2024,1,1),DATE(2024,7,1),DATE(2024,1,2),0.06,1000,2) | Measure accrued interest one day after issue.
+error | =<FUNCTION>(DATE(2024,1,1),DATE(2024,7,1),DATE(2024,5,1),0.06,1000,3) | A frequency of three is outside the supported coupon schedules.
+
+ACCRINTM:
+ordinary | =<FUNCTION>(DATE(2024,1,1),DATE(2024,7,1),0.06,1000) | Compute interest at maturity between January and July.
+alternate | =<FUNCTION>(DATE(2024,1,1),DATE(2024,7,1),0.06,1000,3) | Use the actual-day count with a 365-day year.
+boundary | =<FUNCTION>(DATE(2024,1,1),DATE(2024,1,2),0.06,1000) | Accrue interest for just one day.
+error | =<FUNCTION>(DATE(2024,7,1),DATE(2024,1,1),0.06,1000) | Settlement before issue is outside the valid date order.
+
+CUMIPMT CUMPRINC:
+ordinary | =<FUNCTION>(0.05/12,36,10000,1,12,0) | Calculate the portion paid during the first year of a three-year loan.
+alternate | =<FUNCTION>(0.05/12,36,10000,1,12,1) | Move payments to the beginning of each month.
+boundary | =<FUNCTION>(0.05/12,36,10000,36,36,0) | Limit the calculation to the final payment.
+error | =<FUNCTION>(0.05/12,36,10000,12,1,0) | The ending period cannot precede the starting period.
+
+DB:
+ordinary | =<FUNCTION>(1000,100,5,2) | Apply the fixed declining-balance rate in the second year after a full first year.
+alternate | =<FUNCTION>(1000,100,5,2,1) | Recalculate the second-year depreciation when the first year has only one month.
+boundary | =<FUNCTION>(1000,100,5,1) | Apply the fixed rate to the original cost in year one.
+error | =<FUNCTION>(1000,100,5,0) | Year zero precedes the depreciation schedule.
+
+DDB:
+ordinary | =<FUNCTION>(1000,100,5,2) | Apply the default double-declining rate after the first period’s depreciation.
+alternate | =<FUNCTION>(1000,100,5,2,1) | Use a declining-balance factor of one in place of the default factor of two.
+boundary | =<FUNCTION>(1000,100,5,1) | Apply the double-declining rate to the original cost for the first period.
+error | =<FUNCTION>(1000,100,5,0) | The double-declining schedule starts at period one.
+
+DOLLARDE DOLLARFR:
+ordinary | =<FUNCTION>(1.25,32) | Convert a dollar amount expressed with a 32-part fraction.
+alternate | =<FUNCTION>(-1.25,16) | Use a negative dollar amount and a different fraction base.
+boundary | =<FUNCTION>(0,32) | Zero remains zero under the conversion.
+error | =<FUNCTION>(1.25,0) | A zero fraction denominator cannot define the conversion.
+
+EFFECT:
+ordinary | =<FUNCTION>(0.06,12) | Convert a 6% nominal annual rate to an effective rate with monthly compounding.
+alternate | =<FUNCTION>(0.06,4) | Find the effective yield when the same 6% nominal rate compounds quarterly.
+boundary | =<FUNCTION>(0.06,1) | Annual compounding leaves the effective rate within floating-point rounding of 6%.
+error | =<FUNCTION>(0.06,0) | An effective annual rate needs at least one compounding period.
+
+NOMINAL:
+ordinary | =<FUNCTION>(0.06,12) | Recover the nominal annual rate behind a 6% effective yield with monthly compounding.
+alternate | =<FUNCTION>(0.06,4) | Recover the nominal annual rate behind a 6% effective yield with quarterly compounding.
+boundary | =<FUNCTION>(0.06,1) | With one compounding period, the nominal rate is 6% to floating-point precision.
+error | =<FUNCTION>(0.06,0) | Zero compounding periods cannot determine an equivalent nominal rate.
+
+FV:
+ordinary | =<FUNCTION>(0.05/12,24,-100) | Find the accumulated value of two years of monthly deposits.
+alternate | =<FUNCTION>(0.05/12,24,-100,-500,1) | Add an opening deposit and move the monthly deposits to the start of each period.
+boundary | =<FUNCTION>(0,24,-100) | With no interest each deposit contributes only its principal.
+error | =<FUNCTION>("rate",24,-100) | The interest rate must be a number.
+
+IPMT PPMT:
+ordinary | =<FUNCTION>(0.05/12,2,24,5000) | Break down the second payment on a two-year loan at five percent.
+alternate | =<FUNCTION>(0.05/12,2,24,5000,-1000,0) | Leave a balance of 1,000 after the final end-of-period payment.
+boundary | =<FUNCTION>(0.05/12,24,24,5000) | Calculate the last payment in the schedule.
+error | =<FUNCTION>(0.05/12,25,24,5000) | A payment period beyond the end of the schedule is invalid.
+
+IRR:
+ordinary | =<FUNCTION>({-100,40,50,30}) | Find the rate for an investment with three periodic inflows.
+alternate | =<FUNCTION>({-100,40,50,30},0.2) | Start the solver with a different rate guess.
+boundary | =<FUNCTION>({-100,115}) | Use the minimum two cash flows, an outlay followed by a larger inflow.
+error | =<FUNCTION>({100,40,50,30}) | Cash flows all have the same sign, so there is no zero crossing.
+
+ISPMT:
+ordinary | =<FUNCTION>(0.06,2,6,1200) | Compute interest for the period indexed by two under the even-principal schedule.
+alternate | =<FUNCTION>(0.06,4,6,1200) | Compare the interest later in the same schedule.
+boundary | =<FUNCTION>(0,2,6,1200) | An interest rate of zero yields zero interest.
+error | =<FUNCTION>(0.06,2,0,1200) | A zero number of periods leaves the calculation without a denominator.
+
+MIRR:
+ordinary | =<FUNCTION>({-100,40,50,30},0.05,0.07) | Use separate borrowing and reinvestment rates for an investment.
+alternate | =<FUNCTION>({-100,40,50,30},0.05,0.15) | Raise the reinvestment rate without changing the financing rate.
+boundary | =<FUNCTION>({-100,100},0,0) | Equal cash flows over one interval give a zero modified return at zero rates.
+error | =<FUNCTION>({100,40,50,30},0.05,0.07) | The calculation needs an outflow as well as an inflow.
+
+NPER:
+ordinary | =<FUNCTION>(0.05/12,-100,1200) | Estimate the payment count for a 1,200 balance with monthly payments.
+alternate | =<FUNCTION>(0.05/12,-100,1200,0,1) | Move the payment date to the beginning of each month.
+boundary | =<FUNCTION>(0,-100,1200) | At zero interest the balance falls by the payment amount each month.
+error | =<FUNCTION>(0,0,1200) | A nonzero balance cannot be retired with zero payments at zero interest.
+
+NPV:
+ordinary | =<FUNCTION>(0.05,40,50,60) | Discount three end-of-period cash flows.
+expected-equal | =<FUNCTION>(0.05,{40,50,60}) | Provide the same series as an array in a single value argument.
+boundary | =<FUNCTION>(0,40,50,60) | A zero discount rate leaves the cash flows undiscounted.
+error | =<FUNCTION>(-1,40,50,60) | A rate of negative one makes the discount denominator zero.
+
+PDURATION:
+ordinary | =<FUNCTION>(0.05,100,150) | Find the time required for 100 to grow to 150.
+alternate | =<FUNCTION>(0.1,100,150) | Compare the duration under a higher growth rate.
+boundary | =<FUNCTION>(0.05,100,100) | The target has already been met when current and future values agree.
+error | =<FUNCTION>(0,100,150) | The duration formula requires a positive growth rate.
+
+PMT:
+ordinary | =<FUNCTION>(0.05/12,24,5000) | Calculate the end-of-month payment for a two-year loan.
+alternate | =<FUNCTION>(0.05/12,24,5000,0,1) | Calculate the payment when it is due at the start of each month.
+boundary | =<FUNCTION>(0,24,4800) | At zero interest the principal is divided evenly between payments.
+error | =<FUNCTION>(0.05/12,0,5000) | A zero-length schedule cannot amortize a nonzero principal.
+
+PRICE:
+ordinary | =<FUNCTION>(DATE(2024,2,20),DATE(2027,1,15),0.05,0.06,100,2) | Price a three-year bond at a yield above its coupon rate.
+alternate | =<FUNCTION>(DATE(2024,2,20),DATE(2027,1,15),0.05,0.06,100,2,3) | Switch to an actual-day count with a 365-day year.
+boundary | =<FUNCTION>(DATE(2024,7,15),DATE(2027,1,15),0.05,0.05,100,2) | Settle on a coupon date with equal coupon and yield to price the bond at par.
+error | =<FUNCTION>(DATE(2024,2,20),DATE(2027,1,15),0.05,0.06,100,3) | The coupon frequency of three is unsupported.
+
+PV:
+ordinary | =<FUNCTION>(0.05/12,24,-250) | Discount a series of two years of monthly payments.
+alternate | =<FUNCTION>(0.05/12,24,-250,0,1) | Discount beginning-of-month payments instead of end-of-month payments.
+boundary | =<FUNCTION>(0,24,-250) | With no interest the calculation reduces to undiscounted payments.
+error | =<FUNCTION>("rate",24,-250) | The discount rate must be numeric.
+
+RATE:
+ordinary | =<FUNCTION>(24,-230,5000) | Solve for the periodic rate implied by the principal and payment.
+alternate | =<FUNCTION>(24,-230,5000,0,1,0.02) | Use beginning-of-period payments and choose a starting guess for the solver.
+boundary | =<FUNCTION>(1,-5275,5017) | Infer the interest rate when a 5,017 loan is repaid in a single payment.
+error | =<FUNCTION>(24,"payment",5000) | The payment must be numeric before the solver can run.
+
+RRI:
+ordinary | =<FUNCTION>(5,100,150) | Find the constant growth rate that takes 100 to 150 in five periods.
+alternate | =<FUNCTION>(10,100,150) | Compare the equivalent rate over a longer investment horizon.
+boundary | =<FUNCTION>(5,100,100) | Unchanged value over five periods gives a zero growth rate.
+error | =<FUNCTION>(0,100,150) | A zero number of periods cannot define a compound growth rate.
+
+SLN:
+ordinary | =<FUNCTION>(1000,100,5) | Spread depreciable value evenly over five periods.
+alternate | =<FUNCTION>(1000,0,5) | Depreciate the full cost when there is no salvage value.
+boundary | =<FUNCTION>(1000,1000,5) | Equal cost and salvage leave nothing to depreciate.
+error | =<FUNCTION>(1000,100,0) | A zero useful life leaves no periods over which to depreciate cost.
+
+SYD:
+ordinary | =<FUNCTION>(1000,100,5,2) | Calculate depreciation in period two using the sum of the years' digits.
+alternate | =<FUNCTION>(1000,100,5,1) | Compare the first period, which has the largest weight.
+boundary | =<FUNCTION>(1000,100,5,5) | Evaluate the last allowed period.
+error | =<FUNCTION>(1000,100,5,6) | The period cannot exceed the asset's useful life.
+
+TBILLEQ TBILLPRICE:
+ordinary | =<FUNCTION>(DATE(2024,1,1),DATE(2024,4,1),0.05) | Evaluate a treasury bill with a five-percent discount.
+alternate | =<FUNCTION>(DATE(2024,1,1),DATE(2024,7,1),0.05) | Compare the result for a later maturity.
+boundary | =<FUNCTION>(DATE(2024,1,1),DATE(2024,1,2),0.05) | Evaluate the bill at a one-day term.
+error | =<FUNCTION>(DATE(2024,4,1),DATE(2024,1,1),0.05) | Maturity must follow settlement.
+
+TBILLYIELD:
+ordinary | =<FUNCTION>(DATE(2024,1,1),DATE(2024,4,1),98) | Calculate yield at a price of 98 per 100 face value.
+alternate | =<FUNCTION>(DATE(2024,1,1),DATE(2024,4,1),99) | Compare the result for a higher purchase price.
+boundary | =<FUNCTION>(DATE(2024,1,1),DATE(2024,1,2),99.9) | Compute the annualized yield for a bill maturing the next day.
+error | =<FUNCTION>(DATE(2024,1,1),DATE(2024,4,1),0) | A zero purchase price cannot serve as a return denominator.
+
+XIRR:
+grid {"A1":-100,"A2":60,"A3":55,"B1":"=DATE(2024,1,1)","B2":"=DATE(2024,9,1)","B3":"=DATE(2025,5,1)"}
+ordinary | =<FUNCTION>(A1:A3,B1:B3) | Find the rate for cash flows at irregular dates.
+expected-equal | =<FUNCTION>(A1:A3,B1:B3,0.15) | Choose a different initial guess for the numerical solver.
+boundary | =<FUNCTION>(A1:A2,B1:B2) | Use the minimum schedule of one outflow and one inflow.
+error | =<FUNCTION>(A1:A3,B1:B2) | The cash flow and date ranges must have the same length.
+
+XNPV:
+grid {"A1":-100,"A2":60,"A3":55,"B1":"=DATE(2024,1,1)","B2":"=DATE(2024,9,1)","B3":"=DATE(2025,5,1)"}
+ordinary | =<FUNCTION>(0.05,A1:A3,B1:B3) | Discount the cash flows according to their actual dates.
+alternate | =<FUNCTION>(0.05,A1:A2,B1:B2) | Recalculate the value with the final cash flow removed.
+boundary | =<FUNCTION>(0,A1:A3,B1:B3) | A zero discount rate leaves the signed cash flows undiscounted.
+error | =<FUNCTION>(0.05,A1:A3,B1:B2) | Every cash flow needs a date in the corresponding position.
+
+YIELD:
+ordinary | =<FUNCTION>(DATE(2024,2,20),DATE(2027,1,15),0.05,98,100,2) | Solve for the yield of a semiannual bond purchased below par.
+alternate | =<FUNCTION>(DATE(2024,2,20),DATE(2027,1,15),0.05,98,100,2,3) | Use actual days and a 365-day convention for accrued interest.
+boundary | =<FUNCTION>(DATE(2024,2,20),DATE(2027,1,15),0.05,100,100,2) | Compare the yield with the coupon when the bond is purchased at par.
+error | =<FUNCTION>(DATE(2024,2,20),DATE(2027,1,15),0.05,0,100,2) | The bond price must be positive.
+
+CELL:
+grid {"A1":42}
+ordinary | =<FUNCTION>("address",A1) | Read the absolute address of a known input cell.
+alternate | =<FUNCTION>("contents",A1) | Change the information type to read the cell's content.
+boundary | =<FUNCTION>("contents",B1) | Read the contents of a reference to an empty cell.
+error | =<FUNCTION>("unknown",A1) | An unsupported information type cannot identify a cell property.
+
+ERROR.TYPE:
+ordinary | =ERROR.TYPE(1/0) | Identify the error code produced by division by zero.
+alternate | =ERROR.TYPE(NA()) | Identify the code for a missing value instead.
+boundary | =ERROR.TYPE(SQRT(-1)) | Identify a numeric domain error at the square-root boundary.
+error | =ERROR.TYPE(0) | A number has no spreadsheet error code.
+
+FORMULATEXT:
+grid {"A1":"=1+2","A2":"=42","A3":42,"B1":"=SUM(1,2)"}
+ordinary | =<FUNCTION>(A1) | Read an arithmetic formula as text without returning the calculated sum.
+alternate | =<FUNCTION>(B1) | Retrieve a formula that contains a function call.
+boundary | =<FUNCTION>(A2) | A formula consisting of a single literal still has formula text.
+error | =<FUNCTION>(A3) | A value stored directly in a cell has no formula text to return.
+
+ISBLANK:
+grid {"A1":"=\"\"","A2":0}
+ordinary | =<FUNCTION>(B1) | Test a cell with no stored value or formula.
+alternate | =<FUNCTION>(A2) | A cell containing zero is populated.
+boundary | =<FUNCTION>(A1) | A formula that evaluates to empty text leaves the cell occupied.
+
+ISERROR:
+ordinary | =<FUNCTION>(1/0) | Test a division-by-zero input.
+expected-equal | =<FUNCTION>(NA()) | Test how the predicate classifies the missing-value error.
+boundary | =<FUNCTION>(0) | Test a valid number at zero, with no input error.
+
+ISERR ISNA:
+ordinary | =<FUNCTION>(1/0) | Test a division-by-zero input.
+alternate | =<FUNCTION>(NA()) | Test how the predicate classifies the missing-value error.
+boundary | =<FUNCTION>(0) | Test a valid number at zero, with no input error.
+
+ISEVEN ISODD:
+ordinary | =<FUNCTION>(7) | Test the parity of a positive odd integer.
+alternate | =<FUNCTION>(-8.9) | Test a negative decimal, which the function truncates before testing parity.
+boundary | =<FUNCTION>(0) | Test parity at zero.
+error | =<FUNCTION>("seven") | The input cannot be converted to an integer.
+
+ISFORMULA:
+grid {"A1":"=1+2","A2":3,"B1":"=1/0"}
+ordinary | =<FUNCTION>(A1) | Test a reference to a cell that stores an arithmetic formula.
+alternate | =<FUNCTION>(A2) | The same calculated number stored directly is a value.
+boundary | =<FUNCTION>(B1) | A formula cell remains a formula cell if its calculation returns an error.
+
+ISNUMBER:
+ordinary | =<FUNCTION>(TRUE) | Test how the predicate classifies a logical value.
+expected-equal | =<FUNCTION>("123") | Test numeric-looking text without converting it to a number.
+boundary | =<FUNCTION>("") | Test an empty string, which still has a text type.
+
+ISLOGICAL ISTEXT:
+ordinary | =<FUNCTION>(TRUE) | Test how the predicate classifies a logical value.
+alternate | =<FUNCTION>("123") | Test numeric-looking text without converting it to a number.
+boundary | =<FUNCTION>("") | Test an empty string, which still has a text type.
+
+ISNONTEXT:
+ordinary | =ISNONTEXT(42) | Test whether an ordinary number is a non-text value.
+expected-equal | =ISNONTEXT(TRUE) | Test whether a logical result is also non-text.
+boundary | =ISNONTEXT("") | An empty string is still text.
+
+ISREF:
+grid {"A1":7}
+ordinary | =<FUNCTION>(A1) | Test a reference to a populated cell.
+expected-equal | =<FUNCTION>(A1:B2) | A rectangular range is also a reference.
+boundary | =<FUNCTION>(7) | A number written directly in the formula is a value.
+
+N:
+ordinary | =<FUNCTION>(TRUE) | Convert a logical value to its numeric equivalent.
+alternate | =<FUNCTION>("17") | Test the numeric-looking text case.
+boundary | =<FUNCTION>(FALSE) | Convert the false logical value at the zero boundary.
+error | =<FUNCTION>(1/0) | Preserve the error already present in the input.
+
+NA:
+ordinary | =IFNA(NA(),"No observation") | Mark an observation as missing and substitute descriptive text for it.
+alternate | =ISNA(NA()) | Check explicitly for the missing-value error.
+boundary | =COUNT({0,1},IFNA(NA(),"")) | Count the numeric observations while representing missing data as empty text.
+error | =<FUNCTION>() | Produce the missing-value error directly.
+
+SHEETS:
+grid {"A1":7,"Sheet2!A1":8}
+ordinary | =<FUNCTION>() | Use the default based on the workbook containing the formula.
+expected-equal | =<FUNCTION>(Sheet2!A1) | Supply a reference on a second sheet.
+boundary | =<FUNCTION>(A1) | Evaluate a reference to the first sheet.
+
+SHEET:
+grid {"A1":7,"Sheet2!A1":8}
+ordinary | =<FUNCTION>() | Use the default based on the workbook containing the formula.
+alternate | =<FUNCTION>(Sheet2!A1) | Supply a reference on a second sheet.
+boundary | =<FUNCTION>(A1) | Evaluate a reference to the first sheet.
+
+T:
+ordinary | =<FUNCTION>("sample") | Return a text value unchanged.
+alternate | =<FUNCTION>(123) | Return an empty string for a number.
+boundary | =<FUNCTION>("") | Preserve an already empty string.
+error | =<FUNCTION>(1/0) | Propagate the error instead of returning empty text.
+
+TYPE:
+ordinary | =<FUNCTION>(7) | Read the type code of a numeric value.
+alternate | =<FUNCTION>("7") | Read the different type code for text with the same displayed character.
+boundary | =<FUNCTION>(TRUE) | Read the type code for a logical value.
+
+TRUE:
+ordinary | =TRUE | Return the logical constant TRUE.
+alternate | =IF(TRUE,"Pass","Fail") | Select the first result branch with the true constant.
+boundary | =TRUE*0 | Use the constant in arithmetic with a zero factor.
+
+FALSE:
+ordinary | =FALSE | Return the logical constant FALSE.
+alternate | =IF(FALSE,"Pass","Fail") | Select the second result branch with the false constant.
+boundary | =FALSE*10 | Use the constant in arithmetic, where it contributes zero.
+
+LAMBDA:
+ordinary | =LET(double,LAMBDA(amount,amount*2),double(7)) | Bind a one-parameter calculation to a local name and invoke it.
+alternate | =LET(total,LAMBDA(price,quantity,price*quantity),total(7,3)) | Invoke a local calculation with separate price and quantity arguments.
+boundary | =LET(answer,LAMBDA(42),answer()) | Invoke a locally bound calculation that has no parameters.
+error | =LET(double,LAMBDA(amount,amount/0),double(7)) | An error in the body is returned when the locally bound function is invoked.
+
+LET:
+ordinary | =<FUNCTION>(total,4,total*3) | Bind a value locally and reuse it in the final calculation.
+expected-equal | =<FUNCTION>(price,4,quantity,3,price*quantity) | Bind two local names and use both in the calculation.
+boundary | =<FUNCTION>(amount,0,amount*3) | Bind zero as a valid local value.
+error | =<FUNCTION>(amount,4,amount/0) | An error in the result expression propagates.
+
+AND OR:
+ordinary | =<FUNCTION>(TRUE,FALSE) | Combine one true condition with one false condition.
+expected-equal | =<FUNCTION>(TRUE,TRUE,FALSE) | Add a third condition and compare the result.
+boundary | =<FUNCTION>(FALSE) | Evaluate the logical operation with just one false argument.
+error | =<FUNCTION>(TRUE,1/0) | A supplied argument evaluates to an error.
+
+XOR:
+ordinary | =<FUNCTION>(TRUE,FALSE) | Combine one true condition with one false condition.
+alternate | =<FUNCTION>(TRUE,TRUE,FALSE) | Add a third condition and compare the result.
+boundary | =<FUNCTION>(FALSE) | Evaluate the logical operation with just one false argument.
+error | =<FUNCTION>(TRUE,1/0) | A supplied argument evaluates to an error.
+
+IF:
+ordinary | =<FUNCTION>(2>1,"Large","Small") | Choose between two text values with a numeric comparison.
+expected-equal | =<FUNCTION>(2>1,"Large") | Omit the value for a false comparison.
+boundary | =<FUNCTION>(2>2,"Large","Small") | Equal values make the strict greater-than comparison false.
+error | =<FUNCTION>(2>1,1/0,0) | The selected result expression divides by zero.
+
+IFERROR IFNA:
+ordinary | =<FUNCTION>(NA(),"Unavailable") | Replace a missing-value error with a readable fallback.
+alternate | =<FUNCTION>(42,"Unavailable") | Preserve a numeric input when there is no error to replace.
+boundary | =<FUNCTION>(0,"Unavailable") | A zero result is a valid value and does not need the fallback.
+error | =<FUNCTION>(NA(),1/0) | An error in the fallback becomes the formula result.
+
+IFS:
+ordinary | =<FUNCTION>(7>10,"High",7>5,"Medium") | Return the result for the first true comparison in a sequence.
+expected-equal | =<FUNCTION>(7>5,"Medium",7>6,"High") | The first match takes precedence when multiple conditions are true.
+boundary | =<FUNCTION>(TRUE,"Default") | Use one unconditional comparison, the minimum supported pair.
+error | =<FUNCTION>(FALSE,"No match") | With no true condition there is no result branch to return.
+
+NOT:
+ordinary | =<FUNCTION>(TRUE) | Invert a true logical value.
+alternate | =<FUNCTION>(FALSE) | Invert a false logical value.
+boundary | =<FUNCTION>(0) | Test how a zero value is interpreted before negation.
+error | =<FUNCTION>(1/0) | An error cannot be interpreted as a logical value.
+
+SWITCH:
+ordinary | =<FUNCTION>("B","A","Alpha","B","Beta") | Match an expression against a list of candidate values.
+alternate | =<FUNCTION>("C","A","Alpha","B","Beta","Other") | Supply a default result when no candidate matches.
+boundary | =<FUNCTION>(0,0,"Zero") | Evaluate a single match with a zero numeric key.
+error | =<FUNCTION>("C","A","Alpha","B","Beta") | Without a default this unmatched expression has no result.
+
+ADDRESS:
+ordinary | =<FUNCTION>(7,3) | Build an absolute A1-style address from a row and column.
+alternate | =<FUNCTION>(7,3,4,FALSE,"Data") | Choose relative R1C1 notation and include a sheet name.
+boundary | =<FUNCTION>(1,1) | Build the address at the first row and first column.
+error | =<FUNCTION>(0,3) | Row zero is outside the worksheet.
+
+CHOOSE:
+ordinary | =<FUNCTION>(2,"Low","Medium","High") | Select the second member of a list.
+alternate | =<FUNCTION>(3,10,20,30) | Select a numeric value from a longer choice list.
+boundary | =<FUNCTION>(1,"Only choice") | Select the only item in the minimum-size list.
+error | =<FUNCTION>(4,"Low","Medium","High") | An index beyond the last choice is invalid.
+
+CHOOSECOLS:
+ordinary | =<FUNCTION>({1,2,3;4,5,6},2) | Select the middle column from a two-row array.
+alternate | =<FUNCTION>({1,2,3;4,5,6},-1,1) | Use a negative index to select the last column, then append the first.
+boundary | =<FUNCTION>({7},1) | A one-cell input also has a first column.
+error | =<FUNCTION>({1,2,3;4,5,6},4) | A column index beyond the array dimensions is invalid.
+
+CHOOSEROWS:
+ordinary | =<FUNCTION>({1,2;3,4;5,6},2) | Select the middle row from a three-row array.
+alternate | =<FUNCTION>({1,2;3,4;5,6},-1,1) | Use a negative index to select the last row before the first.
+boundary | =<FUNCTION>({7},1) | A one-cell array has a first row.
+error | =<FUNCTION>({1,2;3,4;5,6},4) | A row index outside the array cannot be selected.
+
+COLUMN ROW:
+ordinary | =<FUNCTION>(B4) | Read the coordinate of an explicit cell reference.
+alternate | =<FUNCTION>() | Omit the reference to use the cell containing the example formula.
+boundary | =<FUNCTION>(A1) | The first cell has coordinate one along both axes.
+
+COLUMNS ROWS:
+ordinary | =<FUNCTION>({1,2,3;4,5,6}) | Count the corresponding dimension of a rectangular array.
+alternate | =<FUNCTION>({1;2;3}) | Count the dimension when the array has one column and three rows.
+boundary | =<FUNCTION>({42}) | The smallest array has one row and one column.
+
+DROP:
+ordinary | =<FUNCTION>({1,2;3,4;5,6},1) | Remove the first row from a rectangular array.
+alternate | =<FUNCTION>({1,2;3,4;5,6},-1,1) | Remove the last row and the first column.
+boundary | =<FUNCTION>({1,2;3,4},1,1) | Reduce a two-by-two array to a single remaining cell.
+error | =<FUNCTION>({1,2;3,4},"two") | The rows argument must give a numeric count.
+
+FILTER:
+ordinary | =<FUNCTION>({10;20;30},{TRUE;FALSE;TRUE}) | Keep two rows according to a Boolean selector.
+alternate | =<FUNCTION>({10;20;30},{FALSE;FALSE;FALSE},"No match") | Supply a text fallback for an empty filtered result.
+boundary | =<FUNCTION>({10},{TRUE}) | Filter the smallest nonempty array with one true condition.
+error | =<FUNCTION>({10;20;30},{FALSE;FALSE;FALSE}) | An empty result without a fallback returns an error.
+
+GROUPBY:
+ordinary | =<FUNCTION>({"Region";"East";"East";"West"},{"Sales";10;20;8},"SUM") | Sum each region's sales from columns that include headers.
+alternate | =<FUNCTION>({"East";"East";"West"},{10;20;8},"AVERAGE",0,0,-1,,0) | Average each region, omit totals and sort labels in descending order.
+boundary | =<FUNCTION>({"East"},{10},"SUM",0,0) | Group a single observation into one result row.
+error | =<FUNCTION>({"East";"West"},{10},"SUM") | Every group label must have a corresponding value.
+
+HLOOKUP:
+ordinary | =<FUNCTION>("Q2",{"Q1","Q2","Q3";10,20,30},2,FALSE) | Match a header exactly and retrieve the second row.
+alternate | =<FUNCTION>(25,{10,20,30;"Low","Mid","High"},2,TRUE) | Use an approximate lookup in the sorted first row.
+boundary | =<FUNCTION>("Q1",{"Q1","Q2";10,20},1,FALSE) | Retrieve the value from the first row itself.
+error | =<FUNCTION>("Q4",{"Q1","Q2","Q3";10,20,30},2,FALSE) | A missing exact-match key returns an error.
+
+HSTACK VSTACK:
+ordinary | =<FUNCTION>({1,2;3,4},{5,6;7,8}) | Join two equally sized rectangular arrays.
+alternate | =<FUNCTION>({1,2},{3,4},{5,6}) | Join three arrays in their argument order.
+boundary | =<FUNCTION>({42}) | Pass the smallest array as the only argument.
+error | =<FUNCTION>(1/0) | A division-by-zero error is carried into the assembled output.
+
+LOOKUP:
+ordinary | =<FUNCTION>(25,{10,20,30},{"Low","Mid","High"}) | Look up a value between two keys and return the corresponding label.
+alternate | =<FUNCTION>(25,{10,20,30;100,200,300}) | Use the array form with keys in the first row.
+boundary | =<FUNCTION>(10,{10,20,30},{"Low","Mid","High"}) | A key equal to the smallest lookup entry has a match.
+error | =<FUNCTION>(5,{10,20,30},{"Low","Mid","High"}) | A lookup smaller than the first key cannot be paired with a result.
+
+MATCH:
+ordinary | =<FUNCTION>("Cy",{"Ana","Bo","Cy"},0) | Find the position of an exact text match.
+alternate | =<FUNCTION>(25,{10,20,30},1) | Find the greatest sorted lookup value at or below the target.
+boundary | =<FUNCTION>(10,{10,20,30},1) | Match the first item at the lower end of a sorted array.
+error | =<FUNCTION>("Dee",{"Ana","Bo","Cy"},0) | A missing exact-match name has no position.
+
+PIVOTBY:
+ordinary | =<FUNCTION>({"Region";"East";"East";"West"},{"Quarter";"Q1";"Q2";"Q1"},{"Sales";10;20;8},"SUM") | Sum sales by region and quarter from three columns that include headers.
+alternate | =<FUNCTION>({"East";"East";"West"},{"Q1";"Q2";"Q1"},{10;20;8},"AVERAGE",0,0,1,0,1,,0) | Average the groups, omit totals and sort both the row and column labels.
+boundary | =<FUNCTION>({"East"},{"Q1"},{10},"SUM",0,0,1,0) | Pivot a single observation into one row and one column group.
+error | =<FUNCTION>({"East";"West"},{"Q1"},{10;8},"SUM") | The grouping and value arrays must align row for row.
+
+RANDARRAY:
+ordinary | =<FUNCTION>(2,3) | Generate a two-row, three-column array of random decimals.
+alternate | =<FUNCTION>(2,2,10,20,TRUE) | Generate a two-by-two array of random integers from 10 through 20.
+boundary | =<FUNCTION>() | Omit all arguments to request one random value.
+error | =<FUNCTION>(0,3) | A random array must contain at least one row.
+
+SEQUENCE:
+ordinary | =<FUNCTION>(4) | Generate four consecutive numbers in one column.
+alternate | =<FUNCTION>(2,3,10,5) | Fill two rows and three columns, starting at ten and increasing by five.
+boundary | =<FUNCTION>(1,1,42,0) | A single-cell sequence returns its starting value.
+error | =<FUNCTION>(0,2) | A sequence with zero rows cannot produce an array.
+
+SORT:
+ordinary | =<FUNCTION>({30;10;20}) | Sort a column in ascending order.
+alternate | =<FUNCTION>({30,"Cy";10,"Ana";20,"Bo"},1,-1) | Sort a two-column table descending by its first column.
+boundary | =<FUNCTION>({42}) | Sorting a one-element array leaves the element in place.
+error | =<FUNCTION>({30;10;20},2) | A sort index outside the available columns cannot select a key.
+
+SORTBY:
+ordinary | =<FUNCTION>({"Cy";"Ana";"Bo"},{30;10;20}) | Sort names by a separate list of numbers.
+alternate | =<FUNCTION>({"Cy";"Ana";"Bo"},{20;10;20},1,{3;1;2},-1) | Sort ascending by the first numeric key, then break ties with a descending second key.
+boundary | =<FUNCTION>({"Ana"},{10}) | Sort a one-item array with one corresponding key.
+error | =<FUNCTION>({"Cy";"Ana";"Bo"},{30;10}) | The sort-key array must align with the sorted data.
+
+TAKE:
+ordinary | =<FUNCTION>({1,2;3,4;5,6},2) | Return the first two rows of a three-row array.
+alternate | =<FUNCTION>({1,2;3,4;5,6},-2,-1) | Return the last two rows and the last column.
+boundary | =<FUNCTION>({1,2;3,4},1,1) | Take one row and one column to return a single cell.
+error | =<FUNCTION>({1,2;3,4},"two") | The rows argument must give a numeric count.
+
+TOCOL TOROW:
+ordinary | =<FUNCTION>({1,2;3,4}) | Flatten a rectangular array with the default scanning order.
+alternate | =<FUNCTION>({1,2;3,4},0,TRUE) | Scan down each column before advancing to the next.
+boundary | =<FUNCTION>({42}) | Flatten an array containing just one value.
+error | =<FUNCTION>({1,2;3,4},9) | An unsupported ignore code cannot select a filtering rule.
+
+TRANSPOSE:
+ordinary | =<FUNCTION>({1,2,3;4,5,6}) | Turn a two-row, three-column rectangle into a three-row, two-column rectangle.
+alternate | =<FUNCTION>({"A";"B";"C"}) | Turn a text column into a row.
+boundary | =<FUNCTION>({42}) | A single-cell array keeps the same dimensions.
+error | =<FUNCTION>(1/0) | An error cannot be transposed as a rectangular array.
+
+UNIQUE:
+ordinary | =<FUNCTION>({"East";"West";"East"}) | Return one entry for each distinct region.
+alternate | =<FUNCTION>({"East";"West";"East"},FALSE,TRUE) | Return only names that occur exactly once.
+boundary | =<FUNCTION>({"East"}) | A single entry is its own unique result.
+error | =<FUNCTION>(1/0) | A division-by-zero error propagates from the input.
+
+VLOOKUP:
+ordinary | =<FUNCTION>("Bo",{"Ana",10;"Bo",20;"Cy",30},2,FALSE) | Match a name in the first column and read the associated value.
+alternate | =<FUNCTION>(25,{10,"Low";20,"Mid";30,"High"},2,TRUE) | Use an approximate match on an ascending first column.
+boundary | =<FUNCTION>("Ana",{"Ana",10;"Bo",20},1,FALSE) | Return the key from column one itself.
+error | =<FUNCTION>("Dee",{"Ana",10;"Bo",20},2,FALSE) | A missing exact-match key has no result row.
+
+XLOOKUP:
+ordinary | =<FUNCTION>("Bo",{"Ana";"Bo";"Cy"},{10;20;30}) | Find a name and return the corresponding number.
+alternate | =<FUNCTION>("Dee",{"Ana";"Bo";"Cy"},{10;20;30},"No match") | Use a custom result for a missing key.
+boundary | =<FUNCTION>("Bo",{"Bo"},{20},"",0,-1) | Search a one-item array from the end for an exact match.
+error | =<FUNCTION>("Dee",{"Ana";"Bo";"Cy"},{10;20;30}) | A missing lookup without a fallback returns an error.
+
+XMATCH:
+ordinary | =<FUNCTION>("Bo",{"Ana";"Bo";"Cy"}) | Return the one-based position of an exact match with the default settings.
+alternate | =<FUNCTION>("Bo",{"Bo";"Ana";"Bo"},0,-1) | Search from the end to find the last exact match.
+boundary | =<FUNCTION>("Bo",{"Bo"}) | The only possible match in a one-item array has position one.
+error | =<FUNCTION>("Dee",{"Ana";"Bo";"Cy"}) | A missing key has no matching position.
+
+RAND:
+ordinary | =<FUNCTION>() | Generate a random decimal in the ordinary interval.
+alternate | =RAND()*100 | Scale the random decimal to a range from zero up to 100.
+boundary | =INT(RAND()) | Round down a draw in RAND's half-open unit interval to zero.
+
+RANDBETWEEN:
+ordinary | =<FUNCTION>(1,6) | Simulate a roll of a six-sided die.
+expected-equal | =<FUNCTION>(-5,5) | Use a range that includes negative values and zero.
+boundary | =<FUNCTION>(5,5) | Equal bounds leave a single possible integer.
+error | =<FUNCTION>(6,1) | The lower bound cannot exceed the upper bound.
+
+ANCHORARRAY:
+grid {"A1":"=SEQUENCE(3)","B1":"=SEQUENCE(2,2)","E1":42,"F1":"=SEQUENCE(1,2)"}
+ordinary | =<FUNCTION>(A1) | Resolve the spill that starts at A1.
+alternate | =<FUNCTION>(B1) | Resolve a spill with more than one column.
+boundary | =<FUNCTION>(F1) | Resolve the spill of a one-row sequence.
+error | =<FUNCTION>(E1) | A numeric input cell has no spill range to resolve.
+
+HYPERLINK:
+ordinary | =<FUNCTION>("https://example.com") | Use the destination itself as the displayed text.
+alternate | =<FUNCTION>("https://example.com","Open example") | Supply independent display text for the same destination.
+boundary | =<FUNCTION>("https://example.com","") | Use an empty display string.
+error | =<FUNCTION>(1/0) | An error in the destination expression propagates.
+
+INDEX:
+ordinary | =<FUNCTION>({10,20;30,40},2,1) | Retrieve the value in row two of the first column.
+alternate | =<FUNCTION>({10;20;30},2) | Omit the column on a single-column array.
+boundary | =<FUNCTION>({10,20;30,40},1,1) | Retrieve the first row and first column.
+error | =<FUNCTION>({10,20;30,40},3,1) | A row outside the input array has no value.
+
+INDIRECT:
+grid {"A1":99}
+ordinary | =<FUNCTION>("A1") | Resolve an A1-style address provided as text.
+grid {"B2":42}
+alternate | =<FUNCTION>("$B$2",TRUE) | Resolve an absolute A1-style reference and explicitly select A1 notation.
+grid {}
+boundary | =<FUNCTION>("B1") | Resolve the reference to an empty cell.
+error | =<FUNCTION>("not a reference") | A string that cannot be resolved to a reference returns an error.
+
+OFFSET:
+grid {"B2":42}
+ordinary | =<FUNCTION>(A1,1,1) | Move one row down and one column right from the anchor.
+grid {"A2":20,"A3":30}
+alternate | =SUM(OFFSET(A1,1,0,2,1)) | Supply the height and width to sum a two-row offset range.
+grid {"A1":10}
+boundary | =<FUNCTION>(A1,0,0) | Zero offsets leave the reference anchored at the input cell.
+grid {}
+error | =<FUNCTION>(A1,-1,0) | Moving above the first row creates an invalid reference.
+
+SINGLE:
+grid {"A1":10,"A2":20,"A100":42}
+ordinary | =<FUNCTION>(A100) | Intersect a single-cell reference with the formula context.
+expected-equal | =<FUNCTION>(42) | A scalar expression can be returned as a single value.
+boundary | =<FUNCTION>(A100:A101) | Intersect a vertical range with the formula's row.
+error | =<FUNCTION>(A1:A2) | The example formula's row is outside this vertical range.
+grid {}
+boundary | =<FUNCTION>({1,2;3,4}) | Return the top-left element of a two-by-two array.
+
+AGGREGATE:
+grid {"A1":20,"A2":"=1/0","A3":10,"A4":30}
+ordinary | =<FUNCTION>(9,6,A1:A4) | Sum a range while ignoring its error cell.
+alternate | =<FUNCTION>(1,6,A1:A4) | Calculate the average over the same range while ignoring error cells.
+boundary | =<FUNCTION>(9,6,A3,A1) | Add the values of two individual references.
+error | =<FUNCTION>(99,6,A1:A4) | An unknown function number cannot select an aggregation.
+error | =<FUNCTION>(14,6,A1:A4,2) | Excel supports a rank argument for operation 14. That operation is currently unavailable in Formualizer.
+
+AVERAGE:
+ordinary | =<FUNCTION>(4,8,12) | Find the arithmetic mean of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the arithmetic mean.
+boundary | =<FUNCTION>(7) | The average of the lone observation is 7.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the arithmetic mean.
+
+AVEDEV:
+ordinary | =<FUNCTION>(4,8,12) | Find the mean absolute deviation of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the mean absolute deviation.
+boundary | =<FUNCTION>(7) | The lone observation has zero distance from its own mean.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the mean absolute deviation.
+
+AVERAGEA:
+ordinary | =<FUNCTION>(4,8,12) | Find the mean with logical and text coercion of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the mean with logical and text coercion.
+boundary | =<FUNCTION>(7) | With a lone numeric observation the coerced mean is 7.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the mean with logical and text coercion.
+grid {"A1":4,"A2":true,"A3":"Pending"}
+alternate | =<FUNCTION>(A1:A3) | Average 4, TRUE and the text Pending as the values 4, 1 and 0.
+
+DEVSQ:
+ordinary | =<FUNCTION>(4,8,12) | Find the sum of squared deviations from the mean of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the sum of squared deviations from the mean.
+boundary | =<FUNCTION>(7) | The sole squared deviation from the mean is zero.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the sum of squared deviations from the mean.
+
+GEOMEAN:
+ordinary | =<FUNCTION>(4,8,12) | Find the geometric mean of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the geometric mean.
+boundary | =<FUNCTION>(7) | With a single positive factor, the geometric mean is the factor itself.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the geometric mean.
+
+HARMEAN:
+ordinary | =<FUNCTION>(4,8,12) | Find the harmonic mean of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the harmonic mean.
+boundary | =<FUNCTION>(7) | Taking the reciprocal twice returns the sole harmonic-mean input.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the harmonic mean.
+
+MAX:
+ordinary | =<FUNCTION>(4,8,12) | Find the largest numeric value of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the largest numeric value.
+boundary | =<FUNCTION>(7) | The lone number is the maximum.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the largest numeric value.
+
+MAXA:
+ordinary | =<FUNCTION>(4,8,12) | Find the maximum with logical and text coercion of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the maximum with logical and text coercion.
+boundary | =<FUNCTION>(7) | With no other values to coerce, 7 is the maximum.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the maximum with logical and text coercion.
+grid {"A1":-4,"A2":true,"A3":"Pending"}
+alternate | =<FUNCTION>(A1:A3) | Find the maximum of −4, TRUE and Pending. TRUE contributes 1 and wins.
+
+MEDIAN:
+ordinary | =<FUNCTION>(4,8,12) | Find the middle value of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the middle value.
+boundary | =<FUNCTION>(7) | The single observation occupies the middle position.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the middle value.
+
+MIN:
+ordinary | =<FUNCTION>(4,8,12) | Find the smallest numeric value of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the smallest numeric value.
+boundary | =<FUNCTION>(7) | The lone number is also the minimum.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the smallest numeric value.
+
+MINA:
+ordinary | =<FUNCTION>(4,8,12) | Find the minimum with logical and text coercion of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the minimum with logical and text coercion.
+boundary | =<FUNCTION>(7) | With no other values to coerce, 7 is the minimum.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the minimum with logical and text coercion.
+grid {"A1":4,"A2":true,"A3":"Pending"}
+alternate | =<FUNCTION>(A1:A3) | Find the minimum of 4, TRUE and Pending. The text contributes 0 and wins.
+
+PRODUCT:
+ordinary | =<FUNCTION>(4,8,12) | Find the product of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the product.
+boundary | =<FUNCTION>(7) | With one factor, the product equals that factor.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the product.
+
+STDEV.P:
+ordinary | =<FUNCTION>(4,8,12) | Find the population standard deviation of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the population standard deviation.
+boundary | =<FUNCTION>(7) | A one-value population has standard deviation zero.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the population standard deviation.
+
+STDEVPA:
+ordinary | =<FUNCTION>(4,8,12) | Find the population standard deviation with logical and text coercion of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the population standard deviation with logical and text coercion.
+boundary | =<FUNCTION>(7) | One numeric cell value gives a population standard deviation of zero.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the population standard deviation with logical and text coercion.
+grid {"A1":4,"A2":true,"A3":"Pending"}
+alternate | =<FUNCTION>(A1:A3) | Treat 4, TRUE and Pending as a population of three values, with TRUE and text contributing 1 and 0.
+
+VAR.P:
+ordinary | =<FUNCTION>(4,8,12) | Find the population variance of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the population variance.
+boundary | =<FUNCTION>(7) | The population variance of one number is zero.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the population variance.
+
+VARPA:
+ordinary | =<FUNCTION>(4,8,12) | Find the population variance with logical and text coercion of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the population variance with logical and text coercion.
+boundary | =<FUNCTION>(7) | With just one value to coerce, the population variance is zero.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the population variance with logical and text coercion.
+grid {"A1":4,"A2":true,"A3":"Pending"}
+alternate | =<FUNCTION>(A1:A3) | Compute population variance across 4, TRUE and Pending with the denominator including the logical and text cells.
+
+SUMSQ:
+ordinary | =<FUNCTION>(4,8,12) | Find the sum of squares of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the sum of squares.
+boundary | =<FUNCTION>(7) | Square 7 without adding any other terms.
+error | =<FUNCTION>(4,1/0,12) | A division error among 4 and 12 prevents computing the sum of squares.
+
+KURT:
+ordinary | =<FUNCTION>(1,2,4,6,8) | Compute sample kurtosis with five observations.
+expected-equal | =<FUNCTION>({1,2,4,6,8}) | Supply all observations as one array.
+boundary | =<FUNCTION>(1,2,4,6) | Evaluate with the minimum sample size of four.
+error | =<FUNCTION>(1,2,4) | Three observations do not suffice for this statistic.
+
+SKEW SKEW.P:
+ordinary | =<FUNCTION>(1,2,4,6,8) | Measure the skew of five observations.
+expected-equal | =<FUNCTION>({1,2,4,6,8}) | Supply the observations as one array.
+boundary | =<FUNCTION>(1,2,9) | Evaluate the skew of a short, nonsymmetric series.
+error | =<FUNCTION>(1,1,1) | Identical observations have no spread to normalize.
+
+STDEV.S:
+ordinary | =<FUNCTION>(4,8,12) | Find the sample standard deviation of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the sample standard deviation.
+boundary | =<FUNCTION>(4,12) | Use 4 and 12, the minimum two observations for the sample standard deviation.
+error | =<FUNCTION>(4) | A lone observation cannot supply the denominator for the sample standard deviation.
+
+STDEVA:
+ordinary | =<FUNCTION>(4,8,12) | Find the sample standard deviation with logical and text coercion of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the sample standard deviation with logical and text coercion.
+boundary | =<FUNCTION>(4,12) | Use 4 and 12, the minimum two observations for the sample standard deviation with logical and text coercion.
+error | =<FUNCTION>(4) | A lone observation cannot supply the denominator for the sample standard deviation with logical and text coercion.
+grid {"A1":4,"A2":true,"A3":"Pending"}
+alternate | =<FUNCTION>(A1:A3) | Compute sample standard deviation over 4, TRUE and Pending, treating the last two as 1 and 0.
+
+VAR.S:
+ordinary | =<FUNCTION>(4,8,12) | Find the sample variance of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the sample variance.
+boundary | =<FUNCTION>(4,12) | Use 4 and 12, the minimum two observations for the sample variance.
+error | =<FUNCTION>(4) | A lone observation cannot supply the denominator for the sample variance.
+
+VARA:
+ordinary | =<FUNCTION>(4,8,12) | Find the sample variance with logical and text coercion of 4, 8 and 12.
+expected-equal | =<FUNCTION>({4,8,12}) | Pass one three-element array to compute the sample variance with logical and text coercion.
+boundary | =<FUNCTION>(4,12) | Use 4 and 12, the minimum two observations for the sample variance with logical and text coercion.
+error | =<FUNCTION>(4) | A lone observation cannot supply the denominator for the sample variance with logical and text coercion.
+grid {"A1":4,"A2":true,"A3":"Pending"}
+alternate | =<FUNCTION>(A1:A3) | Compute sample variance over 4, TRUE and Pending with the coerced values 4, 1 and 0.
+
+MODE.MULT MODE.SNGL:
+ordinary | =<FUNCTION>(7,7,2,9) | Find a repeated value among four entries.
+alternate | =<FUNCTION>({7,7,2,2,9}) | Supply an array with two equally frequent values.
+boundary | =<FUNCTION>(8,8) | Use a pair of identical values, the minimum input with a mode.
+error | =<FUNCTION>(7,2,9) | With no repeated value there is no mode.
+
+AVERAGEIF SUMIF:
+grid {"A1":"East","A2":"West","A3":"East","B1":10,"B2":50,"B3":20,"C1":2,"C2":4,"C3":6}
+ordinary | =<FUNCTION>(A1:A3,"East",B1:B3) | Select East records by label and aggregate the corresponding numbers.
+alternate | =<FUNCTION>(C1:C3,">2") | Omit the result range so the criterion and calculation use the same cells.
+boundary | =<FUNCTION>(A1:A1,"East",B1:B1) | Aggregate a single row that satisfies the criterion.
+
+AVERAGEIFS SUMIFS MAXIFS:
+grid {"A1":10,"A2":50,"A3":20,"B1":"East","B2":"West","B3":"East","C1":2,"C2":4,"C3":6}
+ordinary | =<FUNCTION>(A1:A3,B1:B3,"East") | Aggregate numbers from only the East records.
+alternate | =<FUNCTION>(A1:A3,B1:B3,"East",C1:C3,"<5") | Add a second criterion so both conditions must hold.
+boundary | =<FUNCTION>(A1:A1,B1:B1,"East",C1:C1,2) | Aggregate the only row in a single-row data set.
+
+MINIFS:
+grid {"A1":10,"A2":50,"A3":20,"B1":"East","B2":"West","B3":"East","C1":2,"C2":4,"C3":6}
+ordinary | =<FUNCTION>(A1:A3,B1:B3,"East") | Aggregate numbers from only the East records.
+alternate | =<FUNCTION>(A1:A3,B1:B3,"East",C1:C3,">3") | Add a second criterion so both conditions must hold.
+boundary | =<FUNCTION>(A1:A1,B1:B1,"East",C1:C1,2) | Aggregate the only row in a single-row data set.
+
+COUNT:
+grid {"A1":3,"A2":"five","A3":7}
+ordinary | =<FUNCTION>(A1:A3) | Count numeric values in a range that also includes text.
+alternate | =<FUNCTION>(A1:A3,12) | Add a literal numeric argument to the range count.
+boundary | =<FUNCTION>("x") | A nonnumeric text argument contributes zero to the count.
+
+COUNTA:
+grid {"A1":3,"A2":"five","A3":null,"A4":"=1/0"}
+ordinary | =<FUNCTION>(A1:A3) | Count a number and text while leaving the blank cell out.
+alternate | =<FUNCTION>(A1:A4) | Include an error cell, which is still a populated cell.
+boundary | =<FUNCTION>(A3) | A reference to a genuinely empty cell contributes zero.
+
+COUNTBLANK:
+grid {"A1":3,"A2":null,"A3":"=\"\"","B1":null,"B2":null}
+ordinary | =<FUNCTION>(A1:A3) | Count one genuinely empty cell and one formula returning empty text.
+alternate | =<FUNCTION>(A2,B1:B2) | Formualizer accepts multiple references and counts one blank in A2 and two in B1:B2.
+boundary | =<FUNCTION>(A1) | A populated numeric cell contributes no blanks.
+
+COUNTIF:
+grid {"A1":"East","A2":"West","A3":"East","A4":"Northeast"}
+ordinary | =<FUNCTION>(A1:A4,"East") | Count records equal to a region label.
+alternate | =<FUNCTION>(A1:A4,"*east") | Use a wildcard to include labels with the same ending.
+boundary | =<FUNCTION>(A1:A4,"South") | A criterion matching no cell produces a zero count.
+
+COUNTIFS:
+grid {"A1":"East","A2":"West","A3":"East","B1":10,"B2":50,"B3":20}
+ordinary | =<FUNCTION>(A1:A3,"East") | Count records from one region with a single criteria pair.
+alternate | =<FUNCTION>(A1:A3,"East",B1:B3,">15") | Count records that meet both the region and numeric requirements.
+boundary | =<FUNCTION>(A1:A3,"South",B1:B3,">15") | No row meets the missing region criterion, so the match count is zero.
+
+MULTINOMIAL:
+ordinary | =<FUNCTION>(2,3,4) | Count the arrangements of three groups with different sizes.
+alternate | =<FUNCTION>(1,1,1,1) | Compare four groups of size one.
+boundary | =<FUNCTION>(0) | A single zero-size group gives one empty arrangement.
+error | =<FUNCTION>(-1,2) | A group cannot have negative size.
+
+SUBTOTAL:
+grid {"A1":5,"A2":10,"A3":20,"B1":"=SUBTOTAL(9,A1:A2)"}
+ordinary | =<FUNCTION>(9,A1:A3) | Select the sum operation over three source cells.
+alternate | =<FUNCTION>(1,A1:A3) | Use operation one to calculate their average instead.
+boundary | =<FUNCTION>(9,A1:A3,B1) | Include a referenced nested SUBTOTAL to check how it contributes to the outer sum.
+error | =<FUNCTION>(99,A1:A3) | An unsupported operation number cannot select a subtotal calculation.
+
+SUM:
+grid {"A1":10,"A2":20,"A3":"N/A"}
+ordinary | =<FUNCTION>(A1:A3) | Add two numeric cells and skip the third cell, which contains the text string N/A.
+alternate | =<FUNCTION>(A1:A3,5) | Add a literal number alongside the range.
+boundary | =<FUNCTION>(0) | The sum of a single zero is zero.
+error | =<FUNCTION>(A1:A3,1/0) | A division-by-zero error in a supplied argument propagates through SUM.
+
+SUMPRODUCT:
+ordinary | =<FUNCTION>({1,2,3},{5,10,15}) | Multiply matching entries from two arrays and sum the products.
+alternate | =<FUNCTION>({1,2,3},{5,10,15},{2,2,2}) | Include a third array as another factor at each position.
+boundary | =<FUNCTION>({4},{5}) | One position in each input produces a single product.
+error | =<FUNCTION>({1,2,3},{5,10}) | Unequal dimensions leave some positions without a matching factor.
+
+SUMX2MY2 SUMX2PY2:
+ordinary | =<FUNCTION>({1,2,3},{4,6,8}) | Pair three observations by position before evaluating the squared terms.
+expected-equal | =<FUNCTION>({1,-2,3},{4,6,-8}) | Include negative observations to see how signed inputs affect the terms.
+boundary | =<FUNCTION>({4},{4}) | Evaluate a single pair of equal observations.
+error | =<FUNCTION>({1,2,3},{4,6}) | The arrays must have an equal number of observations.
+
+SUMXMY2:
+ordinary | =<FUNCTION>({1,2,3},{4,6,8}) | Pair three observations by position before evaluating the squared terms.
+alternate | =<FUNCTION>({1,-2,3},{4,6,-8}) | Include negative observations to see how signed inputs affect the terms.
+boundary | =<FUNCTION>({4},{4}) | Evaluate a single pair of equal observations.
+error | =<FUNCTION>({1,2,3},{4,6}) | The arrays must have an equal number of observations.
+
+BETA.DIST:
+ordinary | =<FUNCTION>(0.32,2,3,TRUE) | Evaluate the cumulative beta probability below 0.32.
+alternate | =<FUNCTION>(4,2,3,FALSE,0,10) | Evaluate density on a rescaled interval from zero to ten.
+boundary | =<FUNCTION>(1,2,3,TRUE) | Evaluate at the upper endpoint of the default interval.
+error | =<FUNCTION>(1.1,2,3,TRUE) | A value above the upper endpoint is outside the distribution.
+
+BETADIST:
+ordinary | =<FUNCTION>(0.32,2,3) | Evaluate the cumulative beta probability below 0.32 using the legacy function.
+expected-equal | =<FUNCTION>(3.2,2,3,0,10) | Evaluate the same relative position on the interval from zero to ten.
+boundary | =<FUNCTION>(1,2,3) | Evaluate at the default upper endpoint.
+error | =<FUNCTION>(1.1,2,3) | A value above the default interval is outside the distribution.
+
+BETA.INV:
+ordinary | =<FUNCTION>(0.5,2,3) | Find the median of a beta distribution with shapes two and three.
+alternate | =<FUNCTION>(0.5,2,3,0,10) | Find the same median on the rescaled interval from zero to ten.
+boundary | =<FUNCTION>(1,2,3) | At cumulative probability one, return the upper endpoint of the default interval.
+error | =<FUNCTION>(1.1,2,3) | A probability above one is outside the distribution.
+
+BETAINV:
+ordinary | =<FUNCTION>(0.5,2,3) | Use the legacy name to locate the half-probability point in the unit interval.
+alternate | =<FUNCTION>(0.5,2,3,0,10) | Supply zero and ten as the legacy function’s optional endpoints.
+boundary | =<FUNCTION>(1,2,3) | A cumulative probability of one maps to the upper bound.
+error | =<FUNCTION>(1.1,2,3) | A probability above one is outside the distribution.
+
+BINOM.DIST:
+ordinary | =<FUNCTION>(3,8,0.4,FALSE) | Compute the probability of exactly three successes in eight trials.
+alternate | =<FUNCTION>(3,8,0.4,TRUE) | Compute the probability of three or fewer successes.
+boundary | =<FUNCTION>(0,8,0.4,FALSE) | Find the point probability at the lower success-count boundary.
+error | =<FUNCTION>(9,8,0.4,FALSE) | The number of successes cannot exceed the number of trials.
+
+BINOM.DIST.RANGE:
+ordinary | =<FUNCTION>(8,0.4,3) | Find the probability of exactly three successes.
+alternate | =<FUNCTION>(8,0.4,3,4) | Add the probabilities of three and four successes.
+boundary | =<FUNCTION>(8,0.4,0,8) | Include the entire possible range of outcomes.
+error | =<FUNCTION>(8,0.4,5,3) | The last success count must be at least the first.
+
+BINOM.INV:
+ordinary | =<FUNCTION>(8,0.4,0.5) | Find the first success count that reaches cumulative probability one-half.
+alternate | =<FUNCTION>(8,0.4,0.9) | Use a higher probability threshold for the same experiment.
+boundary | =<FUNCTION>(8,0.4,0) | Use the lower probability boundary.
+error | =<FUNCTION>(8,0.4,1.1) | The cumulative threshold cannot be greater than one.
+
+CHIDIST:
+ordinary | =<FUNCTION>(4,3) | Use the legacy name to integrate the chi-square tail above four.
+alternate | =<FUNCTION>(4,10) | Increase the degrees of freedom from three to ten while holding the tail cutoff fixed.
+boundary | =<FUNCTION>(0,3) | The legacy upper-tail probability above zero is one.
+error | =<FUNCTION>(-1,3) | A negative statistic is outside the chi-square domain.
+
+CHISQ.DIST.RT:
+ordinary | =<FUNCTION>(4,3) | Find the right-tail probability beyond a positive chi-square statistic.
+alternate | =<FUNCTION>(4,10) | Change the degrees of freedom while keeping the statistic fixed.
+boundary | =<FUNCTION>(0,3) | At zero the right tail covers the whole distribution.
+error | =<FUNCTION>(-1,3) | A negative statistic is outside the chi-square domain.
+
+CHIINV:
+ordinary | =<FUNCTION>(0.5,3) | Find the legacy upper-tail chi-square cutoff at probability one half.
+alternate | =<FUNCTION>(0.25,10) | Leave a right-tail area of one quarter with ten degrees of freedom.
+boundary | =<FUNCTION>(0.5,1) | Use one degree of freedom with equal probability on either side.
+error | =<FUNCTION>(1.1,3) | A probability above one is invalid.
+
+CHISQ.INV:
+ordinary | =<FUNCTION>(0.5,3) | Find the chi-square median with three degrees of freedom.
+alternate | =<FUNCTION>(0.25,10) | Find the first lower-tail quartile with ten degrees of freedom.
+boundary | =<FUNCTION>(0.5,1) | Use one degree of freedom and find the lower-tail median.
+error | =<FUNCTION>(1.1,3) | A probability above one is invalid.
+
+CHISQ.INV.RT:
+ordinary | =<FUNCTION>(0.5,3) | Find the upper-tail median with three degrees of freedom.
+alternate | =<FUNCTION>(0.25,10) | Find the statistic above which one quarter of the chi-square probability lies.
+boundary | =<FUNCTION>(0.5,1) | Split the right tail at probability one half with one degree of freedom.
+error | =<FUNCTION>(1.1,3) | A probability above one is invalid.
+
+CHISQ.DIST:
+ordinary | =<FUNCTION>(4,3,TRUE) | Evaluate cumulative probability up to a chi-square statistic of four.
+alternate | =<FUNCTION>(4,3,FALSE) | Evaluate density at the same statistic.
+boundary | =<FUNCTION>(0,3,TRUE) | Evaluate at the lower boundary of the distribution.
+error | =<FUNCTION>(-1,3,TRUE) | A negative statistic is outside the chi-square domain.
+
+CHISQ.TEST:
+ordinary | =<FUNCTION>({10,20;20,10},{15,15;15,15}) | Compare observed counts with expected counts for a two-by-two table.
+alternate | =<FUNCTION>({12,18;18,12},{15,15;15,15}) | Move the observations closer to their expected values.
+boundary | =<FUNCTION>({15,15;15,15},{15,15;15,15}) | Use identical observed and expected counts.
+error | =<FUNCTION>({10,20;20,10},{15,15;0,15}) | A zero expected count leaves a term with a zero denominator.
+
+CONFIDENCE.NORM CONFIDENCE.T:
+ordinary | =<FUNCTION>(0.05,4,20) | Calculate a margin for a 95-percent confidence interval.
+alternate | =<FUNCTION>(0.01,4,20) | Change the significance level while holding sample size and spread constant.
+boundary | =<FUNCTION>(0.05,4,2) | Calculate the margin with a very small sample.
+error | =<FUNCTION>(1.1,4,20) | Significance must be a probability between zero and one.
+
+CORREL COVARIANCE.P COVARIANCE.S PEARSON:
+ordinary | =<FUNCTION>({1,2,3,4},{1,4,5,7}) | Evaluate matched observations in two equally sized arrays.
+alternate | =<FUNCTION>({1,2,3,4},{7,5,4,1}) | Reverse the second series to compare opposite movement.
+boundary | =<FUNCTION>({1,2},{2,4}) | Use two observations that follow a perfect positive linear pattern.
+error | =<FUNCTION>({1,2,3,4},{1,4,5}) | Each observation needs a partner in the other array.
+
+EXPON.DIST:
+ordinary | =<FUNCTION>(2,0.5,TRUE) | Evaluate the cumulative probability at a positive waiting time.
+alternate | =<FUNCTION>(2,0.5,FALSE) | Evaluate density at the same point.
+boundary | =<FUNCTION>(0,0.5,TRUE) | The cumulative probability at zero is zero.
+error | =<FUNCTION>(-1,0.5,TRUE) | A negative waiting time is outside the distribution.
+
+F.DIST:
+ordinary | =<FUNCTION>(2,5,10,TRUE) | Evaluate cumulative probability at an F statistic of two.
+alternate | =<FUNCTION>(2,5,10,FALSE) | Evaluate density at the same statistic.
+boundary | =<FUNCTION>(0,5,10,TRUE) | Evaluate at the lower endpoint of the distribution.
+error | =<FUNCTION>(-1,5,10,TRUE) | A negative F statistic is outside the support.
+
+FDIST:
+ordinary | =<FUNCTION>(2,5,10) | Use the legacy name to find the probability above a variance ratio of two.
+alternate | =<FUNCTION>(2,10,5) | Swap numerator and denominator degrees of freedom before evaluating the upper tail.
+boundary | =<FUNCTION>(0,5,10) | A zero variance ratio leaves the full area in the right tail.
+error | =<FUNCTION>(-1,5,10) | A negative F statistic is outside the support.
+
+F.DIST.RT:
+ordinary | =<FUNCTION>(2,5,10) | Find the right-tail probability for a positive F statistic.
+alternate | =<FUNCTION>(2,10,5) | Swap numerator and denominator degrees of freedom.
+boundary | =<FUNCTION>(0,5,10) | At the lower endpoint the right tail covers the whole distribution.
+error | =<FUNCTION>(-1,5,10) | A negative F statistic is outside the support.
+
+F.INV:
+ordinary | =<FUNCTION>(0.25,5,10) | Find the first lower-tail quartile of an F variate with 5 and 10 degrees of freedom.
+alternate | =<FUNCTION>(0.75,5,10) | Increase the lower-tail probability to three quarters to move the cutoff higher.
+boundary | =<FUNCTION>(0.5,1,1) | Find the lower-tail median with one degree of freedom on each side.
+error | =<FUNCTION>(1.1,5,10) | A probability above one is outside the function's domain.
+
+F.INV.RT:
+ordinary | =<FUNCTION>(0.25,5,10) | Find the F statistic that leaves one quarter of the probability above it.
+alternate | =<FUNCTION>(0.75,5,10) | Leave three quarters of the probability in the right tail to move the cutoff lower.
+boundary | =<FUNCTION>(0.5,1,1) | Split the right-tail probability in half with one degree of freedom per side.
+error | =<FUNCTION>(1.1,5,10) | A probability above one is outside the function's domain.
+
+FINV:
+ordinary | =<FUNCTION>(0.25,5,10) | Use the legacy inverse to find the upper F quartile.
+alternate | =<FUNCTION>(0.75,5,10) | Increase the right-tail probability while holding both degrees of freedom fixed.
+boundary | =<FUNCTION>(0.5,1,1) | Use one numerator and one denominator degree of freedom at right-tail probability 0.5.
+error | =<FUNCTION>(1.1,5,10) | A probability above one is outside the function's domain.
+
+F.TEST:
+ordinary | =<FUNCTION>({3,5,9,10},{4,6,7,8}) | Compare the variances of two small samples.
+alternate | =<FUNCTION>({3,5,9,10},{4,6,9,18}) | Change the spread of one sample while preserving its size.
+boundary | =<FUNCTION>({3,5},{2,5}) | Compare two samples of the minimum size, with a different spread in each.
+error | =<FUNCTION>({3,3,3,3},{4,6,7,8}) | A constant sample has zero variance.
+
+FISHER:
+ordinary | =<FUNCTION>(0.5) | Convert a positive correlation to the Fisher scale.
+alternate | =<FUNCTION>(-0.5) | Compare the transformation of the opposite correlation.
+boundary | =<FUNCTION>(0) | A zero correlation transforms to zero.
+error | =<FUNCTION>(1) | A perfect positive correlation is at the excluded endpoint.
+
+FISHERINV:
+ordinary | =<FUNCTION>(0.5) | Transform a positive Fisher statistic back to the correlation scale.
+alternate | =<FUNCTION>(-0.5) | Transform the opposite statistic.
+boundary | =<FUNCTION>(0) | Zero maps back to zero on the correlation scale.
+error | =<FUNCTION>("invalid") | A nonnumeric value cannot be inverted.
+
+FORECAST.LINEAR:
+ordinary | =<FUNCTION>(5,{2,4,6,8},{1,2,3,4}) | Extend a linear pattern one step beyond the observed x range.
+alternate | =<FUNCTION>(2.5,{2,4,6,8},{1,2,3,4}) | Interpolate between two observed x values.
+boundary | =<FUNCTION>(1,{2,4},{1,2}) | Evaluate at the first x value of a two-point line.
+error | =<FUNCTION>(5,{2,4,6},{1,2}) | Each known y must have a corresponding x.
+
+FREQUENCY:
+ordinary | =<FUNCTION>({1,3,7,10},{3,7}) | Count observations in two bins and an overflow bin.
+alternate | =<FUNCTION>({1,3,7,10},{2,4,6,8}) | Replace the bin boundaries with narrower intervals.
+boundary | =<FUNCTION>({3},{3}) | An observation equal to a bin limit belongs to the bin ending there.
+error | =<FUNCTION>(1/0,{3,7}) | A division-by-zero error cannot provide a data array.
+
+GAMMA:
+ordinary | =<FUNCTION>(4) | Compute Γ(4), which equals the factorial of three.
+alternate | =<FUNCTION>(0.5) | Evaluate Γ(1/2), the square root of π.
+boundary | =<FUNCTION>(1) | At one, Formualizer returns a value just below the mathematical result of one.
+error | =<FUNCTION>(0) | A zero argument is outside the supported domain.
+
+GAMMALN:
+ordinary | =<FUNCTION>(4) | Take the natural logarithm of Γ(4), or ln(6).
+alternate | =<FUNCTION>(0.5) | Evaluate the logarithm of Γ(1/2).
+boundary | =<FUNCTION>(1) | Formualizer returns a small negative value where the mathematical logarithm is zero.
+error | =<FUNCTION>(0) | A zero argument is outside the supported domain.
+
+GAMMALN.PRECISE:
+ordinary | =<FUNCTION>(4) | Find the logarithm of the extended factorial at x = 4.
+alternate | =<FUNCTION>(0.5) | At x = 1/2 the logarithm is half of ln(π).
+boundary | =<FUNCTION>(1) | At Γ(1), the engine approximation gives a tiny negative logarithm instead of zero.
+error | =<FUNCTION>(0) | A zero argument is outside the supported domain.
+
+GAMMA.DIST:
+ordinary | =<FUNCTION>(2,3,2,TRUE) | Find the cumulative probability for a gamma distribution with shape three.
+alternate | =<FUNCTION>(2,3,2,FALSE) | Evaluate density at the same point.
+boundary | =<FUNCTION>(0,3,2,TRUE) | Evaluate the cumulative distribution at its lower boundary.
+error | =<FUNCTION>(-1,3,2,TRUE) | A negative observation is outside the distribution.
+
+GAMMA.INV:
+ordinary | =<FUNCTION>(0.5,3,2) | Find the gamma median for shape three and scale two.
+alternate | =<FUNCTION>(0.9,3,2) | Find the quantile nearer the upper tail.
+boundary | =<FUNCTION>(0,3,2) | Evaluate the lower probability endpoint.
+error | =<FUNCTION>(1.1,3,2) | A probability above one does not specify a gamma quantile.
+
+GAUSS:
+ordinary | =<FUNCTION>(0.5) | Find the signed standard-normal area between zero and z = 0.5.
+alternate | =<FUNCTION>(0.75) | Extend the upper z score to 0.75 to include more area.
+boundary | =<FUNCTION>(0.01) | A z score of 0.01 lies close to the zero-area starting point.
+error | =<FUNCTION>("invalid") | The input must be numeric.
+
+PHI:
+ordinary | =<FUNCTION>(0.5) | Evaluate the normal density half a standard deviation above the mean.
+alternate | =<FUNCTION>(0.75) | Move farther from the maximum density at zero.
+boundary | =<FUNCTION>(0.01) | At 0.01 the density is close to its maximum.
+error | =<FUNCTION>("invalid") | The input must be numeric.
+
+NORM.S.INV:
+ordinary | =<FUNCTION>(0.5) | Find the z score for the median probability 0.5.
+alternate | =<FUNCTION>(0.75) | Find the z score that leaves one quarter of the area above it.
+boundary | =<FUNCTION>(0.01) | A cumulative probability of 0.01 lies in the lower tail.
+error | =<FUNCTION>("invalid") | The input must be numeric.
+
+NORMSDIST:
+ordinary | =<FUNCTION>(0.5) | Use the legacy name to integrate standard-normal density up to 0.5.
+alternate | =<FUNCTION>(0.75) | Move the cutoff up to 0.75 standard deviations above the center.
+boundary | =<FUNCTION>(0.01) | At 0.01 the lower-tail area slightly exceeds one half.
+error | =<FUNCTION>("invalid") | The input must be numeric.
+
+GROWTH:
+ordinary | =<FUNCTION>({2;4;7}) | Fit three unevenly growing observations using default x values.
+alternate | =<FUNCTION>({2;4;8},{1;2;3},{4;5},TRUE) | Predict two new observations with explicitly supplied x values.
+boundary | =<FUNCTION>({2;4},{1;2},{1}) | Predict at the first of two known x values.
+error | =<FUNCTION>({2;4;8},{1;2},{4}) | The known x and y arrays must have corresponding observations.
+
+TREND:
+ordinary | =<FUNCTION>({2;4;8}) | Fit the observed series with default x values.
+alternate | =<FUNCTION>({2;4;8},{1;2;3},{4;5},TRUE) | Predict two new observations with explicitly supplied x values.
+boundary | =<FUNCTION>({2;4},{1;2},{1}) | Predict at the first of two known x values.
+error | =<FUNCTION>({2;4;8},{1;2},{4}) | The known x and y arrays must have corresponding observations.
+
+HYPGEOM.DIST:
+ordinary | =<FUNCTION>(2,5,8,20,FALSE) | Find the probability of two successes when sampling without replacement.
+alternate | =<FUNCTION>(2,5,8,20,TRUE) | Accumulate probabilities for two or fewer successes.
+boundary | =<FUNCTION>(0,5,8,20,FALSE) | Evaluate a sample with no successes.
+error | =<FUNCTION>(2,21,8,20,FALSE) | The sample size cannot exceed the entire population.
+
+HYPGEOMDIST:
+ordinary | =<FUNCTION>(2,5,8,20) | Find the probability of exactly two successes without replacement.
+alternate | =<FUNCTION>(3,5,8,20) | Compare the probability of exactly three successes in the same experiment.
+boundary | =<FUNCTION>(0,5,8,20) | Evaluate a sample with no successes.
+error | =<FUNCTION>(6,5,8,20) | The successes in the sample cannot outnumber the sampled items.
+
+RSQ STEYX:
+ordinary | =<FUNCTION>({2,5,6,9},{1,2,3,4}) | Describe a linear fit between paired x and y observations.
+expected-equal | =<FUNCTION>({9,6,5,2},{1,2,3,4}) | Reverse the order of the y series while leaving x unchanged.
+boundary | =<FUNCTION>({2,4,6},{1,2,3}) | Evaluate a series whose observations lie exactly on a line.
+error | =<FUNCTION>({2,5,6,9},{1,2,3}) | The known x and y series must contain corresponding observations.
+
+INTERCEPT SLOPE:
+ordinary | =<FUNCTION>({2,5,6,9},{1,2,3,4}) | Describe a linear fit between paired x and y observations.
+alternate | =<FUNCTION>({9,6,5,2},{1,2,3,4}) | Reverse the order of the y series while leaving x unchanged.
+boundary | =<FUNCTION>({2,4,6},{1,2,3}) | Evaluate a series whose observations lie exactly on a line.
+error | =<FUNCTION>({2,5,6,9},{1,2,3}) | The known x and y series must contain corresponding observations.
+
+LARGE SMALL:
+ordinary | =<FUNCTION>({10,30,20,40},2) | Select the second value from the requested end of an unsorted data set.
+alternate | =<FUNCTION>({10,30,20,40},3) | Move one position farther into the ordering.
+boundary | =<FUNCTION>({10,30,20,40},4) | Select the last valid rank in the four-value array.
+error | =<FUNCTION>({10,30,20,40},5) | Rank five is outside the size of the source array.
+
+LINEST:
+ordinary | =<FUNCTION>({2;4;8},{1;2;3}) | Fit coefficients using three observations and their known x values.
+alternate | =<FUNCTION>({2;4;8},{1;2;3},TRUE,TRUE) | Request the additional regression statistics.
+boundary | =<FUNCTION>({2;4},{1;2}) | Use two observations with distinct x values.
+error | =<FUNCTION>({2;4;8},{1;2}) | The independent and dependent observations do not align.
+
+LOGEST:
+ordinary | =<FUNCTION>({2;4;8},{1;2;3}) | Fit coefficients using three observations and their known x values.
+alternate | =<FUNCTION>({2;4;7},{1;2;3},TRUE,TRUE) | Return exponential regression statistics for three imperfectly aligned observations.
+boundary | =<FUNCTION>({2;4},{1;2}) | Use two observations with distinct x values.
+error | =<FUNCTION>({2;4;8},{1;2}) | The independent and dependent observations do not align.
+
+LOGNORM.DIST:
+ordinary | =<FUNCTION>(2,0,1,TRUE) | Use ln(2) as the normal z score to find the cumulative probability.
+alternate | =<FUNCTION>(2,0,1,FALSE) | Evaluate the lognormal density at two with log-scale mean zero and deviation one.
+boundary | =<FUNCTION>(1,0,1,TRUE) | The observation one has a log of zero, giving cumulative probability one half.
+error | =<FUNCTION>(2,0,0,TRUE) | The standard deviation must be positive.
+
+NORM.DIST:
+ordinary | =<FUNCTION>(2,0,1,TRUE) | Find the standard normal cumulative probability at two standard deviations.
+alternate | =<FUNCTION>(2,0,1,FALSE) | Evaluate the standard normal density at z = 2.
+boundary | =<FUNCTION>(1,0,1,TRUE) | At z = 1 the cumulative area is the probability below one standard deviation.
+error | =<FUNCTION>(2,0,0,TRUE) | The standard deviation must be positive.
+
+LOGNORM.INV:
+ordinary | =<FUNCTION>(0.5,0,1) | Exponentiate the median log-scale value zero to get the lognormal median.
+alternate | =<FUNCTION>(0.9,0,2) | Find the upper lognormal decile with log-scale deviation two.
+boundary | =<FUNCTION>(0.01,0,1) | At probability 0.01 the lognormal quantile is positive and below one.
+error | =<FUNCTION>(1.1,0,1) | A probability greater than one is outside the distribution.
+
+NORM.INV:
+ordinary | =<FUNCTION>(0.5,0,1) | Find the median of a normal distribution centered at zero.
+alternate | =<FUNCTION>(0.9,0,2) | Find the 90th percentile of a normal distribution with deviation two.
+boundary | =<FUNCTION>(0.01,0,1) | At probability 0.01 the quantile is in the negative tail.
+error | =<FUNCTION>(1.1,0,1) | A probability greater than one is outside the distribution.
+
+LOGNORMDIST:
+ordinary | =<FUNCTION>(2,0,1) | Evaluate the cumulative lognormal distribution above one.
+alternate | =<FUNCTION>(0.5,0,1) | Evaluate a point below one with the same distribution parameters.
+boundary | =<FUNCTION>(1,0,1) | With mean zero and standard deviation one, x = 1 is the median.
+error | =<FUNCTION>(0,0,1) | The lognormal calculation requires a positive observation.
+
+NEGBINOM.DIST:
+ordinary | =<FUNCTION>(3,4,0.5,FALSE) | Find the point probability for three failures before the fourth success.
+alternate | =<FUNCTION>(2,4,0.5,TRUE) | Accumulate probabilities for no more than two failures before the fourth success.
+boundary | =<FUNCTION>(0,4,0.5,FALSE) | Evaluate the probability of four successes without any failure.
+error | =<FUNCTION>(-1,4,0.5,FALSE) | The failure count cannot be negative.
+
+NEGBINOMDIST:
+ordinary | =<FUNCTION>(3,4,0.5) | Find the probability for three failures before the fourth success.
+alternate | =<FUNCTION>(5,4,0.45) | Compare the chance of five failures at a lower per-trial success probability.
+boundary | =<FUNCTION>(0,4,0.5) | Evaluate the probability of four successes without any failure.
+error | =<FUNCTION>(-1,4,0.5) | The failure count cannot be negative.
+
+NORM.S.DIST:
+ordinary | =<FUNCTION>(1,TRUE) | Evaluate the cumulative standard normal distribution at one.
+alternate | =<FUNCTION>(1,FALSE) | Evaluate density at the same z score.
+boundary | =<FUNCTION>(0,TRUE) | Evaluate the cumulative probability at the distribution center.
+error | =<FUNCTION>("invalid",TRUE) | The z score must resolve to a number.
+
+PERCENTILE.EXC PERCENTILE.INC:
+ordinary | =<FUNCTION>({10,20,30,40,50},0.5) | Find the value at the fiftieth percentile.
+alternate | =<FUNCTION>({10,20,30,40,50},0.3) | Choose a percentile between observed ranks to see interpolation.
+boundary | =<FUNCTION>({10,20,30,40,50},0.2) | Evaluate near the lower end of the sample.
+error | =<FUNCTION>({10,20,30,40,50},1.1) | A percentile above one is outside the probability interval.
+
+PERCENTRANK.EXC PERCENTRANK.INC:
+ordinary | =<FUNCTION>({10,20,30,40,50},30) | Find the percentile rank of an observation in the sample.
+alternate | =<FUNCTION>({10,20,30,40,50},25,5) | Interpolate between two observations and request five digits of significance.
+boundary | =<FUNCTION>({10,20,30,40,50},10) | Evaluate the rank of the smallest observed value.
+error | =<FUNCTION>({10,20,30,40,50},5) | A value below every observation is outside the input data.
+
+POISSON.DIST:
+ordinary | =<FUNCTION>(3,5,FALSE) | Find the probability of exactly three events when the mean is five.
+alternate | =<FUNCTION>(3,5,TRUE) | Find the cumulative probability of at most three events.
+boundary | =<FUNCTION>(0,5,FALSE) | Evaluate the point probability of observing no events.
+error | =<FUNCTION>(-1,5,FALSE) | An event count cannot be negative.
+
+QUARTILE.EXC QUARTILE.INC:
+ordinary | =<FUNCTION>({10,20,30,40,50},1) | Find the first quartile of five ordered values.
+alternate | =<FUNCTION>({10,20,30,40,50},3) | Find the corresponding upper quartile.
+boundary | =<FUNCTION>({10,20,30,40,50},2) | The second quartile is the median of this sample.
+error | =<FUNCTION>({10,20,30,40,50},5) | Quartile five is outside the supported range.
+
+RANK.AVG RANK.EQ:
+ordinary | =<FUNCTION>(20,{10,20,20,40,50}) | Rank a value tied with a second observation.
+alternate | =<FUNCTION>(20,{10,20,20,40,50},1) | Select ascending ranking instead of descending ranking.
+boundary | =<FUNCTION>(40,{10,20,20,40}) | The largest value is ranked first in descending order.
+error | =<FUNCTION>(25,{10,20,20,40}) | A value absent from the source array has no rank.
+
+STANDARDIZE:
+ordinary | =<FUNCTION>(14,10,2) | Express an observation four units above the mean on a standard-deviation scale.
+alternate | =<FUNCTION>(6,10,2) | Compare with an observation the same distance below the mean.
+boundary | =<FUNCTION>(10,10,2) | An observation equal to the mean has a standardized score of zero.
+error | =<FUNCTION>(14,10,0) | A standard deviation of zero cannot serve as a divisor.
+
+T.DIST:
+ordinary | =<FUNCTION>(1,10,TRUE) | Find the cumulative Student t probability at a statistic of one.
+alternate | =<FUNCTION>(1,10,FALSE) | Evaluate the density at that statistic.
+boundary | =<FUNCTION>(0,10,TRUE) | The center of this symmetric distribution has cumulative probability one-half.
+error | =<FUNCTION>(1,0,TRUE) | Degrees of freedom must be positive.
+
+T.DIST.2T:
+ordinary | =<FUNCTION>(2,10) | Find the probability outside the interval from −2 to 2 for ten degrees of freedom.
+alternate | =<FUNCTION>(2,30) | Keep the two cutoffs fixed and increase the degrees of freedom.
+boundary | =<FUNCTION>(0,10) | At x = 0 the two tails together cover the whole distribution.
+error | =<FUNCTION>(2,0) | Degrees of freedom must be positive.
+
+T.DIST.RT:
+ordinary | =<FUNCTION>(2,10) | Find the probability above 2 for a t variate with ten degrees of freedom.
+alternate | =<FUNCTION>(2,30) | Use thirty degrees of freedom for the same upper cutoff.
+boundary | =<FUNCTION>(0,10) | By symmetry, one half of the probability lies above zero.
+error | =<FUNCTION>(2,0) | Degrees of freedom must be positive.
+
+T.INV:
+ordinary | =<FUNCTION>(0.25,10) | Find the negative Student t quartile with lower-tail probability one quarter.
+alternate | =<FUNCTION>(0.75,10) | Move to the symmetric positive quartile at lower-tail probability three quarters.
+boundary | =<FUNCTION>(0.5,1) | At probability one half, the t quantile is zero for one degree of freedom.
+error | =<FUNCTION>(1.1,10) | A probability above one cannot identify a t statistic.
+
+T.INV.2T:
+ordinary | =<FUNCTION>(0.25,10) | Find a positive t cutoff that leaves one quarter of the area in both tails combined.
+alternate | =<FUNCTION>(0.75,10) | Increase the combined area to three quarters, moving the cutoff closer to zero.
+boundary | =<FUNCTION>(0.5,1) | Split the total area equally between the center and the two tails using one degree of freedom.
+error | =<FUNCTION>(1.1,10) | A probability above one cannot identify a t statistic.
+
+TINV:
+ordinary | =<FUNCTION>(0.25,10) | Use the legacy inverse to find the t cutoff for combined tail probability 0.25.
+alternate | =<FUNCTION>(0.75,10) | Move the cutoff inward until the two-tail probability reaches 0.75.
+boundary | =<FUNCTION>(0.5,1) | Find the two-sided cutoff at probability one half with one degree of freedom.
+error | =<FUNCTION>(1.1,10) | A probability above one cannot identify a t statistic.
+
+T.TEST:
+ordinary | =<FUNCTION>({10,12,11,14},{11,13,12,16},2,1) | Perform a paired two-tailed comparison of corresponding observations.
+alternate | =<FUNCTION>({10,12,11,14},{11,13,12,16},1,3) | Test one tail with independent samples and unequal variances.
+boundary | =<FUNCTION>({1,5},{2,9},2,1) | Use two matched pairs with differing differences.
+error | =<FUNCTION>({10,12,11,14},{11,13,12,16},3,1) | The number of tails must be one or two.
+
+TDIST:
+ordinary | =<FUNCTION>(2,10,1) | Evaluate one upper tail of the Student t distribution.
+alternate | =<FUNCTION>(2,10,2) | Evaluate both tails at the same statistic.
+boundary | =<FUNCTION>(0,10,2) | At the distribution center the two tails cover the full probability.
+error | =<FUNCTION>(2,10,3) | The number of tails must be one or two.
+
+TRIMMEAN:
+ordinary | =<FUNCTION>({1,10,12,13,50},0.4) | Trim the smallest and largest observations before averaging.
+alternate | =<FUNCTION>({1,10,12,13,50},0.2) | Compare a smaller fraction whose trimming count rounds down.
+boundary | =<FUNCTION>({1,10,12,13,50},0) | A zero trim fraction uses every value.
+error | =<FUNCTION>({1,10,12,13,50},1.1) | The excluded fraction cannot exceed the full sample.
+
+WEIBULL.DIST:
+ordinary | =<FUNCTION>(2,3,4,TRUE) | Find the cumulative Weibull probability at a positive observation.
+alternate | =<FUNCTION>(2,3,4,FALSE) | Evaluate density at the same point.
+boundary | =<FUNCTION>(0,3,4,TRUE) | Evaluate the cumulative distribution at its lower boundary.
+error | =<FUNCTION>(-1,3,4,TRUE) | A negative observation is outside the Weibull support.
+
+Z.TEST:
+ordinary | =<FUNCTION>({8,10,12,14,16},10) | Use the sample spread to find the one-tailed z-test probability.
+alternate | =<FUNCTION>({8,10,12,14,16},10,3) | Supply the population standard deviation explicitly.
+boundary | =<FUNCTION>({8,10,12,14,16},12,3) | Compare the sample with a hypothesized mean equal to its observed mean.
+error | =<FUNCTION>({8,10,12,14,16},10,0) | A population standard deviation of zero cannot be used for the test.
+
+ARRAYTOTEXT:
+ordinary | =<FUNCTION>({1,"East";2,"West"}) | Convert a rectangular array containing numbers and text to its concise representation.
+alternate | =<FUNCTION>({1,"East";2,"West"},1) | Use strict representation to preserve the two-dimensional array syntax.
+boundary | =<FUNCTION>({""},1) | Show how an empty text element is represented in strict format.
+error | =<FUNCTION>({1,"East"},1/0) | An error in the format expression propagates.
+
+ASC:
+ordinary | =<FUNCTION>("ＡＢＣ１２３") | Convert full-width Latin letters and digits to their narrow forms.
+alternate | =<FUNCTION>("ＡBＣ") | Convert a mixture of wide and narrow characters.
+boundary | =<FUNCTION>("") | An empty input produces empty text.
+error | =<FUNCTION>(1/0) | An error in the text argument propagates.
+
+CHAR UNICHAR:
+ordinary | =<FUNCTION>(65) | Return the character at the numeric code for the letter A.
+alternate | =<FUNCTION>(97) | Compare the character at the numeric code for the letter a.
+boundary | =<FUNCTION>(32) | Return the space character at code 32.
+error | =<FUNCTION>(0) | Code zero is outside the supported input range.
+
+CLEAN:
+ordinary | =CLEAN("A"&CHAR(10)&"B") | Remove a line-feed control character embedded between letters.
+alternate | =CLEAN(CHAR(9)&"A"&CHAR(13)) | Remove tab and carriage-return characters while preserving the letter.
+boundary | =<FUNCTION>("") | Cleaning an empty string gives an empty string.
+error | =<FUNCTION>(1/0) | An input error propagates before any cleaning can occur.
+
+CODE UNICODE:
+ordinary | =<FUNCTION>("ABC") | Return the numeric character code for the first character in a string.
+alternate | =<FUNCTION>("aBC") | Change the leading character while keeping the rest of the string.
+boundary | =<FUNCTION>(" ") | Read the numeric code of a single space.
+error | =<FUNCTION>("") | An empty string has no first character to encode.
+
+CONCAT CONCATENATE:
+ordinary | =<FUNCTION>("East"," ","2024") | Join region and year labels with an explicit separator.
+alternate | =<FUNCTION>("Team ",42," score ",8) | Combine text and numeric values in argument order.
+boundary | =<FUNCTION>("Only item") | A single argument is already the entire concatenated result.
+error | =<FUNCTION>("East",1/0) | A division-by-zero error among the inputs propagates.
+
+DOLLAR:
+ordinary | =<FUNCTION>(1234.567) | Format a positive amount using the default number of decimal places.
+alternate | =<FUNCTION>(-1234.567,1) | Format a negative amount with one decimal digit.
+boundary | =<FUNCTION>(0,0) | Format zero with no decimal digits.
+error | =<FUNCTION>("amount",2) | The amount cannot be read from nonnumeric text.
+
+EXACT:
+ordinary | =<FUNCTION>("Team","Team") | Compare two identical text values.
+alternate | =<FUNCTION>("Team","team") | Change letter case while leaving the characters otherwise equal.
+boundary | =<FUNCTION>("","") | Two zero-length strings compare equal.
+error | =<FUNCTION>("Team",1/0) | An error in a comparison input propagates.
+
+FIND:
+ordinary | =<FUNCTION>("bo","Ana and bo") | Find the position of an exact lowercase substring.
+alternate | =<FUNCTION>("A","A-B-A",2) | Skip the first character by supplying a starting position.
+boundary | =<FUNCTION>("A","A") | A one-character text has its match at the first position.
+error | =<FUNCTION>("Bo","Ana and bo") | The uppercase B prevents the case-sensitive search from matching.
+
+FINDB:
+ordinary | =FINDB("界","é界z") | Count past the single accented character to find 界 at position two.
+alternate | =FINDB("é","é界é",2) | Start at the second character and find the final é.
+boundary | =FINDB("界","界") | A single matching character starts at position one.
+error | =FINDB("É","é界") | A case-sensitive search distinguishes É from é.
+
+FIXED:
+ordinary | =<FUNCTION>(1234.567) | Format a number with the default precision and digit grouping.
+alternate | =<FUNCTION>(1234.567,1,TRUE) | Use one decimal place and suppress the grouping separator.
+boundary | =<FUNCTION>(0,0) | Format zero without decimal digits.
+error | =<FUNCTION>("amount",2) | A nonnumeric amount cannot be formatted as a number.
+
+LEFT RIGHT:
+ordinary | =<FUNCTION>("East-2024",4) | Extract four ASCII characters from the selected end of a label.
+alternate | =<FUNCTION>("East-2024") | Omit the count and use the default of one.
+boundary | =<FUNCTION>("East-2024",0) | A count of zero yields empty text.
+error | =<FUNCTION>("East-2024",-1) | A negative extraction count is invalid.
+
+LEFTB:
+ordinary | =LEFTB("é界xyz",2) | Take the first two Unicode scalar characters, é and 界.
+alternate | =LEFTB("é界xyz") | The default count takes the initial é.
+boundary | =LEFTB("é界xyz",0) | A zero count gives empty text.
+error | =LEFTB("é界xyz",-1) | A negative count cannot select a prefix.
+
+RIGHTB:
+ordinary | =RIGHTB("xyzé界",2) | Select é and 界 from the right using two character positions.
+alternate | =RIGHTB("xyzé界") | With the default count, return the final character 界.
+boundary | =RIGHTB("xyzé界",0) | Taking zero characters gives empty text.
+error | =RIGHTB("xyzé界",-1) | A negative count cannot select a suffix.
+
+LEN:
+ordinary | =<FUNCTION>("East 2024") | Count the length of a label containing an internal space.
+alternate | =<FUNCTION>("é界") | Measure text containing non-ASCII characters.
+boundary | =<FUNCTION>("") | Empty text has a length of zero.
+error | =<FUNCTION>(1/0) | A division-by-zero input propagates.
+
+LENB:
+ordinary | =LENB("East 2024") | Count the four letters, one space and four digits in the label.
+alternate | =LENB("é界") | The two Unicode characters contribute one each in Formualizer.
+boundary | =LENB("") | Empty text has zero character positions.
+error | =LENB(1/0) | The input error propagates before any characters can be counted.
+
+LOWER UPPER PROPER:
+ordinary | =<FUNCTION>("eAST team") | Apply the case conversion to two words with mixed capitalization.
+alternate | =<FUNCTION>("Q2-sales") | Convert text that also includes digits and punctuation.
+boundary | =<FUNCTION>("") | Case conversion of an empty string yields empty text.
+error | =<FUNCTION>(1/0) | An input error propagates before any text conversion.
+
+MID:
+ordinary | =<FUNCTION>("East-2024",6,4) | Extract the year from the middle of a label by position.
+expected-equal | =<FUNCTION>("East-2024",6,20) | A requested count beyond the remaining text reaches only the end.
+boundary | =<FUNCTION>("East-2024",6,0) | A zero count produces an empty substring.
+error | =<FUNCTION>("East-2024",0,4) | A start position of zero is invalid.
+
+MIDB:
+ordinary | =MIDB("aé界z",2,2) | Take é and 界 from the second and third positions.
+alternate | =MIDB("aé界z",2,10) | A long count returns all remaining characters beginning at é.
+boundary | =MIDB("aé界z",2,0) | Request zero characters starting at é.
+error | =MIDB("aé界z",0,2) | The start is one-based, so zero is invalid.
+
+NUMBERVALUE:
+ordinary | =<FUNCTION>("1234.56") | Convert a decimal string using the default separators.
+expected-equal | =<FUNCTION>("1.234,56",",",".") | Supply a comma decimal separator and a dot group separator.
+boundary | =<FUNCTION>("0") | Convert the single digit zero.
+error | =<FUNCTION>("unknown") | Nonnumeric text cannot be parsed as a number.
+
+REPLACE:
+ordinary | =<FUNCTION>("East-2024",6,4,"2025") | Replace the final four ASCII characters by position.
+alternate | =<FUNCTION>("East-2024",6,0,"FY") | Insert text without deleting source characters.
+boundary | =<FUNCTION>("East-2024",6,4,"") | Delete the selected characters by replacing them with empty text.
+error | =<FUNCTION>("East-2024",0,4,"2025") | A start position of zero is invalid.
+
+REPLACEB:
+ordinary | =REPLACEB("aé界z",2,2,"_") | Replace the two Unicode characters é and 界 with one underscore.
+alternate | =REPLACEB("aé界z",2,0,"_") | Insert an underscore before é without discarding any original characters.
+boundary | =REPLACEB("aé界z",2,2,"") | Delete é and 界 by replacing them with empty text.
+error | =REPLACEB("aé界z",0,2,"_") | A replacement cannot start before position one.
+
+REPT:
+ordinary | =<FUNCTION>("ab",3) | Repeat a two-character string three times.
+alternate | =<FUNCTION>("ab",2.8) | Use a fractional count to see how it is reduced to an integer.
+boundary | =<FUNCTION>("ab",0) | Zero repetitions produce empty text.
+error | =<FUNCTION>("ab",-1) | A negative repetition count is invalid.
+
+SEARCH:
+ordinary | =<FUNCTION>("BO","Ana and bo") | Find a substring without matching letter case.
+alternate | =<FUNCTION>("A","A-B-a",2) | Start at the second position and find the later occurrence.
+boundary | =<FUNCTION>("A","A") | A one-character text has its match at the first position.
+error | =<FUNCTION>("Cy","Ana and bo") | The requested letters do not occur together in the source.
+
+SEARCHB:
+ordinary | =SEARCHB("Z","é界z") | Find lowercase z at character position three despite the uppercase search term.
+alternate | =SEARCHB("?","é界z",2) | Match a single character starting at 界, the second position.
+boundary | =SEARCHB("界","界") | A one-character match starts at position one.
+error | =SEARCHB("x","é界z") | No character matches the search term.
+
+SUBSTITUTE:
+ordinary | =<FUNCTION>("A-B-A","A","X") | Replace every occurrence of the target text.
+alternate | =<FUNCTION>("A-B-A","A","X",2) | Replace only the second occurrence.
+boundary | =<FUNCTION>("A-B-A","A","") | Remove the target occurrences by replacing them with an empty string.
+error | =<FUNCTION>("A-B-A","A","X",0) | The occurrence index must start at one.
+
+TEXT:
+ordinary | =<FUNCTION>(12.5,"0.00") | Format a fractional number with exactly two decimals.
+alternate | =<FUNCTION>(0.25,"0%") | Change the number format to a percentage.
+boundary | =<FUNCTION>(0,"0.00") | Use the same decimal format at the zero boundary.
+error | =<FUNCTION>(1/0,"0.00") | An input error propagates before formatting.
+
+TEXTAFTER TEXTBEFORE:
+ordinary | =<FUNCTION>("East-Q2-2024","-") | Split the label at the first dash.
+alternate | =<FUNCTION>("East-Q2-2024","-",2) | Use the second occurrence of the delimiter.
+boundary | =<FUNCTION>("-East-","-") | Split at a delimiter that begins the input text.
+error | =<FUNCTION>("East-Q2-2024","/") | The specified delimiter is absent from the source text.
+
+TEXTJOIN:
+ordinary | =<FUNCTION>(", ",TRUE,"East","","West") | Join text while skipping empty items.
+alternate | =<FUNCTION>(", ",FALSE,"East","","West") | Keep the empty item so it contributes a separator position.
+boundary | =<FUNCTION>(", ",TRUE,"East") | A single nonempty item needs no delimiter.
+error | =<FUNCTION>(", ",TRUE,"East",1/0) | A division-by-zero error among the inputs propagates.
+
+TEXTSPLIT:
+ordinary | =<FUNCTION>("East,West",",") | Split one comma-separated row into columns.
+alternate | =<FUNCTION>("EastX10;WestXX20;North","x",";",TRUE,1,"missing") | Split on either case of X, skip empty pieces, and pad the shorter final row with text.
+boundary | =<FUNCTION>("East",",") | With no delimiter occurrence the result contains a single piece of text.
+error | =<FUNCTION>("East,West",1/0) | An error in the delimiter argument prevents splitting.
+
+TRIM:
+ordinary | =<FUNCTION>("  East   Team  ") | Remove leading and trailing spaces and collapse interior space runs.
+alternate | =<FUNCTION>(" East ") | Trim padding around a single word.
+boundary | =<FUNCTION>("   ") | A string consisting entirely of spaces becomes empty.
+error | =<FUNCTION>(1/0) | An input error propagates before trimming.
+
+VALUE:
+ordinary | =<FUNCTION>("1234.56") | Convert decimal text into a number.
+alternate | =<FUNCTION>("25%") | Convert a percent string to its numeric fraction.
+boundary | =<FUNCTION>("0") | Convert the text representation of zero.
+error | =<FUNCTION>("unknown") | An unrecognized numeric string returns an error.
+
+VALUETOTEXT:
+ordinary | =<FUNCTION>(42) | Convert a number to its concise text form.
+alternate | =<FUNCTION>("Visit",1) | Request strict output to see how a text value is represented.
+boundary | =<FUNCTION>("",1) | Request the strict representation of empty text.
+error | =<FUNCTION>(1/0) | In concise mode an input error propagates as an error value.

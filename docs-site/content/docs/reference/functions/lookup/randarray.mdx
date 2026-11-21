@@ -1,51 +1,80 @@
 ---
 title: "RANDARRAY"
-description: "RANDARRAY: Generates a random spilled array of numbers."
+seoTitle: "RANDARRAY function: formula syntax and examples"
+description: "Generates a random spilled array of numbers. =RANDARRAY([rows], [columns], [min], [max], [whole_number])"
 ---
 
-<FunctionPageSchema id="lookup/randarray" />
-
-## Summary
+Generates a random spilled array of numbers.
 
 `RANDARRAY` can return decimal values or whole numbers in a specified range.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=RANDARRAY([rows], [columns], [min], [max], [whole_number])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rows` | number | Optional | `1` |
+| `columns` | number | Optional | `1` |
+| `min` | number | Optional | `0` |
+| `max` | number | Optional | `1` |
+| `whole_number` | logical | Optional | `false` |
 
 ## Remarks
  - Defaults: `rows=1`, `columns=1`, `min=0`, `max=1`, `whole_number=FALSE`.
  - The function is non-deterministic and recalculates to new values.
  - For whole numbers, values are generated in an inclusive integer range.
+
+## Error cases
+
  - `rows &lt;= 0`, `columns &lt;= 0`, or invalid integer bounds return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Generate a 2x3 decimal matrix", "Generate six integer dice rolls"]}>
-<Tab value="Generate a 2x3 decimal matrix">
-<FunctionSandbox
-  title="Generate a 2x3 decimal matrix"
-  formula={`=RANDARRAY(2,3)`}
+<FunctionExample
+  title={"Generate a two-row, three-column array of random decimals."}
+  formula={"=RANDARRAY(2,3)"}
   grid={{}}
-  expected={"2x3 array of decimals in [0,1)"}
+  expected={"2 × 3 array of random numbers"}
 />
-</Tab>
 
-<Tab value="Generate six integer dice rolls">
-<FunctionSandbox
-  title="Generate six integer dice rolls"
-  formula={`=RANDARRAY(6,1,1,6,TRUE)`}
+<FunctionExample
+  title={"Generate a two-by-two array of random integers from 10 through 20."}
+  formula={"=RANDARRAY(2,2,10,20,TRUE)"}
   grid={{}}
-  expected={"6x1 array of integers from 1 to 6"}
+  expected={"2 × 2 array of random numbers"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Omit all arguments to request one random value."}
+  formula={"=RANDARRAY()"}
+  grid={{}}
+  expected={"Random number"}
+/>
+
+<FunctionExample
+  title={"A random array must contain at least one row."}
+  formula={"=RANDARRAY(0,3)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Generate six integer dice rolls"}
+  formula={"=RANDARRAY(6,1,1,6,TRUE)"}
+  grid={{}}
+  expected={"6 × 1 array of random numbers"}
+/>
 
 ## Related functions
 
 - [SEQUENCE](/docs/reference/functions/lookup/sequence)
 - [SORT](/docs/reference/functions/lookup/sort)
 - [UNIQUE](/docs/reference/functions/lookup/unique)
-- [TOCOL](/docs/reference/functions/lookup/tocol)
-- [TOROW](/docs/reference/functions/lookup/torow)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 
 ## FAQ
 
@@ -55,8 +84,6 @@ In whole_number mode, min and max are inclusive integer bounds; in decimal mode 
 ### Why does RANDARRAY recalculate on every recalc pass?
 RANDARRAY is volatile and non-deterministic by design, so its spilled results are regenerated each evaluation.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/randarray" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

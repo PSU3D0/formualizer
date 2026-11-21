@@ -1,11 +1,10 @@
 ---
 title: "CELL"
-description: "CELL: Returns requested information about a reference."
+seoTitle: "CELL function: formula syntax and examples"
+description: "Returns requested information about a reference. =CELL(info_type, [reference])"
 ---
 
-<FunctionPageSchema id="info/cell" />
-
-## Summary
+Returns requested information about a reference.
 
 Supported `info_type` values (case-insensitive):
  - `"contents"` — the value of the upper-left cell of the reference
@@ -26,57 +25,86 @@ Supported `info_type` values (case-insensitive):
  `address`, `col`, `row` or `filename`.
  An argument that evaluates to an error propagates that error unchanged.
 
- Known divergence: without a reference Excel's `filename` names the sheet of
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CELL(info_type, [reference])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `info_type` | any | Required | — |
+| `reference` | any | Optional | — |
+
+## Differences from Excel
+ Without a reference Excel's `filename` names the sheet of
  the cell selected at calculation time. There is no selection state here, so
  it names the formula's own sheet.
  Operation diagnostics report both gaps: a call without a reference as the
  `implicit_active_cell_reference` mode, even with a path, and any call as the
  `filename` mode while the workbook's identity is unknown.
 
- Known divergence: `CELL("contents", &lt;blank cell&gt;)` produces `Empty` in-graph
+ `CELL("contents", &lt;blank cell&gt;)` produces `Empty` in-graph
  where Excel produces numeric `0`, so `ISBLANK(CELL("contents",Z99))` is TRUE
  here and FALSE in Excel; tracked in #333 and to be resolved with the #319
  blank-coercion variant study.
 
 ## Examples
 
-<Tabs items={["CELL contents", "CELL address of the top-left cell"]}>
-<Tab value="CELL contents">
-<FunctionSandbox
-  title="CELL contents"
-  formula={`=CELL("contents",A1)`}
+<FunctionExample
+  title={"Read the absolute address of a known input cell."}
+  formula={"=CELL(\"address\",A1)"}
+  grid={{"A1":"42"}}
+  expected={"$A$1"}
+/>
+
+<FunctionExample
+  title={"Change the information type to read the cell's content."}
+  formula={"=CELL(\"contents\",A1)"}
+  grid={{"A1":"42"}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"Read the contents of a reference to an empty cell."}
+  formula={"=CELL(\"contents\",B1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"An unsupported information type cannot identify a cell property."}
+  formula={"=CELL(\"unknown\",A1)"}
+  grid={{"A1":"42"}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"CELL contents"}
+  formula={"=CELL(\"contents\",A1)"}
   grid={{"A1":"10"}}
   expected={"10"}
 />
-</Tab>
 
-<Tab value="CELL address of the top-left cell">
-<FunctionSandbox
-  title="CELL address of the top-left cell"
-  formula={`=CELL("address",A1)`}
+<FunctionExample
+  title={"CELL address of the top-left cell"}
+  formula={"=CELL(\"address\",A1)"}
   grid={{}}
   expected={"$A$1"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SHEET](/docs/reference/functions/info/sheet)
 - [ISREF](/docs/reference/functions/info/isref)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
-- [ISERR](/docs/reference/functions/info/iserr)
 
 ## FAQ
 
 ### Which info types does CELL support?
 contents, address, col, row, type and filename. Unsupported info types return #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/cell" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

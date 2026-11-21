@@ -1,13 +1,26 @@
 ---
 title: "TAN"
-description: "Returns the tangent of an angle in radians."
+seoTitle: "TAN function: formula syntax and examples"
+description: "Returns the tangent of an angle in radians. =TAN(number)"
 ---
 
-<FunctionPageSchema id="math/tan" />
-
-## Summary
-
 Returns the tangent of an angle in radians.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TAN(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Tangent is sin(x) / cos(x) for a radian angle x. It is undefined at π/2 plus integer multiples of π.
 
 ## Remarks
  - Input is interpreted as radians.
@@ -15,43 +28,52 @@ Returns the tangent of an angle in radians.
 
 ## Examples
 
-<Tabs items={["Tangent at PI/4", "Tangent at zero"]}>
-<Tab value="Tangent at PI/4">
-<FunctionSandbox
-  title="Tangent at PI/4"
-  formula={`=TAN(PI()/4)`}
+<FunctionExample
+  title={"Divide sine by cosine at half a radian."}
+  formula={"=TAN(0.5)"}
   grid={{}}
-  expected={"1"}
+  expected={"0.54630248984379"}
 />
-</Tab>
 
-<Tab value="Tangent at zero">
-<FunctionSandbox
-  title="Tangent at zero"
-  formula={`=TAN(0)`}
+<FunctionExample
+  title={"Negating the angle reverses the sign of the tangent."}
+  formula={"=TAN(-0.5)"}
+  grid={{}}
+  expected={"-0.54630248984379"}
+/>
+
+<FunctionExample
+  title={"A horizontal radius at zero radians has zero slope."}
+  formula={"=TAN(0)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the tangent."}
+  formula={"=TAN(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Tangent at PI/4"}
+  formula={"=TAN(PI()/4)"}
+  grid={{}}
+  expected={"1"}
+/>
 
 ## Related functions
 
 - [SIN](/docs/reference/functions/math/sin)
 - [COS](/docs/reference/functions/math/cos)
 - [ATAN](/docs/reference/functions/math/atan)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### Why does TAN explode near PI()/2?
 Because COS approaches zero there, TAN can become extremely large in magnitude.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/tan" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

@@ -1,31 +1,55 @@
 ---
 title: "SUBTOTAL"
-description: "Reference for the SUBTOTAL function."
+seoTitle: "SUBTOTAL function: formula syntax and examples"
+description: "Reference for the SUBTOTAL function. =SUBTOTAL(function_num, ref1, [ref2], ...)"
 ---
 
-<FunctionPageSchema id="math/subtotal" />
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
 
-## Summary
+## Syntax
 
-Reference for the SUBTOTAL function.
+`=SUBTOTAL(function_num, ref1, [ref2], ...)`
 
-## Formula example
+## Arguments
 
-```text
-=SUBTOTAL(A1, B1)
-```
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `function_num` | number (range) | Required | — |
+| `ref1` | number (range) | Required | — |
+| `ref2` | number (range) | Optional | — |
 
-## Related functions
+Accepts a variable number of arguments. Minimum: 2.
 
-- [AGGREGATE](/docs/reference/functions/math/aggregate)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [COUNT](/docs/reference/functions/math/count)
-- [SUM](/docs/reference/functions/math/sum)
-- [AVERAGEIF](/docs/reference/functions/math/averageif)
-- [COUNTIFS](/docs/reference/functions/math/countifs)
+## Examples
 
-## Runtime metadata
+<FunctionExample
+  title={"Select the sum operation over three source cells."}
+  formula={"=SUBTOTAL(9,A1:A3)"}
+  grid={{"A1":"5","A2":"10","A3":"20"}}
+  expected={"35"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/subtotal" />
-{/* [formualizer-docgen:function-meta:end] */}
+<FunctionExample
+  title={"Use operation one to calculate their average instead."}
+  formula={"=SUBTOTAL(1,A1:A3)"}
+  grid={{"A1":"5","A2":"10","A3":"20"}}
+  expected={"11.6666666666667"}
+/>
+
+<FunctionExample
+  title={"Include a referenced nested SUBTOTAL to check how it contributes to the outer sum."}
+  formula={"=SUBTOTAL(9,A1:A3,B1)"}
+  grid={{"A1":"5","A2":"10","A3":"20","B1":"=SUBTOTAL(9,A1:A2)"}}
+  expected={"35"}
+/>
+
+<FunctionExample
+  title={"An unsupported operation number cannot select a subtotal calculation."}
+  formula={"=SUBTOTAL(99,A1:A3)"}
+  grid={{"A1":"5","A2":"10","A3":"20"}}
+  expected={"#VALUE!"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/aggregate.rs)

@@ -1,58 +1,85 @@
 ---
 title: "MINUTE"
-description: "Extracts the minute component (`0` to `59`) from a time or datetime serial."
+seoTitle: "MINUTE function: formula syntax and examples"
+description: "Extracts the minute component (0 to 59) from a time or datetime serial. =MINUTE(serial_number)"
 ---
-
-<FunctionPageSchema id="datetime/minute" />
-
-## Summary
 
 Extracts the minute component (`0` to `59`) from a time or datetime serial.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MINUTE(serial_number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `serial_number` | number | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - The integer date portion is ignored for minute extraction.
- - Conversion uses Excel 1900 serial interpretation for the date portion when present.
+ - The date portion, when present, is resolved with the workbook's date system.
  - Time is derived from the fractional serial component.
 
 ## Examples
 
-<Tabs items={["Extract minute from 15:30:45", "Extract minute from exact noon"]}>
-<Tab value="Extract minute from 15:30:45">
-<FunctionSandbox
-  title="Extract minute from 15:30:45"
-  formula={`=MINUTE(0.6463541667)`}
+<FunctionExample
+  title={"Extract the component from a time with nonzero hours, minutes and seconds."}
+  formula={"=MINUTE(TIME(14,35,27))"}
   grid={{}}
-  expected={"30"}
+  expected={"35"}
 />
-</Tab>
 
-<Tab value="Extract minute from exact noon">
-<FunctionSandbox
-  title="Extract minute from exact noon"
-  formula={`=MINUTE(0.5)`}
+<FunctionExample
+  title={"Read the time component from a serial that also includes a date."}
+  formula={"=MINUTE(DATE(2024,2,29)+TIME(14,35,27))"}
+  grid={{}}
+  expected={"35"}
+/>
+
+<FunctionExample
+  title={"Read the component at midnight."}
+  formula={"=MINUTE(0)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"An unrecognized time string cannot be converted to a serial."}
+  formula={"=MINUTE(\"not a time\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Extract minute from 15:30:45"}
+  formula={"=MINUTE(0.6463541667)"}
+  grid={{}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"Extract minute from exact noon"}
+  formula={"=MINUTE(0.5)"}
+  grid={{}}
+  expected={"0"}
+/>
 
 ## Related functions
 
 - [HOUR](/docs/reference/functions/datetime/hour)
 - [SECOND](/docs/reference/functions/datetime/second)
 - [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
-- [DAY](/docs/reference/functions/datetime/day)
-- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
-- [MONTH](/docs/reference/functions/datetime/month)
 
 ## FAQ
 
 ### Does MINUTE round to nearest minute?
 No. MINUTE extracts the minute component from the interpreted time value; it does not independently round to minute precision.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/minute" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_parts.rs)

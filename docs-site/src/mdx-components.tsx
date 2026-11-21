@@ -8,16 +8,12 @@ import {
   ConvergentCycleSandbox,
   GuardedPairSandbox,
 } from "@/components/playground/cycle-sandbox";
-import { FunctionMeta } from "@/components/reference/function-meta";
-import { FunctionPageSchema } from "@/components/reference/function-page-schema";
-import { FunctionSandbox } from "@/components/reference/function-sandbox";
+import { FunctionExample } from "@/components/reference/function-example";
 
 export function getMDXComponents(components?: MDXComponents): MDXComponents {
   return {
     ...defaultMdxComponents,
-    FunctionMeta,
-    FunctionPageSchema,
-    FunctionSandbox,
+    FunctionExample,
     CodeTabs,
     RunnableCode,
     GuardedPairSandbox,

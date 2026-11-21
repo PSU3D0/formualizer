@@ -1,13 +1,26 @@
 ---
 title: "LOWER"
-description: "Converts text to lowercase."
+seoTitle: "LOWER function: formula syntax and examples"
+description: "Converts text to lowercase. =LOWER(text)"
 ---
 
-<FunctionPageSchema id="text/lower" />
-
-## Summary
-
 Converts text to lowercase.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LOWER(text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Uses ASCII lowercasing semantics in this implementation.
@@ -16,43 +29,59 @@ Converts text to lowercase.
 
 ## Examples
 
-<Tabs items={["Lowercase letters", "Boolean coerced to text"]}>
-<Tab value="Lowercase letters">
-<FunctionSandbox
-  title="Lowercase letters"
-  formula={`=LOWER("Data PIPELINE")`}
+<FunctionExample
+  title={"Apply the case conversion to two words with mixed capitalization."}
+  formula={"=LOWER(\"eAST team\")"}
+  grid={{}}
+  expected={"east team"}
+/>
+
+<FunctionExample
+  title={"Convert text that also includes digits and punctuation."}
+  formula={"=LOWER(\"Q2-sales\")"}
+  grid={{}}
+  expected={"q2-sales"}
+/>
+
+<FunctionExample
+  title={"Case conversion of an empty string yields empty text."}
+  formula={"=LOWER(\"\")"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"An input error propagates before any text conversion."}
+  formula={"=LOWER(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Lowercase letters"}
+  formula={"=LOWER(\"Data PIPELINE\")"}
   grid={{}}
   expected={"data pipeline"}
 />
-</Tab>
 
-<Tab value="Boolean coerced to text">
-<FunctionSandbox
-  title="Boolean coerced to text"
-  formula={`=LOWER(TRUE)`}
+<FunctionExample
+  title={"Boolean coerced to text"}
+  formula={"=LOWER(TRUE)"}
   grid={{}}
   expected={"true"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [UPPER](/docs/reference/functions/text/upper)
 - [PROPER](/docs/reference/functions/text/proper)
 - [EXACT](/docs/reference/functions/text/exact)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
-- [CLEAN](/docs/reference/functions/text/clean)
 
 ## FAQ
 
 ### How are booleans handled by LOWER?
 Inputs are coerced to text first, so TRUE/FALSE become lowercase string values.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/lower" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/trim_case_concat.rs)

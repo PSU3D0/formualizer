@@ -1,0 +1,79 @@
+---
+title: "BETAINV"
+seoTitle: "BETAINV function: formula syntax and examples"
+description: "Returns the inverse of the cumulative beta distribution (legacy name). =BETAINV(probability, alpha, beta, [a], [b])"
+---
+
+Returns the inverse of the cumulative beta distribution (legacy name).
+
+`BETAINV(probability, alpha, beta, [A], [B])` is the `x` with
+ `BETADIST(x, alpha, beta, A, B) = probability`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BETAINV(probability, alpha, beta, [a], [b])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `alpha` | number | Required | — |
+| `beta` | number | Required | — |
+| `a` | number | Optional | — |
+| `b` | number | Optional | — |
+
+## How it works
+
+Legacy spelling of BETA.INV with the same argument order. Finds the point in the supplied interval whose cumulative beta probability matches probability. Both shape parameters must be positive.
+
+## Remarks
+ - `A` and `B` default to `0` and `1`.
+
+## Error cases
+
+ - Returns `#NUM!` when `alpha &lt;= 0`, `beta &lt;= 0`, `probability &lt;= 0`, `probability &gt; 1`,
+   or `A &gt;= B`.
+
+## Examples
+
+<FunctionExample
+  title={"Use the legacy name to locate the half-probability point in the unit interval."}
+  formula={"=BETAINV(0.5,2,3)"}
+  grid={{}}
+  expected={"0.38572756813239"}
+/>
+
+<FunctionExample
+  title={"Supply zero and ten as the legacy function’s optional endpoints."}
+  formula={"=BETAINV(0.5,2,3,0,10)"}
+  grid={{}}
+  expected={"3.8572756813239"}
+/>
+
+<FunctionExample
+  title={"A cumulative probability of one maps to the upper bound."}
+  formula={"=BETAINV(1,2,3)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A probability above one is outside the distribution."}
+  formula={"=BETAINV(1.1,2,3)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the 70th percentile for shape parameters 8 and 10 on the interval from 1 to 3."}
+  formula={"=BETAINV(0.7,8,10,1,3)"}
+  grid={{}}
+  expected={"2.00989202077018"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

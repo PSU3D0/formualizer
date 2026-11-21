@@ -1,13 +1,26 @@
 ---
 title: "UPPER"
-description: "Converts text to uppercase."
+seoTitle: "UPPER function: formula syntax and examples"
+description: "Converts text to uppercase. =UPPER(text)"
 ---
 
-<FunctionPageSchema id="text/upper" />
-
-## Summary
-
 Converts text to uppercase.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=UPPER(text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Uses ASCII uppercasing semantics in this implementation.
@@ -16,43 +29,59 @@ Converts text to uppercase.
 
 ## Examples
 
-<Tabs items={["Uppercase letters", "Number coerced to text"]}>
-<Tab value="Uppercase letters">
-<FunctionSandbox
-  title="Uppercase letters"
-  formula={`=UPPER("Quarterly report")`}
+<FunctionExample
+  title={"Apply the case conversion to two words with mixed capitalization."}
+  formula={"=UPPER(\"eAST team\")"}
+  grid={{}}
+  expected={"EAST TEAM"}
+/>
+
+<FunctionExample
+  title={"Convert text that also includes digits and punctuation."}
+  formula={"=UPPER(\"Q2-sales\")"}
+  grid={{}}
+  expected={"Q2-SALES"}
+/>
+
+<FunctionExample
+  title={"Case conversion of an empty string yields empty text."}
+  formula={"=UPPER(\"\")"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"An input error propagates before any text conversion."}
+  formula={"=UPPER(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Uppercase letters"}
+  formula={"=UPPER(\"Quarterly report\")"}
   grid={{}}
   expected={"QUARTERLY REPORT"}
 />
-</Tab>
 
-<Tab value="Number coerced to text">
-<FunctionSandbox
-  title="Number coerced to text"
-  formula={`=UPPER(123)`}
+<FunctionExample
+  title={"Number coerced to text"}
+  formula={"=UPPER(123)"}
   grid={{}}
   expected={"123"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [LOWER](/docs/reference/functions/text/lower)
 - [PROPER](/docs/reference/functions/text/proper)
 - [EXACT](/docs/reference/functions/text/exact)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
-- [CLEAN](/docs/reference/functions/text/clean)
 
 ## FAQ
 
 ### Is uppercasing fully Unicode-aware?
 This implementation uses ASCII uppercasing semantics, so non-ASCII case rules are limited.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/upper" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/trim_case_concat.rs)

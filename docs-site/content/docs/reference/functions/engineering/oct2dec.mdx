@@ -1,58 +1,81 @@
 ---
 title: "OCT2DEC"
-description: "OCT2DEC: Converts an octal text value to decimal."
+seoTitle: "OCT2DEC function: formula syntax and examples"
+description: "Converts an octal text value to decimal. =OCT2DEC(number)"
 ---
 
-<FunctionPageSchema id="engineering/oct2dec" />
-
-## Summary
+Converts an octal text value to decimal.
 
 Supports up to 10 octal digits, including signed two's-complement values.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=OCT2DEC(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
 
 ## Remarks
  - Input is coerced to text and must contain only digits `0` through `7`.
  - 10-digit values beginning with `4`-`7` are interpreted as signed 30-bit numbers.
+
+## Error cases
+
  - Returns `#NUM!` for invalid characters or inputs longer than 10 digits.
 
 ## Examples
 
-<Tabs items={["Convert positive octal", "Interpret signed 30-bit octal"]}>
-<Tab value="Convert positive octal">
-<FunctionSandbox
-  title="Convert positive octal"
-  formula={`=OCT2DEC("17")`}
+<FunctionExample
+  title={"Convert two octal digits into a decimal number."}
+  formula={"=OCT2DEC(\"52\")"}
   grid={{}}
-  expected={"15"}
+  expected={"42"}
 />
-</Tab>
 
-<Tab value="Interpret signed 30-bit octal">
-<FunctionSandbox
-  title="Interpret signed 30-bit octal"
-  formula={`=OCT2DEC("7777777777")`}
+<FunctionExample
+  title={"Read a signed ten-digit octal value."}
+  formula={"=OCT2DEC(\"7777777777\")"}
   grid={{}}
   expected={"-1"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Convert the base-eight representation of zero."}
+  formula={"=OCT2DEC(\"0\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The digit 8 is outside base eight."}
+  formula={"=OCT2DEC(\"8\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert positive octal"}
+  formula={"=OCT2DEC(\"17\")"}
+  grid={{}}
+  expected={"15"}
+/>
 
 ## Related functions
 
 - [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
 - [OCT2BIN](/docs/reference/functions/engineering/oct2bin)
 - [OCT2HEX](/docs/reference/functions/engineering/oct2hex)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### How does `OCT2DEC` interpret 10-digit values starting with `4`-`7`?
 Those are treated as signed 30-bit two's-complement octal values.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/oct2dec" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

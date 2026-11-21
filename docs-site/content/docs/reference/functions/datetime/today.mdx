@@ -1,13 +1,16 @@
 ---
 title: "TODAY"
-description: "TODAY: Returns the current date as a volatile serial value."
+seoTitle: "TODAY function: formula syntax and examples"
+description: "Returns the current date as a volatile serial value. =TODAY()"
 ---
 
-<FunctionPageSchema id="datetime/today" />
-
-## Summary
-
 Returns the current date as a volatile serial value.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TODAY()`
 
 ## Remarks
  - `TODAY` is volatile and recalculates each time the workbook recalculates.
@@ -16,43 +19,52 @@ Returns the current date as a volatile serial value.
 
 ## Examples
 
-<Tabs items={["TODAY has no time fraction", "Date arithmetic with TODAY"]}>
-<Tab value="TODAY has no time fraction">
-<FunctionSandbox
-  title="TODAY has no time fraction"
-  formula={`=TODAY()=INT(TODAY())`}
+<FunctionExample
+  title={"Read the current date as a whole-day serial."}
+  formula={"=TODAY()"}
   grid={{}}
-  expected={"true"}
+  expected={"Date serial number"}
 />
-</Tab>
 
-<Tab value="Date arithmetic with TODAY">
-<FunctionSandbox
-  title="Date arithmetic with TODAY"
-  formula={`=TODAY()+7-TODAY()`}
+<FunctionExample
+  title={"Compute the date seven days from recalculation."}
+  formula={"=TODAY()+7"}
   grid={{}}
-  expected={"7"}
+  expected={"Date"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Check the fractional part of today's date serial."}
+  formula={"=MOD(TODAY(),1)"}
+  grid={{}}
+  expected={"Number"}
+/>
+
+<FunctionExample
+  title={"TODAY has no time fraction"}
+  formula={"=TODAY()=INT(TODAY())"}
+  grid={{}}
+  expected={"Logical value"}
+/>
+
+<FunctionExample
+  title={"Date arithmetic with TODAY"}
+  formula={"=TODAY()+7-TODAY()"}
+  grid={{}}
+  expected={"Number"}
+/>
 
 ## Related functions
 
 - [NOW](/docs/reference/functions/datetime/now)
 - [DATE](/docs/reference/functions/datetime/date)
 - [WORKDAY](/docs/reference/functions/datetime/workday)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [DATEVALUE](/docs/reference/functions/datetime/datevalue)
-- [DAY](/docs/reference/functions/datetime/day)
 
 ## FAQ
 
 ### Will TODAY include a time-of-day fraction?
 No. TODAY always returns an integer serial date, so its fractional part is always 0.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/today" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/today_now.rs)

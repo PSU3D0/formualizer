@@ -16,7 +16,11 @@ syn = { version = "2.0", features = ["full", "visit"] }
 walkdir = "2.5"
 formualizer-eval = { path = "../formualizer-eval" }
 formualizer-common = { path = "../formualizer-common" }
+formualizer-parse = { path = "../formualizer-parse" }
+formualizer-workbook = { path = "../formualizer-workbook", default-features = false, features = ["system-clock"] }
 serde_yaml = "0.9"
+chrono = { workspace = true, features = ["clock"] }
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = { workspace = true }

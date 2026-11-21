@@ -1,13 +1,26 @@
 ---
 title: "TIME"
-description: "Returns the fractional-day serial for a time built from hour, minute, and second."
+seoTitle: "TIME function: formula syntax and examples"
+description: "Returns the fractional-day serial for a time built from hour, minute, and second. =TIME(hour, minute, second)"
 ---
 
-<FunctionPageSchema id="datetime/time" />
-
-## Summary
+Returns the fractional-day serial for a time built from hour, minute, and second.
 
 `TIME` normalizes overflowing and negative components by wrapping across day boundaries.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TIME(hour, minute, second)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `hour` | number | Required | — |
+| `minute` | number | Required | — |
+| `second` | number | Required | — |
 
 ## Remarks
  - The result is always in the range `0.0..1.0` and represents only a time-of-day fraction.
@@ -16,43 +29,59 @@ description: "Returns the fractional-day serial for a time built from hour, minu
 
 ## Examples
 
-<Tabs items={["Create noon", "Wrap overflowing hour"]}>
-<Tab value="Create noon">
-<FunctionSandbox
-  title="Create noon"
-  formula={`=TIME(12, 0, 0)`}
+<FunctionExample
+  title={"Build a time fraction from separate hour, minute and second values."}
+  formula={"=TIME(14,35,27)"}
+  grid={{}}
+  expected={"0.607951388888889"}
+/>
+
+<FunctionExample
+  title={"Carry excess minutes into the hour."}
+  formula={"=TIME(1,90,0)"}
+  grid={{}}
+  expected={"0.104166666666667"}
+/>
+
+<FunctionExample
+  title={"Midnight is the zero point of the time fraction."}
+  formula={"=TIME(0,0,0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The hour argument cannot be read from nonnumeric text."}
+  formula={"=TIME(\"hour\",0,0)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Create noon"}
+  formula={"=TIME(12, 0, 0)"}
   grid={{}}
   expected={"0.5"}
 />
-</Tab>
 
-<Tab value="Wrap overflowing hour">
-<FunctionSandbox
-  title="Wrap overflowing hour"
-  formula={`=TIME(25, 0, 0)`}
+<FunctionExample
+  title={"Wrap overflowing hour"}
+  formula={"=TIME(25, 0, 0)"}
   grid={{}}
-  expected={"0.0416666667"}
+  expected={"0.0416666666666667"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [TIMEVALUE](/docs/reference/functions/datetime/timevalue)
 - [HOUR](/docs/reference/functions/datetime/hour)
 - [NOW](/docs/reference/functions/datetime/now)
-- [DATE](/docs/reference/functions/datetime/date)
-- [DATEDIF](/docs/reference/functions/datetime/datedif)
-- [DAY](/docs/reference/functions/datetime/day)
 
 ## FAQ
 
 ### Can TIME return values greater than 1 day?
 No. TIME wraps overflow and always returns a fraction in [0,1), so extra days are discarded.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/time" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_time.rs)

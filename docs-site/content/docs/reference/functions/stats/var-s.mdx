@@ -1,58 +1,91 @@
 ---
 title: "VAR.S"
-description: "VAR.S: Estimates sample variance using `n-1` in the denominator."
+seoTitle: "VAR.S function: formula syntax and examples"
+description: "Estimates sample variance using n-1 in the denominator. =VAR.S(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="stats/var-s" />
-
-## Summary
+Estimates sample variance using `n-1` in the denominator.
 
 `VAR.S` is the squared counterpart of `STDEV.S` for sample-based variability.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=VAR.S(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
  - Requires at least two numeric values.
- - Returns `#DIV/0!` when fewer than two numeric values are provided.
  - Non-numeric values in referenced ranges are ignored.
+
+## Error cases
+
+ - Returns `#DIV/0!` when fewer than two numeric values are provided.
 
 ## Examples
 
-<Tabs items={["Sample variance from scalar arguments", "Sample variance from a range"]}>
-<Tab value="Sample variance from scalar arguments">
-<FunctionSandbox
-  title="Sample variance from scalar arguments"
-  formula={`=VAR.S(2,4,6)`}
+<FunctionExample
+  title={"Find the sample variance of 4, 8 and 12."}
+  formula={"=VAR.S(4,8,12)"}
+  grid={{}}
+  expected={"16"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the sample variance."}
+  formula={"=VAR.S({4,8,12})"}
+  grid={{}}
+  expected={"16"}
+/>
+
+<FunctionExample
+  title={"Use 4 and 12, the minimum two observations for the sample variance."}
+  formula={"=VAR.S(4,12)"}
+  grid={{}}
+  expected={"32"}
+/>
+
+<FunctionExample
+  title={"A lone observation cannot supply the denominator for the sample variance."}
+  formula={"=VAR.S(4)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Sample variance from scalar arguments"}
+  formula={"=VAR.S(2,4,6)"}
   grid={{}}
   expected={"4"}
 />
-</Tab>
 
-<Tab value="Sample variance from a range">
-<FunctionSandbox
-  title="Sample variance from a range"
-  formula={`=VAR.S(A1:A3)`}
+<FunctionExample
+  title={"Sample variance from a range"}
+  formula={"=VAR.S(A1:A3)"}
   grid={{"A1":"1","A2":"2","A3":"3"}}
   expected={"1"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [VAR.P](/docs/reference/functions/stats/var-p)
 - [STDEV.S](/docs/reference/functions/stats/stdev-s)
 - [STDEV.P](/docs/reference/functions/stats/stdev-p)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### Why does VAR.S return #DIV/0!?
 Sample variance requires at least two numeric observations.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/var-s" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

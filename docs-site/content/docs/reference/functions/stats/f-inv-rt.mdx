@@ -1,23 +1,62 @@
 ---
 title: "F.INV.RT"
-description: "F.INV.RT: Returns the inverse of the right-tailed F-distribution."
+seoTitle: "F.INV.RT function: formula syntax and examples"
+description: "Returns the inverse of the right-tailed F-distribution. =F.INV.RT(probability, deg_freedom1, deg_freedom2)"
 ---
-
-<FunctionPageSchema id="stats/f-inv-rt" />
-
-## Summary
 
 Returns the inverse of the right-tailed F-distribution.
 
-## returns: 0
- =F.INV.RT(1,5,10)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=F.INV.RT(probability, deg_freedom1, deg_freedom2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `deg_freedom1` | number | Required | — |
+| `deg_freedom2` | number | Required | — |
+
+## How it works
+
+Solves P(F ≥ q) = probability for the upper-tail F cutoff. Increasing the probability moves the cutoff downward for fixed positive degrees of freedom.
 
 ## Examples
 
-<FunctionSandbox
-  title="A full right tail maps to zero"
-  formula={`=F.INV.RT(1,5,10)`}
+<FunctionExample
+  title={"Find the F statistic that leaves one quarter of the probability above it."}
+  formula={"=F.INV.RT(0.25,5,10)"}
+  grid={{}}
+  expected={"1.58532325938462"}
+/>
+
+<FunctionExample
+  title={"Leave three quarters of the probability in the right tail to move the cutoff lower."}
+  formula={"=F.INV.RT(0.75,5,10)"}
+  grid={{}}
+  expected={"0.529141685567821"}
+/>
+
+<FunctionExample
+  title={"Split the right-tail probability in half with one degree of freedom per side."}
+  formula={"=F.INV.RT(0.5,1,1)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A probability above one is outside the function's domain."}
+  formula={"=F.INV.RT(1.1,5,10)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"A full right tail maps to zero"}
+  formula={"=F.INV.RT(1,5,10)"}
   grid={{}}
   expected={"0"}
 />
@@ -27,17 +66,12 @@ Returns the inverse of the right-tailed F-distribution.
 - [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
 - [F.INV](/docs/reference/functions/stats/f-inv)
 - [F.TEST](/docs/reference/functions/stats/f-test)
-- [F.DIST](/docs/reference/functions/stats/f-dist)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
 
 ## FAQ
 
 ### What p-values are valid for F.INV.RT?
 p must lie in the range 0 to 1, and p=0 returns #NUM! because the inverse diverges.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/f-inv-rt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

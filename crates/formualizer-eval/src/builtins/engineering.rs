@@ -3576,7 +3576,7 @@ impl Function for ImSumFn {
 ///
 /// # Remarks
 /// - Inputs are coerced to complex-number text before parsing.
-/// - Output keeps the suffix style from the parsed inputs.
+/// - The output uses the suffix style of the first argument, defaulting to `i` for a purely real first argument.
 /// - Invalid complex text returns `#NUM!`.
 ///
 /// # Examples
@@ -3586,11 +3586,6 @@ impl Function for ImSumFn {
 /// expected: "3+2i"
 /// ```
 ///
-/// ```yaml,sandbox
-/// title: "Subtract pure imaginary from real"
-/// formula: "=IMSUB(\"4\",\"7j\")"
-/// expected: "4-7j"
-/// ```
 /// ```yaml,docs
 /// related:
 ///   - IMSUM

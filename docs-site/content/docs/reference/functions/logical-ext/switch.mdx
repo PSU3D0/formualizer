@@ -1,53 +1,98 @@
 ---
 title: "SWITCH"
-description: "SWITCH: Returns the result corresponding to the first matching candidate value."
+seoTitle: "SWITCH function: formula syntax and examples"
+description: "Returns the result corresponding to the first matching candidate value. =SWITCH(expression, value1, result1, [(value2, result2), ...], [default])"
 ---
 
-<FunctionPageSchema id="logical-ext/switch" />
-
-## Summary
+Returns the result corresponding to the first matching candidate value.
 
 `SWITCH(expression, value1, result1, [value2, result2], ..., [default])`
  compares `expression` against each candidate from left to right.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SWITCH(expression, value1, result1, [(value2, result2), ...], [default])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `expression` | any | Required | — |
+| `value1` | any | Required | — |
+| `result1` | any | Required | — |
+| `value2` | any | Optional | — |
+| `result2` | any | Optional | — |
+| `default` | any | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 3.
+
 ## Remarks
  - Matching is case-insensitive for text values.
  - Numeric comparisons treat `Int` and `Number` values as compatible.
+ - A blank cell on either side compares as numeric zero, so a blank selector matches a `0`
+   case; it does not match empty text (`""`) or `FALSE`. This deliberately differs from the
+   `=` operator, where a blank also equals `""` and `FALSE`: Excel's `SWITCH` was measured
+   separately and matches a blank against zero only.
+ - A blank matches only an exact zero, not a number within the `1e-12` tolerance used between
+   two numbers (`=SWITCH(Z1,1E-13,...)` does not match).
  - A trailing unmatched argument acts as the default result.
- - When no candidate matches and no default is supplied, returns `#N/A`.
  - Errors in `expression` propagate immediately.
+
+## Error cases
+
+ - When no candidate matches and no default is supplied, returns `#N/A`.
 
 ## Examples
 
-<Tabs items={["Match a text label", "Fall back to default"]}>
-<Tab value="Match a text label">
-<FunctionSandbox
-  title="Match a text label"
-  formula={`=SWITCH("gold","silver",1,"gold",2,0)`}
+<FunctionExample
+  title={"Match an expression against a list of candidate values."}
+  formula={"=SWITCH(\"B\",\"A\",\"Alpha\",\"B\",\"Beta\")"}
+  grid={{}}
+  expected={"Beta"}
+/>
+
+<FunctionExample
+  title={"Supply a default result when no candidate matches."}
+  formula={"=SWITCH(\"C\",\"A\",\"Alpha\",\"B\",\"Beta\",\"Other\")"}
+  grid={{}}
+  expected={"Other"}
+/>
+
+<FunctionExample
+  title={"Evaluate a single match with a zero numeric key."}
+  formula={"=SWITCH(0,0,\"Zero\")"}
+  grid={{}}
+  expected={"Zero"}
+/>
+
+<FunctionExample
+  title={"Without a default this unmatched expression has no result."}
+  formula={"=SWITCH(\"C\",\"A\",\"Alpha\",\"B\",\"Beta\")"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Match a text label"}
+  formula={"=SWITCH(\"gold\",\"silver\",1,\"gold\",2,0)"}
   grid={{}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Fall back to default">
-<FunctionSandbox
-  title="Fall back to default"
-  formula={`=SWITCH(3,1,"one",2,"two","other")`}
+<FunctionExample
+  title={"Fall back to default"}
+  formula={"=SWITCH(3,1,\"one\",2,\"two\",\"other\")"}
   grid={{}}
   expected={"other"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [IF](/docs/reference/functions/logical/if)
 - [IFS](/docs/reference/functions/logical-ext/ifs)
 - [CHOOSE](/docs/reference/functions/lookup/choose)
-- [XOR](/docs/reference/functions/logical-ext/xor)
-- [IFERROR](/docs/reference/functions/logical-ext/iferror)
-- [IFNA](/docs/reference/functions/logical-ext/ifna)
 
 ## FAQ
 
@@ -57,8 +102,6 @@ No. Text comparisons are case-insensitive in this implementation.
 ### What happens when nothing matches?
 SWITCH returns the trailing default when provided; otherwise it returns #N/A.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="logical-ext/switch" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/logical_ext.rs)

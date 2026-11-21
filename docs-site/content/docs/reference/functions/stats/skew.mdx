@@ -1,55 +1,82 @@
 ---
 title: "SKEW"
-description: "Returns the sample skewness of a numeric distribution."
+seoTitle: "SKEW function: formula syntax and examples"
+description: "Returns the sample skewness of a numeric distribution. =SKEW(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="stats/skew" />
-
-## Summary
+Returns the sample skewness of a numeric distribution.
 
 `SKEW` quantifies asymmetry: positive values indicate a longer right tail, negative values a
  longer left tail.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SKEW(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
  - Requires at least three numeric values.
- - Returns `#DIV/0!` when there are fewer than three numbers or zero sample standard deviation.
  - Non-numeric values in ranges are ignored by statistical-collection rules.
  - Uses the Excel-style sample skewness correction factor.
 
+## Error cases
+
+ - Returns `#DIV/0!` when there are fewer than three numbers or zero sample standard deviation.
+
 ## Examples
 
-<Tabs items={["Symmetric sample", "Right-skewed sample"]}>
-<Tab value="Symmetric sample">
-<FunctionSandbox
-  title="Symmetric sample"
-  formula={`=SKEW({1,2,3})`}
+<FunctionExample
+  title={"Measure the skew of five observations."}
+  formula={"=SKEW(1,2,4,6,8)"}
+  grid={{}}
+  expected={"0.306627934728107"}
+/>
+
+<FunctionExample
+  title={"Supply the observations as one array."}
+  formula={"=SKEW({1,2,4,6,8})"}
+  grid={{}}
+  expected={"0.306627934728107"}
+/>
+
+<FunctionExample
+  title={"Evaluate the skew of a short, nonsymmetric series."}
+  formula={"=SKEW(1,2,9)"}
+  grid={{}}
+  expected={"1.63005916171189"}
+/>
+
+<FunctionExample
+  title={"Identical observations have no spread to normalize."}
+  formula={"=SKEW(1,1,1)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Symmetric sample"}
+  formula={"=SKEW({1,2,3})"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Right-skewed sample">
-<FunctionSandbox
-  title="Right-skewed sample"
-  formula={`=SKEW({1,1,2,10})`}
+<FunctionExample
+  title={"Right-skewed sample"}
+  formula={"=SKEW({1,1,2,10})"}
   grid={{}}
-  expected={"1.9683567600862015"}
+  expected={"1.93192196943631"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [SKEW.P](/docs/reference/functions/stats/skew-p)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
-- [KURT](/docs/reference/functions/stats/kurt)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/skew" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

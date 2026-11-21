@@ -1,23 +1,56 @@
 ---
 title: "GAMMA"
-description: "Returns the value of the gamma function."
+seoTitle: "GAMMA function: formula syntax and examples"
+description: "Returns the value of the gamma function. =GAMMA(number)"
 ---
-
-<FunctionPageSchema id="stats/gamma" />
-
-## Summary
 
 Returns the value of the gamma function.
 
-## returns: 24
- =GAMMA(5)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GAMMA(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
 
 ## Examples
 
-<FunctionSandbox
-  title="Gamma extends factorials"
-  formula={`=GAMMA(5)`}
+<FunctionExample
+  title={"Compute Γ(4), which equals the factorial of three."}
+  formula={"=GAMMA(4)"}
+  grid={{}}
+  expected={"6"}
+/>
+
+<FunctionExample
+  title={"Evaluate Γ(1/2), the square root of π."}
+  formula={"=GAMMA(0.5)"}
+  grid={{}}
+  expected={"1.77245385090551"}
+/>
+
+<FunctionExample
+  title={"At one, Formualizer returns a value just below the mathematical result of one."}
+  formula={"=GAMMA(1)"}
+  grid={{}}
+  expected={"0.999999999999999"}
+/>
+
+<FunctionExample
+  title={"A zero argument is outside the supported domain."}
+  formula={"=GAMMA(0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Gamma extends factorials"}
+  formula={"=GAMMA(5)"}
   grid={{}}
   expected={"24"}
 />
@@ -27,17 +60,12 @@ Returns the value of the gamma function.
 - [GAMMALN](/docs/reference/functions/stats/gammaln)
 - [GAMMA.INV](/docs/reference/functions/stats/gamma-inv)
 - [FACT](/docs/reference/functions/math/fact)
-- [GAMMA.DIST](/docs/reference/functions/stats/gamma-dist)
-- [FISHER](/docs/reference/functions/stats/fisher)
-- [FISHERINV](/docs/reference/functions/stats/fisherinv)
 
 ## FAQ
 
 ### When does GAMMA return #NUM!?
 It returns #NUM! for zero and negative integers, where the gamma function has poles.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/gamma" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

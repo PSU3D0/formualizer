@@ -7,7 +7,7 @@ import { remarkRepoLinks } from "./src/lib/remark-repo-links";
 export const docs = defineDocs({
   dir: "content/docs",
   docs: {
-    schema: pageSchema,
+    schema: pageSchema.extend({ seoTitle: pageSchema.shape.title.optional() }),
     postprocess: {
       includeProcessedMarkdown: true,
     },

@@ -1,54 +1,64 @@
 ---
 title: "FISHER"
-description: "Returns the Fisher z-transformation of a correlation-like value `x`."
+seoTitle: "FISHER function: formula syntax and examples"
+description: "Returns the Fisher z-transformation of a correlation-like value x. =FISHER(x)"
 ---
 
-<FunctionPageSchema id="stats/fisher" />
-
-## Summary
+Returns the Fisher z-transformation of a correlation-like value `x`.
 
 `FISHER` maps `(-1, 1)` into `(-inf, +inf)` and is commonly used in correlation inference.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FISHER(x)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number (range) | Required | — |
+
 ## Remarks
  - Input must satisfy `-1 &lt; x &lt; 1`.
- - Returns `#NUM!` when `x &lt;= -1` or `x &gt;= 1`.
  - The transformation is `0.5 * ln((1 + x) / (1 - x))`.
  - Invalid numeric coercions propagate as spreadsheet errors.
 
+## Error cases
+
+ - Returns `#NUM!` when `x &lt;= -1` or `x &gt;= 1`.
+
 ## Examples
 
-<Tabs items={["Fisher transform at zero", "Fisher transform at x=0.5"]}>
-<Tab value="Fisher transform at zero">
-<FunctionSandbox
-  title="Fisher transform at zero"
-  formula={`=FISHER(0)`}
+<FunctionExample
+  title={"Convert a positive correlation to the Fisher scale."}
+  formula={"=FISHER(0.5)"}
+  grid={{}}
+  expected={"0.549306144334055"}
+/>
+
+<FunctionExample
+  title={"Compare the transformation of the opposite correlation."}
+  formula={"=FISHER(-0.5)"}
+  grid={{}}
+  expected={"-0.549306144334055"}
+/>
+
+<FunctionExample
+  title={"A zero correlation transforms to zero."}
+  formula={"=FISHER(0)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Fisher transform at x=0.5">
-<FunctionSandbox
-  title="Fisher transform at x=0.5"
-  formula={`=FISHER(0.5)`}
+<FunctionExample
+  title={"A perfect positive correlation is at the excluded endpoint."}
+  formula={"=FISHER(1)"}
   grid={{}}
-  expected={"0.5493061443340549"}
+  expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [FISHERINV](/docs/reference/functions/stats/fisherinv)
-- [CORREL](/docs/reference/functions/stats/correl)
-- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
-- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
-- [FORECAST.LINEAR](/docs/reference/functions/stats/forecast-linear)
-- [FREQUENCY](/docs/reference/functions/stats/frequency)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/fisher" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

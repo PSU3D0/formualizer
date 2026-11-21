@@ -1,13 +1,26 @@
 ---
 title: "ISNA"
-description: "ISNA: Returns TRUE only for the `#N/A` error."
+seoTitle: "ISNA function: formula syntax and examples"
+description: "Returns TRUE only for the #N/A error. =ISNA(value)"
 ---
 
-<FunctionPageSchema id="info/isna" />
-
-## Summary
-
 Returns TRUE only for the `#N/A` error.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISNA(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
+## Return type
+
+Logical (TRUE or FALSE)
 
 ## Remarks
  - Other error kinds return FALSE.
@@ -16,43 +29,38 @@ Returns TRUE only for the `#N/A` error.
 
 ## Examples
 
-<Tabs items={["Check for N/A", "Other errors are not N/A"]}>
-<Tab value="Check for N/A">
-<FunctionSandbox
-  title="Check for N/A"
-  formula={`=ISNA(NA())`}
+<FunctionExample
+  title={"Test a division-by-zero input."}
+  formula={"=ISNA(1/0)"}
   grid={{}}
-  expected={"true"}
+  expected={"FALSE"}
 />
-</Tab>
 
-<Tab value="Other errors are not N/A">
-<FunctionSandbox
-  title="Other errors are not N/A"
-  formula={`=ISNA(1/0)`}
+<FunctionExample
+  title={"Test how the predicate classifies the missing-value error."}
+  formula={"=ISNA(NA())"}
   grid={{}}
-  expected={"false"}
+  expected={"TRUE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Test a valid number at zero, with no input error."}
+  formula={"=ISNA(0)"}
+  grid={{}}
+  expected={"FALSE"}
+/>
 
 ## Related functions
 
 - [NA](/docs/reference/functions/info/na)
 - [IFNA](/docs/reference/functions/logical-ext/ifna)
 - [ISERROR](/docs/reference/functions/info/iserror)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
 ### Does ISNA return TRUE for errors other than #N/A?
 No. It returns TRUE only when the value is exactly #N/A.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/isna" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

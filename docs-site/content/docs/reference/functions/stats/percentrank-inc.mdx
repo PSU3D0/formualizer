@@ -1,54 +1,80 @@
 ---
 title: "PERCENTRANK.INC"
-description: "PERCENTRANK.INC: Returns the inclusive percentile rank of `x` within a numeric data array."
+seoTitle: "PERCENTRANK.INC function: formula syntax and examples"
+description: "Returns the inclusive percentile rank of x within a numeric data array. =PERCENTRANK.INC(array, x, [significance])"
 ---
 
-<FunctionPageSchema id="stats/percentrank-inc" />
-
-## Summary
+Returns the inclusive percentile rank of `x` within a numeric data array.
 
 `PERCENTRANK.INC` maps values to `[0, 1]` and interpolates linearly between data points.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PERCENTRANK.INC(array, x, [significance])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | number (range) | Required | — |
+| `x` | number (range) | Required | — |
+| `significance` | number (range) | Optional | — |
+
 ## Remarks
- - `x` must be within the observed min/max range; otherwise returns `#N/A`.
  - Optional `significance` controls decimal truncation and defaults to `3`.
  - `significance` must be at least `1`.
+
+## Error cases
+
+ - `x` must be within the observed min/max range; otherwise returns `#N/A`.
  - Returns `#NUM!` for invalid setup such as empty numeric input.
 
 ## Examples
 
-<Tabs items={["Exact inclusive percentile rank", "Interpolated inclusive percentile rank"]}>
-<Tab value="Exact inclusive percentile rank">
-<FunctionSandbox
-  title="Exact inclusive percentile rank"
-  formula={`=PERCENTRANK.INC({1,2,3,4,5},3)`}
+<FunctionExample
+  title={"Find the percentile rank of an observation in the sample."}
+  formula={"=PERCENTRANK.INC({10,20,30,40,50},30)"}
   grid={{}}
   expected={"0.5"}
 />
-</Tab>
 
-<Tab value="Interpolated inclusive percentile rank">
-<FunctionSandbox
-  title="Interpolated inclusive percentile rank"
-  formula={`=PERCENTRANK.INC({1,2,3,4,5},2.5)`}
+<FunctionExample
+  title={"Interpolate between two observations and request five digits of significance."}
+  formula={"=PERCENTRANK.INC({10,20,30,40,50},25,5)"}
   grid={{}}
   expected={"0.375"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Evaluate the rank of the smallest observed value."}
+  formula={"=PERCENTRANK.INC({10,20,30,40,50},10)"}
+  grid={{}}
+  expected={"0"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"A value below every observation is outside the input data."}
+  formula={"=PERCENTRANK.INC({10,20,30,40,50},5)"}
+  grid={{}}
+  expected={"#N/A"}
+/>
 
-- [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
-- [LARGE](/docs/reference/functions/stats/large)
-- [PERCENTILE.EXC](/docs/reference/functions/stats/percentile-exc)
-- [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
-- [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
-- [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
+<FunctionExample
+  title={"Exact inclusive percentile rank"}
+  formula={"=PERCENTRANK.INC({1,2,3,4,5},3)"}
+  grid={{}}
+  expected={"0.5"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Interpolated inclusive percentile rank"}
+  formula={"=PERCENTRANK.INC({1,2,3,4,5},2.5)"}
+  grid={{}}
+  expected={"0.375"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/percentrank-inc" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

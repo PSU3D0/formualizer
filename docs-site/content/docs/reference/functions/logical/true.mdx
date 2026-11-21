@@ -1,13 +1,22 @@
 ---
 title: "TRUE"
-description: "Returns the logical constant TRUE."
+seoTitle: "TRUE function: formula syntax and examples"
+description: "Returns the logical constant TRUE. =TRUE"
 ---
 
-<FunctionPageSchema id="logical/true" />
+Returns the logical constant TRUE.
 
-## Summary
+Use `TRUE` for the logical value true in formulas.
 
-Use `TRUE()` when you want an explicit boolean value in formulas.
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TRUE`
+
+## Return type
+
+Can return a logical value (TRUE or FALSE).
 
 ## Remarks
  - `TRUE` takes no arguments and always returns the boolean value `TRUE`.
@@ -15,43 +24,45 @@ Use `TRUE()` when you want an explicit boolean value in formulas.
 
 ## Examples
 
-<Tabs items={["Return TRUE directly", "Use TRUE in branching"]}>
-<Tab value="Return TRUE directly">
-<FunctionSandbox
-  title="Return TRUE directly"
-  formula={`=TRUE()`}
+<FunctionExample
+  title={"Return the logical constant TRUE."}
+  formula={"=TRUE"}
   grid={{}}
-  expected={"true"}
+  expected={"TRUE"}
 />
-</Tab>
 
-<Tab value="Use TRUE in branching">
-<FunctionSandbox
-  title="Use TRUE in branching"
-  formula={`=IF(TRUE(), "yes", "no")`}
+<FunctionExample
+  title={"Select the first result branch with the true constant."}
+  formula={"=IF(TRUE,\"Pass\",\"Fail\")"}
+  grid={{}}
+  expected={"Pass"}
+/>
+
+<FunctionExample
+  title={"Use the constant in arithmetic with a zero factor."}
+  formula={"=TRUE*0"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Use TRUE in branching"}
+  formula={"=IF(TRUE, \"yes\", \"no\")"}
   grid={{}}
   expected={"yes"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [FALSE](/docs/reference/functions/logical/false)
 - [IF](/docs/reference/functions/logical/if)
 - [AND](/docs/reference/functions/logical/and)
-- [OR](/docs/reference/functions/logical/or)
-- [NA](/docs/reference/functions/info/na)
-- [PI](/docs/reference/functions/math/pi)
 
 ## FAQ
 
 ### Can TRUE accept arguments?
 No. TRUE takes zero arguments and always returns the boolean constant TRUE.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="logical/true" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/logical.rs)

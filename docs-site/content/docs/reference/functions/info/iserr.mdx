@@ -1,13 +1,26 @@
 ---
 title: "ISERR"
-description: "ISERR: Returns TRUE for any error except `#N/A`."
+seoTitle: "ISERR function: formula syntax and examples"
+description: "Returns TRUE for any error except #N/A. =ISERR(value)"
 ---
 
-<FunctionPageSchema id="info/iserr" />
-
-## Summary
-
 Returns TRUE for any error except `#N/A`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISERR(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
+## Return type
+
+Logical (TRUE or FALSE)
 
 ## Remarks
  - `#N/A` specifically returns FALSE.
@@ -16,43 +29,38 @@ Returns TRUE for any error except `#N/A`.
 
 ## Examples
 
-<Tabs items={["DIV/0 is an error excluding N/A", "N/A is excluded"]}>
-<Tab value="DIV/0 is an error excluding N/A">
-<FunctionSandbox
-  title="DIV/0 is an error excluding N/A"
-  formula={`=ISERR(1/0)`}
+<FunctionExample
+  title={"Test a division-by-zero input."}
+  formula={"=ISERR(1/0)"}
   grid={{}}
-  expected={"true"}
+  expected={"TRUE"}
 />
-</Tab>
 
-<Tab value="N/A is excluded">
-<FunctionSandbox
-  title="N/A is excluded"
-  formula={`=ISERR(NA())`}
+<FunctionExample
+  title={"Test how the predicate classifies the missing-value error."}
+  formula={"=ISERR(NA())"}
   grid={{}}
-  expected={"false"}
+  expected={"FALSE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Test a valid number at zero, with no input error."}
+  formula={"=ISERR(0)"}
+  grid={{}}
+  expected={"FALSE"}
+/>
 
 ## Related functions
 
 - [ISERROR](/docs/reference/functions/info/iserror)
 - [ISNA](/docs/reference/functions/info/isna)
 - [IFERROR](/docs/reference/functions/logical-ext/iferror)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
 ### What is the difference between ISERR and ISERROR?
 ISERR excludes #N/A, while ISERROR treats #N/A as an error too.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/iserr" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

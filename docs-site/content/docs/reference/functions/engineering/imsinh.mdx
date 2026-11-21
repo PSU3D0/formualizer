@@ -1,20 +1,67 @@
 ---
 title: "IMSINH"
-description: "IMSINH: Returns the hyperbolic sine of a complex number."
+seoTitle: "IMSINH function: formula syntax and examples"
+description: "Returns the hyperbolic sine of a complex number. =IMSINH(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imsinh" />
-
-## Summary
+Returns the hyperbolic sine of a complex number.
 
 Accepts an Excel-style complex number string and returns the complex
  hyperbolic sine as text.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMSINH(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## How it works
+
+The complex hyperbolic sine is (exp(z) − exp(−z)) / 2. It exists throughout the complex plane and vanishes at zero.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
+
 ## Examples
 
-<FunctionSandbox
-  title="Hyperbolic sine of zero"
-  formula={`=IMSINH("0")`}
+<FunctionExample
+  title={"Take half the difference of the opposite complex exponentials."}
+  formula={"=IMSINH(\"3+4i\")"}
+  grid={{}}
+  expected={"-6.548120040911-7.61923172032141i"}
+/>
+
+<FunctionExample
+  title={"Compare hyperbolic sine below the real axis."}
+  formula={"=IMSINH(\"3-4j\")"}
+  grid={{}}
+  expected={"-6.548120040911+7.61923172032141j"}
+/>
+
+<FunctionExample
+  title={"A real input of one reduces the formula to the ordinary hyperbolic sine."}
+  formula={"=IMSINH(\"1\")"}
+  grid={{}}
+  expected={"1.1752011936438"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to take the hyperbolic sine."}
+  formula={"=IMSINH(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Hyperbolic sine of zero"}
+  formula={"=IMSINH(\"0\")"}
   grid={{}}
   expected={"0"}
 />
@@ -24,17 +71,12 @@ Accepts an Excel-style complex number string and returns the complex
 - [IMCOSH](/docs/reference/functions/engineering/imcosh)
 - [IMTAN](/docs/reference/functions/engineering/imtan)
 - [IMSIN](/docs/reference/functions/engineering/imsin)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### What input format is accepted?
 Use standard spreadsheet complex-number text such as "1+2i" or "1+2j".
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imsinh" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

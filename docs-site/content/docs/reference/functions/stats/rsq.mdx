@@ -1,54 +1,79 @@
 ---
 title: "RSQ"
-description: "RSQ: Returns the coefficient of determination (`R^2`) for paired x/y data."
+seoTitle: "RSQ function: formula syntax and examples"
+description: "Returns the coefficient of determination (R^2) for paired x/y data. =RSQ(known_ys, known_xs)"
 ---
 
-<FunctionPageSchema id="stats/rsq" />
-
-## Summary
+Returns the coefficient of determination (`R^2`) for paired x/y data.
 
 `RSQ` is the square of Pearson correlation and indicates explained linear variance.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=RSQ(known_ys, known_xs)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `known_ys` | number (range) | Required | — |
+| `known_xs` | number (range) | Required | — |
 
 ## Remarks
  - Arrays must contain the same number of numeric observations.
  - Result is in `[0, 1]` for valid numeric inputs.
- - Returns `#DIV/0!` when either input array has zero variance.
  - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
+
+## Error cases
+
+ - Returns `#DIV/0!` when either input array has zero variance.
 
 ## Examples
 
-<Tabs items={["Perfect linear fit", "Strong but imperfect linear relationship"]}>
-<Tab value="Perfect linear fit">
-<FunctionSandbox
-  title="Perfect linear fit"
-  formula={`=RSQ({1,2,3},{2,4,6})`}
+<FunctionExample
+  title={"Describe a linear fit between paired x and y observations."}
+  formula={"=RSQ({2,5,6,9},{1,2,3,4})"}
+  grid={{}}
+  expected={"0.968"}
+/>
+
+<FunctionExample
+  title={"Reverse the order of the y series while leaving x unchanged."}
+  formula={"=RSQ({9,6,5,2},{1,2,3,4})"}
+  grid={{}}
+  expected={"0.968"}
+/>
+
+<FunctionExample
+  title={"Evaluate a series whose observations lie exactly on a line."}
+  formula={"=RSQ({2,4,6},{1,2,3})"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Strong but imperfect linear relationship">
-<FunctionSandbox
-  title="Strong but imperfect linear relationship"
-  formula={`=RSQ({1,2,3},{1,2,4})`}
+<FunctionExample
+  title={"The known x and y series must contain corresponding observations."}
+  formula={"=RSQ({2,5,6,9},{1,2,3})"}
   grid={{}}
-  expected={"0.9642857142857143"}
+  expected={"#N/A"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Perfect linear fit"}
+  formula={"=RSQ({1,2,3},{2,4,6})"}
+  grid={{}}
+  expected={"1"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"Strong but imperfect linear relationship"}
+  formula={"=RSQ({1,2,3},{1,2,4})"}
+  grid={{}}
+  expected={"0.964285714285714"}
+/>
 
-- [CORREL](/docs/reference/functions/stats/correl)
-- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
-- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
-- [INTERCEPT](/docs/reference/functions/stats/intercept)
-- [PEARSON](/docs/reference/functions/stats/pearson)
-- [SLOPE](/docs/reference/functions/stats/slope)
+## Implementation
 
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/rsq" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

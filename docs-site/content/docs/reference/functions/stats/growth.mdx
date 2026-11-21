@@ -1,54 +1,83 @@
 ---
 title: "GROWTH"
-description: "GROWTH: Returns fitted values from an exponential trend model."
+seoTitle: "GROWTH function: formula syntax and examples"
+description: "Returns fitted values from an exponential trend model. =GROWTH(known_ys, [known_xs], [new_xs], [const])"
 ---
 
-<FunctionPageSchema id="stats/growth" />
-
-## Summary
+Returns fitted values from an exponential trend model.
 
 `GROWTH` fits `y = b * m^x` by linearizing in log space, then returns predictions for `new_x`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GROWTH(known_ys, [known_xs], [new_xs], [const])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `known_ys` | number (range) | Required | — |
+| `known_xs` | number (range) | Optional | — |
+| `new_xs` | number (range) | Optional | — |
+| `const` | number (range) | Optional | — |
+
 ## Remarks
  - All known y-values must be strictly greater than `0`.
- - `known_x` defaults to `1..n`; `new_x` defaults to `known_x`.
+ - `known_x` defaults to `1..n`; `new_x` defaults to `known_x`. Several variables are laid
+   out as in `TREND`.
  - `const` defaults to `TRUE`; set to `FALSE` to force `b = 1`.
- - Returns spreadsheet errors for invalid domains, mismatched lengths, or degenerate x-variance.
+
+## Error cases
+
+ - Returns `#NUM!` for non-positive y-values, `#VALUE!` for non-numeric data and `#REF!` for
+   incompatible shapes.
 
 ## Examples
 
-<Tabs items={["Exponential growth forecast", "Default x-values with perfect doubling pattern"]}>
-<Tab value="Exponential growth forecast">
-<FunctionSandbox
-  title="Exponential growth forecast"
-  formula={`=GROWTH({2,4,8},{1,2,3},{4,5})`}
+<FunctionExample
+  title={"Fit three unevenly growing observations using default x values."}
+  formula={"=GROWTH({2;4;7})"}
   grid={{}}
-  expected={"[[16,32]]"}
+  expected={"{2.04500945440301; 3.82586236554478; 7.15753309041052}"}
 />
-</Tab>
 
-<Tab value="Default x-values with perfect doubling pattern">
-<FunctionSandbox
-  title="Default x-values with perfect doubling pattern"
-  formula={`=GROWTH({3,6,12})`}
+<FunctionExample
+  title={"Predict two new observations with explicitly supplied x values."}
+  formula={"=GROWTH({2;4;8},{1;2;3},{4;5},TRUE)"}
   grid={{}}
-  expected={"[[3,6,12]]"}
+  expected={"{16; 32}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Predict at the first of two known x values."}
+  formula={"=GROWTH({2;4},{1;2},{1})"}
+  grid={{}}
+  expected={"2"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"The known x and y arrays must have corresponding observations."}
+  formula={"=GROWTH({2;4;8},{1;2},{4})"}
+  grid={{}}
+  expected={"#REF!"}
+/>
 
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
-- [HARMEAN](/docs/reference/functions/stats/harmean)
-- [KURT](/docs/reference/functions/stats/kurt)
-- [LINEST](/docs/reference/functions/stats/linest)
+<FunctionExample
+  title={"Exponential growth forecast"}
+  formula={"=GROWTH({2,4,8},{1,2,3},{4,5})"}
+  grid={{}}
+  expected={"{16, 32}"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Default x-values with perfect doubling pattern"}
+  formula={"=GROWTH({3,6,12})"}
+  grid={{}}
+  expected={"{3, 6, 12}"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/growth" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

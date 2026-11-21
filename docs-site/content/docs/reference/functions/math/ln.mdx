@@ -1,58 +1,86 @@
 ---
 title: "LN"
-description: "LN: Returns the natural logarithm of a positive number."
+seoTitle: "LN function: formula syntax and examples"
+description: "Returns the natural logarithm of a positive number. =LN(number)"
 ---
-
-<FunctionPageSchema id="math/ln" />
-
-## Summary
 
 Returns the natural logarithm of a positive number.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LN(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
 ## Remarks
- - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
  - `LN(EXP(x))` returns `x` up to floating-point precision.
  - Input errors are propagated.
 
+## Error cases
+
+ - `number` must be greater than `0`; otherwise the function returns `#NUM!`.
+
 ## Examples
 
-<Tabs items={["Natural log of e cubed", "Natural log of a fraction"]}>
-<Tab value="Natural log of e cubed">
-<FunctionSandbox
-  title="Natural log of e cubed"
-  formula={`=LN(EXP(3))`}
+<FunctionExample
+  title={"Evaluate the logarithm of a positive number above one."}
+  formula={"=LN(100)"}
+  grid={{}}
+  expected={"4.60517018598809"}
+/>
+
+<FunctionExample
+  title={"A positive value below one gives a negative logarithm."}
+  formula={"=LN(0.01)"}
+  grid={{}}
+  expected={"-4.60517018598809"}
+/>
+
+<FunctionExample
+  title={"The logarithm of one is zero."}
+  formula={"=LN(1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Zero is outside the real logarithm domain."}
+  formula={"=LN(0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Natural log of e cubed"}
+  formula={"=LN(EXP(3))"}
   grid={{}}
   expected={"3"}
 />
-</Tab>
 
-<Tab value="Natural log of a fraction">
-<FunctionSandbox
-  title="Natural log of a fraction"
-  formula={`=LN(0.5)`}
+<FunctionExample
+  title={"Natural log of a fraction"}
+  formula={"=LN(0.5)"}
   grid={{}}
-  expected={"-0.6931471805599453"}
+  expected={"-0.693147180559945"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [EXP](/docs/reference/functions/math/exp)
 - [LOG](/docs/reference/functions/math/log)
 - [LOG10](/docs/reference/functions/math/log10)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
 
 ## FAQ
 
 ### Why does LN return #NUM! for 0 or negatives?
 Natural logarithm is only defined for strictly positive inputs.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/ln" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

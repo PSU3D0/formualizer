@@ -1,59 +1,95 @@
 ---
 title: "IFNA"
-description: "IFNA: Returns a fallback only when the first expression is `#N/A`."
+seoTitle: "IFNA function: formula syntax and examples"
+description: "Returns a fallback only when the first expression is #N/A. =IFNA(value, value_if_na)"
 ---
 
-<FunctionPageSchema id="logical-ext/ifna" />
-
-## Summary
+Returns a fallback only when the first expression is `#N/A`.
 
 `IFNA(value, value_if_na)` is narrower than `IFERROR`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IFNA(value, value_if_na)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+| `value_if_na` | any | Required | — |
 
 ## Remarks
  - Only `#N/A` triggers fallback.
  - Other error kinds are returned unchanged.
  - Non-error results pass through unchanged.
+ - When the first argument is an array or range, each `#N/A` element is
+   replaced by the matching element of the fallback, with the same pairing,
+   laziness, and size rules as `IFERROR`; other elements, including other
+   error kinds, pass through.
+ - Evaluation failures of the first argument are not caught.
+
+## Error cases
+
  - Exactly two arguments are required; other arities return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Catch N/A", "Do not catch other errors"]}>
-<Tab value="Catch N/A">
-<FunctionSandbox
-  title="Catch N/A"
-  formula={`=IFNA(NA(), "missing")`}
+<FunctionExample
+  title={"Replace a missing-value error with a readable fallback."}
+  formula={"=IFNA(NA(),\"Unavailable\")"}
   grid={{}}
-  expected={"missing"}
+  expected={"Unavailable"}
 />
-</Tab>
 
-<Tab value="Do not catch other errors">
-<FunctionSandbox
-  title="Do not catch other errors"
-  formula={`=IFNA(1/0, "missing")`}
+<FunctionExample
+  title={"Preserve a numeric input when there is no error to replace."}
+  formula={"=IFNA(42,\"Unavailable\")"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"A zero result is a valid value and does not need the fallback."}
+  formula={"=IFNA(0,\"Unavailable\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"An error in the fallback becomes the formula result."}
+  formula={"=IFNA(NA(),1/0)"}
   grid={{}}
   expected={"#DIV/0!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Catch N/A"}
+  formula={"=IFNA(NA(), \"missing\")"}
+  grid={{}}
+  expected={"missing"}
+/>
+
+<FunctionExample
+  title={"Do not catch other errors"}
+  formula={"=IFNA(1/0, \"missing\")"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
 
 ## Related functions
 
 - [IFERROR](/docs/reference/functions/logical-ext/iferror)
 - [ISNA](/docs/reference/functions/info/isna)
 - [NA](/docs/reference/functions/info/na)
-- [IFS](/docs/reference/functions/logical-ext/ifs)
-- [NOT](/docs/reference/functions/logical-ext/not)
-- [SWITCH](/docs/reference/functions/logical-ext/switch)
 
 ## FAQ
 
 ### Which errors does IFNA intercept?
-Only #N/A is intercepted; all other errors pass through unchanged.
+Only #N/A is intercepted; all other errors pass through unchanged, including inside arrays.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="logical-ext/ifna" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/logical_ext.rs)

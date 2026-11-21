@@ -1,54 +1,86 @@
 ---
 title: "CHISQ.TEST"
-description: "CHISQ.TEST: Returns the right-tail p-value from a chi-square goodness-of-fit style comparison."
+seoTitle: "CHISQ.TEST function: formula syntax and examples"
+description: "Returns the right-tail p-value from a chi-square goodness-of-fit style comparison. =CHISQ.TEST(actual_range, expected_range)"
 ---
 
-<FunctionPageSchema id="stats/chisq-test" />
-
-## Summary
+Returns the right-tail p-value from a chi-square goodness-of-fit style comparison.
 
 `CHISQ.TEST` compares observed and expected values and computes `1 - CHISQ.DIST(...)`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CHISQ.TEST(actual_range, expected_range)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `actual_range` | number (range) | Required | — |
+| `expected_range` | number (range) | Required | — |
+
+## Differences from Excel
+
+An expected count of zero returns `#NUM!` in Formualizer and `#DIV/0!` in Excel.
+
 ## Remarks
- - `actual_range` and `expected_range` must contain the same number of numeric points.
+ - `actual_range` and `expected_range` must have matching shapes and numeric counts.
  - Expected values must be strictly greater than `0`.
- - Requires at least two categories (`df &gt;= 1`).
- - Returns `#N/A` for length mismatches or empty inputs, and `#NUM!` for invalid expected values.
+ - For a two-dimensional table, degrees of freedom are `(rows - 1) * (columns - 1)`.
+   For a row or column vector, they are the number of collected numeric points minus one.
+ - Numeric collection retains statistical coercion/ignoring rules; cell errors propagate.
+
+## Error cases
+
+ - Requires `df &gt;= 1`; a 1×1 input returns `#NUM!`.
+ - Returns `#N/A` for shape/count mismatches or empty numeric inputs, and `#NUM!` for invalid expected values.
 
 ## Examples
 
-<Tabs items={["Perfect match between observed and expected", "Two-category chi-square test"]}>
-<Tab value="Perfect match between observed and expected">
-<FunctionSandbox
-  title="Perfect match between observed and expected"
-  formula={`=CHISQ.TEST({20,30,50},{20,30,50})`}
+<FunctionExample
+  title={"Compare observed counts with expected counts for a two-by-two table."}
+  formula={"=CHISQ.TEST({10,20;20,10},{15,15;15,15})"}
+  grid={{}}
+  expected={"0.00982327450751919"}
+/>
+
+<FunctionExample
+  title={"Move the observations closer to their expected values."}
+  formula={"=CHISQ.TEST({12,18;18,12},{15,15;15,15})"}
+  grid={{}}
+  expected={"0.121335250358482"}
+/>
+
+<FunctionExample
+  title={"Use identical observed and expected counts."}
+  formula={"=CHISQ.TEST({15,15;15,15},{15,15;15,15})"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Two-category chi-square test">
-<FunctionSandbox
-  title="Two-category chi-square test"
-  formula={`=CHISQ.TEST({18,22},{20,20})`}
+<FunctionExample
+  title={"A zero expected count leaves a term with a zero denominator."}
+  formula={"=CHISQ.TEST({10,20;20,10},{15,15;0,15})"}
   grid={{}}
-  expected={"0.5270892568655381"}
+  expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Perfect match between observed and expected"}
+  formula={"=CHISQ.TEST({20,30,50},{20,30,50})"}
+  grid={{}}
+  expected={"1"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"Two-category chi-square test"}
+  formula={"=CHISQ.TEST({18,22},{20,20})"}
+  grid={{}}
+  expected={"0.527089256865538"}
+/>
 
-- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
-- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
-- [CHISQ.INV.RT](/docs/reference/functions/stats/chisq-inv-rt)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [F.TEST](/docs/reference/functions/stats/f-test)
-- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
+## Implementation
 
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/chisq-test" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

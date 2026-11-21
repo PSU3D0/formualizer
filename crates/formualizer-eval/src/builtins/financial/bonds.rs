@@ -707,9 +707,9 @@ fn calculate_price(
 /// ```
 ///
 /// ```yaml,sandbox
-/// title: "Yield recovered from a discounted price"
-/// formula: "=YIELD(DATE(2024,2,15), DATE(2027,2,15), 0.05, 97.2914042780609, 100, 2, 0)"
-/// expected: 0.06
+/// title: "Find the yield of a 5% bond trading at 97.5 per 100 of face value."
+/// formula: "=YIELD(DATE(2024,2,15), DATE(2027,2,15), 0.05, 97.5, 100, 2, 0)"
+/// expected: 0.0592179160028713
 /// ```
 /// ```yaml,docs
 /// related:

@@ -1,58 +1,92 @@
 ---
 title: "ASINH"
-description: "ASINH: Returns the inverse hyperbolic sine of a number."
+seoTitle: "ASINH function: formula syntax and examples"
+description: "Returns the inverse hyperbolic sine of a number. =ASINH(number)"
 ---
 
-<FunctionPageSchema id="math/asinh" />
-
-## Summary
+Returns the inverse hyperbolic sine of a number.
 
 `ASINH` is the inverse of `SINH` over all real inputs.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ASINH(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Inverts hyperbolic sine. It equals ln(x + √(x² + 1)) and is real for every real x.
 
 ## Remarks
  - Domain: accepts any real number.
  - Radians: this function is hyperbolic, so the output is not an angle in radians.
+
+## Error cases
+
  - Errors: no function-specific domain errors are produced.
 
 ## Examples
 
-<Tabs items={["Inverse hyperbolic sine of one", "Inverse hyperbolic sine of negative two"]}>
-<Tab value="Inverse hyperbolic sine of one">
-<FunctionSandbox
-  title="Inverse hyperbolic sine of one"
-  formula={`=ASINH(1)`}
+<FunctionExample
+  title={"Find the positive input whose hyperbolic sine is one half."}
+  formula={"=ASINH(0.5)"}
+  grid={{}}
+  expected={"0.481211825059603"}
+/>
+
+<FunctionExample
+  title={"A negative hyperbolic sine of one half has the opposite inverse."}
+  formula={"=ASINH(-0.5)"}
+  grid={{}}
+  expected={"-0.481211825059603"}
+/>
+
+<FunctionExample
+  title={"The inverse hyperbolic sine of zero is zero."}
+  formula={"=ASINH(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the inverse hyperbolic sine."}
+  formula={"=ASINH(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Inverse hyperbolic sine of one"}
+  formula={"=ASINH(1)"}
   grid={{}}
   expected={"0.881373587019543"}
 />
-</Tab>
 
-<Tab value="Inverse hyperbolic sine of negative two">
-<FunctionSandbox
-  title="Inverse hyperbolic sine of negative two"
-  formula={`=ASINH(-2)`}
+<FunctionExample
+  title={"Inverse hyperbolic sine of negative two"}
+  formula={"=ASINH(-2)"}
   grid={{}}
-  expected={"-1.4436354751788103"}
+  expected={"-1.44363547517881"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SINH](/docs/reference/functions/math/sinh)
 - [ACOSH](/docs/reference/functions/math/acosh)
 - [ATANH](/docs/reference/functions/math/atanh)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### Does ASINH have restricted input domain?
 No. ASINH accepts any real-valued input.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/asinh" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

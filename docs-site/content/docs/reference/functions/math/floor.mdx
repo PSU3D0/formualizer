@@ -1,58 +1,93 @@
 ---
 title: "FLOOR"
-description: "FLOOR: Rounds a number down to the nearest multiple of a significance."
+seoTitle: "FLOOR function: formula syntax and examples"
+description: "Rounds a number down to the nearest multiple of a significance. =FLOOR(number, significance)"
 ---
 
-<FunctionPageSchema id="math/floor" />
-
-## Summary
+Rounds a number down to the nearest multiple of a significance.
 
 This implementation defaults significance to `1` and normalizes negative significance to positive.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FLOOR(number, significance)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `significance` | number | Required | — |
+
+## Differences from Excel
+
+Formualizer defaults the significance to 1 if it is omitted. Excel requires it.
+
 ## Remarks
  - If `significance` is omitted, `1` is used.
- - `significance = 0` returns `#DIV/0!`.
  - Negative significance is treated as its absolute value in this fallback behavior.
+
+## Error cases
+
+ - `significance = 0` returns `#DIV/0!`.
 
 ## Examples
 
-<Tabs items={["Round down to the nearest multiple", "Round a negative number to a lower multiple"]}>
-<Tab value="Round down to the nearest multiple">
-<FunctionSandbox
-  title="Round down to the nearest multiple"
-  formula={`=FLOOR(5.9,2)`}
+<FunctionExample
+  title={"Round a fractional number to a multiple of two."}
+  formula={"=FLOOR(7.2,2)"}
+  grid={{}}
+  expected={"6"}
+/>
+
+<FunctionExample
+  title={"Use a five-unit rounding interval."}
+  formula={"=FLOOR(7.2,5)"}
+  grid={{}}
+  expected={"5"}
+/>
+
+<FunctionExample
+  title={"A number already at a multiple of the significance stays at that multiple."}
+  formula={"=FLOOR(8,2)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"The number argument cannot be read from this text."}
+  formula={"=FLOOR(\"invalid\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Round down to the nearest multiple"}
+  formula={"=FLOOR(5.9,2)"}
   grid={{}}
   expected={"4"}
 />
-</Tab>
 
-<Tab value="Round a negative number to a lower multiple">
-<FunctionSandbox
-  title="Round a negative number to a lower multiple"
-  formula={`=FLOOR(-5.9,2)`}
+<FunctionExample
+  title={"Round a negative number to a lower multiple"}
+  formula={"=FLOOR(-5.9,2)"}
   grid={{}}
   expected={"-6"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [FLOOR.MATH](/docs/reference/functions/math/floor-math)
 - [CEILING](/docs/reference/functions/math/ceiling)
 - [ROUNDDOWN](/docs/reference/functions/math/rounddown)
-- [FLOOR.PRECISE](/docs/reference/functions/math/floor-precise)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [CEILING.MATH](/docs/reference/functions/math/ceiling-math)
 
 ## FAQ
 
 ### Why does FLOOR move negative values farther from zero?
 FLOOR rounds down to a lower multiple, which is more negative for negative inputs.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/floor" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

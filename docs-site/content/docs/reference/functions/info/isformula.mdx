@@ -1,58 +1,73 @@
 ---
 title: "ISFORMULA"
-description: "ISFORMULA: Returns whether a value originates from a formula."
+seoTitle: "ISFORMULA function: formula syntax and examples"
+description: "Returns whether the referenced cell contains a formula. =ISFORMULA(reference)"
 ---
 
-<FunctionPageSchema id="info/isformula" />
+Returns whether the referenced cell contains a formula.
 
-## Summary
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
 
-Current engine metadata does not track formula provenance at this call site.
+## Syntax
+
+`=ISFORMULA(reference)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `reference` | any | Required | — |
+
+## Return type
+
+Logical (TRUE or FALSE)
+
+## Differences from Excel
+
+Formualizer accepts scalar expressions and returns FALSE for them. Excel requires a reference.
 
 ## Remarks
- - This implementation currently returns FALSE for all inputs.
- - Errors are not raised solely due to provenance unavailability.
+ - Inspects the first cell of a reference, including named references.
+ - Non-reference values return FALSE; the referenced value need not be evaluated.
+
+## Error cases
+
  - Arity mismatch returns `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Literal value", "Computed value in expression context"]}>
-<Tab value="Literal value">
-<FunctionSandbox
-  title="Literal value"
-  formula={`=ISFORMULA(10)`}
-  grid={{}}
-  expected={"false"}
+<FunctionExample
+  title={"Test a reference to a cell that stores an arithmetic formula."}
+  formula={"=ISFORMULA(A1)"}
+  grid={{"A1":"=1+2"}}
+  expected={"TRUE"}
 />
-</Tab>
 
-<Tab value="Computed value in expression context">
-<FunctionSandbox
-  title="Computed value in expression context"
-  formula={`=ISFORMULA(1+1)`}
-  grid={{}}
-  expected={"false"}
+<FunctionExample
+  title={"The same calculated number stored directly is a value."}
+  formula={"=ISFORMULA(A2)"}
+  grid={{"A2":"3"}}
+  expected={"FALSE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A formula cell remains a formula cell if its calculation returns an error."}
+  formula={"=ISFORMULA(B1)"}
+  grid={{"B1":"=1/0"}}
+  expected={"TRUE"}
+/>
 
 ## Related functions
 
 - [TYPE](/docs/reference/functions/info/type)
 - [ISNUMBER](/docs/reference/functions/info/isnumber)
 - [ISTEXT](/docs/reference/functions/info/istext)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
 
 ## FAQ
 
-### Can ISFORMULA currently detect formula provenance?
-Not yet. This implementation always returns FALSE because provenance metadata is not tracked here.
+### Does a formula that returns an error count as a formula?
+Yes. ISFORMULA inspects the cell definition rather than its calculated value.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/isformula" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

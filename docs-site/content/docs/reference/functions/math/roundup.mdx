@@ -1,13 +1,23 @@
 ---
 title: "ROUNDUP"
-description: "ROUNDUP: Rounds a number away from zero to a specified number of digits."
+seoTitle: "ROUNDUP function: formula syntax and examples"
+description: "Rounds a number away from zero to a specified number of digits. =ROUNDUP(number, num_digits)"
 ---
 
-<FunctionPageSchema id="math/roundup" />
-
-## Summary
-
 Rounds a number away from zero to a specified number of digits.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ROUNDUP(number, num_digits)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `num_digits` | number | Required | — |
 
 ## Remarks
  - Positive `num_digits` affects decimals; negative values affect digits left of the decimal.
@@ -16,43 +26,59 @@ Rounds a number away from zero to a specified number of digits.
 
 ## Examples
 
-<Tabs items={["Round up decimals away from zero", "Round up a negative value at the hundreds place"]}>
-<Tab value="Round up decimals away from zero">
-<FunctionSandbox
-  title="Round up decimals away from zero"
-  formula={`=ROUNDUP(3.14159,3)`}
+<FunctionExample
+  title={"Round to two places to the right of the decimal point."}
+  formula={"=ROUNDUP(12.345,2)"}
+  grid={{}}
+  expected={"12.35"}
+/>
+
+<FunctionExample
+  title={"Round to a place left of the decimal point."}
+  formula={"=ROUNDUP(127,-1)"}
+  grid={{}}
+  expected={"130"}
+/>
+
+<FunctionExample
+  title={"Select zero decimal places to return an integer."}
+  formula={"=ROUNDUP(12.345,0)"}
+  grid={{}}
+  expected={"13"}
+/>
+
+<FunctionExample
+  title={"The number cannot be read from nonnumeric text."}
+  formula={"=ROUNDUP(\"invalid\",2)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Round up decimals away from zero"}
+  formula={"=ROUNDUP(3.14159,3)"}
   grid={{}}
   expected={"3.142"}
 />
-</Tab>
 
-<Tab value="Round up a negative value at the hundreds place">
-<FunctionSandbox
-  title="Round up a negative value at the hundreds place"
-  formula={`=ROUNDUP(-987.65,-2)`}
+<FunctionExample
+  title={"Round up a negative value at the hundreds place"}
+  formula={"=ROUNDUP(-987.65,-2)"}
   grid={{}}
   expected={"-1000"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [ROUND](/docs/reference/functions/math/round)
 - [ROUNDDOWN](/docs/reference/functions/math/rounddown)
 - [CEILING](/docs/reference/functions/math/ceiling)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [COMBIN](/docs/reference/functions/math/combin)
-- [COMBINA](/docs/reference/functions/math/combina)
 
 ## FAQ
 
 ### What does ROUNDUP do when discarded digits are already zero?
 It leaves the value unchanged because no non-zero discarded part remains.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/roundup" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

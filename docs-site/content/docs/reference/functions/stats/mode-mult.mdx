@@ -1,58 +1,95 @@
 ---
 title: "MODE.MULT"
-description: "MODE.MULT: Returns all modal values as a vertical array."
+seoTitle: "MODE.MULT function: formula syntax and examples"
+description: "Returns all modal values as a vertical array. =MODE.MULT(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="stats/mode-mult" />
-
-## Summary
+Returns all modal values as a vertical array.
 
 Use `MODE.MULT` when a data set can have multiple values with the same highest frequency.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MODE.MULT(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Return type
+
+Can return an array.
+
 ## Remarks
  - Returns each tied mode as a separate row in the result array.
- - Returns `#N/A` when every numeric value appears only once.
  - Non-numeric values in referenced ranges are ignored.
+
+## Error cases
+
+ - Returns `#N/A` when every numeric value appears only once.
 
 ## Examples
 
-<Tabs items={["Multiple modes from direct values", "Single repeated mode still returns an array"]}>
-<Tab value="Multiple modes from direct values">
-<FunctionSandbox
-  title="Multiple modes from direct values"
-  formula={`=MODE.MULT({1,2,2,3,3,4})`}
+<FunctionExample
+  title={"Find a repeated value among four entries."}
+  formula={"=MODE.MULT(7,7,2,9)"}
   grid={{}}
-  expected={"[[2],[3]]"}
+  expected={"7"}
 />
-</Tab>
 
-<Tab value="Single repeated mode still returns an array">
-<FunctionSandbox
-  title="Single repeated mode still returns an array"
-  formula={`=MODE.MULT(A1:A4)`}
+<FunctionExample
+  title={"Supply an array with two equally frequent values."}
+  formula={"=MODE.MULT({7,7,2,2,9})"}
+  grid={{}}
+  expected={"{2; 7}"}
+/>
+
+<FunctionExample
+  title={"Use a pair of identical values, the minimum input with a mode."}
+  formula={"=MODE.MULT(8,8)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"With no repeated value there is no mode."}
+  formula={"=MODE.MULT(7,2,9)"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Multiple modes from direct values"}
+  formula={"=MODE.MULT({1,2,2,3,3,4})"}
+  grid={{}}
+  expected={"{2; 3}"}
+/>
+
+<FunctionExample
+  title={"Single repeated mode still returns an array"}
+  formula={"=MODE.MULT(A1:A4)"}
   grid={{"A1":"5","A2":"5","A3":"2","A4":"1"}}
-  expected={"[[5]]"}
+  expected={"5"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [MODE.SNGL](/docs/reference/functions/stats/mode-sngl)
 - [FREQUENCY](/docs/reference/functions/stats/frequency)
 - [MEDIAN](/docs/reference/functions/stats/median)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### Why can MODE.MULT return an array result?
 It emits every value tied for highest frequency as separate rows.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/mode-mult" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,13 +1,31 @@
 ---
 title: "REPLACE"
-description: "Replaces part of a text string by position."
+seoTitle: "REPLACE function: formula syntax and examples"
+description: "Replaces part of a text string by position. =REPLACE(old_text, start_num, num_chars, new_text)"
 ---
 
-<FunctionPageSchema id="text/replace" />
-
-## Summary
+Replaces part of a text string by position.
 
 `REPLACE(old_text, start_num, num_chars, new_text)` works by character index.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=REPLACE(old_text, start_num, num_chars, new_text)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `old_text` | any | Required | — |
+| `start_num` | any | Required | — |
+| `num_chars` | any | Required | — |
+| `new_text` | any | Required | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - `start_num` is 1-based and must be at least `1`.
@@ -17,43 +35,59 @@ description: "Replaces part of a text string by position."
 
 ## Examples
 
-<Tabs items={["Replace middle segment", "Insert at start"]}>
-<Tab value="Replace middle segment">
-<FunctionSandbox
-  title="Replace middle segment"
-  formula={`=REPLACE("abcdef", 3, 2, "ZZ")`}
+<FunctionExample
+  title={"Replace the final four ASCII characters by position."}
+  formula={"=REPLACE(\"East-2024\",6,4,\"2025\")"}
+  grid={{}}
+  expected={"East-2025"}
+/>
+
+<FunctionExample
+  title={"Insert text without deleting source characters."}
+  formula={"=REPLACE(\"East-2024\",6,0,\"FY\")"}
+  grid={{}}
+  expected={"East-FY2024"}
+/>
+
+<FunctionExample
+  title={"Delete the selected characters by replacing them with empty text."}
+  formula={"=REPLACE(\"East-2024\",6,4,\"\")"}
+  grid={{}}
+  expected={"East-"}
+/>
+
+<FunctionExample
+  title={"A start position of zero is invalid."}
+  formula={"=REPLACE(\"East-2024\",0,4,\"2025\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Replace middle segment"}
+  formula={"=REPLACE(\"abcdef\", 3, 2, \"ZZ\")"}
   grid={{}}
   expected={"abZZef"}
 />
-</Tab>
 
-<Tab value="Insert at start">
-<FunctionSandbox
-  title="Insert at start"
-  formula={`=REPLACE("report", 1, 0, "Q1-")`}
+<FunctionExample
+  title={"Insert at start"}
+  formula={"=REPLACE(\"report\", 1, 0, \"Q1-\")"}
   grid={{}}
   expected={"Q1-report"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SUBSTITUTE](/docs/reference/functions/text/substitute)
 - [MID](/docs/reference/functions/text/mid)
 - [LEFT](/docs/reference/functions/text/left)
-- [REPLACEB](/docs/reference/functions/text/replaceb)
-- [ASC](/docs/reference/functions/text/asc)
-- [CHAR](/docs/reference/functions/text/char)
 
 ## FAQ
 
 ### Does REPLACE match text patterns?
 No. REPLACE is position-based and replaces by start_num and num_chars, not by searching old text.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/replace" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/mid_sub_replace.rs)

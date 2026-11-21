@@ -1,59 +1,98 @@
 ---
 title: "IFS"
-description: "IFS: Returns the value for the first TRUE condition in condition-value pairs."
+seoTitle: "IFS function: formula syntax and examples"
+description: "Returns the value for the first TRUE condition in condition-value pairs. =IFS(logical_test1, value_if_true1, [(logical_test2, value_if_true2), ...])"
 ---
 
-<FunctionPageSchema id="logical-ext/ifs" />
-
-## Summary
+Returns the value for the first TRUE condition in condition-value pairs.
 
 `IFS(cond1, value1, cond2, value2, ...)` evaluates left to right and short-circuits.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IFS(logical_test1, value_if_true1, [(logical_test2, value_if_true2), ...])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `logical_test1` | any | Required | — |
+| `value_if_true1` | any | Required | — |
+| `logical_test2` | any | Optional | — |
+| `value_if_true2` | any | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 2.
+
+## Return type
+
+Can return a reference when evaluated in a reference context.
+
 ## Remarks
- - Arguments must be provided as pairs; odd argument counts return `#VALUE!`.
  - Conditions accept booleans and numbers (`0` FALSE, non-zero TRUE); blank is FALSE.
+
+## Error cases
+
+ - Arguments must be provided as pairs; odd argument counts return `#VALUE!`.
  - Text conditions return `#VALUE!`; error conditions propagate.
  - If no condition is TRUE, returns `#N/A`.
 
 ## Examples
 
-<Tabs items={["First matching condition wins", "No conditions matched"]}>
-<Tab value="First matching condition wins">
-<FunctionSandbox
-  title="First matching condition wins"
-  formula={`=IFS(2<1, "a", 3>2, "b", TRUE, "c")`}
+<FunctionExample
+  title={"Return the result for the first true comparison in a sequence."}
+  formula={"=IFS(7>10,\"High\",7>5,\"Medium\")"}
   grid={{}}
-  expected={"b"}
+  expected={"Medium"}
 />
-</Tab>
 
-<Tab value="No conditions matched">
-<FunctionSandbox
-  title="No conditions matched"
-  formula={`=IFS(FALSE, 1, 0, 2)`}
+<FunctionExample
+  title={"The first match takes precedence when multiple conditions are true."}
+  formula={"=IFS(7>5,\"Medium\",7>6,\"High\")"}
+  grid={{}}
+  expected={"Medium"}
+/>
+
+<FunctionExample
+  title={"Use one unconditional comparison, the minimum supported pair."}
+  formula={"=IFS(TRUE,\"Default\")"}
+  grid={{}}
+  expected={"Default"}
+/>
+
+<FunctionExample
+  title={"With no true condition there is no result branch to return."}
+  formula={"=IFS(FALSE,\"No match\")"}
   grid={{}}
   expected={"#N/A"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"First matching condition wins"}
+  formula={"=IFS(2<1, \"a\", 3>2, \"b\", TRUE, \"c\")"}
+  grid={{}}
+  expected={"b"}
+/>
+
+<FunctionExample
+  title={"No conditions matched"}
+  formula={"=IFS(FALSE, 1, 0, 2)"}
+  grid={{}}
+  expected={"#N/A"}
+/>
 
 ## Related functions
 
 - [IF](/docs/reference/functions/logical/if)
 - [AND](/docs/reference/functions/logical/and)
 - [OR](/docs/reference/functions/logical/or)
-- [SWITCH](/docs/reference/functions/logical-ext/switch)
-- [XOR](/docs/reference/functions/logical-ext/xor)
-- [IFERROR](/docs/reference/functions/logical-ext/iferror)
 
 ## FAQ
 
 ### What errors can IFS return on structure issues?
 Odd argument counts return #VALUE!, and no TRUE condition returns #N/A.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="logical-ext/ifs" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/logical_ext.rs)

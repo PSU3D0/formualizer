@@ -1,13 +1,28 @@
 ---
 title: "GAUSS"
-description: "GAUSS: Returns the standard normal area between `0` and `z`."
+seoTitle: "GAUSS function: formula syntax and examples"
+description: "Returns the standard normal area between 0 and z. =GAUSS(z)"
 ---
 
-<FunctionPageSchema id="stats/gauss" />
-
-## Summary
+Returns the standard normal area between `0` and `z`.
 
 `GAUSS` computes `NORM.S.DIST(z, TRUE) - 0.5`, preserving the sign of `z`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GAUSS(z)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `z` | number | Required | — |
+
+## How it works
+
+Gives Φ(z) − 0.5, the signed standard-normal area between zero and z. Any real z is valid and the result changes sign when z does.
 
 ## Remarks
  - Positive `z` returns a positive area; negative `z` returns a negative area.
@@ -17,38 +32,48 @@ description: "GAUSS: Returns the standard normal area between `0` and `z`."
 
 ## Examples
 
-<Tabs items={["Area from mean to z = 1", "Symmetric negative z-value"]}>
-<Tab value="Area from mean to z = 1">
-<FunctionSandbox
-  title="Area from mean to z = 1"
-  formula={`=GAUSS(1)`}
+<FunctionExample
+  title={"Find the signed standard-normal area between zero and z = 0.5."}
+  formula={"=GAUSS(0.5)"}
   grid={{}}
-  expected={"0.3413447460685429"}
+  expected={"0.191462461274013"}
 />
-</Tab>
 
-<Tab value="Symmetric negative z-value">
-<FunctionSandbox
-  title="Symmetric negative z-value"
-  formula={`=GAUSS(-1)`}
+<FunctionExample
+  title={"Extend the upper z score to 0.75 to include more area."}
+  formula={"=GAUSS(0.75)"}
   grid={{}}
-  expected={"-0.3413447460685429"}
+  expected={"0.273372647623132"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A z score of 0.01 lies close to the zero-area starting point."}
+  formula={"=GAUSS(0.01)"}
+  grid={{}}
+  expected={"0.0039893563146316"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"The input must be numeric."}
+  formula={"=GAUSS(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
-- [FISHER](/docs/reference/functions/stats/fisher)
-- [FISHERINV](/docs/reference/functions/stats/fisherinv)
-- [GAMMA](/docs/reference/functions/stats/gamma)
-- [GAMMALN](/docs/reference/functions/stats/gammaln)
-- [GAMMALN.PRECISE](/docs/reference/functions/stats/gammaln-precise)
-- [NORM.S.INV](/docs/reference/functions/stats/norm-s-inv)
+<FunctionExample
+  title={"Area from mean to z = 1"}
+  formula={"=GAUSS(1)"}
+  grid={{}}
+  expected={"0.341344746068543"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Symmetric negative z-value"}
+  formula={"=GAUSS(-1)"}
+  grid={{}}
+  expected={"-0.341344746068543"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/gauss" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,54 +1,85 @@
 ---
 title: "EXPON.DIST"
-description: "EXPON.DIST: Returns the exponential-distribution probability at `x` for rate `lambda`."
+seoTitle: "EXPON.DIST function: formula syntax and examples"
+description: "Returns the exponential-distribution probability at x for rate lambda. =EXPON.DIST(x, lambda, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/expon-dist" />
-
-## Summary
+Returns the exponential-distribution probability at `x` for rate `lambda`.
 
 Use `EXPON.DIST` for waiting-time models where events occur with a constant hazard rate.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=EXPON.DIST(x, lambda, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `lambda` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+With positive rate λ, the density at waiting time x is λ exp(−λx), and the cumulative probability is 1 − exp(−λx). The waiting time must be nonnegative.
 
 ## Remarks
  - Requires `x &gt;= 0` and `lambda &gt; 0`.
  - Set `cumulative` to non-zero for CDF mode, or `0` for PDF mode.
- - Returns `#NUM!` when inputs violate domain requirements.
  - Invalid numeric coercions propagate as spreadsheet errors.
+ - Alias `EXPONDIST` (the Excel 2007 compatibility name) is supported.
+
+## Error cases
+
+ - Returns `#NUM!` when inputs violate domain requirements.
 
 ## Examples
 
-<Tabs items={["Exponential CDF", "Exponential PDF"]}>
-<Tab value="Exponential CDF">
-<FunctionSandbox
-  title="Exponential CDF"
-  formula={`=EXPON.DIST(1,1,TRUE)`}
+<FunctionExample
+  title={"Evaluate the cumulative probability at a positive waiting time."}
+  formula={"=EXPON.DIST(2,0.5,TRUE)"}
   grid={{}}
-  expected={"0.6321205588285577"}
+  expected={"0.632120558828558"}
 />
-</Tab>
 
-<Tab value="Exponential PDF">
-<FunctionSandbox
-  title="Exponential PDF"
-  formula={`=EXPON.DIST(1,1,FALSE)`}
+<FunctionExample
+  title={"Evaluate density at the same point."}
+  formula={"=EXPON.DIST(2,0.5,FALSE)"}
   grid={{}}
-  expected={"0.36787944117144233"}
+  expected={"0.183939720585721"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The cumulative probability at zero is zero."}
+  formula={"=EXPON.DIST(0,0.5,TRUE)"}
+  grid={{}}
+  expected={"0"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"A negative waiting time is outside the distribution."}
+  formula={"=EXPON.DIST(-1,0.5,TRUE)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
-- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
-- [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
-- [F.INV](/docs/reference/functions/stats/f-inv)
+<FunctionExample
+  title={"Exponential CDF"}
+  formula={"=EXPON.DIST(1,1,TRUE)"}
+  grid={{}}
+  expected={"0.632120558828558"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Exponential PDF"}
+  formula={"=EXPON.DIST(1,1,FALSE)"}
+  grid={{}}
+  expected={"0.367879441171442"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/expon-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

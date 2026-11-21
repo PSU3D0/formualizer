@@ -1,13 +1,18 @@
 ---
 title: "RAND"
-description: "Returns a uniformly distributed pseudo-random number in the interval `[0, 1)`."
+seoTitle: "RAND function: formula syntax and examples"
+description: "Returns a uniformly distributed pseudo-random number in the interval [0, 1). =RAND()"
 ---
 
-<FunctionPageSchema id="random/rand" />
-
-## Summary
+Returns a uniformly distributed pseudo-random number in the interval `[0, 1)`.
 
 `RAND` is volatile and recalculates whenever dependent formulas recalculate.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=RAND()`
 
 ## Remarks
  - The result is always greater than or equal to `0` and strictly less than `1`.
@@ -16,35 +21,46 @@ description: "Returns a uniformly distributed pseudo-random number in the interv
 
 ## Examples
 
-<Tabs items={["RAND stays within bounds", "Derived integer bucket from RAND"]}>
-<Tab value="RAND stays within bounds">
-<FunctionSandbox
-  title="RAND stays within bounds"
-  formula={`=LET(n, RAND(), AND(n>=0, n<1))`}
+<FunctionExample
+  title={"Generate a random decimal in the ordinary interval."}
+  formula={"=RAND()"}
   grid={{}}
-  expected={"true"}
+  expected={"Decimal from 0 up to 1"}
 />
-</Tab>
 
-<Tab value="Derived integer bucket from RAND">
-<FunctionSandbox
-  title="Derived integer bucket from RAND"
-  formula={`=LET(n, INT(RAND()*10), AND(n>=0, n<=9))`}
+<FunctionExample
+  title={"Scale the random decimal to a range from zero up to 100."}
+  formula={"=RAND()*100"}
   grid={{}}
-  expected={"true"}
+  expected={"Number"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Round down a draw in RAND's half-open unit interval to zero."}
+  formula={"=INT(RAND())"}
+  grid={{}}
+  expected={"Number"}
+/>
+
+<FunctionExample
+  title={"RAND stays within bounds"}
+  formula={"=LET(n, RAND(), AND(n>=0, n<1))"}
+  grid={{}}
+  expected={"Logical value"}
+/>
+
+<FunctionExample
+  title={"Derived integer bucket from RAND"}
+  formula={"=LET(n, INT(RAND()*10), AND(n>=0, n<=9))"}
+  grid={{}}
+  expected={"Logical value"}
+/>
 
 ## Related functions
 
 - [RANDBETWEEN](/docs/reference/functions/random/randbetween)
 - [LET](/docs/reference/functions/lambda/let)
 - [INT](/docs/reference/functions/math/int)
-- [NOW](/docs/reference/functions/datetime/now)
-- [TODAY](/docs/reference/functions/datetime/today)
-- [FALSE](/docs/reference/functions/logical/false)
 
 ## FAQ
 
@@ -57,8 +73,6 @@ Only if you bind it once (for example with LET). Two separate RAND calls are two
 ### Why does RAND look deterministic in some engine runs?
 Randomness is seeded per evaluation context, which keeps a run reproducible while still treating RAND as volatile across recalculations.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="random/rand" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/random.rs)

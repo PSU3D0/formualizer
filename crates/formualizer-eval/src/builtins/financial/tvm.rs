@@ -49,10 +49,12 @@ fn truncate_date_serials(dates: &mut [f64]) {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Calculate the monthly payment on a 300,000 30-year mortgage at 6% annual interest."
 /// formula: =PMT(0.06/12, 360, 300000)
 /// result: -1798.6515754582708
 /// ```
 /// ```yaml,sandbox
+/// title: "Find the deposit due at the start of each quarter to offset a 10,000 opening outlay."
 /// formula: =PMT(0.05/4, 20, -10000, 0, 1)
 /// result: 561.1890334005388
 /// ```
@@ -127,19 +129,80 @@ impl Function for PmtFn {
             ));
         }
 
-        let pmt = if rate.abs() < 1e-10 {
-            // When rate is 0, PMT = -(pv + fv) / nper
-            -(pv + fv) / nper
-        } else {
-            // PMT = (rate * (pv * (1+rate)^nper + fv)) / ((1+rate)^nper - 1)
-            // With type adjustment for beginning of period
-            let factor = (1.0 + rate).powf(nper);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
-        };
+        let pmt = tvm_pmt(rate, nper, pv, fv, pmt_type);
 
         Ok(CalcValue::Scalar(LiteralValue::Number(pmt)))
     }
+}
+
+/// Computes periodic payment `PMT` for fixed-rate TVM functions.
+fn tvm_pmt(rate: f64, nper: f64, pv: f64, fv: f64, pmt_type: i32) -> f64 {
+    if rate.abs() < 1e-10 {
+        // When rate is 0, PMT = -(pv + fv) / nper
+        -(pv + fv) / nper
+    } else {
+        // PMT = -(rate * (pv * (1+rate)^nper + fv)) / (((1+rate)^nper - 1) * type_adj)
+        let factor = (1.0 + rate).powf(nper);
+        let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+        -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
+    }
+}
+
+/// Computes periodic interest component `IPMT` given precomputed periodic `pmt`.
+fn tvm_ipmt(rate: f64, per: f64, pv: f64, pmt_type: i32, pmt: f64) -> f64 {
+    if (pmt_type != 0 && per == 1.0) || rate == 0.0 {
+        return 0.0;
+    }
+
+    // For annuity-due (`type != 0`), payment occurs at the start of each period, so for
+    // `per > 1` interest accrues on the balance after the period-start payment rather than
+    // before it. Because `pmt(type=1) = pmt(type=0) / (1 + rate)`, dividing the equivalent
+    // `type=0` interest by `(1 + rate)` matches Excel for all `fv` and `per > 1`.
+    let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
+    let fv_at_start_type0 = if rate.abs() < 1e-10 {
+        -pv - (pmt * type_adj) * (per - 1.0)
+    } else {
+        let factor = (1.0 + rate).powf(per - 1.0);
+        -pv * factor - (pmt * type_adj) * (factor - 1.0) / rate
+    };
+
+    (fv_at_start_type0 * rate) / type_adj
+}
+
+struct TvmPeriodArgs {
+    rate: f64,
+    per: f64,
+    nper: f64,
+    pv: f64,
+    fv: f64,
+    pmt_type: i32,
+}
+
+fn parse_tvm_period_args<'a, 'b>(
+    args: &[ArgumentHandle<'a, 'b>],
+) -> Result<TvmPeriodArgs, ExcelError> {
+    let rate = coerce_num(&args[0])?;
+    let per = coerce_num(&args[1])?;
+    let nper = coerce_num(&args[2])?;
+    let pv = coerce_num(&args[3])?;
+    let fv = if args.len() > 4 {
+        coerce_num(&args[4])?
+    } else {
+        0.0
+    };
+    let pmt_type = if args.len() > 5 {
+        coerce_num(&args[5])? as i32
+    } else {
+        0
+    };
+    Ok(TvmPeriodArgs {
+        rate,
+        per,
+        nper,
+        pv,
+        fv,
+        pmt_type,
+    })
 }
 
 /// Calculates present value from periodic cash flows at a fixed rate.
@@ -155,10 +218,12 @@ impl Function for PmtFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Recover the mortgage principal from its 360 monthly payments."
 /// formula: =PV(0.06/12, 360, -1798.65157545827)
 /// result: 299999.9999999998
 /// ```
 /// ```yaml,sandbox
+/// title: "Value ten 500 payments at a zero discount rate."
 /// formula: =PV(0, 10, -500)
 /// result: 5000
 /// ```
@@ -252,10 +317,12 @@ impl Function for PvFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Project the balance after ten years of 200 monthly deposits at 4% annual interest."
 /// formula: =FV(0.04/12, 120, -200)
 /// result: 29449.96094509572
 /// ```
 /// ```yaml,sandbox
+/// title: "Accumulate two years of 150 monthly deposits at zero interest while offsetting an initial 1,000 receipt."
 /// formula: =FV(0, 24, -150, 1000)
 /// result: 2600
 /// ```
@@ -351,10 +418,12 @@ impl Function for FvFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Discount three successive receipts of 4,000, 5,000 and 6,000 at 8% per period."
 /// formula: =NPV(0.08, 4000, 5000, 6000)
 /// result: 12753.391251333636
 /// ```
 /// ```yaml,sandbox
+/// title: "Discount an outlay in the first period followed by three receipts, all at 10% per period."
 /// formula: =NPV(0.10, -5000, 2000, 2500, 3000)
 /// result: 1034.7653848780812
 /// ```
@@ -536,10 +605,12 @@ fn accumulate_npv_cash_flow(
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Recover the 360 monthly payments of a 300,000 mortgage."
 /// formula: =NPER(0.06/12, -1798.65157545827, 300000)
 /// result: 360.00000000000045
 /// ```
 /// ```yaml,sandbox
+/// title: "Find how many 250 payments retire a 5,000 balance at zero interest."
 /// formula: =NPER(0, -250, 5000)
 /// result: 20
 /// ```
@@ -645,12 +716,14 @@ impl Function for NperFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
-/// formula: =RATE(360, -1798.65157545827, 300000)
-/// result: 0.005000000000000038
+/// title: "Infer the monthly mortgage rate from a 300,000 principal and a rounded payment of 1,800."
+/// formula: =RATE(360, -1800, 300000)
+/// result: 0.00500582500676236
 /// ```
 /// ```yaml,sandbox
-/// formula: =RATE(12, -88.84878867834166, 1000)
-/// result: 0.010000000000005125
+/// title: "Infer the periodic rate of a 1,000 loan paid back in twelve payments of 89."
+/// formula: =RATE(12, -89, 1000)
+/// result: 0.0102692347720166
 /// ```
 /// ```yaml,docs
 /// related:
@@ -786,10 +859,12 @@ impl Function for RateFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Find the interest portion of the first payment on a 30-year mortgage."
 /// formula: =IPMT(0.06/12, 1, 360, 300000)
 /// result: -1500
 /// ```
 /// ```yaml,sandbox
+/// title: "Find the interest portion of the twelfth payment after eleven principal reductions."
 /// formula: =IPMT(0.06/12, 12, 360, 300000)
 /// result: -1483.1572957145672
 /// ```
@@ -844,52 +919,16 @@ impl Function for IpmtFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let rate = coerce_num(&args[0])?;
-        let per = coerce_num(&args[1])?;
-        let nper = coerce_num(&args[2])?;
-        let pv = coerce_num(&args[3])?;
-        let fv = if args.len() > 4 {
-            coerce_num(&args[4])?
-        } else {
-            0.0
-        };
-        let pmt_type = if args.len() > 5 {
-            coerce_num(&args[5])? as i32
-        } else {
-            0
-        };
+        let a = parse_tvm_period_args(args)?;
 
-        if per < 1.0 || per > nper {
+        if a.per < 1.0 || a.per > a.nper {
             return Ok(CalcValue::Scalar(
                 LiteralValue::Error(ExcelError::new_num()),
             ));
         }
 
-        // Calculate PMT first
-        let pmt = if rate.abs() < 1e-10 {
-            -(pv + fv) / nper
-        } else {
-            let factor = (1.0 + rate).powf(nper);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
-        };
-
-        // Calculate FV at start of period
-        let fv_at_start = if rate.abs() < 1e-10 {
-            -pv - pmt * (per - 1.0)
-        } else {
-            let factor = (1.0 + rate).powf(per - 1.0);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -pv * factor - pmt * type_adj * (factor - 1.0) / rate
-        };
-
-        // Interest is rate * balance at start of period
-        // fv_at_start is negative of balance, so ipmt = fv_at_start * rate
-        let ipmt = if pmt_type != 0 && per == 1.0 {
-            0.0 // No interest in first period for annuity due
-        } else {
-            fv_at_start * rate
-        };
+        let pmt = tvm_pmt(a.rate, a.nper, a.pv, a.fv, a.pmt_type);
+        let ipmt = tvm_ipmt(a.rate, a.per, a.pv, a.pmt_type, pmt);
 
         Ok(CalcValue::Scalar(LiteralValue::Number(ipmt)))
     }
@@ -908,10 +947,12 @@ impl Function for IpmtFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Find the principal portion of the first mortgage payment."
 /// formula: =PPMT(0.06/12, 1, 360, 300000)
 /// result: -298.6515754582708
 /// ```
 /// ```yaml,sandbox
+/// title: "Find the principal portion of the twelfth mortgage payment."
 /// formula: =PPMT(0.06/12, 12, 360, 300000)
 /// result: -315.4942797437036
 /// ```
@@ -966,50 +1007,16 @@ impl Function for PpmtFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<CalcValue<'b>, ExcelError> {
-        let rate = coerce_num(&args[0])?;
-        let per = coerce_num(&args[1])?;
-        let nper = coerce_num(&args[2])?;
-        let pv = coerce_num(&args[3])?;
-        let fv = if args.len() > 4 {
-            coerce_num(&args[4])?
-        } else {
-            0.0
-        };
-        let pmt_type = if args.len() > 5 {
-            coerce_num(&args[5])? as i32
-        } else {
-            0
-        };
+        let a = parse_tvm_period_args(args)?;
 
-        if per < 1.0 || per > nper {
+        if a.per < 1.0 || a.per > a.nper {
             return Ok(CalcValue::Scalar(
                 LiteralValue::Error(ExcelError::new_num()),
             ));
         }
 
-        // Calculate PMT
-        let pmt = if rate.abs() < 1e-10 {
-            -(pv + fv) / nper
-        } else {
-            let factor = (1.0 + rate).powf(nper);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -(rate * (pv * factor + fv)) / ((factor - 1.0) * type_adj)
-        };
-
-        // Calculate IPMT
-        let fv_at_start = if rate.abs() < 1e-10 {
-            -pv - pmt * (per - 1.0)
-        } else {
-            let factor = (1.0 + rate).powf(per - 1.0);
-            let type_adj = if pmt_type != 0 { 1.0 + rate } else { 1.0 };
-            -pv * factor - pmt * type_adj * (factor - 1.0) / rate
-        };
-
-        let ipmt = if pmt_type != 0 && per == 1.0 {
-            0.0
-        } else {
-            fv_at_start * rate
-        };
+        let pmt = tvm_pmt(a.rate, a.nper, a.pv, a.fv, a.pmt_type);
+        let ipmt = tvm_ipmt(a.rate, a.per, a.pv, a.pmt_type, pmt);
 
         // PPMT = PMT - IPMT
         let ppmt = pmt - ipmt;
@@ -1032,10 +1039,12 @@ impl Function for PpmtFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Annualize a 12% nominal rate that compounds monthly."
 /// formula: =EFFECT(0.12, 12)
 /// result: 0.12682503013196977
 /// ```
 /// ```yaml,sandbox
+/// title: "Calculate the effective annual yield from 8% nominal interest compounded quarterly."
 /// formula: =EFFECT(0.08, 4)
 /// result: 0.08243215999999998
 /// ```
@@ -1111,12 +1120,14 @@ impl Function for EffectFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Recover the monthly-compounded nominal rate from an effective annual yield of about 12.68%."
 /// formula: =NOMINAL(0.12682503013196977, 12)
 /// result: 0.1200000000000001
 /// ```
 /// ```yaml,sandbox
-/// formula: =NOMINAL(0.08243216, 4)
-/// result: 0.08000000000000007
+/// title: "Find the quarterly-compounded nominal rate for an effective annual yield of 8.3%."
+/// formula: =NOMINAL(0.083, 4)
+/// result: 0.080534983082126
 /// ```
 /// ```yaml,docs
 /// related:
@@ -1362,10 +1373,12 @@ fn irr_solve(cashflows: &[f64], guess: f64) -> Option<f64> {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Find the periodic return on a 10,000 outlay followed by three increasing receipts."
 /// formula: =IRR({-10000,3000,4200,6800})
 /// result: 0.16340560068898924
 /// ```
 /// ```yaml,sandbox
+/// title: "Solve for the return on four receipts using 10% as the starting guess."
 /// formula: =IRR({-5000,1200,1410,1875,1050}, 0.1)
 /// result: 0.041848876015677466
 /// ```
@@ -1489,10 +1502,12 @@ impl Function for IrrFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Calculate a modified return with 10% financing and 12% reinvestment."
 /// formula: =MIRR({-10000,3000,4200,6800}, 0.1, 0.12)
 /// result: 0.15147133664676304
 /// ```
 /// ```yaml,sandbox
+/// title: "Calculate the modified return on a 120,000 outlay and five receipts."
 /// formula: =MIRR({-120000,39000,30000,21000,37000,46000}, 0.1, 0.12)
 /// result: 0.1260941303659051
 /// ```
@@ -1631,10 +1646,12 @@ impl Function for MirrFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Total the interest paid in the first year of a 30-year mortgage."
 /// formula: =CUMIPMT(0.06/12, 360, 300000, 1, 12, 0)
 /// result: -17899.783768668927
 /// ```
 /// ```yaml,sandbox
+/// title: "Total the interest paid in the second year of that mortgage."
 /// formula: =CUMIPMT(0.06/12, 360, 300000, 13, 24, 0)
 /// result: -17672.560542597304
 /// ```
@@ -1749,10 +1766,12 @@ impl Function for CumipmtFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Find how much principal the first 12 mortgage payments retire."
 /// formula: =CUMPRINC(0.06/12, 360, 300000, 1, 12, 0)
 /// result: -3684.0351368303236
 /// ```
 /// ```yaml,sandbox
+/// title: "Find how much principal the second year of mortgage payments retires."
 /// formula: =CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)
 /// result: -3911.2583629019473
 /// ```
@@ -1868,10 +1887,12 @@ impl Function for CumprincFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Discount four receipts spaced 365 days apart at an annual rate of 10%."
 /// formula: =XNPV(0.10, {-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})
 /// result: 332.4567993989465
 /// ```
 /// ```yaml,sandbox
+/// title: "Discount three unequally spaced receipts at an annual rate of 8% and include the initial outlay."
 /// formula: =XNPV(0.08, {-5000,1200,1800,2400}, {0,180,365,730})
 /// result: -120.41078799700836
 /// ```
@@ -2070,10 +2091,12 @@ fn calculate_xnpv_derivative(rate: f64, values: &[f64], dates: &[f64]) -> f64 {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Find the annualized return on four receipts spaced 365 days apart."
 /// formula: =XIRR({-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})
 /// result: 0.11541278310055854
 /// ```
 /// ```yaml,sandbox
+/// title: "Find the annualized return on unequally spaced receipts from a 10% starting guess."
 /// formula: =XIRR({-5000,1200,1800,2400}, {0,180,365,730}, 0.1)
 /// result: 0.06001829492127762
 /// ```
@@ -2279,10 +2302,12 @@ impl Function for XirrFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Convert 1 and 2 sixteenths to a decimal dollar quote."
 /// formula: =DOLLARDE(1.02, 16)
 /// result: 1.125
 /// ```
 /// ```yaml,sandbox
+/// title: "Convert a negative dollar quote whose fractional part is 15 thirty-seconds."
 /// formula: =DOLLARDE(-3.15, 32)
 /// result: -3.46875
 /// ```
@@ -2371,10 +2396,12 @@ impl Function for DollardeFn {
 ///
 /// # Examples
 /// ```yaml,sandbox
+/// title: "Express a decimal dollar quote in sixteenths."
 /// formula: =DOLLARFR(1.125, 16)
 /// result: 1.02
 /// ```
 /// ```yaml,sandbox
+/// title: "Express the fractional portion of a negative dollar quote in thirty-seconds."
 /// formula: =DOLLARFR(-3.46875, 32)
 /// result: -3.15
 /// ```

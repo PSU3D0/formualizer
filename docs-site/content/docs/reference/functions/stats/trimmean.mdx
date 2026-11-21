@@ -1,54 +1,79 @@
 ---
 title: "TRIMMEAN"
-description: "TRIMMEAN: Returns the mean after trimming a percentage of values from both tails."
+seoTitle: "TRIMMEAN function: formula syntax and examples"
+description: "Returns the mean after trimming a percentage of values from both tails. =TRIMMEAN(array, percent)"
 ---
 
-<FunctionPageSchema id="stats/trimmean" />
-
-## Summary
+Returns the mean after trimming a percentage of values from both tails.
 
 `TRIMMEAN` sorts numeric data, removes an equal count from low and high ends, then averages the
  remaining interior values.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TRIMMEAN(array, percent)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | number (range) | Required | — |
+| `percent` | number (range) | Required | — |
+
 ## Remarks
  - `percent` must satisfy `0 &lt;= percent &lt; 1`.
  - The trimmed count per side is `floor(n * percent / 2)`.
+
+## Error cases
+
  - Returns `#NUM!` for invalid percent values or when no numeric values are available.
 
 ## Examples
 
-<Tabs items={["Trimmed mean from direct values", "Trimmed mean from a range"]}>
-<Tab value="Trimmed mean from direct values">
-<FunctionSandbox
-  title="Trimmed mean from direct values"
-  formula={`=TRIMMEAN({1,2,3,4,5,6},0.3333333333333333)`}
+<FunctionExample
+  title={"Trim the smallest and largest observations before averaging."}
+  formula={"=TRIMMEAN({1,10,12,13,50},0.4)"}
+  grid={{}}
+  expected={"11.6666666666667"}
+/>
+
+<FunctionExample
+  title={"Compare a smaller fraction whose trimming count rounds down."}
+  formula={"=TRIMMEAN({1,10,12,13,50},0.2)"}
+  grid={{}}
+  expected={"17.2"}
+/>
+
+<FunctionExample
+  title={"A zero trim fraction uses every value."}
+  formula={"=TRIMMEAN({1,10,12,13,50},0)"}
+  grid={{}}
+  expected={"17.2"}
+/>
+
+<FunctionExample
+  title={"The excluded fraction cannot exceed the full sample."}
+  formula={"=TRIMMEAN({1,10,12,13,50},1.1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Trimmed mean from direct values"}
+  formula={"=TRIMMEAN({1,2,3,4,5,6},0.3333333333333333)"}
   grid={{}}
   expected={"3.5"}
 />
-</Tab>
 
-<Tab value="Trimmed mean from a range">
-<FunctionSandbox
-  title="Trimmed mean from a range"
-  formula={`=TRIMMEAN(A1:A6,0.4)`}
+<FunctionExample
+  title={"Trimmed mean from a range"}
+  formula={"=TRIMMEAN(A1:A6,0.4)"}
   grid={{"A1":"10","A2":"12","A3":"13","A4":"20","A5":"21","A6":"30"}}
   expected={"16.5"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [CORREL](/docs/reference/functions/stats/correl)
-- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
-- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
-- [INTERCEPT](/docs/reference/functions/stats/intercept)
-- [PEARSON](/docs/reference/functions/stats/pearson)
-- [RSQ](/docs/reference/functions/stats/rsq)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/trimmean" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

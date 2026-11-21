@@ -1,60 +1,94 @@
 ---
 title: "NPER"
-description: "NPER: Calculates the number of periods needed to satisfy a cash-flow target."
+seoTitle: "NPER function: formula syntax and examples"
+description: "Calculates the number of periods needed to satisfy a cash-flow target. =NPER(rate, pmt, pv, [fv], [type])"
 ---
 
-<FunctionPageSchema id="financial/nper" />
-
-## Summary
+Calculates the number of periods needed to satisfy a cash-flow target.
 
 Use this to solve term length when periodic rate, payment, and value constraints are known.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=NPER(rate, pmt, pv, [fv], [type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `pmt` | number | Required | — |
+| `pv` | number | Required | — |
+| `fv` | number | Optional | — |
+| `type` | number | Optional | — |
 
 ## Remarks
  - `rate` is the interest rate per period.
  - Cash-flow sign convention: at least one of `pmt`, `pv`, or `fv` should usually have opposite sign.
  - `type = 0` means payments at period end; `type != 0` means period start.
+
+## Error cases
+
  - Returns `#NUM!` when inputs imply no finite solution (for example, invalid logarithm domain).
  - Returns `#NUM!` when both `rate = 0` and `pmt = 0`.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=NPER(0.06/12, -1798.65157545827, 300000)`}
+<FunctionExample
+  title={"Estimate the payment count for a 1,200 balance with monthly payments."}
+  formula={"=NPER(0.05/12,-100,1200)"}
   grid={{}}
-  expected={"null"}
+  expected={"12.3360195270412"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=NPER(0, -250, 5000)`}
+<FunctionExample
+  title={"Move the payment date to the beginning of each month."}
+  formula={"=NPER(0.05/12,-100,1200,0,1)"}
   grid={{}}
-  expected={"null"}
+  expected={"12.2835029522066"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"At zero interest the balance falls by the payment amount each month."}
+  formula={"=NPER(0,-100,1200)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"A nonzero balance cannot be retired with zero payments at zero interest."}
+  formula={"=NPER(0,0,1200)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Recover the 360 monthly payments of a 300,000 mortgage."}
+  formula={"=NPER(0.06/12, -1798.65157545827, 300000)"}
+  grid={{}}
+  expected={"360"}
+/>
+
+<FunctionExample
+  title={"Find how many 250 payments retire a 5,000 balance at zero interest."}
+  formula={"=NPER(0, -250, 5000)"}
+  grid={{}}
+  expected={"20"}
+/>
 
 ## Related functions
 
 - [PMT](/docs/reference/functions/financial/pmt)
 - [PV](/docs/reference/functions/financial/pv)
 - [RATE](/docs/reference/functions/financial/rate)
-- [FV](/docs/reference/functions/financial/fv)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
 
 ## FAQ
 
 ### Why does `NPER` return `#NUM!` for some sign combinations?
 If the logarithm domain is non-positive (or `rate=0` with `pmt=0`), there is no finite solution and `#NUM!` is returned.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/nper" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

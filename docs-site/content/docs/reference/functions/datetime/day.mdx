@@ -1,58 +1,85 @@
 ---
 title: "DAY"
-description: "Extracts the day-of-month (`1` to `31`) from a date serial."
+seoTitle: "DAY function: formula syntax and examples"
+description: "Extracts the day-of-month (1 to 31) from a date serial. =DAY(serial_number)"
 ---
-
-<FunctionPageSchema id="datetime/day" />
-
-## Summary
 
 Extracts the day-of-month (`1` to `31`) from a date serial.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DAY(serial_number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `serial_number` | number | Required | — |
+
 ## Remarks
+ - A date argument may be text holding a date or time (`"10/26/1999"`, `"1999-10-26 14:05"`),
+   read as its serial; text that is neither a number nor a date returns `#VALUE!`.
  - Fractional time is ignored; only the integer serial portion is used.
- - Serials are interpreted with Excel 1900 date semantics.
+ - Serials are interpreted with the workbook's date system (Excel 1900 or Excel 1904).
  - Output is the day within the month, not day-of-year.
 
 ## Examples
 
-<Tabs items={["Extract day from first-of-month", "Extract day from leap date"]}>
-<Tab value="Extract day from first-of-month">
-<FunctionSandbox
-  title="Extract day from first-of-month"
-  formula={`=DAY(44927)`}
-  grid={{}}
-  expected={"1"}
-/>
-</Tab>
-
-<Tab value="Extract day from leap date">
-<FunctionSandbox
-  title="Extract day from leap date"
-  formula={`=DAY(45351)`}
+<FunctionExample
+  title={"Extract the date component from a leap-day date."}
+  formula={"=DAY(DATE(2024,2,29))"}
   grid={{}}
   expected={"29"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Read the date component from a serial that also contains a time fraction."}
+  formula={"=DAY(DATE(2024,12,31)+0.75)"}
+  grid={{}}
+  expected={"31"}
+/>
+
+<FunctionExample
+  title={"Read the component of the first day of the 1900 date system."}
+  formula={"=DAY(1)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"An unrecognized date string cannot be interpreted as a serial."}
+  formula={"=DAY(\"not a date\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Extract day from first-of-month"}
+  formula={"=DAY(44927)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Extract day from leap date"}
+  formula={"=DAY(45351)"}
+  grid={{}}
+  expected={"29"}
+/>
 
 ## Related functions
 
 - [DATE](/docs/reference/functions/datetime/date)
 - [MONTH](/docs/reference/functions/datetime/month)
 - [EOMONTH](/docs/reference/functions/datetime/eomonth)
-- [HOUR](/docs/reference/functions/datetime/hour)
-- [ISOWEEKNUM](/docs/reference/functions/datetime/isoweeknum)
-- [MINUTE](/docs/reference/functions/datetime/minute)
 
 ## FAQ
 
 ### Does DAY return day-of-year or day-of-month?
 DAY returns the day number within the month (1-31), not the ordinal day of the year.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="datetime/day" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/datetime/date_parts.rs)

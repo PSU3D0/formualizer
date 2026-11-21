@@ -1,14 +1,30 @@
 ---
 title: "FREQUENCY"
-description: "Returns a vertical frequency distribution for numeric data across bin cutoffs."
+seoTitle: "FREQUENCY function: formula syntax and examples"
+description: "Returns a vertical frequency distribution for numeric data across bin cutoffs. =FREQUENCY(data_array, bins_array)"
 ---
 
-<FunctionPageSchema id="stats/frequency" />
-
-## Summary
+Returns a vertical frequency distribution for numeric data across bin cutoffs.
 
 `FREQUENCY` counts values into `&lt;= first bin`, intermediate right-closed bins, and an overflow
  bucket above the final bin.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FREQUENCY(data_array, bins_array)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `data_array` | number (range) | Required | — |
+| `bins_array` | number (range) | Required | — |
+
+## Return type
+
+Can return an array.
 
 ## Remarks
  - Returns an array with `bins + 1` rows.
@@ -18,38 +34,48 @@ description: "Returns a vertical frequency distribution for numeric data across 
 
 ## Examples
 
-<Tabs items={["Frequency buckets with two bins", "Frequency with repeated values"]}>
-<Tab value="Frequency buckets with two bins">
-<FunctionSandbox
-  title="Frequency buckets with two bins"
-  formula={`=FREQUENCY({1,2,3,4,5},{2,4})`}
+<FunctionExample
+  title={"Count observations in two bins and an overflow bin."}
+  formula={"=FREQUENCY({1,3,7,10},{3,7})"}
   grid={{}}
-  expected={"[[2],[2],[1]]"}
+  expected={"{2; 1; 1}"}
 />
-</Tab>
 
-<Tab value="Frequency with repeated values">
-<FunctionSandbox
-  title="Frequency with repeated values"
-  formula={`=FREQUENCY({1,1,2,2,3},{1,2})`}
+<FunctionExample
+  title={"Replace the bin boundaries with narrower intervals."}
+  formula={"=FREQUENCY({1,3,7,10},{2,4,6,8})"}
   grid={{}}
-  expected={"[[2],[2],[1]]"}
+  expected={"{1; 1; 0; 1; 1}"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"An observation equal to a bin limit belongs to the bin ending there."}
+  formula={"=FREQUENCY({3},{3})"}
+  grid={{}}
+  expected={"{1; 0}"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"A division-by-zero error cannot provide a data array."}
+  formula={"=FREQUENCY(1/0,{3,7})"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
 
-- [CORREL](/docs/reference/functions/stats/correl)
-- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
-- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
-- [INTERCEPT](/docs/reference/functions/stats/intercept)
-- [PEARSON](/docs/reference/functions/stats/pearson)
-- [RSQ](/docs/reference/functions/stats/rsq)
+<FunctionExample
+  title={"Frequency buckets with two bins"}
+  formula={"=FREQUENCY({1,2,3,4,5},{2,4})"}
+  grid={{}}
+  expected={"{2; 2; 1}"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Frequency with repeated values"}
+  formula={"=FREQUENCY({1,1,2,2,3},{1,2})"}
+  grid={{}}
+  expected={"{2; 2; 1}"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/frequency" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

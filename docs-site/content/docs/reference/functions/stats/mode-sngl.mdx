@@ -1,58 +1,91 @@
 ---
 title: "MODE.SNGL"
-description: "MODE.SNGL: Returns the most frequently occurring value in a data set."
+seoTitle: "MODE.SNGL function: formula syntax and examples"
+description: "Returns the most frequently occurring value in a data set. =MODE.SNGL(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="stats/mode-sngl" />
-
-## Summary
+Returns the most frequently occurring value in a data set.
 
 `MODE.SNGL` returns a single mode value and reports `#N/A` if no value repeats.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MODE.SNGL(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
  - Returns the first mode encountered after sorting when frequencies tie.
- - Returns `#N/A` when every numeric value appears only once.
  - Alias `MODE` is supported.
+
+## Error cases
+
+ - Returns `#N/A` when every numeric value appears only once.
 
 ## Examples
 
-<Tabs items={["Single mode from scalar arguments", "Single mode from a range"]}>
-<Tab value="Single mode from scalar arguments">
-<FunctionSandbox
-  title="Single mode from scalar arguments"
-  formula={`=MODE.SNGL(1,2,2,3)`}
+<FunctionExample
+  title={"Find a repeated value among four entries."}
+  formula={"=MODE.SNGL(7,7,2,9)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"Supply an array with two equally frequent values."}
+  formula={"=MODE.SNGL({7,7,2,2,9})"}
   grid={{}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Single mode from a range">
-<FunctionSandbox
-  title="Single mode from a range"
-  formula={`=MODE.SNGL(A1:A5)`}
+<FunctionExample
+  title={"Use a pair of identical values, the minimum input with a mode."}
+  formula={"=MODE.SNGL(8,8)"}
+  grid={{}}
+  expected={"8"}
+/>
+
+<FunctionExample
+  title={"With no repeated value there is no mode."}
+  formula={"=MODE.SNGL(7,2,9)"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Single mode from scalar arguments"}
+  formula={"=MODE.SNGL(1,2,2,3)"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Single mode from a range"}
+  formula={"=MODE.SNGL(A1:A5)"}
   grid={{"A1":"4","A2":"4","A3":"6","A4":"6","A5":"6"}}
   expected={"6"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [MODE.MULT](/docs/reference/functions/stats/mode-mult)
 - [MEDIAN](/docs/reference/functions/stats/median)
 - [AVERAGE](/docs/reference/functions/math/average)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
-- [GEOMEAN](/docs/reference/functions/stats/geomean)
 
 ## FAQ
 
 ### When does MODE.SNGL return #N/A?
 It returns #N/A when no value repeats in the numeric dataset.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/mode-sngl" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

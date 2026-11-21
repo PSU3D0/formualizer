@@ -1,52 +1,88 @@
 ---
 title: "CHOOSECOLS"
-description: "CHOOSECOLS: Returns selected columns from an array or range."
+seoTitle: "CHOOSECOLS function: formula syntax and examples"
+description: "Returns selected columns from an array or range. =CHOOSECOLS(array, col_num1, [col_num2], ...)"
 ---
 
-<FunctionPageSchema id="lookup/choosecols" />
-
-## Summary
+Returns selected columns from an array or range.
 
 `CHOOSECOLS` builds a new spilled array containing only the requested columns, in the
  order provided.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CHOOSECOLS(array, col_num1, [col_num2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | range or any (range) | Required | — |
+| `col_num1` | number | Required | — |
+| `col_num2` | value | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 2.
+
 ## Remarks
  - Column indexes are 1-based; negative indexes count from the end (`-1` is last column).
  - Repeated indexes are allowed and duplicate columns in the output.
- - Index `0` or out-of-bounds indexes return `#VALUE!`.
  - The result spills as an array unless it collapses to a single cell.
+
+## Error cases
+
+ - Index `0` or out-of-bounds indexes return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Select first and third columns", "Select the last column with a negative index"]}>
-<Tab value="Select first and third columns">
-<FunctionSandbox
-  title="Select first and third columns"
-  formula={`=CHOOSECOLS(A1:C2,1,3)`}
-  grid={{"A1":"Name","A2":"Ana","B1":"Dept","B2":"Ops","C1":"Score","C2":"91"}}
-  expected={"[[\"Name\",\"Score\"],[\"Ana\",91]]"}
+<FunctionExample
+  title={"Select the middle column from a two-row array."}
+  formula={"=CHOOSECOLS({1,2,3;4,5,6},2)"}
+  grid={{}}
+  expected={"{2; 5}"}
 />
-</Tab>
 
-<Tab value="Select the last column with a negative index">
-<FunctionSandbox
-  title="Select the last column with a negative index"
-  formula={`=CHOOSECOLS(A1:C1,-1)`}
+<FunctionExample
+  title={"Use a negative index to select the last column, then append the first."}
+  formula={"=CHOOSECOLS({1,2,3;4,5,6},-1,1)"}
+  grid={{}}
+  expected={"{3, 1; 6, 4}"}
+/>
+
+<FunctionExample
+  title={"A one-cell input also has a first column."}
+  formula={"=CHOOSECOLS({7},1)"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"A column index beyond the array dimensions is invalid."}
+  formula={"=CHOOSECOLS({1,2,3;4,5,6},4)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Select first and third columns"}
+  formula={"=CHOOSECOLS(A1:C2,1,3)"}
+  grid={{"A1":"\"Name\"","A2":"\"Ana\"","B1":"\"Dept\"","B2":"\"Ops\"","C1":"\"Score\"","C2":"91"}}
+  expected={"{\"Name\", \"Score\"; \"Ana\", 91}"}
+/>
+
+<FunctionExample
+  title={"Select the last column with a negative index"}
+  formula={"=CHOOSECOLS(A1:C1,-1)"}
   grid={{"A1":"10","B1":"20","C1":"30"}}
   expected={"30"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 - [TAKE](/docs/reference/functions/lookup/take)
 - [DROP](/docs/reference/functions/lookup/drop)
-- [XMATCH](/docs/reference/functions/lookup/xmatch)
-- [XLOOKUP](/docs/reference/functions/lookup/xlookup)
-- [FILTER](/docs/reference/functions/lookup/filter)
 
 ## FAQ
 
@@ -56,8 +92,6 @@ Negative indexes count from the right edge of the array, so -1 selects the last 
 ### What triggers #VALUE! in CHOOSECOLS?
 Index 0 and any index whose absolute position falls outside the source width return #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/choosecols" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/choose.rs)

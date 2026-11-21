@@ -1,0 +1,17 @@
+name: Record tested source tree
+description: Record the checked out tree for reuse by the matching successful PR workflow
+runs:
+  using: composite
+  steps:
+    - id: tree
+      shell: bash
+      run: |
+        git rev-parse 'HEAD^{tree}' > "$RUNNER_TEMP/tested-tree.txt"
+        echo "sha=$(<"$RUNNER_TEMP/tested-tree.txt")" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: tested-tree-pr-${{ github.event.pull_request.number }}-${{ github.run_attempt }}-${{ steps.tree.outputs.sha }}
+        path: ${{ runner.temp }}/tested-tree.txt
+        if-no-files-found: error
+        retention-days: 14

@@ -1,54 +1,83 @@
 ---
 title: "T.INV.2T"
-description: "T.INV.2T: Returns the positive t critical value for a two-tailed probability."
+seoTitle: "T.INV.2T function: formula syntax and examples"
+description: "Returns the positive t critical value for a two-tailed probability. =T.INV.2T(probability, deg_freedom)"
 ---
 
-<FunctionPageSchema id="stats/t-inv-2t" />
-
-## Summary
+Returns the positive t critical value for a two-tailed probability.
 
 `T.INV.2T` solves for `t` such that `P(|T| &gt; t) = probability`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=T.INV.2T(probability, deg_freedom)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+
+## How it works
+
+Finds the nonnegative cutoff q with P(|T| ≥ q) equal to the requested probability. Degrees of freedom must be positive.
 
 ## Remarks
  - `probability` must satisfy `0 &lt; probability &lt;= 1`.
  - `deg_freedom` must be at least `1`.
+ - The compatibility name `TINV` is a separate function that also truncates `deg_freedom`.
+
+## Error cases
+
  - Returns `#NUM!` for invalid probability or degree-of-freedom arguments.
- - Alias `TINV` is supported.
 
 ## Examples
 
-<Tabs items={["Maximum two-tailed probability", "95% two-sided critical value"]}>
-<Tab value="Maximum two-tailed probability">
-<FunctionSandbox
-  title="Maximum two-tailed probability"
-  formula={`=T.INV.2T(1,10)`}
+<FunctionExample
+  title={"Find a positive t cutoff that leaves one quarter of the area in both tails combined."}
+  formula={"=T.INV.2T(0.25,10)"}
+  grid={{}}
+  expected={"1.22125539500392"}
+/>
+
+<FunctionExample
+  title={"Increase the combined area to three quarters, moving the cutoff closer to zero."}
+  formula={"=T.INV.2T(0.75,10)"}
+  grid={{}}
+  expected={"0.327558264952591"}
+/>
+
+<FunctionExample
+  title={"Split the total area equally between the center and the two tails using one degree of freedom."}
+  formula={"=T.INV.2T(0.5,1)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A probability above one cannot identify a t statistic."}
+  formula={"=T.INV.2T(1.1,10)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Maximum two-tailed probability"}
+  formula={"=T.INV.2T(1,10)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="95% two-sided critical value">
-<FunctionSandbox
-  title="95% two-sided critical value"
-  formula={`=T.INV.2T(0.05,10)`}
+<FunctionExample
+  title={"95% two-sided critical value"}
+  formula={"=T.INV.2T(0.05,10)"}
   grid={{}}
-  expected={"2.228138851986273"}
+  expected={"2.22813885198627"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [T.DIST.2T](/docs/reference/functions/stats/t-dist-2t)
-- [T.DIST.RT](/docs/reference/functions/stats/t-dist-rt)
-- [T.DIST](/docs/reference/functions/stats/t-dist)
-- [T.INV](/docs/reference/functions/stats/t-inv)
-- [T.TEST](/docs/reference/functions/stats/t-test)
-- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/t-inv-2t" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

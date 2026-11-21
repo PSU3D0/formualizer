@@ -13,7 +13,7 @@ use formualizer_macros::func_caps;
 pub struct TrueFn;
 /// Returns the logical constant TRUE.
 ///
-/// Use `TRUE()` when you want an explicit boolean value in formulas.
+/// Use `TRUE` for the logical value true in formulas.
 ///
 /// # Remarks
 /// - `TRUE` takes no arguments and always returns the boolean value `TRUE`.
@@ -79,7 +79,7 @@ impl Function for TrueFn {
 pub struct FalseFn;
 /// Returns the logical constant FALSE.
 ///
-/// Use `FALSE()` when you want an explicit boolean false value in formulas.
+/// Use `FALSE` for the logical value false in formulas.
 ///
 /// # Remarks
 /// - `FALSE` takes no arguments and always returns the boolean value `FALSE`.

@@ -1,13 +1,25 @@
 ---
 title: "SERIESSUM"
-description: "SERIESSUM: Evaluates a power series from coefficients, start power, and step."
+seoTitle: "SERIESSUM function: formula syntax and examples"
+description: "Evaluates a power series from coefficients, start power, and step. =SERIESSUM(x, n, m, coefficients)"
 ---
 
-<FunctionPageSchema id="math/seriessum" />
-
-## Summary
-
 Evaluates a power series from coefficients, start power, and step.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SERIESSUM(x, n, m, coefficients)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `n` | number | Required | — |
+| `m` | number | Required | — |
+| `coefficients` | any | Required | — |
 
 ## Remarks
  - Computes `sum(c_i * x^(n + i*m))` in coefficient order.
@@ -16,43 +28,59 @@ Evaluates a power series from coefficients, start power, and step.
 
 ## Examples
 
-<Tabs items={["Series from an array literal", "Series from worksheet coefficients"]}>
-<Tab value="Series from an array literal">
-<FunctionSandbox
-  title="Series from an array literal"
-  formula={`=SERIESSUM(2,0,1,{1,2,3})`}
+<FunctionExample
+  title={"Sum three terms with powers that increase by one at each coefficient."}
+  formula={"=SERIESSUM(2,1,1,{1,2,3})"}
+  grid={{}}
+  expected={"34"}
+/>
+
+<FunctionExample
+  title={"Start at the constant term and increase each power by two."}
+  formula={"=SERIESSUM(2,0,2,{1,2,3})"}
+  grid={{}}
+  expected={"57"}
+/>
+
+<FunctionExample
+  title={"Evaluate the series with just one coefficient."}
+  formula={"=SERIESSUM(2,0,1,{5})"}
+  grid={{}}
+  expected={"5"}
+/>
+
+<FunctionExample
+  title={"A nonnumeric coefficient interrupts the series."}
+  formula={"=SERIESSUM(2,0,1,{1,\"invalid\",3})"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Series from an array literal"}
+  formula={"=SERIESSUM(2,0,1,{1,2,3})"}
   grid={{}}
   expected={"17"}
 />
-</Tab>
 
-<Tab value="Series from worksheet coefficients">
-<FunctionSandbox
-  title="Series from worksheet coefficients"
-  formula={`=SERIESSUM(0.5,1,2,A1:A3)`}
+<FunctionExample
+  title={"Series from worksheet coefficients"}
+  formula={"=SERIESSUM(0.5,1,2,A1:A3)"}
   grid={{"A1":"1","A2":"-1","A3":"0.5"}}
   expected={"0.390625"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SUMPRODUCT](/docs/reference/functions/math/sumproduct)
 - [POWER](/docs/reference/functions/math/power)
 - [EXP](/docs/reference/functions/math/exp)
-- [DECIMAL](/docs/reference/functions/math/decimal)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
 
 ## FAQ
 
 ### In what order are SERIESSUM coefficients applied?
 Coefficients are consumed in input order as c_i*x^(n+i*m).
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/seriessum" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

@@ -1,0 +1,216 @@
+# Functions with the same parameter list share a line. A final ... repeats
+# the preceding parameter or parenthesized group. Brackets mark optional slots.
+# This documents the implementation, including differences from Excel.
+DAVERAGE DCOUNT DCOUNTA DGET DMAX DMIN DPRODUCT DSTDEV DSTDEVP DSUM DVAR DVARP: database, field, criteria
+DATE: year, month, day
+DATEDIF: start_date, end_date, unit
+DATEVALUE: date_text
+DAY HOUR ISOWEEKNUM MINUTE MONTH SECOND YEAR: serial_number
+DAYS: end_date, start_date
+DAYS360: start_date, end_date, [method]
+EDATE EOMONTH: start_date, months
+NETWORKDAYS: start_date, end_date, [holidays]
+NETWORKDAYS.INTL: start_date, end_date, [weekend], [holidays]
+NOW TODAY:
+TIME: hour, minute, second
+TIMEVALUE: time_text
+WEEKDAY WEEKNUM: serial_number, [return_type]
+WORKDAY: start_date, days, [holidays]
+WORKDAY.INTL: start_date, days, [weekend], [holidays]
+YEARFRAC: start_date, end_date, [basis]
+BESSELI BESSELJ BESSELK BESSELY: x, n
+BIN2DEC HEX2DEC OCT2DEC: number
+BIN2HEX BIN2OCT DEC2BIN DEC2HEX DEC2OCT HEX2BIN HEX2OCT OCT2BIN OCT2HEX: number, [places]
+BITAND BITOR BITXOR: number1, number2
+BITLSHIFT BITRSHIFT: number, shift_amount
+COMPLEX: real_num, i_num, [suffix]
+CONVERT: number, from_unit, to_unit
+DELTA: number1, [number2]
+ERF: lower_limit, [upper_limit]
+ERF.PRECISE ERFC ERFC.PRECISE: x
+GESTEP: number, [step]
+IMABS IMAGINARY IMARGUMENT IMCONJUGATE IMCOS IMCOSH IMCOT IMCSC IMCSCH IMEXP IMLN IMLOG10 IMLOG2 IMREAL IMSEC IMSECH IMSIN IMSINH IMSQRT IMTAN: inumber
+IMDIV IMSUB: inumber1, inumber2
+IMPOWER: inumber, number
+IMPRODUCT IMSUM: inumber1, [inumber2], ...
+ACCRINT: issue, first_interest, settlement, rate, par, frequency, [basis], [calc_method]
+ACCRINTM: issue, settlement, rate, par, [basis]
+CUMIPMT CUMPRINC: rate, nper, pv, start_period, end_period, type
+DB: cost, salvage, life, period, [month]
+DDB: cost, salvage, life, period, [factor]
+DOLLARDE: fractional_dollar, fraction
+DOLLARFR: decimal_dollar, fraction
+EFFECT: nominal_rate, npery
+FV: rate, nper, pmt, [pv], [type]
+IPMT PPMT: rate, per, nper, pv, [fv], [type]
+IRR: values, [guess]
+ISPMT: rate, per, nper, pv
+MIRR: values, finance_rate, reinvest_rate
+NOMINAL: effect_rate, npery
+NPER: rate, pmt, pv, [fv], [type]
+NPV: rate, value1, [value2], ...
+PDURATION: rate, pv, fv
+PMT: rate, nper, pv, [fv], [type]
+PV: rate, nper, pmt, [fv], [type]
+PRICE: settlement, maturity, rate, yld, redemption, frequency, [basis]
+RATE: nper, pmt, pv, [fv], [type], [guess]
+RRI: nper, pv, fv
+SLN: cost, salvage, life
+SYD: cost, salvage, life, per
+TBILLEQ TBILLPRICE: settlement, maturity, discount
+TBILLYIELD: settlement, maturity, pr
+XIRR: values, dates, [guess]
+XNPV: rate, values, dates
+YIELD: settlement, maturity, rate, pr, redemption, frequency, [basis]
+CELL: info_type, [reference]
+ERROR.TYPE: error_val
+FORMULATEXT: reference
+ISBLANK ISERR ISERROR ISEVEN ISLOGICAL ISNA ISNONTEXT ISNUMBER ISODD ISREF ISTEXT N T TYPE: value
+ISFORMULA: reference
+NA FALSE TRUE PI RAND:
+SHEET SHEETS COLUMN ROW: [reference]
+LAMBDA: [parameter1, ...], calculation
+LET: name1, name_value1, [name2, name_value2, ...], calculation
+AND OR XOR: logical1, [logical2], ...
+IF: logical_test, value_if_true, [value_if_false]
+IFERROR: value, value_if_error
+IFNA: value, value_if_na
+IFS: logical_test1, value_if_true1, [(logical_test2, value_if_true2), ...]
+NOT: logical
+SWITCH: expression, value1, result1, [(value2, result2), ...], [default]
+ADDRESS: row_num, column_num, [abs_num], [a1], [sheet_text]
+CHOOSE: index_num, value1, [value2], ...
+CHOOSECOLS: array, col_num1, [col_num2], ...
+CHOOSEROWS: array, row_num1, [row_num2], ...
+COLUMNS ROWS TRANSPOSE: array
+DROP TAKE: array, rows, [columns]
+FILTER: array, include, [if_empty]
+GROUPBY: row_fields, values, function, [field_headers], [total_depth], [sort_order], [filter_array], [field_relationship]
+HLOOKUP: lookup_value, table_array, row_index_num, [range_lookup]
+HSTACK VSTACK: array1, [array2], ...
+LOOKUP: lookup_value, lookup_vector_or_array, [result_vector]
+MATCH: lookup_value, lookup_array, [match_type]
+PIVOTBY: row_fields, col_fields, values, function, [field_headers], [row_total_depth], [row_sort_order], [col_total_depth], [col_sort_order], [filter_array], [relative_to]
+RANDARRAY: [rows], [columns], [min], [max], [whole_number]
+SEQUENCE: rows, [columns], [start], [step]
+SORT: array, [sort_index], [sort_order], [by_col]
+SORTBY: array, by_array1, [sort_order1], [(by_array2, [sort_order2]), ...]
+TOCOL TOROW: array, [ignore], [scan_by_column]
+UNIQUE: array, [by_col], [exactly_once]
+VLOOKUP: lookup_value, table_array, col_index_num, [range_lookup]
+XLOOKUP: lookup_value, lookup_array, return_array, [if_not_found], [match_mode], [search_mode]
+XMATCH: lookup_value, lookup_array, [match_mode], [search_mode]
+ABS ACOS ACOSH ACOT ACOTH ASIN ASINH ATAN ATANH COS COSH COT COTH CSC CSCH EVEN EXP FACT FACTDOUBLE INT LN LOG10 ODD SEC SECH SIGN SIN SINH SQRT SQRTPI TAN TANH: number
+AGGREGATE: function_num, options, ref1, [ref2], ...
+ARABIC: text
+ATAN2: x_num, y_num
+AVERAGE AVEDEV DEVSQ GEOMEAN HARMEAN KURT MAX MEDIAN MIN MODE.MULT MODE.SNGL MULTINOMIAL PRODUCT SKEW SKEW.P STDEV.P STDEV.S SUMSQ VAR.P VAR.S: number1, [number2], ...
+AVERAGEA MAXA MINA STDEVA STDEVPA VARA VARPA: value1, [value2], ...
+AVERAGEIF: range, criteria, [average_range]
+AVERAGEIFS: average_range, criteria_range1, criteria1, [(criteria_range2, criteria2), ...]
+BASE: number, radix, [min_length]
+CEILING FLOOR: number, significance
+CEILING.PRECISE FLOOR.PRECISE ISO.CEILING: number, [significance]
+CEILING.MATH FLOOR.MATH: number, [significance]
+COMBIN COMBINA PERMUT: number, number_chosen
+COUNT: value1, [value2], ...
+COUNTA: value1, [value2], ...
+COUNTBLANK: range, [range2], ...
+COUNTIF: range, criteria
+COUNTIFS: criteria_range1, criteria1, [(criteria_range2, criteria2), ...]
+DECIMAL: text, radix
+DEGREES RADIANS: angle
+GCD LCM: number1, [number2]
+LOG: number, [base]
+MOD: number, divisor
+MROUND: number, multiple
+POWER: number, power
+QUOTIENT: numerator, denominator
+ROMAN: number, [form]
+ROUND ROUNDDOWN ROUNDUP: number, num_digits
+SERIESSUM: x, n, m, coefficients
+SUBTOTAL: function_num, ref1, [ref2], ...
+SUM: number1, [number2], ...
+SUMIF: range, criteria, [sum_range]
+SUMIFS: sum_range, criteria_range1, criteria1, [(criteria_range2, criteria2), ...]
+SUMPRODUCT: array1, [array2], ...
+SUMX2MY2 SUMX2PY2 SUMXMY2 CORREL COVARIANCE.P COVARIANCE.S F.TEST PEARSON: array1, array2
+TRUNC: number, [num_digits]
+RANDBETWEEN: bottom, top
+ANCHORARRAY: anchor
+HYPERLINK: link_location, [friendly_name]
+INDEX: array, row_num, [column_num]
+INDIRECT: ref_text, [a1]
+OFFSET: reference, rows, cols, [height], [width]
+SINGLE: value
+BETA.DIST: x, alpha, beta, cumulative, [a], [b]
+BETA.INV BETAINV: probability, alpha, beta, [a], [b]
+BETADIST: x, alpha, beta, [a], [b]
+BINOM.DIST: number_s, trials, probability_s, cumulative
+BINOM.DIST.RANGE: trials, probability_s, number_s, [number_s2]
+BINOM.INV: trials, probability_s, alpha
+CHIDIST CHISQ.DIST.RT: x, deg_freedom
+CHIINV CHISQ.INV CHISQ.INV.RT: probability, deg_freedom
+CHISQ.DIST T.DIST: x, deg_freedom, cumulative
+CHISQ.TEST: actual_range, expected_range
+CONFIDENCE.NORM CONFIDENCE.T: alpha, standard_dev, size
+EXPON.DIST: x, lambda, cumulative
+F.DIST: x, deg_freedom1, deg_freedom2, cumulative
+F.DIST.RT FDIST: x, deg_freedom1, deg_freedom2
+F.INV F.INV.RT FINV: probability, deg_freedom1, deg_freedom2
+FISHER GAMMALN GAMMALN.PRECISE PHI: x
+FISHERINV: y
+GAUSS NORMSDIST: z
+NORM.S.INV: probability
+FORECAST.LINEAR: x, known_ys, known_xs
+FREQUENCY: data_array, bins_array
+GAMMA: number
+GAMMA.DIST: x, alpha, beta, cumulative
+GAMMA.INV: probability, alpha, beta
+GROWTH TREND: known_ys, [known_xs], [new_xs], [const]
+HYPGEOM.DIST: sample_s, number_sample, population_s, number_pop, cumulative
+HYPGEOMDIST: sample_s, number_sample, population_s, number_pop
+INTERCEPT RSQ SLOPE STEYX: known_ys, known_xs
+LARGE SMALL PERCENTILE.EXC PERCENTILE.INC: array, k
+LINEST LOGEST: known_ys, [known_xs], [const], [stats]
+LOGNORM.DIST NORM.DIST: x, mean, standard_dev, cumulative
+LOGNORM.INV NORM.INV: probability, mean, standard_dev
+LOGNORMDIST STANDARDIZE: x, mean, standard_dev
+MAXIFS: max_range, criteria_range1, criteria1, [(criteria_range2, criteria2), ...]
+MINIFS: min_range, criteria_range1, criteria1, [(criteria_range2, criteria2), ...]
+NEGBINOM.DIST: number_f, number_s, probability_s, cumulative
+NEGBINOMDIST: number_f, number_s, probability_s
+NORM.S.DIST: z, cumulative
+PERCENTRANK.EXC PERCENTRANK.INC: array, x, [significance]
+POISSON.DIST: x, mean, cumulative
+QUARTILE.EXC QUARTILE.INC: array, quart
+RANK.AVG RANK.EQ: number, ref, [order]
+T.DIST.2T T.DIST.RT: x, deg_freedom
+T.INV T.INV.2T TINV: probability, deg_freedom
+T.TEST: array1, array2, tails, type
+TDIST: x, deg_freedom, tails
+TRIMMEAN: array, percent
+WEIBULL.DIST: x, alpha, beta, cumulative
+Z.TEST: array, x, [sigma]
+ARRAYTOTEXT: array, [format]
+ASC CLEAN CODE LEN LENB LOWER PROPER TRIM UNICODE UPPER VALUE: text
+NUMBERVALUE: text, [decimal_separator], [group_separator]
+CHAR UNICHAR: number
+CONCAT CONCATENATE: text1, [text2], ...
+DOLLAR: number, [decimals]
+EXACT: text1, text2
+FIND FINDB SEARCH SEARCHB: find_text, within_text, [start_num]
+FIXED: number, [decimals], [no_commas]
+LEFT RIGHT: text, [num_chars]
+LEFTB RIGHTB: text, [num_bytes]
+MID: text, start_num, num_chars
+MIDB: text, start_num, num_bytes
+REPLACE: old_text, start_num, num_chars, new_text
+REPLACEB: old_text, start_num, num_bytes, new_text
+REPT: text, number_times
+SUBSTITUTE: text, old_text, new_text, [instance_num]
+TEXT: value, format_text
+TEXTAFTER TEXTBEFORE: text, delimiter, [instance_num]
+TEXTJOIN: delimiter, ignore_empty, text1, [text2], ...
+TEXTSPLIT: text, col_delimiter, [row_delimiter], [ignore_empty], [match_mode], [pad_with]
+VALUETOTEXT: value, [format]

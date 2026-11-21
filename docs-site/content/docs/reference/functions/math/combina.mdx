@@ -1,19 +1,57 @@
 ---
 title: "COMBINA"
-description: "Returns the number of combinations with repetition."
+seoTitle: "COMBINA function: formula syntax and examples"
+description: "Returns the number of combinations with repetition. =COMBINA(number, number_chosen)"
 ---
-
-<FunctionPageSchema id="math/combina" />
-
-## Summary
 
 Returns the number of combinations with repetition.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COMBINA(number, number_chosen)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `number_chosen` | number | Required | — |
+
 ## Examples
 
-<FunctionSandbox
-  title="Choose with repetition"
-  formula={`=COMBINA(4,3)`}
+<FunctionExample
+  title={"Count selections of size two from a population of five."}
+  formula={"=COMBINA(5,2)"}
+  grid={{}}
+  expected={"15"}
+/>
+
+<FunctionExample
+  title={"Compare the result when selecting a single member."}
+  formula={"=COMBINA(5,1)"}
+  grid={{}}
+  expected={"5"}
+/>
+
+<FunctionExample
+  title={"Count the ways to make an empty selection."}
+  formula={"=COMBINA(5,0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative population size is invalid."}
+  formula={"=COMBINA(-1,2)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Choose with repetition"}
+  formula={"=COMBINA(4,3)"}
   grid={{}}
   expected={"20"}
 />
@@ -21,19 +59,12 @@ Returns the number of combinations with repetition.
 ## Related functions
 
 - [COMBIN](/docs/reference/functions/math/combin)
-- [ATAN2](/docs/reference/functions/math/atan2)
-- [DECIMAL](/docs/reference/functions/math/decimal)
-- [MOD](/docs/reference/functions/math/mod)
-- [MROUND](/docs/reference/functions/math/mround)
-- [PERMUT](/docs/reference/functions/math/permut)
 
 ## FAQ
 
 ### How is COMBINA different from COMBIN?
 COMBINA counts selections where the same item can be chosen more than once.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/combina" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/combinatorics.rs)

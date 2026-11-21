@@ -1,20 +1,65 @@
 ---
 title: "FINDB"
-description: "FINDB: Finds text within text using non-DBCS byte-compatible semantics."
+seoTitle: "FINDB function: formula syntax and examples"
+description: "Finds text within text using non-DBCS byte-compatible semantics. =FINDB(find_text, within_text, [start_num])"
 ---
 
-<FunctionPageSchema id="text/findb" />
-
-## Summary
+Finds text within text using non-DBCS byte-compatible semantics.
 
 In Formualizer's invariant locale, FINDB delegates to FIND and counts Unicode
  scalar characters rather than double-byte locale bytes.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FINDB(find_text, within_text, [start_num])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `find_text` | any | Required | — |
+| `within_text` | any | Required | — |
+| `start_num` | any | Optional | — |
+
+## How it works
+
+Delegates to FIND in Formualizer’s invariant locale. It returns 1 plus the number of Unicode scalar characters before the case-sensitive match. An out-of-range start or absent match returns an error.
+
 ## Examples
 
-<FunctionSandbox
-  title="Find byte-compatible text"
-  formula={`=FINDB("CD","abcDEFCD")`}
+<FunctionExample
+  title={"Count past the single accented character to find 界 at position two."}
+  formula={"=FINDB(\"界\",\"é界z\")"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Start at the second character and find the final é."}
+  formula={"=FINDB(\"é\",\"é界é\",2)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"A single matching character starts at position one."}
+  formula={"=FINDB(\"界\",\"界\")"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A case-sensitive search distinguishes É from é."}
+  formula={"=FINDB(\"É\",\"é界\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Find byte-compatible text"}
+  formula={"=FINDB(\"CD\",\"abcDEFCD\")"}
   grid={{}}
   expected={"7"}
 />
@@ -24,17 +69,12 @@ In Formualizer's invariant locale, FINDB delegates to FIND and counts Unicode
 - [FIND](/docs/reference/functions/text/find)
 - [SEARCHB](/docs/reference/functions/text/searchb)
 - [LENB](/docs/reference/functions/text/lenb)
-- [SEARCH](/docs/reference/functions/text/search)
-- [CONCAT](/docs/reference/functions/text/concat)
-- [CONCATENATE](/docs/reference/functions/text/concatenate)
 
 ## FAQ
 
 ### Does FINDB use DBCS byte counts?
 Not currently. In the invariant locale it delegates to FIND.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/findb" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/byte.rs)

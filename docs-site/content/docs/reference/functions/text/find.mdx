@@ -1,59 +1,91 @@
 ---
 title: "FIND"
-description: "FIND: Returns the 1-based position of one text string inside another."
+seoTitle: "FIND function: formula syntax and examples"
+description: "Returns the 1-based position of one text string inside another. =FIND(find_text, within_text, [start_num])"
 ---
 
-<FunctionPageSchema id="text/find" />
-
-## Summary
+Returns the 1-based position of one text string inside another.
 
 `FIND` is case-sensitive and does not interpret wildcard characters.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FIND(find_text, within_text, [start_num])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `find_text` | any | Required | — |
+| `within_text` | any | Required | — |
+| `start_num` | any | Optional | — |
 
 ## Remarks
  - Search is case-sensitive (`"A"` and `"a"` are different).
  - `start_num` is 1-based and must be greater than `0`.
- - If no match is found, returns `#VALUE!`.
  - Errors in either argument are propagated.
+
+## Error cases
+
+ - If no match is found, returns `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Case-sensitive match", "Case mismatch fails"]}>
-<Tab value="Case-sensitive match">
-<FunctionSandbox
-  title="Case-sensitive match"
-  formula={`=FIND("World", "Hello World")`}
+<FunctionExample
+  title={"Find the position of an exact lowercase substring."}
+  formula={"=FIND(\"bo\",\"Ana and bo\")"}
   grid={{}}
-  expected={"7"}
+  expected={"9"}
 />
-</Tab>
 
-<Tab value="Case mismatch fails">
-<FunctionSandbox
-  title="Case mismatch fails"
-  formula={`=FIND("world", "Hello World")`}
+<FunctionExample
+  title={"Skip the first character by supplying a starting position."}
+  formula={"=FIND(\"A\",\"A-B-A\",2)"}
+  grid={{}}
+  expected={"5"}
+/>
+
+<FunctionExample
+  title={"A one-character text has its match at the first position."}
+  formula={"=FIND(\"A\",\"A\")"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The uppercase B prevents the case-sensitive search from matching."}
+  formula={"=FIND(\"Bo\",\"Ana and bo\")"}
   grid={{}}
   expected={"#VALUE!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Case-sensitive match"}
+  formula={"=FIND(\"World\", \"Hello World\")"}
+  grid={{}}
+  expected={"7"}
+/>
+
+<FunctionExample
+  title={"Case mismatch fails"}
+  formula={"=FIND(\"world\", \"Hello World\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
 
 ## Related functions
 
 - [SEARCH](/docs/reference/functions/text/search)
 - [EXACT](/docs/reference/functions/text/exact)
 - [TEXTBEFORE](/docs/reference/functions/text/textbefore)
-- [FINDB](/docs/reference/functions/text/findb)
-- [SEARCHB](/docs/reference/functions/text/searchb)
-- [CONCAT](/docs/reference/functions/text/concat)
 
 ## FAQ
 
 ### Do wildcard characters work in FIND?
 No. FIND treats * and ? as literal characters and matches case-sensitively.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/find" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/find_search_exact.rs)

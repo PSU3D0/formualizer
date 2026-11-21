@@ -1,53 +1,88 @@
 ---
 title: "OFFSET"
-description: "OFFSET: Returns a reference shifted from a starting reference by rows and columns."
+seoTitle: "OFFSET function: formula syntax and examples"
+description: "Returns a reference shifted from a starting reference by rows and columns. =OFFSET(reference, rows, cols, [height], [width])"
 ---
 
-<FunctionPageSchema id="reference-fns/offset" />
-
-## Summary
+Returns a reference shifted from a starting reference by rows and columns.
 
 `OFFSET` is volatile and returns a reference that can point to a single cell or a resized
  range, depending on the optional `height` and `width` arguments.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=OFFSET(reference, rows, cols, [height], [width])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `reference` | range (range) | Required | — |
+| `rows` | number | Required | — |
+| `cols` | number | Required | — |
+| `height` | number | Optional | — |
+| `width` | number | Optional | — |
+
+## Return type
+
+Can return a reference when evaluated in a reference context.
+
 ## Remarks
  - `rows` and `cols` shift from the top-left of `reference`.
  - If omitted, `height` and `width` default to the original reference size.
- - Non-positive target coordinates or dimensions return `#REF!`.
- - Non-numeric offset/size inputs return `#VALUE!`.
+ - Offset/size inputs coerce like Excel: a blank is `0`, `TRUE` is `1` and numeric text is
+   parsed; other text returns `#VALUE!`.
  - In value context, a 1x1 result returns a scalar; larger results spill as an array.
+
+## Error cases
+
+ - Non-positive target coordinates or dimensions return `#REF!`, and so does a result that
+   extends past the last row or column of the sheet.
 
 ## Examples
 
-<Tabs items={["Move one row down and one column right", "Offset and resize a range"]}>
-<Tab value="Move one row down and one column right">
-<FunctionSandbox
-  title="Move one row down and one column right"
-  formula={`=OFFSET(A1,1,1)`}
-  grid={{"A1":"10","B2":"42"}}
+<FunctionExample
+  title={"Move one row down and one column right from the anchor."}
+  formula={"=OFFSET(A1,1,1)"}
+  grid={{"B2":"42"}}
   expected={"42"}
 />
-</Tab>
 
-<Tab value="Offset and resize a range">
-<FunctionSandbox
-  title="Offset and resize a range"
-  formula={`=SUM(OFFSET(A1,1,0,2,2))`}
-  grid={{"A1":"1","A2":"2","A3":"3","B1":"4","B2":"5","B3":"6"}}
+<FunctionExample
+  title={"Supply the height and width to sum a two-row offset range."}
+  formula={"=SUM(OFFSET(A1,1,0,2,1))"}
+  grid={{"A2":"20","A3":"30"}}
+  expected={"50"}
+/>
+
+<FunctionExample
+  title={"Zero offsets leave the reference anchored at the input cell."}
+  formula={"=OFFSET(A1,0,0)"}
+  grid={{"A1":"10"}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"Moving above the first row creates an invalid reference."}
+  formula={"=OFFSET(A1,-1,0)"}
+  grid={{}}
+  expected={"#REF!"}
+/>
+
+<FunctionExample
+  title={"Offset and resize a range"}
+  formula={"=SUM(OFFSET(A1,1,0,2,2))"}
+  grid={{"A2":"2","A3":"3","B2":"5","B3":"6"}}
   expected={"16"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [INDIRECT](/docs/reference/functions/reference-fns/indirect)
 - [ADDRESS](/docs/reference/functions/lookup/address)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
 
 ## FAQ
 
@@ -55,10 +90,8 @@ description: "OFFSET: Returns a reference shifted from a starting reference by r
 OFFSET keeps the source reference size, then applies the row/column shift to that same-sized block.
 
 ### When does OFFSET return #REF!?
-It returns #REF! if the shifted start goes to row/column &lt;= 0 or if requested height/width are non-positive.
+It returns #REF! if the shifted start goes to row/column &lt;= 0, if requested height/width are non-positive, or if the result extends past the edge of the sheet.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="reference-fns/offset" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/reference_fns.rs)

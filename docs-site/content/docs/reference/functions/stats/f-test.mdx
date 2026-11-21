@@ -1,54 +1,79 @@
 ---
 title: "F.TEST"
-description: "F.TEST: Returns the two-tailed p-value from an F-test comparing sample variances."
+seoTitle: "F.TEST function: formula syntax and examples"
+description: "Returns the two-tailed p-value from an F-test comparing sample variances. =F.TEST(array1, array2)"
 ---
 
-<FunctionPageSchema id="stats/f-test" />
-
-## Summary
+Returns the two-tailed p-value from an F-test comparing sample variances.
 
 `F.TEST` evaluates whether two samples have significantly different variances.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=F.TEST(array1, array2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array1` | number (range) | Required | — |
+| `array2` | number (range) | Required | — |
 
 ## Remarks
  - Each array must contain at least two numeric values.
  - Uses sample variances and computes a two-tailed probability.
- - Returns `#DIV/0!` when either sample variance is zero.
  - Alias `FTEST` is supported.
+
+## Error cases
+
+ - Returns `#DIV/0!` when either sample variance is zero.
 
 ## Examples
 
-<Tabs items={["Identical samples yield p-value 1", "Different variances example"]}>
-<Tab value="Identical samples yield p-value 1">
-<FunctionSandbox
-  title="Identical samples yield p-value 1"
-  formula={`=F.TEST({1,2,3,4},{1,2,3,4})`}
+<FunctionExample
+  title={"Compare the variances of two small samples."}
+  formula={"=F.TEST({3,5,9,10},{4,6,7,8})"}
   grid={{}}
-  expected={"1"}
+  expected={"0.307067313172766"}
 />
-</Tab>
 
-<Tab value="Different variances example">
-<FunctionSandbox
-  title="Different variances example"
-  formula={`=F.TEST({1,2,3,4},{1,1,1,5})`}
+<FunctionExample
+  title={"Change the spread of one sample while preserving its size."}
+  formula={"=F.TEST({3,5,9,10},{4,6,9,18})"}
   grid={{}}
-  expected={"0.5466810975407987"}
+  expected={"0.330536863361369"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Compare two samples of the minimum size, with a different spread in each."}
+  formula={"=F.TEST({3,5},{2,5})"}
+  grid={{}}
+  expected={"0.748668167243995"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"A constant sample has zero variance."}
+  formula={"=F.TEST({3,3,3,3},{4,6,7,8})"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
 
-- [F.DIST](/docs/reference/functions/stats/f-dist)
-- [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
-- [F.INV](/docs/reference/functions/stats/f-inv)
-- [F.INV.RT](/docs/reference/functions/stats/f-inv-rt)
-- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
-- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
+<FunctionExample
+  title={"Compare samples of equal size whose spreads differ."}
+  formula={"=F.TEST({1,2,3,4},{3,4,7,9})"}
+  grid={{}}
+  expected={"0.245157188752938"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Different variances example"}
+  formula={"=F.TEST({1,2,3,4},{1,1,1,5})"}
+  grid={{}}
+  expected={"0.490941737154559"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/f-test" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

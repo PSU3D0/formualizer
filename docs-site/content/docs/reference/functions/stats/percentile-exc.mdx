@@ -1,58 +1,89 @@
 ---
 title: "PERCENTILE.EXC"
-description: "PERCENTILE.EXC: Returns the k-th percentile of a data set using exclusive interpolation."
+seoTitle: "PERCENTILE.EXC function: formula syntax and examples"
+description: "Returns the k-th percentile of a data set using exclusive interpolation. =PERCENTILE.EXC(array, k)"
 ---
 
-<FunctionPageSchema id="stats/percentile-exc" />
-
-## Summary
+Returns the k-th percentile of a data set using exclusive interpolation.
 
 `PERCENTILE.EXC` uses the `n+1` rank basis and excludes the exact endpoints `0` and `1`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PERCENTILE.EXC(array, k)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array` | number (range) | Required | — |
+| `k` | number (range) | Required | — |
+
 ## Remarks
  - `k` must satisfy `0 &lt; k &lt; 1`.
+
+## Error cases
+
  - Returns `#NUM!` when the percentile falls outside the valid rank range for the data size.
  - Returns `#NUM!` for empty numeric input.
 
 ## Examples
 
-<Tabs items={["Exclusive 25th percentile from direct values", "Exclusive percentile from a range"]}>
-<Tab value="Exclusive 25th percentile from direct values">
-<FunctionSandbox
-  title="Exclusive 25th percentile from direct values"
-  formula={`=PERCENTILE.EXC({1,2,3,4,5},0.25)`}
+<FunctionExample
+  title={"Find the value at the fiftieth percentile."}
+  formula={"=PERCENTILE.EXC({10,20,30,40,50},0.5)"}
+  grid={{}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"Choose a percentile between observed ranks to see interpolation."}
+  formula={"=PERCENTILE.EXC({10,20,30,40,50},0.3)"}
+  grid={{}}
+  expected={"18"}
+/>
+
+<FunctionExample
+  title={"Evaluate near the lower end of the sample."}
+  formula={"=PERCENTILE.EXC({10,20,30,40,50},0.2)"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"A percentile above one is outside the probability interval."}
+  formula={"=PERCENTILE.EXC({10,20,30,40,50},1.1)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Exclusive 25th percentile from direct values"}
+  formula={"=PERCENTILE.EXC({1,2,3,4,5},0.25)"}
   grid={{}}
   expected={"1.5"}
 />
-</Tab>
 
-<Tab value="Exclusive percentile from a range">
-<FunctionSandbox
-  title="Exclusive percentile from a range"
-  formula={`=PERCENTILE.EXC(A1:A5,0.6)`}
+<FunctionExample
+  title={"Exclusive percentile from a range"}
+  formula={"=PERCENTILE.EXC(A1:A5,0.6)"}
   grid={{"A1":"10","A2":"20","A3":"30","A4":"40","A5":"50"}}
   expected={"36"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [PERCENTILE.INC](/docs/reference/functions/stats/percentile-inc)
 - [QUARTILE.EXC](/docs/reference/functions/stats/quartile-exc)
 - [PERCENTRANK.EXC](/docs/reference/functions/stats/percentrank-exc)
-- [LARGE](/docs/reference/functions/stats/large)
-- [PERCENTRANK.INC](/docs/reference/functions/stats/percentrank-inc)
-- [QUARTILE.INC](/docs/reference/functions/stats/quartile-inc)
 
 ## FAQ
 
 ### Why does PERCENTILE.EXC reject k=0 or k=1?
 Exclusive percentile uses the n+1 basis and requires strictly 0 &lt; k &lt; 1.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/percentile-exc" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

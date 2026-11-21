@@ -1,54 +1,86 @@
 ---
 title: "HYPGEOM.DIST"
-description: "HYPGEOM.DIST: Returns hypergeometric probabilities for successes drawn without replacement."
+seoTitle: "HYPGEOM.DIST function: formula syntax and examples"
+description: "Returns hypergeometric probabilities for successes drawn without replacement. =HYPGEOM.DIST(sample_s, number_sample, population_s, number_pop, cumulative)"
 ---
 
-<FunctionPageSchema id="stats/hypgeom-dist" />
-
-## Summary
+Returns hypergeometric probabilities for successes drawn without replacement.
 
 Use `HYPGEOM.DIST` for finite-population sampling where each draw changes remaining odds.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=HYPGEOM.DIST(sample_s, number_sample, population_s, number_pop, cumulative)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `sample_s` | number | Required | — |
+| `number_sample` | number | Required | — |
+| `population_s` | number | Required | — |
+| `number_pop` | number | Required | — |
+| `cumulative` | number | Required | — |
+
+## How it works
+
+For k sample successes among n draws from N items with K successes, the point probability is C(K,k) C(N−K,n−k) / C(N,n). The counts must support drawing without replacement. The cumulative option sums the feasible counts through k.
 
 ## Remarks
  - Count inputs are truncated to integers.
  - Requires valid population/sample bounds and feasible success counts.
  - Set `cumulative` to non-zero for CDF mode, or `0` for PMF mode.
+
+## Error cases
+
  - Returns `#NUM!` for invalid population setup; out-of-support PMF values return `0`.
 
 ## Examples
 
-<Tabs items={["Hypergeometric PMF", "Hypergeometric CDF"]}>
-<Tab value="Hypergeometric PMF">
-<FunctionSandbox
-  title="Hypergeometric PMF"
-  formula={`=HYPGEOM.DIST(1,3,4,10,FALSE)`}
+<FunctionExample
+  title={"Find the probability of two successes when sampling without replacement."}
+  formula={"=HYPGEOM.DIST(2,5,8,20,FALSE)"}
   grid={{}}
-  expected={"0.5"}
+  expected={"0.397316821465427"}
 />
-</Tab>
 
-<Tab value="Hypergeometric CDF">
-<FunctionSandbox
-  title="Hypergeometric CDF"
-  formula={`=HYPGEOM.DIST(1,3,4,10,TRUE)`}
+<FunctionExample
+  title={"Accumulate probabilities for two or fewer successes."}
+  formula={"=HYPGEOM.DIST(2,5,8,20,TRUE)"}
   grid={{}}
-  expected={"0.6666666666666666"}
+  expected={"0.703818369453043"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Evaluate a sample with no successes."}
+  formula={"=HYPGEOM.DIST(0,5,8,20,FALSE)"}
+  grid={{}}
+  expected={"0.0510835913312692"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"The sample size cannot exceed the entire population."}
+  formula={"=HYPGEOM.DIST(2,21,8,20,FALSE)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-- [BINOM.DIST](/docs/reference/functions/stats/binom-dist)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [CHISQ.DIST.RT](/docs/reference/functions/stats/chisq-dist-rt)
-- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
-- [CHISQ.INV.RT](/docs/reference/functions/stats/chisq-inv-rt)
+<FunctionExample
+  title={"Find the probability of exactly one success in three draws from ten items, five of which count as successes."}
+  formula={"=HYPGEOM.DIST(1,3,5,10,FALSE)"}
+  grid={{}}
+  expected={"0.416666666666669"}
+/>
 
-## Runtime metadata
+<FunctionExample
+  title={"Hypergeometric CDF"}
+  formula={"=HYPGEOM.DIST(1,3,4,10,TRUE)"}
+  grid={{}}
+  expected={"0.666666666666668"}
+/>
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/hypgeom-dist" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

@@ -1,19 +1,66 @@
 ---
 title: "IMSECH"
-description: "IMSECH: Returns the hyperbolic secant of a complex number."
+seoTitle: "IMSECH function: formula syntax and examples"
+description: "Returns the hyperbolic secant of a complex number. =IMSECH(inumber)"
 ---
 
-<FunctionPageSchema id="engineering/imsech" />
-
-## Summary
+Returns the hyperbolic secant of a complex number.
 
 Computes `1 / IMCOSH(inumber)` for an Excel-style complex number string.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMSECH(inumber)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber` | any | Required | — |
+
+## How it works
+
+The complex hyperbolic secant is 1 / cosh(z). Its poles are i times π/2 plus integer multiples of πi.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
+
 ## Examples
 
-<FunctionSandbox
-  title="Hyperbolic secant of zero"
-  formula={`=IMSECH("0")`}
+<FunctionExample
+  title={"Invert the complex hyperbolic cosine at 3 + 4i."}
+  formula={"=IMSECH(\"3+4i\")"}
+  grid={{}}
+  expected={"-0.0652940278579471+0.0752249603027732i"}
+/>
+
+<FunctionExample
+  title={"Reflect the input to change the sign of the secant’s imaginary component."}
+  formula={"=IMSECH(\"3-4j\")"}
+  grid={{}}
+  expected={"-0.0652940278579471-0.0752249603027732j"}
+/>
+
+<FunctionExample
+  title={"At real one, the result is the reciprocal of cosh(1)."}
+  formula={"=IMSECH(\"1\")"}
+  grid={{}}
+  expected={"0.648054273663885"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” has no complex value from which to take the hyperbolic secant."}
+  formula={"=IMSECH(\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Hyperbolic secant of zero"}
+  formula={"=IMSECH(\"0\")"}
   grid={{}}
   expected={"1"}
 />
@@ -23,17 +70,12 @@ Computes `1 / IMCOSH(inumber)` for an Excel-style complex number string.
 - [IMCOSH](/docs/reference/functions/engineering/imcosh)
 - [IMSEC](/docs/reference/functions/engineering/imsec)
 - [IMCSCH](/docs/reference/functions/engineering/imcsch)
-- [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
-- [ERF.PRECISE](/docs/reference/functions/engineering/erf-precise)
-- [ERFC](/docs/reference/functions/engineering/erfc)
 
 ## FAQ
 
 ### What does IMSECH return?
 It returns a complex number encoded as spreadsheet text.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imsech" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

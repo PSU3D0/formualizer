@@ -1,58 +1,77 @@
 ---
 title: "HYPERLINK"
-description: "Returns the friendly name of a hyperlink, or its link location when no name is given."
+seoTitle: "HYPERLINK function: formula syntax and examples"
+description: "Returns the friendly name of a hyperlink, or its link location when no name is given. =HYPERLINK(link_location, [friendly_name])"
 ---
 
-<FunctionPageSchema id="reference-fns/hyperlink" />
-
-## Summary
+Returns the friendly name of a hyperlink, or its link location when no name is given.
 
 The returned value is `friendly_name` when the second argument is present,
  otherwise `link_location`.
 
- Known divergence: the friendly name is always returned as text, whereas
- Excel passes numbers and booleans through with their original type, so
- `=ISNUMBER(HYPERLINK("x",1))` is FALSE here and TRUE in Excel.
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=HYPERLINK(link_location, [friendly_name])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `link_location` | any | Required | — |
+| `friendly_name` | any | Optional | — |
+
+## Differences from Excel
+ Formualizer returns the friendly name as text. Excel passes numbers and booleans through
+ with their original type, so `=ISNUMBER(HYPERLINK("x",1))` is FALSE in Formualizer and TRUE in Excel.
 
 ## Examples
 
-<Tabs items={["Hyperlink with a friendly name", "Hyperlink without a friendly name"]}>
-<Tab value="Hyperlink with a friendly name">
-<FunctionSandbox
-  title="Hyperlink with a friendly name"
-  formula={`=HYPERLINK("https://example.com","Example")`}
-  grid={{}}
-  expected={"Example"}
-/>
-</Tab>
-
-<Tab value="Hyperlink without a friendly name">
-<FunctionSandbox
-  title="Hyperlink without a friendly name"
-  formula={`=HYPERLINK("https://example.com")`}
+<FunctionExample
+  title={"Use the destination itself as the displayed text."}
+  formula={"=HYPERLINK(\"https://example.com\")"}
   grid={{}}
   expected={"https://example.com"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Supply independent display text for the same destination."}
+  formula={"=HYPERLINK(\"https://example.com\",\"Open example\")"}
+  grid={{}}
+  expected={"Open example"}
+/>
+
+<FunctionExample
+  title={"Use an empty display string."}
+  formula={"=HYPERLINK(\"https://example.com\",\"\")"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"An error in the destination expression propagates."}
+  formula={"=HYPERLINK(1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Hyperlink with a friendly name"}
+  formula={"=HYPERLINK(\"https://example.com\",\"Example\")"}
+  grid={{}}
+  expected={"Example"}
+/>
 
 ## Related functions
 
 - [INDIRECT](/docs/reference/functions/reference-fns/indirect)
-- [INDEX](/docs/reference/functions/reference-fns/index-fn)
-- [OFFSET](/docs/reference/functions/reference-fns/offset)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
-- [CELL](/docs/reference/functions/info/cell)
-- [VALUETOTEXT](/docs/reference/functions/text/valuetotext)
 
 ## FAQ
 
 ### What does HYPERLINK return?
 The friendly name when provided, otherwise the link location, always as text.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="reference-fns/hyperlink" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/reference_fns.rs)

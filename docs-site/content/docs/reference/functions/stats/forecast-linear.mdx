@@ -1,54 +1,80 @@
 ---
 title: "FORECAST.LINEAR"
-description: "FORECAST.LINEAR: Returns a predicted y-value at `x` from simple linear regression over known data."
+seoTitle: "FORECAST.LINEAR function: formula syntax and examples"
+description: "Returns a predicted y-value at x from simple linear regression over known data. =FORECAST.LINEAR(x, known_ys, known_xs)"
 ---
 
-<FunctionPageSchema id="stats/forecast-linear" />
-
-## Summary
+Returns a predicted y-value at `x` from simple linear regression over known data.
 
 `FORECAST.LINEAR` fits `y = intercept + slope * x` and evaluates that line at the requested x.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FORECAST.LINEAR(x, known_ys, known_xs)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number (range) | Required | — |
+| `known_ys` | number (range) | Required | — |
+| `known_xs` | number (range) | Required | — |
+
 ## Remarks
  - Requires `known_y` and `known_x` arrays with the same numeric length.
+ - Alias `FORECAST` is supported.
+
+## Error cases
+
  - Returns `#N/A` when arrays are empty or lengths do not match.
  - Returns `#DIV/0!` when `known_x` has zero variance.
- - Alias `FORECAST` is supported.
 
 ## Examples
 
-<Tabs items={["Predict next point on a perfect line", "Forecast with non-zero intercept"]}>
-<Tab value="Predict next point on a perfect line">
-<FunctionSandbox
-  title="Predict next point on a perfect line"
-  formula={`=FORECAST.LINEAR(4,{2,4,6},{1,2,3})`}
+<FunctionExample
+  title={"Extend a linear pattern one step beyond the observed x range."}
+  formula={"=FORECAST.LINEAR(5,{2,4,6,8},{1,2,3,4})"}
+  grid={{}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"Interpolate between two observed x values."}
+  formula={"=FORECAST.LINEAR(2.5,{2,4,6,8},{1,2,3,4})"}
+  grid={{}}
+  expected={"5"}
+/>
+
+<FunctionExample
+  title={"Evaluate at the first x value of a two-point line."}
+  formula={"=FORECAST.LINEAR(1,{2,4},{1,2})"}
+  grid={{}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Each known y must have a corresponding x."}
+  formula={"=FORECAST.LINEAR(5,{2,4,6},{1,2})"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Predict next point on a perfect line"}
+  formula={"=FORECAST.LINEAR(4,{2,4,6},{1,2,3})"}
   grid={{}}
   expected={"8"}
 />
-</Tab>
 
-<Tab value="Forecast with non-zero intercept">
-<FunctionSandbox
-  title="Forecast with non-zero intercept"
-  formula={`=FORECAST.LINEAR(5,{3,5,7},{1,2,3})`}
+<FunctionExample
+  title={"Forecast with non-zero intercept"}
+  formula={"=FORECAST.LINEAR(5,{3,5,7},{1,2,3})"}
   grid={{}}
   expected={"11"}
 />
-</Tab>
 
-</Tabs>
+## Implementation
 
-## Related functions
-
-- [CORREL](/docs/reference/functions/stats/correl)
-- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
-- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
-- [FISHER](/docs/reference/functions/stats/fisher)
-- [FISHERINV](/docs/reference/functions/stats/fisherinv)
-- [FREQUENCY](/docs/reference/functions/stats/frequency)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/forecast-linear" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

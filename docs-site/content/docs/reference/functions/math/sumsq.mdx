@@ -1,13 +1,25 @@
 ---
 title: "SUMSQ"
-description: "SUMSQ: Returns the sum of squares of supplied numbers."
+seoTitle: "SUMSQ function: formula syntax and examples"
+description: "Returns the sum of squares of supplied numbers. =SUMSQ(number1, [number2], ...)"
 ---
 
-<FunctionPageSchema id="math/sumsq" />
-
-## Summary
-
 Returns the sum of squares of supplied numbers.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SUMSQ(number1, [number2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number1` | number (range) | Required | — |
+| `number2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
 
 ## Remarks
  - Accepts one or more scalar values, arrays, or ranges.
@@ -16,43 +28,59 @@ Returns the sum of squares of supplied numbers.
 
 ## Examples
 
-<Tabs items={["Sum squares of scalar arguments", "Ignore text cells in a range"]}>
-<Tab value="Sum squares of scalar arguments">
-<FunctionSandbox
-  title="Sum squares of scalar arguments"
-  formula={`=SUMSQ(3,4)`}
+<FunctionExample
+  title={"Find the sum of squares of 4, 8 and 12."}
+  formula={"=SUMSQ(4,8,12)"}
+  grid={{}}
+  expected={"224"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the sum of squares."}
+  formula={"=SUMSQ({4,8,12})"}
+  grid={{}}
+  expected={"224"}
+/>
+
+<FunctionExample
+  title={"Square 7 without adding any other terms."}
+  formula={"=SUMSQ(7)"}
+  grid={{}}
+  expected={"49"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the sum of squares."}
+  formula={"=SUMSQ(4,1/0,12)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Sum squares of scalar arguments"}
+  formula={"=SUMSQ(3,4)"}
   grid={{}}
   expected={"25"}
 />
-</Tab>
 
-<Tab value="Ignore text cells in a range">
-<FunctionSandbox
-  title="Ignore text cells in a range"
-  formula={`=SUMSQ(A1:A3)`}
-  grid={{"A1":"1","A2":"x","A3":"2"}}
+<FunctionExample
+  title={"Ignore text cells in a range"}
+  formula={"=SUMSQ(A1:A3)"}
+  grid={{"A1":"1","A2":"\"x\"","A3":"2"}}
   expected={"5"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SUM](/docs/reference/functions/math/sum)
 - [PRODUCT](/docs/reference/functions/stats/product)
 - [SUMPRODUCT](/docs/reference/functions/math/sumproduct)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [MAX](/docs/reference/functions/math/max)
-- [MIN](/docs/reference/functions/math/min)
 
 ## FAQ
 
 ### How does SUMSQ treat text cells in ranges?
 Non-numeric range cells are ignored, while explicit errors are propagated.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sumsq" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

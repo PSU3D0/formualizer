@@ -1,59 +1,97 @@
 ---
 title: "TEXTAFTER"
-description: "TEXTAFTER: Returns text that appears after a delimiter."
+seoTitle: "TEXTAFTER function: formula syntax and examples"
+description: "Returns text that appears after a delimiter. =TEXTAFTER(text, delimiter, [instance_num])"
 ---
 
-<FunctionPageSchema id="text/textafter" />
-
-## Summary
-
 Returns text that appears after a delimiter.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TEXTAFTER(text, delimiter, [instance_num])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `delimiter` | any | Required | — |
+| `instance_num` | number | Optional | `1` |
+
+## Return type
+
+Text
+
+## Differences from Excel
+
+Formualizer supports the arguments through `instance_num`. Excel also accepts `match_mode`, `match_end` and `if_not_found`.
 
 ## Remarks
  - Delimiter matching is case-sensitive.
  - `instance_num` defaults to `1`; negative instances search from the end.
+
+## Error cases
+
  - `instance_num=0` or empty delimiter returns `#VALUE!`.
  - If requested delimiter occurrence is not found, returns `#N/A`.
 
 ## Examples
 
-<Tabs items={["Text after first delimiter", "Text after last delimiter"]}>
-<Tab value="Text after first delimiter">
-<FunctionSandbox
-  title="Text after first delimiter"
-  formula={`=TEXTAFTER("a-b-c", "-")`}
+<FunctionExample
+  title={"Split the label at the first dash."}
+  formula={"=TEXTAFTER(\"East-Q2-2024\",\"-\")"}
+  grid={{}}
+  expected={"Q2-2024"}
+/>
+
+<FunctionExample
+  title={"Use the second occurrence of the delimiter."}
+  formula={"=TEXTAFTER(\"East-Q2-2024\",\"-\",2)"}
+  grid={{}}
+  expected={"2024"}
+/>
+
+<FunctionExample
+  title={"Split at a delimiter that begins the input text."}
+  formula={"=TEXTAFTER(\"-East-\",\"-\")"}
+  grid={{}}
+  expected={"East-"}
+/>
+
+<FunctionExample
+  title={"The specified delimiter is absent from the source text."}
+  formula={"=TEXTAFTER(\"East-Q2-2024\",\"/\")"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Text after first delimiter"}
+  formula={"=TEXTAFTER(\"a-b-c\", \"-\")"}
   grid={{}}
   expected={"b-c"}
 />
-</Tab>
 
-<Tab value="Text after last delimiter">
-<FunctionSandbox
-  title="Text after last delimiter"
-  formula={`=TEXTAFTER("a-b-c", "-", -1)`}
+<FunctionExample
+  title={"Text after last delimiter"}
+  formula={"=TEXTAFTER(\"a-b-c\", \"-\", -1)"}
   grid={{}}
   expected={"c"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [TEXTBEFORE](/docs/reference/functions/text/textbefore)
 - [FIND](/docs/reference/functions/text/find)
 - [SEARCH](/docs/reference/functions/text/search)
-- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
-- [EXACT](/docs/reference/functions/text/exact)
 
 ## FAQ
 
 ### Is matching case-sensitive?
 Yes. TEXTAFTER performs case-sensitive delimiter matching in this implementation.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/textafter" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/extended.rs)

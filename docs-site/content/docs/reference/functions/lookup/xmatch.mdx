@@ -1,44 +1,82 @@
 ---
 title: "XMATCH"
-description: "XMATCH: Returns the 1-based position of a value in a one-dimensional lookup array."
+seoTitle: "XMATCH function: formula syntax and examples"
+description: "Returns the 1-based position of a value in a one-dimensional lookup array. =XMATCH(lookup_value, lookup_array, [match_mode], [search_mode])"
 ---
 
-<FunctionPageSchema id="lookup/xmatch" />
-
-## Summary
+Returns the 1-based position of a value in a one-dimensional lookup array.
 
 `XMATCH` extends `MATCH` with explicit search direction and wildcard mode.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=XMATCH(lookup_value, lookup_array, [match_mode], [search_mode])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `lookup_value` | any | Required | — |
+| `lookup_array` | range (range) | Required | — |
+| `match_mode` | number | Optional | `0` |
+| `search_mode` | number | Optional | `1` |
 
 ## Remarks
  - Defaults: `match_mode=0` (exact), `search_mode=1` (first-to-last).
  - In exact and wildcard modes, a blank lookup value selects only a blank candidate; numeric zero and empty text remain distinct.
  - `match_mode`: `0` exact, `-1` exact-or-next-smaller, `1` exact-or-next-larger, `2` wildcard.
  - `search_mode`: `1` forward, `-1` reverse, `2` ascending binary intent, `-2` descending binary intent.
+
+## Error cases
+
  - `lookup_array` must be a single row or single column, otherwise returns `#VALUE!`.
  - Not found returns `#N/A`.
 
 ## Examples
 
-<Tabs items={["Exact match position", "Reverse search finds last duplicate"]}>
-<Tab value="Exact match position">
-<FunctionSandbox
-  title="Exact match position"
-  formula={`=XMATCH("beta",A1:A3)`}
-  grid={{"A1":"alpha","A2":"beta","A3":"gamma"}}
+<FunctionExample
+  title={"Return the one-based position of an exact match with the default settings."}
+  formula={"=XMATCH(\"Bo\",{\"Ana\";\"Bo\";\"Cy\"})"}
+  grid={{}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Reverse search finds last duplicate">
-<FunctionSandbox
-  title="Reverse search finds last duplicate"
-  formula={`=XMATCH(7,A1:A3,0,-1)`}
+<FunctionExample
+  title={"Search from the end to find the last exact match."}
+  formula={"=XMATCH(\"Bo\",{\"Bo\";\"Ana\";\"Bo\"},0,-1)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"The only possible match in a one-item array has position one."}
+  formula={"=XMATCH(\"Bo\",{\"Bo\"})"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A missing key has no matching position."}
+  formula={"=XMATCH(\"Dee\",{\"Ana\";\"Bo\";\"Cy\"})"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Exact match position"}
+  formula={"=XMATCH(\"beta\",A1:A3)"}
+  grid={{"A1":"\"alpha\"","A2":"\"beta\"","A3":"\"gamma\""}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Reverse search finds last duplicate"}
+  formula={"=XMATCH(7,A1:A3,0,-1)"}
   grid={{"A1":"7","A2":"9","A3":"7"}}
   expected={"3"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -46,8 +84,6 @@ description: "XMATCH: Returns the 1-based position of a value in a one-dimension
 - [MATCH](/docs/reference/functions/lookup/match)
 - [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [VLOOKUP](/docs/reference/functions/lookup/vlookup)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
-- [CHOOSEROWS](/docs/reference/functions/lookup/chooserows)
 
 ## FAQ
 
@@ -57,8 +93,6 @@ search_mode=1 returns the first qualifying match, while search_mode=-1 scans fro
 ### When do binary-intent search modes (2 or -2) return #N/A?
 For approximate modes they require sorted data in the expected direction; unsorted arrays are treated as no valid match and return #N/A.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/xmatch" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/dynamic.rs)

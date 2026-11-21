@@ -352,6 +352,13 @@ pub(super) fn scan(
                                 get_attrs!(e, b"t" => t, b"si" => si, b"ref" => range)
                                     .map_err(|e| xml_error(quick_xml::Error::InvalidAttr(e)))?;
 
+                            // Excel saves the other cells of a volatile array formula as an empty
+                            // `<f ca="1"/>`. It is not a formula: keep the cell's cached value,
+                            // which the array formula then fills.
+                            if matches!(t, None | Some(b"normal")) && text.trim().is_empty() {
+                                continue;
+                            }
+
                             // Ordinary OOXML formulas retain scalar legacy semantics without
                             // relying on optional calculation-chain evidence. Arrays keep
                             // their expression and fixed/dynamic ownership separately.

@@ -1,13 +1,22 @@
 ---
 title: "DEGREES"
-description: "Converts an angle from radians to degrees."
+seoTitle: "DEGREES function: formula syntax and examples"
+description: "Converts an angle from radians to degrees. =DEGREES(angle)"
 ---
 
-<FunctionPageSchema id="math/degrees" />
-
-## Summary
-
 Converts an angle from radians to degrees.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DEGREES(angle)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `angle` | any | Required | — |
 
 ## Remarks
  - Useful when converting the output of inverse trig functions.
@@ -15,43 +24,52 @@ Converts an angle from radians to degrees.
 
 ## Examples
 
-<Tabs items={["Convert PI radians", "Convert PI/2 radians"]}>
-<Tab value="Convert PI radians">
-<FunctionSandbox
-  title="Convert PI radians"
-  formula={`=DEGREES(PI())`}
-  grid={{}}
-  expected={"180"}
-/>
-</Tab>
-
-<Tab value="Convert PI/2 radians">
-<FunctionSandbox
-  title="Convert PI/2 radians"
-  formula={`=DEGREES(PI()/2)`}
+<FunctionExample
+  title={"Convert a right angle from radians to degrees."}
+  formula={"=DEGREES(PI()/2)"}
   grid={{}}
   expected={"90"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Convert a negative half-turn."}
+  formula={"=DEGREES(-PI())"}
+  grid={{}}
+  expected={"-180"}
+/>
+
+<FunctionExample
+  title={"The zero angle stays zero after converting units."}
+  formula={"=DEGREES(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The angle must be numeric."}
+  formula={"=DEGREES(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Convert PI radians"}
+  formula={"=DEGREES(PI())"}
+  grid={{}}
+  expected={"180"}
+/>
 
 ## Related functions
 
 - [RADIANS](/docs/reference/functions/math/radians)
 - [ATAN](/docs/reference/functions/math/atan)
 - [ACOS](/docs/reference/functions/math/acos)
-- [ACOSH](/docs/reference/functions/math/acosh)
-- [ATANH](/docs/reference/functions/math/atanh)
-- [SECH](/docs/reference/functions/math/sech)
 
 ## FAQ
 
 ### Does DEGREES change the angle value or just units?
 It converts units only, multiplying radians by 180/PI().
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/degrees" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

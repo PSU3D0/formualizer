@@ -1,59 +1,80 @@
 ---
 title: "UNICHAR"
-description: "UNICHAR: Returns the Unicode character for a given code point."
+seoTitle: "UNICHAR function: formula syntax and examples"
+description: "Returns the Unicode character for a given code point. =UNICHAR(number)"
 ---
-
-<FunctionPageSchema id="text/unichar" />
-
-## Summary
 
 Returns the Unicode character for a given code point.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=UNICHAR(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
+
 ## Remarks
  - Input is truncated to an integer code point.
- - Code point `0`, surrogate range, and values above `0x10FFFF` return `#VALUE!`.
  - Errors are propagated unchanged.
  - Non-numeric inputs are coerced with numeric coercion rules.
 
+## Error cases
+
+ - Code point `0`, surrogate range, and values above `0x10FFFF` return `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["Basic Unicode code point", "Invalid code point"]}>
-<Tab value="Basic Unicode code point">
-<FunctionSandbox
-  title="Basic Unicode code point"
-  formula={`=UNICHAR(9731)`}
+<FunctionExample
+  title={"Return the character at the numeric code for the letter A."}
+  formula={"=UNICHAR(65)"}
   grid={{}}
-  expected={"☃"}
+  expected={"A"}
 />
-</Tab>
 
-<Tab value="Invalid code point">
-<FunctionSandbox
-  title="Invalid code point"
-  formula={`=UNICHAR(0)`}
+<FunctionExample
+  title={"Compare the character at the numeric code for the letter a."}
+  formula={"=UNICHAR(97)"}
+  grid={{}}
+  expected={"a"}
+/>
+
+<FunctionExample
+  title={"Return the space character at code 32."}
+  formula={"=UNICHAR(32)"}
+  grid={{}}
+  expected={" "}
+/>
+
+<FunctionExample
+  title={"Code zero is outside the supported input range."}
+  formula={"=UNICHAR(0)"}
   grid={{}}
   expected={"#VALUE!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Basic Unicode code point"}
+  formula={"=UNICHAR(9731)"}
+  grid={{}}
+  expected={"☃"}
+/>
 
 ## Related functions
 
 - [UNICODE](/docs/reference/functions/text/unicode)
 - [CHAR](/docs/reference/functions/text/char)
 - [CODE](/docs/reference/functions/text/code)
-- [ASC](/docs/reference/functions/text/asc)
-- [CLEAN](/docs/reference/functions/text/clean)
-- [LEN](/docs/reference/functions/text/len)
 
 ## FAQ
 
 ### Which code points are invalid?
 0, surrogate values, and anything above 0x10FFFF return #VALUE!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/unichar" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/extended.rs)

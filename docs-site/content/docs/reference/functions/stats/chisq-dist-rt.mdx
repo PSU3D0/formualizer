@@ -1,25 +1,63 @@
 ---
 title: "CHISQ.DIST.RT"
-description: "CHISQ.DIST.RT: Returns the right-tailed chi-squared distribution probability."
+seoTitle: "CHISQ.DIST.RT function: formula syntax and examples"
+description: "Returns the right-tailed chi-squared distribution probability. =CHISQ.DIST.RT(x, deg_freedom)"
 ---
-
-<FunctionPageSchema id="stats/chisq-dist-rt" />
-
-## Summary
 
 Returns the right-tailed chi-squared distribution probability.
 
-## returns: 0.36787944117144233
- =CHISQ.DIST.RT(2,2)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CHISQ.DIST.RT(x, deg_freedom)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+
+## How it works
+
+Returns P(X ≥ x) for a chi-squared variate, the integral above x of a gamma density with shape ν/2 and scale 2. The statistic must be nonnegative and ν positive.
 
 ## Examples
 
-<FunctionSandbox
-  title="Right-tail chi-squared probability"
-  formula={`=CHISQ.DIST.RT(2,2)`}
+<FunctionExample
+  title={"Find the right-tail probability beyond a positive chi-square statistic."}
+  formula={"=CHISQ.DIST.RT(4,3)"}
   grid={{}}
-  expected={"0.36787944117144233"}
+  expected={"0.261464129949111"}
+/>
+
+<FunctionExample
+  title={"Change the degrees of freedom while keeping the statistic fixed."}
+  formula={"=CHISQ.DIST.RT(4,10)"}
+  grid={{}}
+  expected={"0.947346982656289"}
+/>
+
+<FunctionExample
+  title={"At zero the right tail covers the whole distribution."}
+  formula={"=CHISQ.DIST.RT(0,3)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative statistic is outside the chi-square domain."}
+  formula={"=CHISQ.DIST.RT(-1,3)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Right-tail chi-squared probability"}
+  formula={"=CHISQ.DIST.RT(2,2)"}
+  grid={{}}
+  expected={"0.367879441171442"}
 />
 
 ## Related functions
@@ -27,17 +65,12 @@ Returns the right-tailed chi-squared distribution probability.
 - [CHISQ.INV.RT](/docs/reference/functions/stats/chisq-inv-rt)
 - [CHISQ.TEST](/docs/reference/functions/stats/chisq-test)
 - [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [CHISQ.INV](/docs/reference/functions/stats/chisq-inv)
-- [F.TEST](/docs/reference/functions/stats/f-test)
-- [NORM.S.DIST](/docs/reference/functions/stats/norm-s-dist)
 
 ## FAQ
 
 ### Which inputs return #NUM!?
 Negative x values and degrees of freedom below 1 return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/chisq-dist-rt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

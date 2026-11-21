@@ -1,54 +1,84 @@
 ---
 title: "F.INV"
-description: "F.INV: Returns the F value whose left-tail probability equals `probability`."
+seoTitle: "F.INV function: formula syntax and examples"
+description: "Returns the F value whose left-tail probability equals probability. =F.INV(probability, deg_freedom1, deg_freedom2)"
 ---
 
-<FunctionPageSchema id="stats/f-inv" />
-
-## Summary
+Returns the F value whose left-tail probability equals `probability`.
 
 `F.INV` inverts `F.DIST(x, deg_freedom1, deg_freedom2, TRUE)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=F.INV(probability, deg_freedom1, deg_freedom2)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `probability` | number | Required | — |
+| `deg_freedom1` | number | Required | — |
+| `deg_freedom2` | number | Required | — |
+
+## How it works
+
+Solves P(F ≤ q) = probability for the lower-tail F quantile, with positive numerator and denominator degrees of freedom.
 
 ## Remarks
  - `probability` must be strictly between `0` and `1`.
  - `deg_freedom1` and `deg_freedom2` must each be at least `1`.
- - Returns `#NUM!` for invalid probability or degree-of-freedom arguments.
  - Invalid numeric coercions propagate as spreadsheet errors.
+
+## Error cases
+
+ - Returns `#NUM!` for invalid probability or degree-of-freedom arguments.
 
 ## Examples
 
-<Tabs items={["Median F quantile with symmetric 2 and 2 degrees of freedom", "Upper-tail F critical value"]}>
-<Tab value="Median F quantile with symmetric 2 and 2 degrees of freedom">
-<FunctionSandbox
-  title="Median F quantile with symmetric 2 and 2 degrees of freedom"
-  formula={`=F.INV(0.5,2,2)`}
+<FunctionExample
+  title={"Find the first lower-tail quartile of an F variate with 5 and 10 degrees of freedom."}
+  formula={"=F.INV(0.25,5,10)"}
+  grid={{}}
+  expected={"0.529141685567821"}
+/>
+
+<FunctionExample
+  title={"Increase the lower-tail probability to three quarters to move the cutoff higher."}
+  formula={"=F.INV(0.75,5,10)"}
+  grid={{}}
+  expected={"1.58532325938462"}
+/>
+
+<FunctionExample
+  title={"Find the lower-tail median with one degree of freedom on each side."}
+  formula={"=F.INV(0.5,1,1)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Upper-tail F critical value">
-<FunctionSandbox
-  title="Upper-tail F critical value"
-  formula={`=F.INV(0.95,5,10)`}
+<FunctionExample
+  title={"A probability above one is outside the function's domain."}
+  formula={"=F.INV(1.1,5,10)"}
   grid={{}}
-  expected={"3.3258345304130112"}
+  expected={"#NUM!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Find the 63rd percentile with two numerator and two denominator degrees of freedom."}
+  formula={"=F.INV(0.63,2,2)"}
+  grid={{}}
+  expected={"1.70270270270271"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"Upper-tail F critical value"}
+  formula={"=F.INV(0.95,5,10)"}
+  grid={{}}
+  expected={"3.32583453041301"}
+/>
 
-- [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
-- [F.DIST](/docs/reference/functions/stats/f-dist)
-- [F.INV.RT](/docs/reference/functions/stats/f-inv-rt)
-- [F.TEST](/docs/reference/functions/stats/f-test)
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
+## Implementation
 
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/f-inv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

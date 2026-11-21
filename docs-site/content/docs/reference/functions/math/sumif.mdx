@@ -1,50 +1,74 @@
 ---
 title: "SUMIF"
-description: "SUMIF: Adds values that satisfy a single criterion."
+seoTitle: "SUMIF function: formula syntax and examples"
+description: "Adds values that satisfy a single criterion. =SUMIF(range, criteria, [sum_range])"
 ---
 
-<FunctionPageSchema id="math/sumif" />
-
-## Summary
+Adds values that satisfy a single criterion.
 
 `SUMIF` evaluates each cell in `range` against `criteria`, then sums corresponding values.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SUMIF(range, criteria, [sum_range])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `range` | any | Required | — |
+| `criteria` | any | Required | — |
+| `sum_range` | any | Optional | — |
+
+## Differences from Excel
+
+Excel requires a reference for the optional result range, where Formualizer can evaluate a non-reference expression and propagate its error. Formualizer also accepts array constants as the criteria range, which Excel requires to be a reference.
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - If `sum_range` is omitted, matching cells from `range` are summed.
  - Criteria support operators like `"&gt;10"` and wildcard text patterns.
  - Cells that do not coerce to numbers in the sum target contribute `0`.
 
 ## Examples
 
-<Tabs items={["Sum values above a threshold", "Use separate sum range", "Wildcard criteria"]}>
-<Tab value="Sum values above a threshold">
-<FunctionSandbox
-  title="Sum values above a threshold"
-  formula={`=SUMIF(A1:A3, ">10")`}
+<FunctionExample
+  title={"Select East records by label and aggregate the corresponding numbers."}
+  formula={"=SUMIF(A1:A3,\"East\",B1:B3)"}
+  grid={{"A1":"\"East\"","A2":"\"West\"","A3":"\"East\"","B1":"10","B2":"50","B3":"20"}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"Omit the result range so the criterion and calculation use the same cells."}
+  formula={"=SUMIF(C1:C3,\">2\")"}
+  grid={{"C1":"2","C2":"4","C3":"6"}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"Aggregate a single row that satisfies the criterion."}
+  formula={"=SUMIF(A1:A1,\"East\",B1:B1)"}
+  grid={{"A1":"\"East\"","B1":"10"}}
+  expected={"10"}
+/>
+
+<FunctionExample
+  title={"Sum values above a threshold"}
+  formula={"=SUMIF(A1:A3, \">10\")"}
   grid={{"A1":"5","A2":"15","A3":"25"}}
   expected={"40"}
 />
-</Tab>
 
-<Tab value="Use separate sum range">
-<FunctionSandbox
-  title="Use separate sum range"
-  formula={`=SUMIF(A1:A3, "East", B1:B3)`}
-  grid={{"A1":"East","A2":"West","A3":"East","B1":"10","B2":"40","B3":"20"}}
+<FunctionExample
+  title={"Use separate sum range"}
+  formula={"=SUMIF(A1:A3, \"East\", B1:B3)"}
+  grid={{"A1":"\"East\"","A2":"\"West\"","A3":"\"East\"","B1":"10","B2":"40","B3":"20"}}
   expected={"30"}
 />
-</Tab>
-
-<Tab value="Wildcard criteria">
-<FunctionSandbox
-  title="Wildcard criteria"
-  formula={`=SUMIF({"apple","pear","apricot"}, "ap*", {2,3,5})`}
-  grid={{}}
-  expected={"7"}
-/>
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -52,8 +76,6 @@ description: "SUMIF: Adds values that satisfy a single criterion."
 - [SUMIFS](/docs/reference/functions/math/sumifs)
 - [COUNTIF](/docs/reference/functions/math/countif)
 - [AVERAGEIF](/docs/reference/functions/math/averageif)
-- [COUNTIFS](/docs/reference/functions/math/countifs)
-- [AVERAGEIFS](/docs/reference/functions/math/averageifs)
 
 ## FAQ
 
@@ -63,8 +85,6 @@ They contribute 0 to the sum target after coercion logic.
 ### Can SUMIF use wildcard criteria like * and ??
 Yes. Text criteria support wildcard matching semantics.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sumif" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/criteria_aggregates.rs)

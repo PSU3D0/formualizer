@@ -1,13 +1,29 @@
 ---
 title: "CONCAT"
-description: "Concatenates multiple values into one text string."
+seoTitle: "CONCAT function: formula syntax and examples"
+description: "Concatenates multiple values into one text string. =CONCAT(text1, [text2], ...)"
 ---
 
-<FunctionPageSchema id="text/concat" />
-
-## Summary
-
 Concatenates multiple values into one text string.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CONCAT(text1, [text2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text1` | any (range) | Required | — |
+| `text2` | any (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Accepts one or more arguments.
@@ -15,47 +31,66 @@ Concatenates multiple values into one text string.
  - Blank values contribute an empty string.
  - Numbers and booleans are coerced to text.
  - Errors are propagated as soon as encountered.
+
+## Error cases
+
  - Results longer than 32,767 characters return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Join text pieces", "Concatenate with blanks"]}>
-<Tab value="Join text pieces">
-<FunctionSandbox
-  title="Join text pieces"
-  formula={`=CONCAT("Q", 1, "-", "2026")`}
+<FunctionExample
+  title={"Join region and year labels with an explicit separator."}
+  formula={"=CONCAT(\"East\",\" \",\"2024\")"}
+  grid={{}}
+  expected={"East 2024"}
+/>
+
+<FunctionExample
+  title={"Combine text and numeric values in argument order."}
+  formula={"=CONCAT(\"Team \",42,\" score \",8)"}
+  grid={{}}
+  expected={"Team 42 score 8"}
+/>
+
+<FunctionExample
+  title={"A single argument is already the entire concatenated result."}
+  formula={"=CONCAT(\"Only item\")"}
+  grid={{}}
+  expected={"Only item"}
+/>
+
+<FunctionExample
+  title={"A division-by-zero error among the inputs propagates."}
+  formula={"=CONCAT(\"East\",1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Join text pieces"}
+  formula={"=CONCAT(\"Q\", 1, \"-\", \"2026\")"}
   grid={{}}
   expected={"Q1-2026"}
 />
-</Tab>
 
-<Tab value="Concatenate with blanks">
-<FunctionSandbox
-  title="Concatenate with blanks"
-  formula={`=CONCAT("A", "", "B")`}
+<FunctionExample
+  title={"Concatenate with blanks"}
+  formula={"=CONCAT(\"A\", \"\", \"B\")"}
   grid={{}}
   expected={"AB"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [CONCATENATE](/docs/reference/functions/text/concatenate)
 - [TEXTJOIN](/docs/reference/functions/text/textjoin)
 - [VALUE](/docs/reference/functions/text/value)
-- [LEFT](/docs/reference/functions/text/left)
-- [LEFTB](/docs/reference/functions/text/leftb)
-- [NUMBERVALUE](/docs/reference/functions/text/numbervalue)
 
 ## FAQ
 
 ### Do blank arguments add separators or characters?
 No. CONCAT appends each value directly, and blanks contribute an empty string.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/concat" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/trim_case_concat.rs)

@@ -1,13 +1,22 @@
 ---
 title: "SIGN"
-description: "Returns the sign of a number as -1, 0, or 1."
+seoTitle: "SIGN function: formula syntax and examples"
+description: "Returns the sign of a number as -1, 0, or 1. =SIGN(number)"
 ---
 
-<FunctionPageSchema id="math/sign" />
-
-## Summary
-
 Returns the sign of a number as -1, 0, or 1.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SIGN(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
 
 ## Remarks
  - Returns `1` for positive numbers.
@@ -16,43 +25,59 @@ Returns the sign of a number as -1, 0, or 1.
 
 ## Examples
 
-<Tabs items={["Positive input", "Negative input"]}>
-<Tab value="Positive input">
-<FunctionSandbox
-  title="Positive input"
-  formula={`=SIGN(12)`}
-  grid={{}}
-  expected={"1"}
-/>
-</Tab>
-
-<Tab value="Negative input">
-<FunctionSandbox
-  title="Negative input"
-  formula={`=SIGN(-12)`}
+<FunctionExample
+  title={"Evaluate a negative number with a fractional part."}
+  formula={"=SIGN(-4.7)"}
   grid={{}}
   expected={"-1"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Compare the result on the positive side of zero."}
+  formula={"=SIGN(4.7)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Evaluate the function at the zero boundary."}
+  formula={"=SIGN(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A nonnumeric text value cannot be used as the number."}
+  formula={"=SIGN(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Positive input"}
+  formula={"=SIGN(12)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Negative input"}
+  formula={"=SIGN(-12)"}
+  grid={{}}
+  expected={"-1"}
+/>
 
 ## Related functions
 
 - [ABS](/docs/reference/functions/math/abs)
 - [INT](/docs/reference/functions/math/int)
 - [IF](/docs/reference/functions/logical/if)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### Can SIGN return anything other than -1, 0, or 1?
 No. After numeric coercion, the output is always exactly -1, 0, or 1.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sign" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

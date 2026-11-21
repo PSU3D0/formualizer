@@ -1,59 +1,97 @@
 ---
 title: "TEXTBEFORE"
-description: "TEXTBEFORE: Returns text that appears before a delimiter."
+seoTitle: "TEXTBEFORE function: formula syntax and examples"
+description: "Returns text that appears before a delimiter. =TEXTBEFORE(text, delimiter, [instance_num])"
 ---
 
-<FunctionPageSchema id="text/textbefore" />
-
-## Summary
-
 Returns text that appears before a delimiter.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TEXTBEFORE(text, delimiter, [instance_num])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `delimiter` | any | Required | — |
+| `instance_num` | number | Optional | `1` |
+
+## Return type
+
+Text
+
+## Differences from Excel
+
+Formualizer supports the arguments through `instance_num`. Excel also accepts `match_mode`, `match_end` and `if_not_found`.
 
 ## Remarks
  - Delimiter matching is case-sensitive.
  - `instance_num` defaults to `1`; negative instances search from the end.
+
+## Error cases
+
  - `instance_num=0` or empty delimiter returns `#VALUE!`.
  - If requested delimiter occurrence is not found, returns `#N/A`.
 
 ## Examples
 
-<Tabs items={["Text before first delimiter", "Text before last delimiter"]}>
-<Tab value="Text before first delimiter">
-<FunctionSandbox
-  title="Text before first delimiter"
-  formula={`=TEXTBEFORE("a-b-c", "-")`}
+<FunctionExample
+  title={"Split the label at the first dash."}
+  formula={"=TEXTBEFORE(\"East-Q2-2024\",\"-\")"}
+  grid={{}}
+  expected={"East"}
+/>
+
+<FunctionExample
+  title={"Use the second occurrence of the delimiter."}
+  formula={"=TEXTBEFORE(\"East-Q2-2024\",\"-\",2)"}
+  grid={{}}
+  expected={"East-Q2"}
+/>
+
+<FunctionExample
+  title={"Split at a delimiter that begins the input text."}
+  formula={"=TEXTBEFORE(\"-East-\",\"-\")"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"The specified delimiter is absent from the source text."}
+  formula={"=TEXTBEFORE(\"East-Q2-2024\",\"/\")"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Text before first delimiter"}
+  formula={"=TEXTBEFORE(\"a-b-c\", \"-\")"}
   grid={{}}
   expected={"a"}
 />
-</Tab>
 
-<Tab value="Text before last delimiter">
-<FunctionSandbox
-  title="Text before last delimiter"
-  formula={`=TEXTBEFORE("a-b-c", "-", -1)`}
+<FunctionExample
+  title={"Text before last delimiter"}
+  formula={"=TEXTBEFORE(\"a-b-c\", \"-\", -1)"}
   grid={{}}
   expected={"a-b"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [TEXTAFTER](/docs/reference/functions/text/textafter)
 - [FIND](/docs/reference/functions/text/find)
 - [SEARCH](/docs/reference/functions/text/search)
-- [TEXTSPLIT](/docs/reference/functions/text/textsplit)
-- [ARRAYTOTEXT](/docs/reference/functions/text/arraytotext)
-- [EXACT](/docs/reference/functions/text/exact)
 
 ## FAQ
 
 ### What happens when the delimiter is missing?
 TEXTBEFORE returns #N/A when the requested delimiter occurrence is not found.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/textbefore" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/extended.rs)

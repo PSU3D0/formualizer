@@ -1,54 +1,72 @@
 ---
 title: "STEYX"
-description: "STEYX: Returns the standard error of y-estimates from a simple linear regression."
+seoTitle: "STEYX function: formula syntax and examples"
+description: "Returns the standard error of y-estimates from a simple linear regression. =STEYX(known_ys, known_xs)"
 ---
 
-<FunctionPageSchema id="stats/steyx" />
-
-## Summary
+Returns the standard error of y-estimates from a simple linear regression.
 
 `STEYX` measures the typical residual size around the fitted regression line.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=STEYX(known_ys, known_xs)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `known_ys` | number (range) | Required | — |
+| `known_xs` | number (range) | Required | — |
 
 ## Remarks
  - Requires paired x/y inputs with matching numeric lengths.
  - Requires at least three paired points.
- - Returns `#DIV/0!` when `n &lt; 3` or x-values have zero variance.
  - Pairing and shape mismatches return spreadsheet errors from paired-array validation.
+
+## Error cases
+
+ - Returns `#DIV/0!` when `n &lt; 3` or x-values have zero variance.
 
 ## Examples
 
-<Tabs items={["Perfect linear fit has zero standard error", "Non-zero regression standard error"]}>
-<Tab value="Perfect linear fit has zero standard error">
-<FunctionSandbox
-  title="Perfect linear fit has zero standard error"
-  formula={`=STEYX({2,4,6},{1,2,3})`}
+<FunctionExample
+  title={"Describe a linear fit between paired x and y observations."}
+  formula={"=STEYX({2,5,6,9},{1,2,3,4})"}
+  grid={{}}
+  expected={"0.632455532033676"}
+/>
+
+<FunctionExample
+  title={"Reverse the order of the y series while leaving x unchanged."}
+  formula={"=STEYX({9,6,5,2},{1,2,3,4})"}
+  grid={{}}
+  expected={"0.632455532033676"}
+/>
+
+<FunctionExample
+  title={"Evaluate a series whose observations lie exactly on a line."}
+  formula={"=STEYX({2,4,6},{1,2,3})"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-<Tab value="Non-zero regression standard error">
-<FunctionSandbox
-  title="Non-zero regression standard error"
-  formula={`=STEYX({2,5,7},{1,2,3})`}
+<FunctionExample
+  title={"The known x and y series must contain corresponding observations."}
+  formula={"=STEYX({2,5,6,9},{1,2,3})"}
   grid={{}}
-  expected={"0.408248290463863"}
+  expected={"#N/A"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Non-zero regression standard error"}
+  formula={"=STEYX({2,5,7},{1,2,3})"}
+  grid={{}}
+  expected={"0.408248290463862"}
+/>
 
-## Related functions
+## Implementation
 
-- [CORREL](/docs/reference/functions/stats/correl)
-- [COVARIANCE.P](/docs/reference/functions/stats/covariance-p)
-- [COVARIANCE.S](/docs/reference/functions/stats/covariance-s)
-- [INTERCEPT](/docs/reference/functions/stats/intercept)
-- [PEARSON](/docs/reference/functions/stats/pearson)
-- [RSQ](/docs/reference/functions/stats/rsq)
-
-## Runtime metadata
-
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/steyx" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

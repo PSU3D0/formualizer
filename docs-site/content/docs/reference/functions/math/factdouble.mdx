@@ -1,39 +1,63 @@
 ---
 title: "FACTDOUBLE"
-description: "FACTDOUBLE: Returns the double factorial of a number."
+seoTitle: "FACTDOUBLE function: formula syntax and examples"
+description: "Returns the double factorial of a number. =FACTDOUBLE(number)"
 ---
-
-<FunctionPageSchema id="math/factdouble" />
-
-## Summary
 
 Returns the double factorial of a number.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=FACTDOUBLE(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
 ## Examples
 
-<FunctionSandbox
-  title="Odd double factorial"
-  formula={`=FACTDOUBLE(7)`}
+<FunctionExample
+  title={"Evaluate the factorial product for a positive odd integer."}
+  formula={"=FACTDOUBLE(7)"}
   grid={{}}
   expected={"105"}
+/>
+
+<FunctionExample
+  title={"Pass a fractional value to see how the input is truncated."}
+  formula={"=FACTDOUBLE(6.9)"}
+  grid={{}}
+  expected={"48"}
+/>
+
+<FunctionExample
+  title={"Evaluate the product at zero."}
+  formula={"=FACTDOUBLE(0)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative input is outside the supported domain."}
+  formula={"=FACTDOUBLE(-3)"}
+  grid={{}}
+  expected={"#NUM!"}
 />
 
 ## Related functions
 
 - [FACT](/docs/reference/functions/math/fact)
 - [COMBIN](/docs/reference/functions/math/combin)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### What does FACTDOUBLE do with 0 or -1?
 It returns 1, matching spreadsheet double-factorial conventions.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/factdouble" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/combinatorics.rs)

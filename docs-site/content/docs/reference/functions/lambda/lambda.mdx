@@ -1,13 +1,27 @@
 ---
 title: "LAMBDA"
-description: "LAMBDA: Creates an anonymous callable that can be invoked with spreadsheet arguments."
+seoTitle: "LAMBDA function: formula syntax and examples"
+description: "Creates an anonymous callable that can be invoked with spreadsheet arguments. =LAMBDA([parameter1, ...], calculation)"
 ---
 
-<FunctionPageSchema id="lambda/lambda" />
-
-## Summary
+Creates an anonymous callable that can be invoked with spreadsheet arguments.
 
 `LAMBDA` captures its defining local scope and returns a reusable function value.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LAMBDA([parameter1, ...], calculation)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `parameter1` | any | Optional | — |
+| `calculation` | any | Required | — |
+
+Accepts a variable number of arguments. Minimum: 1.
 
 ## Remarks
  - All arguments except the last are parameter names; the last argument is the body expression.
@@ -15,51 +29,71 @@ description: "LAMBDA: Creates an anonymous callable that can be invoked with spr
  - Invocation arity must exactly match the declared parameter count.
  - Returning an uninvoked lambda as a final cell value yields a `#CALC!` in evaluation.
 
+## Differences from Excel
+ Excel-style immediate invocation, such as `LAMBDA(x,x+1)(1)`, returns `#N/IMPL!` in
+ Formualizer. Bind the LAMBDA to a name with LET before invoking it.
+
 ## Examples
 
-<Tabs items={["Inline lambda invocation", "Lambda captures outer LET bindings", "Duplicate parameter names are invalid"]}>
-<Tab value="Inline lambda invocation">
-<FunctionSandbox
-  title="Inline lambda invocation"
-  formula={`=LAMBDA(x,x+1)(41)`}
+<FunctionExample
+  title={"Bind a one-parameter calculation to a local name and invoke it."}
+  formula={"=LET(double,LAMBDA(amount,amount*2),double(7))"}
+  grid={{}}
+  expected={"14"}
+/>
+
+<FunctionExample
+  title={"Invoke a local calculation with separate price and quantity arguments."}
+  formula={"=LET(total,LAMBDA(price,quantity,price*quantity),total(7,3))"}
+  grid={{}}
+  expected={"21"}
+/>
+
+<FunctionExample
+  title={"Invoke a locally bound calculation that has no parameters."}
+  formula={"=LET(answer,LAMBDA(42),answer())"}
   grid={{}}
   expected={"42"}
 />
-</Tab>
 
-<Tab value="Lambda captures outer LET bindings">
-<FunctionSandbox
-  title="Lambda captures outer LET bindings"
-  formula={`=LET(k,10,addk,LAMBDA(n,n+k),addk(5))`}
+<FunctionExample
+  title={"An error in the body is returned when the locally bound function is invoked."}
+  formula={"=LET(double,LAMBDA(amount,amount/0),double(7))"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Inline invocation returns an unsupported operation error"}
+  formula={"=LAMBDA(x,x+1)(41)"}
+  grid={{}}
+  expected={"#N/IMPL!"}
+/>
+
+<FunctionExample
+  title={"Lambda captures outer LET bindings"}
+  formula={"=LET(k,10,addk,LAMBDA(n,n+k),addk(5))"}
   grid={{}}
   expected={"15"}
 />
-</Tab>
 
-<Tab value="Duplicate parameter names are invalid">
-<FunctionSandbox
-  title="Duplicate parameter names are invalid"
-  formula={`=LAMBDA(x,x,x+1)`}
+<FunctionExample
+  title={"Duplicate parameter names are invalid"}
+  formula={"=LAMBDA(x,x,x+1)"}
   grid={{}}
   expected={"#VALUE!"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [LET](/docs/reference/functions/lambda/let)
 - [IF](/docs/reference/functions/logical/if)
 - [SUM](/docs/reference/functions/math/sum)
-- [AND](/docs/reference/functions/logical/and)
-- [OR](/docs/reference/functions/logical/or)
-- [IFS](/docs/reference/functions/logical-ext/ifs)
 
 ## FAQ
 
 ### Why does =LAMBDA(x,x+1) return #CALC! instead of a number?
-LAMBDA returns a callable value. In a cell result position, it must be invoked, for example =LAMBDA(x,x+1)(1).
+LAMBDA returns a callable value. In a cell result position, invoke a local binding such as =LET(inc,LAMBDA(x,x+1),inc(1)).
 
 ### Does a LAMBDA read outer LET variables at call time or definition time?
 Definition time. The closure captures its lexical environment when created.
@@ -67,8 +101,6 @@ Definition time. The closure captures its lexical environment when created.
 ### Can I call a LAMBDA with fewer or extra arguments?
 No. Invocation arity must match the declared parameter count exactly, or #VALUE! is returned.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lambda/lambda" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lambda.rs)

@@ -1,60 +1,92 @@
 ---
 title: "XNPV"
-description: "XNPV: Calculates annualized net present value for irregularly dated cash flows."
+seoTitle: "XNPV function: formula syntax and examples"
+description: "Calculates annualized net present value for irregularly dated cash flows. =XNPV(rate, values, dates)"
 ---
 
-<FunctionPageSchema id="financial/xnpv" />
-
-## Summary
+Calculates annualized net present value for irregularly dated cash flows.
 
 Discounting uses an actual-day offset divided by 365 from the first provided date.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=XNPV(rate, values, dates)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `values` | any | Required | — |
+| `dates` | any | Required | — |
 
 ## Remarks
  - `rate` is an annual discount rate.
  - Cash-flow sign convention: outflows are negative and inflows are positive.
  - `values` and `dates` are flattened to numeric entries; non-numeric entries are ignored.
+
+## Error cases
+
  - Scalar error inputs are propagated; callable inputs return `#CALC!`.
  - Returns `#NUM!` when `values` and `dates` lengths differ or no numeric pair exists.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=XNPV(0.10, {-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})`}
-  grid={{}}
-  expected={"null"}
+<FunctionExample
+  title={"Discount the cash flows according to their actual dates."}
+  formula={"=XNPV(0.05,A1:A3,B1:B3)"}
+  grid={{"A1":"-100","A2":"60","A3":"55","B1":"=DATE(2024,1,1)","B2":"=DATE(2024,9,1)","B3":"=DATE(2025,5,1)"}}
+  expected={"9.61515964938344"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=XNPV(0.08, {-5000,1200,1800,2400}, {0,180,365,730})`}
-  grid={{}}
-  expected={"null"}
+<FunctionExample
+  title={"Recalculate the value with the final cash flow removed."}
+  formula={"=XNPV(0.05,A1:A2,B1:B2)"}
+  grid={{"A1":"-100","A2":"60","B1":"=DATE(2024,1,1)","B2":"=DATE(2024,9,1)"}}
+  expected={"-41.9253837003986"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A zero discount rate leaves the signed cash flows undiscounted."}
+  formula={"=XNPV(0,A1:A3,B1:B3)"}
+  grid={{"A1":"-100","A2":"60","A3":"55","B1":"=DATE(2024,1,1)","B2":"=DATE(2024,9,1)","B3":"=DATE(2025,5,1)"}}
+  expected={"15"}
+/>
+
+<FunctionExample
+  title={"Every cash flow needs a date in the corresponding position."}
+  formula={"=XNPV(0.05,A1:A3,B1:B2)"}
+  grid={{"A1":"-100","A2":"60","A3":"55","B1":"=DATE(2024,1,1)","B2":"=DATE(2024,9,1)"}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Discount four receipts spaced 365 days apart at an annual rate of 10%."}
+  formula={"=XNPV(0.10, {-10000,2750,4250,3250,2750}, {0,365,730,1095,1460})"}
+  grid={{}}
+  expected={"332.456799398946"}
+/>
+
+<FunctionExample
+  title={"Discount three unequally spaced receipts at an annual rate of 8% and include the initial outlay."}
+  formula={"=XNPV(0.08, {-5000,1200,1800,2400}, {0,180,365,730})"}
+  grid={{}}
+  expected={"-120.410787997008"}
+/>
 
 ## Related functions
 
 - [NPV](/docs/reference/functions/financial/npv)
 - [XIRR](/docs/reference/functions/financial/xirr)
 - [MIRR](/docs/reference/functions/financial/mirr)
-- [PDURATION](/docs/reference/functions/financial/pduration)
-- [RRI](/docs/reference/functions/financial/rri)
-- [SLN](/docs/reference/functions/financial/sln)
 
 ## FAQ
 
 ### How are dates interpreted in `XNPV`?
 Each cash flow is discounted by `(date_i - first_date) / 365`, so dates must align one-to-one with values.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/xnpv" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

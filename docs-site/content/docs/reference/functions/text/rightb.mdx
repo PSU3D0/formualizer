@@ -1,19 +1,63 @@
 ---
 title: "RIGHTB"
-description: "RIGHTB: Returns the rightmost characters using non-DBCS byte-compatible semantics."
+seoTitle: "RIGHTB function: formula syntax and examples"
+description: "Returns the rightmost characters using non-DBCS byte-compatible semantics. =RIGHTB(text, [num_bytes])"
 ---
 
-<FunctionPageSchema id="text/rightb" />
-
-## Summary
+Returns the rightmost characters using non-DBCS byte-compatible semantics.
 
 In Formualizer's invariant locale, RIGHTB delegates to RIGHT.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=RIGHTB(text, [num_bytes])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `num_bytes` | any | Optional | — |
+
+## How it works
+
+Delegates to RIGHT. Takes up to the final n Unicode scalar characters in Formualizer’s invariant locale. At zero it returns empty text, and a negative count is invalid.
+
 ## Examples
 
-<FunctionSandbox
-  title="Right byte-compatible characters"
-  formula={`=RIGHTB("hello",2)`}
+<FunctionExample
+  title={"Select é and 界 from the right using two character positions."}
+  formula={"=RIGHTB(\"xyzé界\",2)"}
+  grid={{}}
+  expected={"é界"}
+/>
+
+<FunctionExample
+  title={"With the default count, return the final character 界."}
+  formula={"=RIGHTB(\"xyzé界\")"}
+  grid={{}}
+  expected={"界"}
+/>
+
+<FunctionExample
+  title={"Taking zero characters gives empty text."}
+  formula={"=RIGHTB(\"xyzé界\",0)"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"A negative count cannot select a suffix."}
+  formula={"=RIGHTB(\"xyzé界\",-1)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Right byte-compatible characters"}
+  formula={"=RIGHTB(\"hello\",2)"}
   grid={{}}
   expected={"lo"}
 />
@@ -23,17 +67,12 @@ In Formualizer's invariant locale, RIGHTB delegates to RIGHT.
 - [RIGHT](/docs/reference/functions/text/right)
 - [LEFTB](/docs/reference/functions/text/leftb)
 - [MIDB](/docs/reference/functions/text/midb)
-- [CONCAT](/docs/reference/functions/text/concat)
-- [CONCATENATE](/docs/reference/functions/text/concatenate)
-- [LEFT](/docs/reference/functions/text/left)
 
 ## FAQ
 
 ### Does RIGHTB count DBCS bytes?
 Not currently. In the invariant locale it matches RIGHT.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/rightb" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/byte.rs)

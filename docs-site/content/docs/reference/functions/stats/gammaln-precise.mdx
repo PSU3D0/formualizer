@@ -1,25 +1,62 @@
 ---
 title: "GAMMALN.PRECISE"
-description: "GAMMALN.PRECISE: Returns the natural logarithm of the gamma function using Excel's precise naming variant."
+seoTitle: "GAMMALN.PRECISE function: formula syntax and examples"
+description: "Returns the natural logarithm of the gamma function using Excel's precise naming variant. =GAMMALN.PRECISE(x)"
 ---
-
-<FunctionPageSchema id="stats/gammaln-precise" />
-
-## Summary
 
 Returns the natural logarithm of the gamma function using Excel's precise naming variant.
 
-## returns: 3.1780538303479458
- =GAMMALN.PRECISE(5)
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=GAMMALN.PRECISE(x)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+
+## How it works
+
+Evaluates ln(Γ(x)) on positive real inputs. Γ(x) continues the factorial through Γ(n) = (n − 1)! for positive integers. The real function used here excludes zero and negative arguments.
 
 ## Examples
 
-<FunctionSandbox
-  title="Precise log gamma at 5"
-  formula={`=GAMMALN.PRECISE(5)`}
+<FunctionExample
+  title={"Find the logarithm of the extended factorial at x = 4."}
+  formula={"=GAMMALN.PRECISE(4)"}
   grid={{}}
-  expected={"3.1780538303479458"}
+  expected={"1.79175946922805"}
+/>
+
+<FunctionExample
+  title={"At x = 1/2 the logarithm is half of ln(π)."}
+  formula={"=GAMMALN.PRECISE(0.5)"}
+  grid={{}}
+  expected={"0.5723649429247"}
+/>
+
+<FunctionExample
+  title={"At Γ(1), the engine approximation gives a tiny negative logarithm instead of zero."}
+  formula={"=GAMMALN.PRECISE(1)"}
+  grid={{}}
+  expected={"-8.88178419700125E-16"}
+/>
+
+<FunctionExample
+  title={"A zero argument is outside the supported domain."}
+  formula={"=GAMMALN.PRECISE(0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Precise log gamma at 5"}
+  formula={"=GAMMALN.PRECISE(5)"}
+  grid={{}}
+  expected={"3.17805383034794"}
 />
 
 ## Related functions
@@ -27,17 +64,12 @@ Returns the natural logarithm of the gamma function using Excel's precise naming
 - [GAMMALN](/docs/reference/functions/stats/gammaln)
 - [GAMMA](/docs/reference/functions/stats/gamma)
 - [LN](/docs/reference/functions/math/ln)
-- [FISHER](/docs/reference/functions/stats/fisher)
-- [FISHERINV](/docs/reference/functions/stats/fisherinv)
-- [GAUSS](/docs/reference/functions/stats/gauss)
 
 ## FAQ
 
 ### How does GAMMALN.PRECISE differ here?
 This implementation uses the same core log-gamma calculation as GAMMALN, matching Excel's function naming split.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/gammaln-precise" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

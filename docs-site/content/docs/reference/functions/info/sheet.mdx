@@ -1,62 +1,69 @@
 ---
 title: "SHEET"
-description: "Returns the 1-based sheet index for the current sheet or a reference."
+seoTitle: "SHEET function: formula syntax and examples"
+description: "Returns the 1-based sheet index for the current sheet or a reference. =SHEET([reference])"
 ---
 
-<FunctionPageSchema id="info/sheet" />
-
-## Summary
+Returns the 1-based sheet index for the current sheet or a reference.
 
 With no argument, returns the index of the sheet containing the formula. With
  a reference or sheet-name text argument, returns that sheet's index.
 
-
-
-
-
-
-
 Returns the 1-based sheet index for the current sheet or a reference.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SHEET([reference])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `reference` | any | Optional | — |
 
 ## Examples
 
-<Tabs items={["Current sheet index", "Referenced sheet index"]}>
-<Tab value="Current sheet index">
-<FunctionSandbox
-  title="Current sheet index"
-  formula={`=SHEET()`}
+<FunctionExample
+  title={"Use the default based on the workbook containing the formula."}
+  formula={"=SHEET()"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Referenced sheet index">
-<FunctionSandbox
-  title="Referenced sheet index"
-  formula={`=SHEET(A1)`}
+<FunctionExample
+  title={"Supply a reference on a second sheet."}
+  formula={"=SHEET(Sheet2!A1)"}
+  grid={{"Sheet2!A1":"8"}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Evaluate a reference to the first sheet."}
+  formula={"=SHEET(A1)"}
+  grid={{"A1":"7"}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"Referenced sheet index"}
+  formula={"=SHEET(A1)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SHEETS](/docs/reference/functions/info/sheets)
 - [ISREF](/docs/reference/functions/info/isref)
 - [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [ISBLANK](/docs/reference/functions/info/isblank)
-- [ISERR](/docs/reference/functions/info/iserr)
 
 ## FAQ
 
 ### Are sheet indexes 0-based?
 No. SHEET returns Excel-style 1-based sheet indexes.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/sheet" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

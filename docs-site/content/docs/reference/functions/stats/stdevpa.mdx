@@ -1,25 +1,65 @@
 ---
 title: "STDEVPA"
-description: "STDEVPA: Returns the population standard deviation using A-variant coercion semantics."
+seoTitle: "STDEVPA function: formula syntax and examples"
+description: "Returns the population standard deviation using A-variant coercion semantics. =STDEVPA(value1, [value2], ...)"
 ---
-
-<FunctionPageSchema id="stats/stdevpa" />
-
-## Summary
 
 Returns the population standard deviation using A-variant coercion semantics.
 
-## returns: 0.816496580927726
- =STDEVPA(TRUE,2,"x")
- ```
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=STDEVPA(value1, [value2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value1` | number (range) | Required | — |
+| `value2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Differences from Excel
+
+Formualizer accepts calls such as `(TRUE,2,"x")`. Excel returns `#VALUE!` for the unparseable text supplied directly.
 
 ## Examples
 
-<FunctionSandbox
-  title="Population deviation with coerced values"
-  formula={`=STDEVPA(TRUE,2,"x")`}
+<FunctionExample
+  title={"Find the population standard deviation with logical and text coercion of 4, 8 and 12."}
+  formula={"=STDEVPA(4,8,12)"}
   grid={{}}
-  expected={"0.816496580927726"}
+  expected={"3.2659863237109"}
+/>
+
+<FunctionExample
+  title={"Pass one three-element array to compute the population standard deviation with logical and text coercion."}
+  formula={"=STDEVPA({4,8,12})"}
+  grid={{}}
+  expected={"3.2659863237109"}
+/>
+
+<FunctionExample
+  title={"One numeric cell value gives a population standard deviation of zero."}
+  formula={"=STDEVPA(7)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A division error among 4 and 12 prevents computing the population standard deviation with logical and text coercion."}
+  formula={"=STDEVPA(4,1/0,12)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Treat 4, TRUE and Pending as a population of three values, with TRUE and text contributing 1 and 0."}
+  formula={"=STDEVPA(A1:A3)"}
+  grid={{"A1":"4","A2":"TRUE","A3":"\"Pending\""}}
+  expected={"1.69967317119759"}
 />
 
 ## Related functions
@@ -27,17 +67,12 @@ Returns the population standard deviation using A-variant coercion semantics.
 - [STDEVA](/docs/reference/functions/stats/stdeva)
 - [VARPA](/docs/reference/functions/stats/varpa)
 - [STDEV.P](/docs/reference/functions/stats/stdev-p)
-- [AVEDEV](/docs/reference/functions/stats/avedev)
-- [AVERAGEA](/docs/reference/functions/stats/averagea)
-- [DEVSQ](/docs/reference/functions/stats/devsq)
 
 ## FAQ
 
 ### What is the difference between STDEVA and STDEVPA?
 STDEVA uses the sample denominator n-1, while STDEVPA uses the population denominator n.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/stdevpa" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

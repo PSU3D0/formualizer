@@ -1,13 +1,22 @@
 ---
 title: "EVEN"
-description: "Rounds a number away from zero to the nearest even integer."
+seoTitle: "EVEN function: formula syntax and examples"
+description: "Rounds a number away from zero to the nearest even integer. =EVEN(number)"
 ---
 
-<FunctionPageSchema id="math/even" />
-
-## Summary
-
 Rounds a number away from zero to the nearest even integer.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=EVEN(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
 
 ## Remarks
  - Values already equal to an even integer stay unchanged.
@@ -16,43 +25,59 @@ Rounds a number away from zero to the nearest even integer.
 
 ## Examples
 
-<Tabs items={["Round a positive number to even", "Round a negative number away from zero"]}>
-<Tab value="Round a positive number to even">
-<FunctionSandbox
-  title="Round a positive number to even"
-  formula={`=EVEN(3)`}
+<FunctionExample
+  title={"Evaluate a negative number with a fractional part."}
+  formula={"=EVEN(-4.7)"}
+  grid={{}}
+  expected={"-6"}
+/>
+
+<FunctionExample
+  title={"Compare the result on the positive side of zero."}
+  formula={"=EVEN(4.7)"}
+  grid={{}}
+  expected={"6"}
+/>
+
+<FunctionExample
+  title={"Evaluate the function at the zero boundary."}
+  formula={"=EVEN(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A nonnumeric text value cannot be used as the number."}
+  formula={"=EVEN(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Round a positive number to even"}
+  formula={"=EVEN(3)"}
   grid={{}}
   expected={"4"}
 />
-</Tab>
 
-<Tab value="Round a negative number away from zero">
-<FunctionSandbox
-  title="Round a negative number away from zero"
-  formula={`=EVEN(-1.1)`}
+<FunctionExample
+  title={"Round a negative number away from zero"}
+  formula={"=EVEN(-1.1)"}
   grid={{}}
   expected={"-2"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [ODD](/docs/reference/functions/math/odd)
 - [ROUNDUP](/docs/reference/functions/math/roundup)
 - [MROUND](/docs/reference/functions/math/mround)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
 
 ## FAQ
 
 ### Does EVEN ever round toward zero?
 No. It always rounds away from zero to the nearest even integer.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/even" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/numeric.rs)

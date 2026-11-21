@@ -1,60 +1,91 @@
 ---
 title: "IRR"
-description: "IRR: Calculates periodic internal rate of return for regularly spaced cash flows."
+seoTitle: "IRR function: formula syntax and examples"
+description: "Calculates periodic internal rate of return for regularly spaced cash flows. =IRR(values, [guess])"
 ---
 
-<FunctionPageSchema id="financial/irr" />
-
-## Summary
+Calculates periodic internal rate of return for regularly spaced cash flows.
 
 The function iteratively finds the per-period rate where discounted cash flows sum to zero.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IRR(values, [guess])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `values` | any | Required | — |
+| `guess` | number | Optional | — |
 
 ## Remarks
  - Output is a rate per cash-flow period (not automatically annualized).
  - Cash-flow sign convention: outflows are negative and inflows are positive.
  - Non-numeric cells in arrays/ranges are ignored; direct scalar errors are propagated.
+
+## Error cases
+
  - A callable value input returns `#CALC!`.
  - Returns `#NUM!` if fewer than two numeric cash flows are available, if derivative is near zero, or if iteration does not converge.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=IRR({-10000,3000,4200,6800})`}
+<FunctionExample
+  title={"Find the rate for an investment with three periodic inflows."}
+  formula={"=IRR({-100,40,50,30})"}
   grid={{}}
-  expected={"null"}
+  expected={"0.10133104877261"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=IRR({-5000,1200,1410,1875,1050}, 0.1)`}
+<FunctionExample
+  title={"Start the solver with a different rate guess."}
+  formula={"=IRR({-100,40,50,30},0.2)"}
   grid={{}}
-  expected={"null"}
+  expected={"0.101331048772609"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Use the minimum two cash flows, an outlay followed by a larger inflow."}
+  formula={"=IRR({-100,115})"}
+  grid={{}}
+  expected={"0.15"}
+/>
+
+<FunctionExample
+  title={"Cash flows all have the same sign, so there is no zero crossing."}
+  formula={"=IRR({100,40,50,30})"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the periodic return on a 10,000 outlay followed by three increasing receipts."}
+  formula={"=IRR({-10000,3000,4200,6800})"}
+  grid={{}}
+  expected={"0.163405600688989"}
+/>
+
+<FunctionExample
+  title={"Solve for the return on four receipts using 10% as the starting guess."}
+  formula={"=IRR({-5000,1200,1410,1875,1050}, 0.1)"}
+  grid={{}}
+  expected={"0.0418488760156776"}
+/>
 
 ## Related functions
 
 - [MIRR](/docs/reference/functions/financial/mirr)
 - [NPV](/docs/reference/functions/financial/npv)
 - [XIRR](/docs/reference/functions/financial/xirr)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
-- [DB](/docs/reference/functions/financial/db)
 
 ## FAQ
 
 ### Why can `IRR` return `#NUM!` even with numeric cash flows?
 The Newton solve can fail if derivative terms become unstable or no convergent root is reached from the chosen guess.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/irr" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

@@ -1,13 +1,29 @@
 ---
 title: "BIN2OCT"
-description: "BIN2OCT: Converts a binary text value to octal text."
+seoTitle: "BIN2OCT function: formula syntax and examples"
+description: "Converts a binary text value to octal text. =BIN2OCT(number, [places])"
 ---
 
-<FunctionPageSchema id="engineering/bin2oct" />
-
-## Summary
+Converts a binary text value to octal text.
 
 Supports optional left-padding through the `places` argument.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=BIN2OCT(number, [places])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+| `places` | number | Optional | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Input must be binary text up to 10 digits and may be signed two's-complement.
@@ -16,43 +32,59 @@ Supports optional left-padding through the `places` argument.
 
 ## Examples
 
-<Tabs items={["Convert binary to octal", "Pad octal output"]}>
-<Tab value="Convert binary to octal">
-<FunctionSandbox
-  title="Convert binary to octal"
-  formula={`=BIN2OCT("111111")`}
+<FunctionExample
+  title={"Convert a binary value using the shortest output."}
+  formula={"=BIN2OCT(\"1010\")"}
+  grid={{}}
+  expected={"12"}
+/>
+
+<FunctionExample
+  title={"Ask for five output places, padding on the left."}
+  formula={"=BIN2OCT(\"1010\",5)"}
+  grid={{}}
+  expected={"00012"}
+/>
+
+<FunctionExample
+  title={"Convert zero with a one-place width."}
+  formula={"=BIN2OCT(\"0\",1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The input contains a digit outside base two."}
+  formula={"=BIN2OCT(\"102\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert binary to octal"}
+  formula={"=BIN2OCT(\"111111\")"}
   grid={{}}
   expected={"77"}
 />
-</Tab>
 
-<Tab value="Pad octal output">
-<FunctionSandbox
-  title="Pad octal output"
-  formula={`=BIN2OCT("111111",4)`}
+<FunctionExample
+  title={"Pad octal output"}
+  formula={"=BIN2OCT(\"111111\",4)"}
   grid={{}}
   expected={"0077"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [OCT2BIN](/docs/reference/functions/engineering/oct2bin)
 - [BIN2DEC](/docs/reference/functions/engineering/bin2dec)
 - [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
-- [DEC2BIN](/docs/reference/functions/engineering/dec2bin)
-- [DEC2HEX](/docs/reference/functions/engineering/dec2hex)
 
 ## FAQ
 
 ### How are signed 10-bit binaries handled by `BIN2OCT`?
 They are first decoded as signed decimal and then re-encoded to octal with two's-complement output for negatives.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/bin2oct" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

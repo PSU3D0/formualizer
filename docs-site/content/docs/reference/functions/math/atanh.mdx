@@ -1,58 +1,85 @@
 ---
 title: "ATANH"
-description: "ATANH: Returns the inverse hyperbolic tangent of a number."
+seoTitle: "ATANH function: formula syntax and examples"
+description: "Returns the inverse hyperbolic tangent of a number. =ATANH(number)"
 ---
 
-<FunctionPageSchema id="math/atanh" />
-
-## Summary
+Returns the inverse hyperbolic tangent of a number.
 
 `ATANH` is the inverse of `TANH` on the open interval `(-1, 1)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ATANH(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
+
+## How it works
+
+Inverts hyperbolic tangent. It equals ln((1 + x) / (1 − x)) / 2 for −1 &lt; x &lt; 1, with singularities at both endpoints.
 
 ## Remarks
  - Domain: input must be strictly between `-1` and `1`.
  - Radians: this function is hyperbolic, so the output is not an angle in radians.
+
+## Error cases
+
  - Errors: returns `#NUM!` when the input is `&lt;= -1` or `&gt;= 1`.
 
 ## Examples
 
-<Tabs items={["Inverse hyperbolic tangent of one half", "Domain boundary error"]}>
-<Tab value="Inverse hyperbolic tangent of one half">
-<FunctionSandbox
-  title="Inverse hyperbolic tangent of one half"
-  formula={`=ATANH(0.5)`}
+<FunctionExample
+  title={"Find the input whose hyperbolic tangent is one half."}
+  formula={"=ATANH(0.5)"}
   grid={{}}
-  expected={"0.5493061443340548"}
+  expected={"0.549306144334055"}
 />
-</Tab>
 
-<Tab value="Domain boundary error">
-<FunctionSandbox
-  title="Domain boundary error"
-  formula={`=ATANH(1)`}
+<FunctionExample
+  title={"Negating the target reverses the inverse hyperbolic tangent."}
+  formula={"=ATANH(-0.5)"}
+  grid={{}}
+  expected={"-0.549306144334055"}
+/>
+
+<FunctionExample
+  title={"A hyperbolic tangent of zero comes from input zero."}
+  formula={"=ATANH(0)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the inverse hyperbolic tangent."}
+  formula={"=ATANH(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Domain boundary error"}
+  formula={"=ATANH(1)"}
   grid={{}}
   expected={"#NUM!"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [TANH](/docs/reference/functions/math/tanh)
 - [ATAN](/docs/reference/functions/math/atan)
 - [ASINH](/docs/reference/functions/math/asinh)
-- [ACOSH](/docs/reference/functions/math/acosh)
-- [DEGREES](/docs/reference/functions/math/degrees)
-- [RADIANS](/docs/reference/functions/math/radians)
 
 ## FAQ
 
 ### Which inputs are invalid for ATANH?
 ATANH is only defined on (-1, 1); endpoints and outside values return #NUM!.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/atanh" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

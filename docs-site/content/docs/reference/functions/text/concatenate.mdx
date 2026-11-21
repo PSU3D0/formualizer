@@ -1,13 +1,29 @@
 ---
 title: "CONCATENATE"
-description: "CONCATENATE: Legacy function that joins multiple scalar values as text."
+seoTitle: "CONCATENATE function: formula syntax and examples"
+description: "Legacy function that joins multiple scalar values as text. =CONCATENATE(text1, [text2], ...)"
 ---
 
-<FunctionPageSchema id="text/concatenate" />
-
-## Summary
-
 Legacy function that joins multiple scalar values as text.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CONCATENATE(text1, [text2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text1` | any | Required | — |
+| `text2` | any | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Range and array arguments use only their top-left value.
@@ -17,43 +33,59 @@ Legacy function that joins multiple scalar values as text.
 
 ## Examples
 
-<Tabs items={["Legacy concatenate behavior", "Boolean coercion"]}>
-<Tab value="Legacy concatenate behavior">
-<FunctionSandbox
-  title="Legacy concatenate behavior"
-  formula={`=CONCATENATE("Jan", "-", 2026)`}
+<FunctionExample
+  title={"Join region and year labels with an explicit separator."}
+  formula={"=CONCATENATE(\"East\",\" \",\"2024\")"}
+  grid={{}}
+  expected={"East 2024"}
+/>
+
+<FunctionExample
+  title={"Combine text and numeric values in argument order."}
+  formula={"=CONCATENATE(\"Team \",42,\" score \",8)"}
+  grid={{}}
+  expected={"Team 42 score 8"}
+/>
+
+<FunctionExample
+  title={"A single argument is already the entire concatenated result."}
+  formula={"=CONCATENATE(\"Only item\")"}
+  grid={{}}
+  expected={"Only item"}
+/>
+
+<FunctionExample
+  title={"A division-by-zero error among the inputs propagates."}
+  formula={"=CONCATENATE(\"East\",1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Legacy concatenate behavior"}
+  formula={"=CONCATENATE(\"Jan\", \"-\", 2026)"}
   grid={{}}
   expected={"Jan-2026"}
 />
-</Tab>
 
-<Tab value="Boolean coercion">
-<FunctionSandbox
-  title="Boolean coercion"
-  formula={`=CONCATENATE("Flag:", TRUE)`}
+<FunctionExample
+  title={"Boolean coercion"}
+  formula={"=CONCATENATE(\"Flag:\", TRUE)"}
   grid={{}}
   expected={"Flag:TRUE"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [CONCAT](/docs/reference/functions/text/concat)
 - [TEXTJOIN](/docs/reference/functions/text/textjoin)
 - [VALUE](/docs/reference/functions/text/value)
-- [LEFT](/docs/reference/functions/text/left)
-- [LEFTB](/docs/reference/functions/text/leftb)
-- [NUMBERVALUE](/docs/reference/functions/text/numbervalue)
 
 ## FAQ
 
 ### Is CONCATENATE behavior different from CONCAT here?
 Yes. CONCAT expands ranges and arrays, while legacy CONCATENATE uses only the top-left value.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/concatenate" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/trim_case_concat.rs)

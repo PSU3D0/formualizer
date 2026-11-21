@@ -1,54 +1,80 @@
 ---
 title: "STANDARDIZE"
-description: "STANDARDIZE: Returns the z-score of `x` relative to a mean and standard deviation."
+seoTitle: "STANDARDIZE function: formula syntax and examples"
+description: "Returns the z-score of x relative to a mean and standard deviation. =STANDARDIZE(x, mean, standard_dev)"
 ---
 
-<FunctionPageSchema id="stats/standardize" />
-
-## Summary
+Returns the z-score of `x` relative to a mean and standard deviation.
 
 `STANDARDIZE` computes `(x - mean) / standard_dev`.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=STANDARDIZE(x, mean, standard_dev)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `mean` | number | Required | — |
+| `standard_dev` | number | Required | — |
+
 ## Remarks
  - `standard_dev` must be strictly greater than `0`.
- - Returns `#NUM!` when `standard_dev &lt;= 0`.
  - Positive output means `x` is above the mean; negative output means below.
  - Invalid numeric coercions propagate as spreadsheet errors.
 
+## Error cases
+
+ - Returns `#NUM!` when `standard_dev &lt;= 0`.
+
 ## Examples
 
-<Tabs items={["One standard deviation above the mean", "Exactly at the mean"]}>
-<Tab value="One standard deviation above the mean">
-<FunctionSandbox
-  title="One standard deviation above the mean"
-  formula={`=STANDARDIZE(42,40,2)`}
+<FunctionExample
+  title={"Express an observation four units above the mean on a standard-deviation scale."}
+  formula={"=STANDARDIZE(14,10,2)"}
   grid={{}}
-  expected={"1"}
+  expected={"2"}
 />
-</Tab>
 
-<Tab value="Exactly at the mean">
-<FunctionSandbox
-  title="Exactly at the mean"
-  formula={`=STANDARDIZE(100,100,10)`}
+<FunctionExample
+  title={"Compare with an observation the same distance below the mean."}
+  formula={"=STANDARDIZE(6,10,2)"}
+  grid={{}}
+  expected={"-2"}
+/>
+
+<FunctionExample
+  title={"An observation equal to the mean has a standardized score of zero."}
+  formula={"=STANDARDIZE(10,10,2)"}
   grid={{}}
   expected={"0"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A standard deviation of zero cannot serve as a divisor."}
+  formula={"=STANDARDIZE(14,10,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
 
-## Related functions
+<FunctionExample
+  title={"One standard deviation above the mean"}
+  formula={"=STANDARDIZE(42,40,2)"}
+  grid={{}}
+  expected={"1"}
+/>
 
-- [BINOM.INV](/docs/reference/functions/stats/binom-inv)
-- [CHISQ.DIST](/docs/reference/functions/stats/chisq-dist)
-- [CONFIDENCE.NORM](/docs/reference/functions/stats/confidence-norm)
-- [CONFIDENCE.T](/docs/reference/functions/stats/confidence-t)
-- [EXPON.DIST](/docs/reference/functions/stats/expon-dist)
-- [F.DIST.RT](/docs/reference/functions/stats/f-dist-rt)
+<FunctionExample
+  title={"Exactly at the mean"}
+  formula={"=STANDARDIZE(100,100,10)"}
+  grid={{}}
+  expected={"0"}
+/>
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="stats/standardize" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/mod.rs)

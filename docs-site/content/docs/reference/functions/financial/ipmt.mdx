@@ -1,60 +1,99 @@
 ---
 title: "IPMT"
-description: "IPMT: Returns the interest-only component of a payment for a specific period."
+seoTitle: "IPMT function: formula syntax and examples"
+description: "Returns the interest-only component of a payment for a specific period. =IPMT(rate, per, nper, pv, [fv], [type])"
 ---
 
-<FunctionPageSchema id="financial/ipmt" />
-
-## Summary
+Returns the interest-only component of a payment for a specific period.
 
 Use this with `PMT` or `PPMT` to break a fixed payment into interest and principal pieces.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IPMT(rate, per, nper, pv, [fv], [type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `per` | number | Required | — |
+| `nper` | number | Required | — |
+| `pv` | number | Required | — |
+| `fv` | number | Optional | — |
+| `type` | number | Optional | — |
+
+## Differences from Excel
+
+For some payments at the start of the period (type 1), Formualizer overstates the interest charge compared with Excel. For example, with a rate of 0.05/12, 24 payments, a principal of 5,000 and a zero future balance, the engine returns the same period-2 interest for types 0 and 1.
 
 ## Remarks
  - `rate` is the interest rate per payment period.
  - `per` is 1-based and must satisfy `1 &lt;= per &lt;= nper`.
  - Cash-flow sign convention: for a positive loan principal (`pv`), interest components are typically negative.
  - `type = 1` yields zero interest in period 1 (annuity-due first payment).
+
+## Error cases
+
  - Returns `#NUM!` when `per` is outside valid bounds.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=IPMT(0.06/12, 1, 360, 300000)`}
+<FunctionExample
+  title={"Break down the second payment on a two-year loan at five percent."}
+  formula={"=IPMT(0.05/12,2,24,5000)"}
   grid={{}}
-  expected={"null"}
+  expected={"-20.0061516027625"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=IPMT(0.06/12, 12, 360, 300000)`}
+<FunctionExample
+  title={"Leave a balance of 1,000 after the final end-of-period payment."}
+  formula={"=IPMT(0.05/12,2,24,5000,-1000,0)"}
   grid={{}}
-  expected={"null"}
+  expected={"-20.1715879488766"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Calculate the last payment in the schedule."}
+  formula={"=IPMT(0.05/12,24,24,5000)"}
+  grid={{}}
+  expected={"-0.910194807760771"}
+/>
+
+<FunctionExample
+  title={"A payment period beyond the end of the schedule is invalid."}
+  formula={"=IPMT(0.05/12,25,24,5000)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the interest portion of the first payment on a 30-year mortgage."}
+  formula={"=IPMT(0.06/12, 1, 360, 300000)"}
+  grid={{}}
+  expected={"-1500"}
+/>
+
+<FunctionExample
+  title={"Find the interest portion of the twelfth payment after eleven principal reductions."}
+  formula={"=IPMT(0.06/12, 12, 360, 300000)"}
+  grid={{}}
+  expected={"-1483.15729571457"}
+/>
 
 ## Related functions
 
 - [PMT](/docs/reference/functions/financial/pmt)
 - [PPMT](/docs/reference/functions/financial/ppmt)
 - [CUMIPMT](/docs/reference/functions/financial/cumipmt)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
-- [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
 
 ## FAQ
 
 ### Why is `IPMT` period 1 equal to zero for `type=1`?
 With beginning-of-period payments, the first payment occurs before interest accrues, so period-1 interest is zero.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/ipmt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

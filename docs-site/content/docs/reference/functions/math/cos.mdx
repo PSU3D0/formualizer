@@ -1,13 +1,26 @@
 ---
 title: "COS"
-description: "Returns the cosine of an angle in radians."
+seoTitle: "COS function: formula syntax and examples"
+description: "Returns the cosine of an angle in radians. =COS(number)"
 ---
 
-<FunctionPageSchema id="math/cos" />
-
-## Summary
-
 Returns the cosine of an angle in radians.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=COS(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Cosine is the horizontal coordinate on the unit circle at angle x, measured in radians. Its real domain is unrestricted.
 
 ## Remarks
  - Input must be in radians.
@@ -15,43 +28,52 @@ Returns the cosine of an angle in radians.
 
 ## Examples
 
-<Tabs items={["Cosine at zero", "Cosine at PI"]}>
-<Tab value="Cosine at zero">
-<FunctionSandbox
-  title="Cosine at zero"
-  formula={`=COS(0)`}
+<FunctionExample
+  title={"Read the unit-circle horizontal coordinate at half a radian."}
+  formula={"=COS(0.5)"}
+  grid={{}}
+  expected={"0.877582561890373"}
+/>
+
+<FunctionExample
+  title={"Opposite angles have the same horizontal coordinate."}
+  formula={"=COS(-0.5)"}
+  grid={{}}
+  expected={"0.877582561890373"}
+/>
+
+<FunctionExample
+  title={"At zero radians, the horizontal coordinate is one."}
+  formula={"=COS(0)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Cosine at PI">
-<FunctionSandbox
-  title="Cosine at PI"
-  formula={`=COS(PI())`}
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the cosine."}
+  formula={"=COS(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Cosine at PI"}
+  formula={"=COS(PI())"}
   grid={{}}
   expected={"-1"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SIN](/docs/reference/functions/math/sin)
 - [TAN](/docs/reference/functions/math/tan)
 - [PI](/docs/reference/functions/math/pi)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### Why can COS look wrong for degree values like 60?
 COS interprets 60 as radians, not degrees; use COS(RADIANS(60)).
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/cos" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

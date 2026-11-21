@@ -1,50 +1,74 @@
 ---
 title: "AVERAGEIFS"
-description: "AVERAGEIFS: Returns the average of cells that satisfy multiple criteria."
+seoTitle: "AVERAGEIFS function: formula syntax and examples"
+description: "Returns the average of cells that satisfy multiple criteria. =AVERAGEIFS(average_range, criteria_range1, criteria1, [(criteria_range2, criteria2), ...])"
 ---
 
-<FunctionPageSchema id="math/averageifs" />
-
-## Summary
+Returns the average of cells that satisfy multiple criteria.
 
 `AVERAGEIFS` filters by all criteria pairs, then averages matching numeric values.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=AVERAGEIFS(average_range, criteria_range1, criteria1, [(criteria_range2, criteria2), ...])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `average_range` | any | Required | — |
+| `criteria_range1` | any | Required | — |
+| `criteria1` | any | Required | — |
+| `criteria_range2` | any | Optional | — |
+| `criteria2` | any | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 3.
+
+## Differences from Excel
+
+Formualizer accepts array constants as ranges. Excel requires references. An invalid INDIRECT result in the result range can raise `#NAME?` in Formualizer, where Excel returns `#REF!`.
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - The first argument is the average target range.
  - Criteria are supplied in `(criteria_range, criteria)` pairs.
+
+## Error cases
+
  - If no numeric cells match, the function returns `#DIV/0!`.
 
 ## Examples
 
-<Tabs items={["Average with two criteria", "Average over inline arrays", "No matches returns divide-by-zero"]}>
-<Tab value="Average with two criteria">
-<FunctionSandbox
-  title="Average with two criteria"
-  formula={`=AVERAGEIFS(C1:C3, A1:A3, "East", B1:B3, ">=2025")`}
-  grid={{"A1":"East","A2":"East","A3":"West","B1":"2025","B2":"2024","B3":"2025","C1":"10","C2":"40","C3":"30"}}
+<FunctionExample
+  title={"Aggregate numbers from only the East records."}
+  formula={"=AVERAGEIFS(A1:A3,B1:B3,\"East\")"}
+  grid={{"A1":"10","A2":"50","A3":"20","B1":"\"East\"","B2":"\"West\"","B3":"\"East\""}}
+  expected={"15"}
+/>
+
+<FunctionExample
+  title={"Add a second criterion so both conditions must hold."}
+  formula={"=AVERAGEIFS(A1:A3,B1:B3,\"East\",C1:C3,\"<5\")"}
+  grid={{"A1":"10","A2":"50","A3":"20","B1":"\"East\"","B2":"\"West\"","B3":"\"East\"","C1":"2","C2":"4","C3":"6"}}
   expected={"10"}
 />
-</Tab>
 
-<Tab value="Average over inline arrays">
-<FunctionSandbox
-  title="Average over inline arrays"
-  formula={`=AVERAGEIFS({10,20,30}, {1,2,3}, ">=2")`}
-  grid={{}}
-  expected={"25"}
+<FunctionExample
+  title={"Aggregate the only row in a single-row data set."}
+  formula={"=AVERAGEIFS(A1:A1,B1:B1,\"East\",C1:C1,2)"}
+  grid={{"A1":"10","B1":"\"East\"","C1":"2"}}
+  expected={"10"}
 />
-</Tab>
 
-<Tab value="No matches returns divide-by-zero">
-<FunctionSandbox
-  title="No matches returns divide-by-zero"
-  formula={`=AVERAGEIFS({10,20}, {"A","B"}, "C")`}
-  grid={{}}
-  expected={"#DIV/0!"}
+<FunctionExample
+  title={"Average with two criteria"}
+  formula={"=AVERAGEIFS(C1:C3, A1:A3, \"East\", B1:B3, \">=2025\")"}
+  grid={{"A1":"\"East\"","A2":"\"East\"","A3":"\"West\"","B1":"2025","B2":"2024","B3":"2025","C1":"10","C2":"40","C3":"30"}}
+  expected={"10"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
@@ -52,8 +76,6 @@ description: "AVERAGEIFS: Returns the average of cells that satisfy multiple cri
 - [AVERAGE](/docs/reference/functions/math/average)
 - [SUMIFS](/docs/reference/functions/math/sumifs)
 - [COUNTIFS](/docs/reference/functions/math/countifs)
-- [SUMIF](/docs/reference/functions/math/sumif)
-- [SUM](/docs/reference/functions/math/sum)
 
 ## FAQ
 
@@ -63,8 +85,6 @@ It returns #DIV/0! when no matching numeric cells are available to average.
 ### Do non-numeric matched cells count in the average?
 No. Only numeric target cells contribute to sum and count.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/averageifs" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/criteria_aggregates.rs)

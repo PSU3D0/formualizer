@@ -16,6 +16,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,7 +26,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  reuse-pr-checks:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/reuse-pr-checks.yml
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    with:
+      workflow-file: bench-core.yml
+
   bench-core:
+    needs: reuse-pr-checks
+    if: ${{ !cancelled() && needs.reuse-pr-checks.outputs.reuse != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -69,3 +82,8 @@ jobs:
         cargo test -p formualizer-bench-core
         --features formualizer_runner
         --test parity_harness_smoke
+
+    - name: Record tested source tree
+      if: github.event_name == 'pull_request'
+      continue-on-error: true
+      uses: ./.github/actions/record-ci-tree

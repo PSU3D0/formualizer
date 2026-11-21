@@ -1,60 +1,93 @@
 ---
 title: "SUMPRODUCT"
-description: "SUMPRODUCT: Multiplies aligned values across arrays and returns the sum of those products."
+seoTitle: "SUMPRODUCT function: formula syntax and examples"
+description: "Multiplies aligned values across arrays and returns the sum of those products. =SUMPRODUCT(array1, [array2], ...)"
 ---
 
-<FunctionPageSchema id="math/sumproduct" />
-
-## Summary
+Multiplies aligned values across arrays and returns the sum of those products.
 
 `SUMPRODUCT` supports scalar or range inputs, applies broadcast semantics, and accumulates
  the product for each aligned cell position.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SUMPRODUCT(array1, [array2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `array1` | number (range) | Required | — |
+| `array2` | number (range) | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
 ## Remarks
- - Input shapes must be broadcast-compatible; otherwise `SUMPRODUCT` returns `#VALUE!`.
  - Non-numeric values are treated as `0` during multiplication.
  - Any explicit error value in the inputs propagates immediately.
 
+## Error cases
+
+ - Input shapes must be broadcast-compatible; otherwise `SUMPRODUCT` returns `#VALUE!`.
+
 ## Examples
 
-<Tabs items={["Pairwise sum of products", "Range-based sumproduct", "Text entries contribute zero"]}>
-<Tab value="Pairwise sum of products">
-<FunctionSandbox
-  title="Pairwise sum of products"
-  formula={`=SUMPRODUCT({1,2,3}, {4,5,6})`}
+<FunctionExample
+  title={"Multiply matching entries from two arrays and sum the products."}
+  formula={"=SUMPRODUCT({1,2,3},{5,10,15})"}
+  grid={{}}
+  expected={"70"}
+/>
+
+<FunctionExample
+  title={"Include a third array as another factor at each position."}
+  formula={"=SUMPRODUCT({1,2,3},{5,10,15},{2,2,2})"}
+  grid={{}}
+  expected={"140"}
+/>
+
+<FunctionExample
+  title={"One position in each input produces a single product."}
+  formula={"=SUMPRODUCT({4},{5})"}
+  grid={{}}
+  expected={"20"}
+/>
+
+<FunctionExample
+  title={"Unequal dimensions leave some positions without a matching factor."}
+  formula={"=SUMPRODUCT({1,2,3},{5,10})"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Pairwise sum of products"}
+  formula={"=SUMPRODUCT({1,2,3}, {4,5,6})"}
   grid={{}}
   expected={"32"}
 />
-</Tab>
 
-<Tab value="Range-based sumproduct">
-<FunctionSandbox
-  title="Range-based sumproduct"
-  formula={`=SUMPRODUCT(A1:A3, B1:B3)`}
+<FunctionExample
+  title={"Range-based sumproduct"}
+  formula={"=SUMPRODUCT(A1:A3, B1:B3)"}
   grid={{"A1":"2","A2":"3","A3":"4","B1":"10","B2":"20","B3":"30"}}
   expected={"200"}
 />
-</Tab>
 
-<Tab value="Text entries contribute zero">
-<FunctionSandbox
-  title="Text entries contribute zero"
-  formula={`=SUMPRODUCT({1,"x",3}, {1,1,1})`}
+<FunctionExample
+  title={"Text entries contribute zero"}
+  formula={"=SUMPRODUCT({1,\"x\",3}, {1,1,1})"}
   grid={{}}
   expected={"4"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SUM](/docs/reference/functions/math/sum)
 - [PRODUCT](/docs/reference/functions/stats/product)
 - [SUMIFS](/docs/reference/functions/math/sumifs)
-- [AVERAGE](/docs/reference/functions/math/average)
-- [MAX](/docs/reference/functions/math/max)
-- [MIN](/docs/reference/functions/math/min)
 
 ## FAQ
 
@@ -64,8 +97,6 @@ The argument arrays must be broadcast-compatible; incompatible shapes raise #VAL
 ### How are text values handled in multiplication?
 Non-numeric values are treated as 0, unless an explicit error is present.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sumproduct" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/aggregate.rs)

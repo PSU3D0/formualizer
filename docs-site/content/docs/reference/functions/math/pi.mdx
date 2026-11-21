@@ -1,13 +1,16 @@
 ---
 title: "PI"
-description: "PI: Returns the mathematical constant π."
+seoTitle: "PI function: formula syntax and examples"
+description: "Returns the mathematical constant π. =PI()"
 ---
 
-<FunctionPageSchema id="math/pi" />
-
-## Summary
-
 Returns the mathematical constant π.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PI()`
 
 ## Remarks
  - `PI()` takes no arguments.
@@ -15,43 +18,45 @@ Returns the mathematical constant π.
 
 ## Examples
 
-<Tabs items={["Pi constant", "Circle circumference with radius 2"]}>
-<Tab value="Pi constant">
-<FunctionSandbox
-  title="Pi constant"
-  formula={`=PI()`}
+<FunctionExample
+  title={"Return the constant pi at spreadsheet precision."}
+  formula={"=PI()"}
   grid={{}}
-  expected={"3.141592653589793"}
+  expected={"3.14159265358979"}
 />
-</Tab>
 
-<Tab value="Circle circumference with radius 2">
-<FunctionSandbox
-  title="Circle circumference with radius 2"
-  formula={`=2*PI()*2`}
+<FunctionExample
+  title={"Use pi in the circumference formula for a circle of radius three."}
+  formula={"=2*PI()*3"}
   grid={{}}
-  expected={"12.566370614359172"}
+  expected={"18.8495559215388"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The area expression for a circle of radius zero evaluates to zero."}
+  formula={"=PI()*0^2"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"Circle circumference with radius 2"}
+  formula={"=2*PI()*2"}
+  grid={{}}
+  expected={"12.5663706143592"}
+/>
 
 ## Related functions
 
 - [RADIANS](/docs/reference/functions/math/radians)
 - [DEGREES](/docs/reference/functions/math/degrees)
 - [SIN](/docs/reference/functions/math/sin)
-- [ABS](/docs/reference/functions/math/abs)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOSH](/docs/reference/functions/math/acosh)
 
 ## FAQ
 
 ### Can PI take arguments?
 No. PI() has arity zero and always returns the same constant.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/pi" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

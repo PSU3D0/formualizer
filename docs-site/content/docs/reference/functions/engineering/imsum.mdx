@@ -1,58 +1,103 @@
 ---
 title: "IMSUM"
-description: "IMSUM: Returns the sum of one or more complex numbers."
+seoTitle: "IMSUM function: formula syntax and examples"
+description: "Returns the sum of one or more complex numbers. =IMSUM(inumber1, [inumber2], ...)"
 ---
 
-<FunctionPageSchema id="engineering/imsum" />
-
-## Summary
+Returns the sum of one or more complex numbers.
 
 Adds real parts together and imaginary parts together.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IMSUM(inumber1, [inumber2], ...)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `inumber1` | any | Required | — |
+| `inumber2` | any | Optional | — |
+
+Accepts a variable number of arguments. Minimum: 1.
+
+## Return type
+
+Can return text.
+
+## How it works
+
+Add corresponding components to get (a + c) + (b + d)i. An additional argument adds its real and imaginary coefficients independently.
+
+## Differences from Excel
+
+The raw Formualizer text can contain more significant digits than Excel’s complex-number text. The examples round each coefficient to 15 significant digits for display.
 
 ## Remarks
  - Each argument is coerced to complex-number text before parsing.
  - Accepts any number of arguments from one upward.
+
+## Error cases
+
  - Invalid complex text returns `#NUM!`.
 
 ## Examples
 
-<Tabs items={["Add multiple complex values", "Add j-suffix values"]}>
-<Tab value="Add multiple complex values">
-<FunctionSandbox
-  title="Add multiple complex values"
-  formula={`=IMSUM("3+4i","1-2i","5")`}
+<FunctionExample
+  title={"Add the real and imaginary coefficients of 3 + 4i and 1 + i."}
+  formula={"=IMSUM(\"3+4i\",\"1+i\")"}
+  grid={{}}
+  expected={"4+5i"}
+/>
+
+<FunctionExample
+  title={"Add two to the real coefficient while leaving the imaginary sum fixed."}
+  formula={"=IMSUM(\"3+4i\",\"1+i\",\"2\")"}
+  grid={{}}
+  expected={"6+5i"}
+/>
+
+<FunctionExample
+  title={"With one operand, the sum is the input itself."}
+  formula={"=IMSUM(\"3+4i\")"}
+  grid={{}}
+  expected={"3+4i"}
+/>
+
+<FunctionExample
+  title={"An operand that cannot be parsed as complex causes an error."}
+  formula={"=IMSUM(\"3+4i\",\"invalid\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Add multiple complex values"}
+  formula={"=IMSUM(\"3+4i\",\"1-2i\",\"5\")"}
   grid={{}}
   expected={"9+2i"}
 />
-</Tab>
 
-<Tab value="Add j-suffix values">
-<FunctionSandbox
-  title="Add j-suffix values"
-  formula={`=IMSUM("2j","-j")`}
+<FunctionExample
+  title={"Add j-suffix values"}
+  formula={"=IMSUM(\"2j\",\"-j\")"}
   grid={{}}
   expected={"j"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [IMSUB](/docs/reference/functions/engineering/imsub)
 - [IMPRODUCT](/docs/reference/functions/engineering/improduct)
 - [COMPLEX](/docs/reference/functions/engineering/complex)
-- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
-- [HEX2OCT](/docs/reference/functions/engineering/hex2oct)
-- [BIN2HEX](/docs/reference/functions/engineering/bin2hex)
 
 ## FAQ
 
 ### Can `IMSUM` take more than two arguments?
 Yes. It is variadic and sums all provided complex arguments in sequence.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/imsum" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

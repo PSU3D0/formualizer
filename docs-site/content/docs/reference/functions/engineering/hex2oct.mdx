@@ -1,13 +1,29 @@
 ---
 title: "HEX2OCT"
-description: "HEX2OCT: Converts a hexadecimal text value to octal text."
+seoTitle: "HEX2OCT function: formula syntax and examples"
+description: "Converts a hexadecimal text value to octal text. =HEX2OCT(number, [places])"
 ---
 
-<FunctionPageSchema id="engineering/hex2oct" />
-
-## Summary
+Converts a hexadecimal text value to octal text.
 
 Supports optional left-padding through the `places` argument.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=HEX2OCT(number, [places])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
+| `places` | any | Optional | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - Input must be hexadecimal text up to 10 characters and may be signed two's-complement.
@@ -16,43 +32,59 @@ Supports optional left-padding through the `places` argument.
 
 ## Examples
 
-<Tabs items={["Convert hex to octal", "Convert signed hex"]}>
-<Tab value="Convert hex to octal">
-<FunctionSandbox
-  title="Convert hex to octal"
-  formula={`=HEX2OCT("1F")`}
+<FunctionExample
+  title={"Convert hexadecimal 1E with no output padding."}
+  formula={"=HEX2OCT(\"1E\")"}
+  grid={{}}
+  expected={"36"}
+/>
+
+<FunctionExample
+  title={"Use eight output characters to preserve leading zeros."}
+  formula={"=HEX2OCT(\"1E\",8)"}
+  grid={{}}
+  expected={"00000036"}
+/>
+
+<FunctionExample
+  title={"Convert zero with a one-place width."}
+  formula={"=HEX2OCT(\"0\",1)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"The input contains an invalid hexadecimal digit."}
+  formula={"=HEX2OCT(\"G\")"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert hex to octal"}
+  formula={"=HEX2OCT(\"1F\")"}
   grid={{}}
   expected={"37"}
 />
-</Tab>
 
-<Tab value="Convert signed hex">
-<FunctionSandbox
-  title="Convert signed hex"
-  formula={`=HEX2OCT("FFFFFFFFFF")`}
+<FunctionExample
+  title={"Convert signed hex"}
+  formula={"=HEX2OCT(\"FFFFFFFFFF\")"}
   grid={{}}
   expected={"7777777777"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [OCT2HEX](/docs/reference/functions/engineering/oct2hex)
 - [HEX2DEC](/docs/reference/functions/engineering/hex2dec)
 - [DEC2OCT](/docs/reference/functions/engineering/dec2oct)
-- [HEX2BIN](/docs/reference/functions/engineering/hex2bin)
-- [IMPRODUCT](/docs/reference/functions/engineering/improduct)
-- [IMSUM](/docs/reference/functions/engineering/imsum)
 
 ## FAQ
 
 ### What causes `HEX2OCT` to return `#NUM!`?
 The decoded value must fit octal output range `[-2^29, 2^29 - 1]`, and optional `places` must be valid.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="engineering/hex2oct" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/engineering.rs)

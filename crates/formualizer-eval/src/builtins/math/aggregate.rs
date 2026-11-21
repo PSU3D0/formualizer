@@ -1875,6 +1875,15 @@ impl Function for SubtotalFn {
 #[derive(Debug)]
 pub struct AggregateFn;
 
+/// Aggregates references with options for hidden rows, errors and nested totals.
+///
+/// # Remarks
+/// - Function numbers `1` through `11` select the same operations as SUBTOTAL.
+/// - Options `0` through `7` control whether to include hidden rows, errors, and nested SUBTOTAL or AGGREGATE results.
+///
+/// # Differences from Excel
+/// Excel's function numbers `12` through `19`, including the array form that takes a rank or percentile, return `#N/IMPL!` in Formualizer for otherwise valid inputs.
+///
 /// [formualizer-docgen:schema:start]
 /// Name: AGGREGATE
 /// Type: AggregateFn

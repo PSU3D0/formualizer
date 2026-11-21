@@ -1,27 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { loadFormualizer } from "@/lib/wasm/formualizer-loader";
 
-/**
- * Interactive demos for runtime cycle detection + iterative calculation
- * (RFCs #112 / #113).
- *
- * The new cycle config (`cycleDetection` / `cyclePolicy` /
- * `iterateMaxIterations` / `iterateMaxChange`) flows through
- * `Workbook.fromJsonWithOptions(json, options)`. That entry point exists in
- * published 0.6.x, but the cycle *behavior* it drives only ships in the
- * post-#131 engine. We therefore feature-detect at runtime: a known-convergent
- * cycle that still returns `#CIRC!` means the loaded wasm predates the feature,
- * and the demo renders a "requires a newer build" banner instead of misleading
- * output.
- */
-
 type WasmModule = Awaited<ReturnType<typeof loadFormualizer>>;
-type WasmWorkbook = {
-  evaluateAll: () => void;
-  evaluateCell: (sheet: string, row: number, col: number) => unknown;
-};
+type WasmWorkbook = InstanceType<WasmModule["Workbook"]>;
 
 type CellSpec =
   | { row: number; col: number; value: number | boolean }
@@ -74,83 +57,65 @@ function buildJson(cells: CellSpec[]): string {
 function readCell(wb: WasmWorkbook, addr: string): string {
   const m = addr.match(/^([A-Z]+)([0-9]+)$/);
   if (!m) return "—";
-  const out = wb.evaluateCell(SHEET, Number(m[2]), colToIndex(m[1]));
+  const { value: out } = wb.inspectCell({
+    sheet: SHEET,
+    row: Number(m[2]),
+    column: colToIndex(m[1]),
+  }).cell;
+  if (out && typeof out === "object" && "kind" in out && out.kind === "error") {
+    return out.code;
+  }
   if (out === null || out === undefined) return "—";
   if (typeof out === "number")
     return Number.isInteger(out) ? String(out) : out.toFixed(4);
   return String(out);
 }
 
-function evaluate(
+function cycleWorkbook(
   mod: WasmModule,
   cells: CellSpec[],
-  options: CycleOptions | null,
-): WasmWorkbook {
-  const json = buildJson(cells);
-  const Workbook = (
-    mod as unknown as {
-      Workbook: {
-        fromJson: (j: string) => WasmWorkbook;
-        fromJsonWithOptions: (j: string, o: unknown) => WasmWorkbook;
-      };
-    }
-  ).Workbook;
-  const wb = options
-    ? Workbook.fromJsonWithOptions(json, options)
-    : Workbook.fromJson(json);
-  wb.evaluateAll();
-  return wb;
+  options: CycleOptions,
+) {
+  // The package types omit this static method on the wrapped constructor.
+  const Workbook = mod.Workbook as WasmModule["Workbook"] & {
+    fromJsonWithOptions(json: string, options: CycleOptions): WasmWorkbook;
+  };
+  return Workbook.fromJsonWithOptions(buildJson(cells), options);
 }
 
-/**
- * Probe whether the loaded wasm honors iterative calculation. A convergent
- * arithmetic cycle (B1 = 0.5*A1 + 0.5*C1, C1 = 0.5*B1 + 0.5*D1; A1=10, D1=20)
- * settles to B1 ≈ 13.333 once the feature is present, and returns `#CIRC!`
- * otherwise.
- */
-function probeIterativeSupport(mod: WasmModule): boolean {
+function evaluate<T>(
+  mod: WasmModule,
+  cells: CellSpec[],
+  options: CycleOptions,
+  read: (workbook: WasmWorkbook) => T,
+): T {
+  const workbook = cycleWorkbook(mod, cells, options);
   try {
-    const wb = evaluate(
-      mod,
-      [
-        ref("A1", { value: 10 }),
-        ref("D1", { value: 20 }),
-        ref("B1", { formula: "=0.5*A1 + 0.5*C1" }),
-        ref("C1", { formula: "=0.5*B1 + 0.5*D1" }),
-      ],
-      {
-        cyclePolicy: "iterate",
-        iterateMaxIterations: 100,
-        iterateMaxChange: 0.001,
+    workbook.evaluateAll();
+    return read(workbook);
+  } finally {
+    workbook.free();
+  }
+}
+
+function useCycleEngine() {
+  const [mod, setMod] = useState<WasmModule | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    loadFormualizer().then(
+      (module) => {
+        if (!cancelled) setMod(module);
+      },
+      (cause: unknown) => {
+        if (!cancelled) setError(String(cause));
       },
     );
-    const b1 = readCell(wb, "B1");
-    return !b1.startsWith("#") && Math.abs(Number(b1) - 40 / 3) < 0.1;
-  } catch {
-    return false;
-  }
-}
-
-function StatusBanner({ supported }: { supported: boolean | null }) {
-  if (supported === null) return null;
-  if (supported) {
-    return (
-      <div className="mb-4 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
-        ✓ Live: this page is running runtime cycle detection in your browser via
-        the formualizer WASM build.
-      </div>
-    );
-  }
-  return (
-    <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-      The installed <code>formualizer</code> WASM package does not yet implement
-      runtime cycle detection / iterative calculation, so these demos fall back
-      to read-only previews. They light up automatically once the docs site
-      upgrades to the first release that ships RFC #112 / #113 (the{" "}
-      <code>fromJsonWithOptions</code> cycle config). Until then, the values
-      shown are the documented expected outputs, not live evaluation.
-    </div>
-  );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return { mod, error };
 }
 
 function Grid({
@@ -208,22 +173,9 @@ function Grid({
  * cycle and produces values; under static detection it is stamped `#CIRC!`.
  */
 export function GuardedPairSandbox() {
-  const [mod, setMod] = useState<WasmModule | null>(null);
-  const [supported, setSupported] = useState<boolean | null>(null);
+  const { mod, error } = useCycleEngine();
   const [guard, setGuard] = useState(true);
   const [mode, setMode] = useState<"runtime" | "static">("runtime");
-
-  useEffect(() => {
-    let cancelled = false;
-    loadFormualizer().then((m) => {
-      if (cancelled) return;
-      setMod(m);
-      setSupported(probeIterativeSupport(m));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const cells = useMemo<CellSpec[]>(
     () => [
@@ -235,44 +187,24 @@ export function GuardedPairSandbox() {
   );
 
   const rows = useMemo(() => {
-    // Expected values, used both as the live target and as the static preview.
-    const expected = {
-      runtime: guard ? { A2: "555", A3: "555" } : { A2: "999", A3: "999" },
-      static: { A2: "#CIRC!", A3: "#CIRC!" },
-    } as const;
-
-    if (supported && mod) {
-      try {
-        const wb = evaluate(mod, cells, { cycleDetection: mode });
-        return [
-          {
-            label: "A1 (guard)",
-            value: String(guard).toUpperCase(),
-            note: "boolean input",
-          },
-          { label: "A2", value: readCell(wb, "A2"), note: "=IF(A1,555,A3)" },
-          { label: "A3", value: readCell(wb, "A3"), note: "=IF(A1,A2,999)" },
-        ];
-      } catch (e) {
-        return [{ label: "error", value: String(e), note: "" }];
-      }
+    if (!mod) return [{ label: "Engine", value: error ?? "Loading…" }];
+    try {
+      return evaluate(mod, cells, { cycleDetection: mode }, (wb) => [
+        {
+          label: "A1 (guard)",
+          value: String(guard).toUpperCase(),
+          note: "boolean input",
+        },
+        { label: "A2", value: readCell(wb, "A2"), note: "=IF(A1,555,A3)" },
+        { label: "A3", value: readCell(wb, "A3"), note: "=IF(A1,A2,999)" },
+      ]);
+    } catch (cause) {
+      return [{ label: "Engine", value: String(cause) }];
     }
-
-    const exp = expected[mode];
-    return [
-      {
-        label: "A1 (guard)",
-        value: String(guard).toUpperCase(),
-        note: "boolean input",
-      },
-      { label: "A2", value: exp.A2, note: "=IF(A1,555,A3)" },
-      { label: "A3", value: exp.A3, note: "=IF(A1,A2,999)" },
-    ];
-  }, [supported, mod, cells, mode, guard]);
+  }, [mod, cells, mode, guard, error]);
 
   return (
     <div className="my-6 rounded-xl border bg-fd-card p-4">
-      <StatusBanner supported={supported} />
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <button
           type="button"
@@ -317,22 +249,9 @@ export function GuardedPairSandbox() {
  * max-change threshold stops earlier with a slightly looser result.
  */
 export function ConvergentCycleSandbox() {
-  const [mod, setMod] = useState<WasmModule | null>(null);
-  const [supported, setSupported] = useState<boolean | null>(null);
+  const { mod, error } = useCycleEngine();
   const [maxChange, setMaxChange] = useState(0.001);
   const [maxIterations, setMaxIterations] = useState(100);
-
-  useEffect(() => {
-    let cancelled = false;
-    loadFormualizer().then((m) => {
-      if (cancelled) return;
-      setMod(m);
-      setSupported(probeIterativeSupport(m));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const cells = useMemo<CellSpec[]>(
     () => [
@@ -345,42 +264,30 @@ export function ConvergentCycleSandbox() {
   );
 
   const rows = useMemo(() => {
-    if (supported && mod) {
-      try {
-        const wb = evaluate(mod, cells, {
+    if (!mod) return [{ label: "Engine", value: error ?? "Loading…" }];
+    try {
+      return evaluate(
+        mod,
+        cells,
+        {
           cyclePolicy: "iterate",
           iterateMaxIterations: maxIterations,
           iterateMaxChange: maxChange,
-        });
-        return [
+        },
+        (wb) => [
           { label: "A1", value: "10", note: "input" },
           { label: "D1", value: "20", note: "input" },
           { label: "B1", value: readCell(wb, "B1"), note: "=0.5*A1 + 0.5*C1" },
           { label: "C1", value: readCell(wb, "C1"), note: "=0.5*B1 + 0.5*D1" },
-        ];
-      } catch (e) {
-        return [{ label: "error", value: String(e), note: "" }];
-      }
+        ],
+      );
+    } catch (cause) {
+      return [{ label: "Engine", value: String(cause) }];
     }
-    return [
-      { label: "A1", value: "10", note: "input" },
-      { label: "D1", value: "20", note: "input" },
-      {
-        label: "B1",
-        value: (40 / 3).toFixed(4),
-        note: "fixed point ≈ 13.3333",
-      },
-      {
-        label: "C1",
-        value: (50 / 3).toFixed(4),
-        note: "fixed point ≈ 16.6667",
-      },
-    ];
-  }, [supported, mod, cells, maxChange, maxIterations]);
+  }, [mod, cells, maxChange, maxIterations, error]);
 
   return (
     <div className="my-6 rounded-xl border bg-fd-card p-4">
-      <StatusBanner supported={supported} />
       <div className="mb-4 space-y-3">
         <label className="block text-xs font-medium text-fd-muted-foreground">
           Max change (absolute convergence threshold):{" "}
@@ -427,56 +334,42 @@ export function ConvergentCycleSandbox() {
  * counter ticks up by one.
  */
 export function AccumulatorSandbox() {
-  const [mod, setMod] = useState<WasmModule | null>(null);
-  const [supported, setSupported] = useState<boolean | null>(null);
-  const [count, setCount] = useState(0);
+  const { mod, error } = useCycleEngine();
+  const workbook = useRef<WasmWorkbook | null>(null);
+  const [value, setValue] = useState("0");
 
   useEffect(() => {
-    let cancelled = false;
-    loadFormualizer().then((m) => {
-      if (cancelled) return;
-      setMod(m);
-      setSupported(probeIterativeSupport(m));
+    if (!mod) return;
+    const wb = cycleWorkbook(mod, [ref("A2", { formula: "=A2+1" })], {
+      cyclePolicy: "iterate",
+      iterateMaxIterations: 1,
+      iterateMaxChange: 0.001,
     });
+    workbook.current = wb;
     return () => {
-      cancelled = true;
+      workbook.current = null;
+      wb.free();
     };
-  }, []);
+  }, [mod]);
 
-  // Live path: rebuild a workbook seeded with the prior value and run one pass.
   const recalc = useCallback(() => {
-    if (supported && mod) {
-      try {
-        const wb = evaluate(
-          mod,
-          [
-            ref("A1", { value: count }),
-            ref("B1", { formula: "=A1" }),
-            ref("A2", { formula: "=A2+1" }),
-          ],
-          {
-            cyclePolicy: "iterate",
-            iterateMaxIterations: 1,
-            iterateMaxChange: 0.001,
-          },
-        );
-        const next = Number(readCell(wb, "A2"));
-        setCount(Number.isFinite(next) ? next : count + 1);
-        return;
-      } catch {
-        // fall through to the preview increment
-      }
+    const wb = workbook.current;
+    if (!wb) return;
+    try {
+      wb.evaluateAll();
+      setValue(readCell(wb, "A2"));
+    } catch (cause) {
+      setValue(String(cause));
     }
-    setCount((c) => c + 1);
-  }, [supported, mod, count]);
+  }, []);
 
   return (
     <div className="my-6 rounded-xl border bg-fd-card p-4">
-      <StatusBanner supported={supported} />
       <div className="mb-3 flex items-center gap-3">
         <button
           type="button"
           onClick={recalc}
+          disabled={!mod}
           className="rounded-md bg-fd-primary px-3 py-1.5 text-xs font-medium text-fd-primary-foreground shadow-sm hover:bg-fd-primary/90"
         >
           Recalc (F9)
@@ -489,7 +382,7 @@ export function AccumulatorSandbox() {
         rows={[
           {
             label: "A2",
-            value: String(count),
+            value: error ?? value,
             note: "=A2+1 — advances once per recalc",
           },
         ]}

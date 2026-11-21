@@ -1,60 +1,99 @@
 ---
 title: "PPMT"
-description: "PPMT: Returns the principal component of a payment for a specific period."
+seoTitle: "PPMT function: formula syntax and examples"
+description: "Returns the principal component of a payment for a specific period. =PPMT(rate, per, nper, pv, [fv], [type])"
 ---
 
-<FunctionPageSchema id="financial/ppmt" />
-
-## Summary
+Returns the principal component of a payment for a specific period.
 
 `PPMT` is computed as `PMT - IPMT` using the same rate, timing, and sign convention.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PPMT(rate, per, nper, pv, [fv], [type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `per` | number | Required | — |
+| `nper` | number | Required | — |
+| `pv` | number | Required | — |
+| `fv` | number | Optional | — |
+| `type` | number | Optional | — |
+
+## Differences from Excel
+
+For some payments at the start of the period (type 1), Formualizer uses a different interest amount than Excel when splitting the payment into interest and principal.
 
 ## Remarks
  - `rate` is the interest rate per payment period.
  - `per` is 1-based and must satisfy `1 &lt;= per &lt;= nper`.
  - Cash-flow sign convention: with a positive borrowed `pv`, principal components are usually negative.
  - `type = 1` means beginning-of-period payments.
+
+## Error cases
+
  - Returns `#NUM!` when `per` is outside valid bounds.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=PPMT(0.06/12, 1, 360, 300000)`}
+<FunctionExample
+  title={"Break down the second payment on a two-year loan at five percent."}
+  formula={"=PPMT(0.05/12,2,24,5000)"}
   grid={{}}
-  expected={"null"}
+  expected={"-199.350797067581"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=PPMT(0.06/12, 12, 360, 300000)`}
+<FunctionExample
+  title={"Leave a balance of 1,000 after the final end-of-period payment."}
+  formula={"=PPMT(0.05/12,2,24,5000,-1000,0)"}
   grid={{}}
-  expected={"null"}
+  expected={"-159.480637654064"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Calculate the last payment in the schedule."}
+  formula={"=PPMT(0.05/12,24,24,5000)"}
+  grid={{}}
+  expected={"-218.446753862582"}
+/>
+
+<FunctionExample
+  title={"A payment period beyond the end of the schedule is invalid."}
+  formula={"=PPMT(0.05/12,25,24,5000)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the principal portion of the first mortgage payment."}
+  formula={"=PPMT(0.06/12, 1, 360, 300000)"}
+  grid={{}}
+  expected={"-298.651575458271"}
+/>
+
+<FunctionExample
+  title={"Find the principal portion of the twelfth mortgage payment."}
+  formula={"=PPMT(0.06/12, 12, 360, 300000)"}
+  grid={{}}
+  expected={"-315.494279743704"}
+/>
 
 ## Related functions
 
 - [PMT](/docs/reference/functions/financial/pmt)
 - [IPMT](/docs/reference/functions/financial/ipmt)
 - [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [ACCRINTM](/docs/reference/functions/financial/accrintm)
-- [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
 
 ## FAQ
 
 ### How is `PPMT` computed?
 `PPMT` is computed as `PMT - IPMT` for the same `rate`, `per`, `nper`, `pv`, `fv`, and `type`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/ppmt" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

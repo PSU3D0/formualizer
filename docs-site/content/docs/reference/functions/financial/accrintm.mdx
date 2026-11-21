@@ -1,13 +1,28 @@
 ---
 title: "ACCRINTM"
-description: "ACCRINTM: Returns accrued interest for a security that pays interest at maturity."
+seoTitle: "ACCRINTM function: formula syntax and examples"
+description: "Returns accrued interest for a security that pays interest at maturity. =ACCRINTM(issue, settlement, rate, par, [basis])"
 ---
 
-<FunctionPageSchema id="financial/accrintm" />
-
-## Summary
+Returns accrued interest for a security that pays interest at maturity.
 
 `ACCRINTM` accrues from `issue` to `settlement` with no periodic coupon schedule.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ACCRINTM(issue, settlement, rate, par, [basis])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `issue` | number | Required | — |
+| `settlement` | number | Required | — |
+| `rate` | number | Required | — |
+| `par` | number | Required | — |
+| `basis` | number | Optional | — |
 
 ## Remarks
  - Date inputs are spreadsheet serial dates and must satisfy `settlement &gt; issue`.
@@ -18,35 +33,53 @@ description: "ACCRINTM: Returns accrued interest for a security that pays intere
 
 ## Examples
 
-<Tabs items={["One full 30/360 year", "European 30/360 half-year accrual"]}>
-<Tab value="One full 30/360 year">
-<FunctionSandbox
-  title="One full 30/360 year"
-  formula={`=ACCRINTM(DATE(2024,1,1), DATE(2025,1,1), 0.05, 1000, 0)`}
+<FunctionExample
+  title={"Compute interest at maturity between January and July."}
+  formula={"=ACCRINTM(DATE(2024,1,1),DATE(2024,7,1),0.06,1000)"}
+  grid={{}}
+  expected={"30"}
+/>
+
+<FunctionExample
+  title={"Use the actual-day count with a 365-day year."}
+  formula={"=ACCRINTM(DATE(2024,1,1),DATE(2024,7,1),0.06,1000,3)"}
+  grid={{}}
+  expected={"29.9178082191781"}
+/>
+
+<FunctionExample
+  title={"Accrue interest for just one day."}
+  formula={"=ACCRINTM(DATE(2024,1,1),DATE(2024,1,2),0.06,1000)"}
+  grid={{}}
+  expected={"0.166666666666667"}
+/>
+
+<FunctionExample
+  title={"Settlement before issue is outside the valid date order."}
+  formula={"=ACCRINTM(DATE(2024,7,1),DATE(2024,1,1),0.06,1000)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"One full 30/360 year"}
+  formula={"=ACCRINTM(DATE(2024,1,1), DATE(2025,1,1), 0.05, 1000, 0)"}
   grid={{}}
   expected={"50"}
 />
-</Tab>
 
-<Tab value="European 30/360 half-year accrual">
-<FunctionSandbox
-  title="European 30/360 half-year accrual"
-  formula={`=ACCRINTM(DATE(2024,2,28), DATE(2024,8,28), 0.04, 1000, 4)`}
+<FunctionExample
+  title={"European 30/360 half-year accrual"}
+  formula={"=ACCRINTM(DATE(2024,2,28), DATE(2024,8,28), 0.04, 1000, 4)"}
   grid={{}}
   expected={"20"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [PRICE](/docs/reference/functions/financial/price)
 - [YIELD](/docs/reference/functions/financial/yield)
-- [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
-- [IPMT](/docs/reference/functions/financial/ipmt)
 
 ## FAQ
 
@@ -56,8 +89,6 @@ No. It accrues directly from `issue` to `settlement` with no periodic coupon sch
 ### What causes `#NUM!`?
 Invalid `basis`, non-positive `rate`/`par`, or `settlement &lt;= issue`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/accrintm" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/bonds.rs)

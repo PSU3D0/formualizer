@@ -1,13 +1,26 @@
 ---
 title: "ISNONTEXT"
-description: "ISNONTEXT: Returns TRUE when the value is anything other than text."
+seoTitle: "ISNONTEXT function: formula syntax and examples"
+description: "Returns TRUE when the value is anything other than text. =ISNONTEXT(value)"
 ---
 
-<FunctionPageSchema id="info/isnontext" />
-
-## Summary
-
 Returns TRUE when the value is anything other than text.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ISNONTEXT(value)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+
+## Return type
+
+Logical (TRUE or FALSE)
 
 ## Remarks
  - Text literals return FALSE.
@@ -16,43 +29,44 @@ Returns TRUE when the value is anything other than text.
 
 ## Examples
 
-<Tabs items={["Number is non-text", "Text is not non-text"]}>
-<Tab value="Number is non-text">
-<FunctionSandbox
-  title="Number is non-text"
-  formula={`=ISNONTEXT(42)`}
+<FunctionExample
+  title={"Test whether an ordinary number is a non-text value."}
+  formula={"=ISNONTEXT(42)"}
   grid={{}}
-  expected={"true"}
+  expected={"TRUE"}
 />
-</Tab>
 
-<Tab value="Text is not non-text">
-<FunctionSandbox
-  title="Text is not non-text"
-  formula={`=ISNONTEXT("alpha")`}
+<FunctionExample
+  title={"Test whether a logical result is also non-text."}
+  formula={"=ISNONTEXT(TRUE)"}
   grid={{}}
-  expected={"false"}
+  expected={"TRUE"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"An empty string is still text."}
+  formula={"=ISNONTEXT(\"\")"}
+  grid={{}}
+  expected={"FALSE"}
+/>
+
+<FunctionExample
+  title={"Text is not non-text"}
+  formula={"=ISNONTEXT(\"alpha\")"}
+  grid={{}}
+  expected={"FALSE"}
+/>
 
 ## Related functions
 
 - [ISTEXT](/docs/reference/functions/info/istext)
 - [TYPE](/docs/reference/functions/info/type)
-- [ERROR.TYPE](/docs/reference/functions/info/error-type)
-- [FORMULATEXT](/docs/reference/functions/info/formulatext)
-- [ISBLANK](/docs/reference/functions/info/isblank)
-- [ISERR](/docs/reference/functions/info/iserr)
 
 ## FAQ
 
 ### Do errors count as non-text values?
 Yes. This implementation treats any non-text value, including errors, as TRUE for ISNONTEXT.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="info/isnontext" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/info.rs)

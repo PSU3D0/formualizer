@@ -1,178 +1,120 @@
-import { docs } from 'fumadocs-mdx:collections/server';
-import { type InferPageType, loader } from 'fumadocs-core/source';
-import { lucideIconsPlugin } from 'fumadocs-core/source/lucide-icons';
-import functionsMeta from '@/generated/functions-meta.json';
+import { docs } from "fumadocs-mdx:collections/server";
+import { type InferPageType, loader } from "fumadocs-core/source";
+import { lucideIconsPlugin } from "fumadocs-core/source/lucide-icons";
+import functionsMeta from "@/generated/functions-meta.json";
 
 // See https://fumadocs.dev/docs/headless/source-api for more info
 export const source = loader({
-  baseUrl: '/docs',
+  baseUrl: "/docs",
   source: docs.toFumadocsSource(),
   plugins: [lucideIconsPlugin()],
 });
 
-type FunctionArg = {
-  name: string;
-  kinds: string[];
-  required: boolean;
-  shape: string;
-  by_ref: boolean;
-  coercion: string;
-  max: string | null;
-  repeating: string | null;
-  has_default: boolean;
-};
-
-type FunctionMetaRecord = {
-  name: string;
-  category: string;
-  shortSummary?: string;
-  minArgs: number | null;
-  maxArgs: number | null;
-  variadic: boolean | null;
-  signature: string | null;
-  args?: FunctionArg[];
-  caps: string[];
-  implementationSource: string;
-  registrationSource: string;
-};
-
-const META = functionsMeta as Record<string, FunctionMetaRecord>;
+export function isNoindex(page: InferPageType<typeof source>) {
+  const [reference, functions, ...slugs] = page.slugs;
+  if (reference !== "reference" || functions !== "functions") return false;
+  const id = slugs.join("/") as keyof typeof functionsMeta;
+  return functionsMeta[id]?.noindex ?? false;
+}
 
 export function getPageImage(page: InferPageType<typeof source>) {
-  const segments = [...page.slugs, 'image.webp'];
+  const segments = [...page.slugs, "image.webp"];
 
   return {
     segments,
-    url: `/og/docs/${segments.join('/')}`,
+    url: `/og/docs/${segments.join("/")}`,
   };
 }
 
-function llmSignature(meta: FunctionMetaRecord): string {
-  const args = meta.args ?? [];
-  if (args.length === 0) return meta.signature ?? `${meta.name}(...)`;
-
-  const minArgs = meta.minArgs ?? 0;
-  if (args.length === 1 && minArgs > 1) {
-    return `${meta.name}(arg1, arg2, ... argN)`;
-  }
-
-  const rendered = args.map((arg, index) => {
-    const optional = arg.required ? '?' : '';
-    const variadicTail = meta.variadic && index === args.length - 1 ? '…' : '';
-    const shape = arg.shape === 'scalar' ? '' : ` (${arg.shape})`;
-    return `${arg.name}${optional}${variadicTail}: ${arg.kinds.join('|')}${shape}`;
-  });
-
-  return `${meta.name}(${rendered.join(', ')})`;
-}
-
-function markdownRuntimeMeta(id: string): string {
-  const meta = META[id];
-  if (!meta) return `Runtime metadata unavailable for ${id}.`;
-
-  const args = (meta.args ?? [])
-    .map((arg) => {
-      const optional = arg.required ? '' : '?';
-      const shape = arg.shape === 'scalar' ? '' : ` (${arg.shape})`;
-      const extra = [] as string[];
-      if (arg.by_ref) extra.push('by-ref');
-      if (arg.has_default) extra.push('default');
-      if (arg.coercion && arg.coercion !== 'None') extra.push(`coercion=${arg.coercion}`);
-      return `- ${arg.name}${optional}: ${arg.kinds.join('|')}${shape}${extra.length ? ` [${extra.join(', ')}]` : ''}`;
-    })
-    .join('\n');
-
-  const caps = meta.caps.length > 0 ? meta.caps.join(', ') : 'none';
-  const maxArgs = meta.variadic ? 'variadic' : (meta.maxArgs ?? 'unknown').toString();
-
-  return [
-    `- Name: ${meta.name}`,
-    `- Category: ${meta.category}`,
-    `- Arity: min ${meta.minArgs ?? 'unknown'}, max ${maxArgs}`,
-    `- Signature: ${llmSignature(meta)}`,
-    `- Caps: ${caps}`,
-    `- Source: ${meta.implementationSource}`,
-    args ? '- Arguments:\n' + args : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
+// Fumadocs serializes MDX expressions as XML-escaped attribute values.
+function readExampleAttribute(value: string) {
+  const decoded = value.replace(
+    /&#(?:x([0-9a-f]+)|(\d+));|&amp;/gi,
+    (_, hex, decimal) =>
+      hex
+        ? String.fromCodePoint(parseInt(hex, 16))
+        : decimal
+          ? String.fromCodePoint(Number(decimal))
+          : "&",
+  );
+  return JSON.parse(decoded);
 }
 
 function renderLlmFriendlyMarkdown(processed: string): string {
   let llmSafe = processed.replace(
-    /<FunctionMeta\s+id="([^"]+)"\s*\/>/g,
-    (_full, id: string) => markdownRuntimeMeta(id),
-  );
+    /<FunctionExample\s+title="([^"]*)"\s+formula="([^"]*)"\s+grid="([^"]*)"\s+expected="([^"]*)"\s*\/>/g,
+    (_match, titleJson, formulaJson, gridJson, expectedJson) => {
+      const title: string = readExampleAttribute(titleJson);
+      const formula: string = readExampleAttribute(formulaJson);
+      const grid: Record<string, string> = readExampleAttribute(gridJson);
+      const expected: string | null = readExampleAttribute(expectedJson);
 
-  llmSafe = llmSafe.replace(/<FunctionPageSchema\s+id="([^"]+)"\s*\/>/g, '');
-
-  // Strip docgen markers
-  llmSafe = llmSafe.replace(/\{\/\*\s*\[formualizer-docgen:function-meta:(start|end)\]\s*\*\/\}/g, '');
-
-  // Convert FunctionSandbox back to readable markdown block
-  llmSafe = llmSafe.replace(
-    /<FunctionSandbox\s+title="([^"]*)"\s+formula=\{`([^`]+)`\}\s+grid=\{([^}]+)\}\s+expected=\{([^}]+)\}\s*\/>/g,
-    (_full, title, formula, gridJson, expectedJson) => {
-      let out = `### Example: ${title || 'Evaluation'}\n\n`;
-      if (gridJson && gridJson !== '{}') {
-        out += `**Inputs:**\n\`\`\`json\n${gridJson}\n\`\`\`\n\n`;
+      const lines = [
+        ...(title ? [`### ${title}`, ""] : []),
+        "```excel",
+        formula,
+        "```",
+        "",
+      ];
+      if (Object.keys(grid).length > 0) {
+        lines.push(
+          "Input cells:",
+          "```json",
+          JSON.stringify(grid, null, 2),
+          "```",
+          "",
+        );
       }
-      out += `**Formula:**\n\`\`\`excel\n${formula}\n\`\`\`\n\n`;
-      if (expectedJson && expectedJson !== 'null') {
-        out += `**Expected Result:** \`${expectedJson.replace(/^"|"$/g, '')}\`\n\n`;
-      }
-      return out;
-    }
+      if (expected !== null)
+        lines.push(`Expected result: ${expected || '""'}`, "");
+      return lines.join("\n");
+    },
   );
 
   // Convert CodeTabs to multi-language code blocks
-  llmSafe = llmSafe.replace(
-    /<CodeTabs[\s\S]*?\/>/g,
-    (match) => {
-      const titleMatch = match.match(/title="([^"]*)"/);
-      const title = titleMatch ? titleMatch[1] : '';
+  llmSafe = llmSafe.replace(/<CodeTabs[\s\S]*?\/>/g, (match) => {
+    const titleMatch = match.match(/title="([^"]*)"/);
+    const title = titleMatch ? titleMatch[1] : "";
 
-      const langMap: Array<[string, string, string]> = [
-        ['rust', 'rust', 'Rust'],
-        ['python', 'python', 'Python'],
-        ['ts', 'ts', 'JS/WASM'],
-      ];
+    const langMap: Array<[string, string, string]> = [
+      ["rust", "rust", "Rust"],
+      ["python", "python", "Python"],
+      ["ts", "ts", "JS/WASM"],
+    ];
 
-      let out = title ? `**${title}**\n\n` : '';
+    let out = title ? `**${title}**\n\n` : "";
 
-      for (const [prop, lang, label] of langMap) {
-        const codeMatch = match.match(new RegExp(`${prop}=\\{` + '`([\\s\\S]*?)`' + '\\}'));
-        if (codeMatch) {
-          out += `**${label}:**\n\`\`\`${lang}\n${codeMatch[1]}\n\`\`\`\n\n`;
-        }
+    for (const [prop, lang, label] of langMap) {
+      const codeMatch = match.match(
+        new RegExp(`${prop}=\\{` + "`([\\s\\S]*?)`" + "\\}"),
+      );
+      if (codeMatch) {
+        out += `**${label}:**\n\`\`\`${lang}\n${codeMatch[1]}\n\`\`\`\n\n`;
       }
-
-      return out;
     }
-  );
+
+    return out;
+  });
 
   // Convert RunnableCode to a standard code block
-  llmSafe = llmSafe.replace(
-    /<RunnableCode[\s\S]*?\/>/g,
-    (match) => {
-      const titleMatch = match.match(/title="([^"]*)"/);
-      const title = titleMatch ? titleMatch[1] : '';
-      const codeMatch = match.match(/code=\{`([\s\S]*?)`\}/);
-      const code = codeMatch ? codeMatch[1] : '';
-      const langMatch = match.match(/lang="([^"]*)"/);
-      const lang = langMatch ? langMatch[1] : 'ts';
+  llmSafe = llmSafe.replace(/<RunnableCode[\s\S]*?\/>/g, (match) => {
+    const titleMatch = match.match(/title="([^"]*)"/);
+    const title = titleMatch ? titleMatch[1] : "";
+    const codeMatch = match.match(/code=\{`([\s\S]*?)`\}/);
+    const code = codeMatch ? codeMatch[1] : "";
+    const langMatch = match.match(/lang="([^"]*)"/);
+    const lang = langMatch ? langMatch[1] : "ts";
 
-      let out = title ? `**${title}:**\n` : '';
-      out += `\`\`\`${lang}\n${code}\n\`\`\`\n`;
-      return out;
-    }
-  );
+    let out = title ? `**${title}:**\n` : "";
+    out += `\`\`\`${lang}\n${code}\n\`\`\`\n`;
+    return out;
+  });
 
   return llmSafe;
 }
 
 export async function getLLMText(page: InferPageType<typeof source>) {
-  const processed = await page.data.getText('processed');
+  const processed = await page.data.getText("processed");
   const llmSafe = renderLlmFriendlyMarkdown(processed);
 
   return `# ${page.data.title}

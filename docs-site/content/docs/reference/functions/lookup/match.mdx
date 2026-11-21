@@ -1,13 +1,26 @@
 ---
 title: "MATCH"
-description: "MATCH: Returns the relative position of a lookup value in a one-dimensional array."
+seoTitle: "MATCH function: formula syntax and examples"
+description: "Returns the relative position of a lookup value in a one-dimensional array. =MATCH(lookup_value, lookup_array, [match_type])"
 ---
 
-<FunctionPageSchema id="lookup/match" />
-
-## Summary
+Returns the relative position of a lookup value in a one-dimensional array.
 
 `MATCH` supports exact and approximate modes and returns a 1-based position.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=MATCH(lookup_value, lookup_array, [match_type])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `lookup_value` | any | Required | — |
+| `lookup_array` | any (range) | Required | — |
+| `match_type` | number | Optional | `1` |
 
 ## Remarks
  - `match_type` defaults to `1` (approximate, ascending).
@@ -15,40 +28,61 @@ description: "MATCH: Returns the relative position of a lookup value in a one-di
  - Exact matching never selects a blank candidate. A blank lookup value retains numeric-zero semantics and can select a real numeric zero, but not blank, text, or boolean candidates.
  - `match_type=1` looks for the largest value less than or equal to the lookup value.
  - `match_type=-1` looks for the smallest value greater than or equal to the lookup value.
+
+## Error cases
+
  - Approximate modes require sorted data. MATCH detects unsorted input and returns `#N/A`, matching the same guard applied by VLOOKUP and HLOOKUP.
  - If no match is found, returns `#N/A`.
 
 ## Examples
 
-<Tabs items={["Exact text match", "Approximate numeric match"]}>
-<Tab value="Exact text match">
-<FunctionSandbox
-  title="Exact text match"
-  formula={`=MATCH("B",A1:A3,0)`}
-  grid={{"A1":"A","A2":"B","A3":"C"}}
+<FunctionExample
+  title={"Find the position of an exact text match."}
+  formula={"=MATCH(\"Cy\",{\"Ana\",\"Bo\",\"Cy\"},0)"}
+  grid={{}}
+  expected={"3"}
+/>
+
+<FunctionExample
+  title={"Find the greatest sorted lookup value at or below the target."}
+  formula={"=MATCH(25,{10,20,30},1)"}
+  grid={{}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Approximate numeric match">
-<FunctionSandbox
-  title="Approximate numeric match"
-  formula={`=MATCH(27,A1:A4,1)`}
+<FunctionExample
+  title={"Match the first item at the lower end of a sorted array."}
+  formula={"=MATCH(10,{10,20,30},1)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A missing exact-match name has no position."}
+  formula={"=MATCH(\"Dee\",{\"Ana\",\"Bo\",\"Cy\"},0)"}
+  grid={{}}
+  expected={"#N/A"}
+/>
+
+<FunctionExample
+  title={"Exact text match"}
+  formula={"=MATCH(\"B\",A1:A3,0)"}
+  grid={{"A1":"\"A\"","A2":"\"B\"","A3":"\"C\""}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Approximate numeric match"}
+  formula={"=MATCH(27,A1:A4,1)"}
   grid={{"A1":"10","A2":"20","A3":"30","A4":"40"}}
   expected={"2"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [XMATCH](/docs/reference/functions/lookup/xmatch)
 - [XLOOKUP](/docs/reference/functions/lookup/xlookup)
 - [VLOOKUP](/docs/reference/functions/lookup/vlookup)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
-- [LOOKUP](/docs/reference/functions/lookup/lookup)
-- [CHOOSECOLS](/docs/reference/functions/lookup/choosecols)
 
 ## FAQ
 
@@ -58,8 +92,6 @@ Approximate modes assume ordered lookup data; this implementation treats detecte
 ### When are wildcards interpreted in MATCH?
 Wildcard patterns (*, ?, ~ escapes) are only applied in exact mode (match_type=0) for text lookup values.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/match" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/core.rs)

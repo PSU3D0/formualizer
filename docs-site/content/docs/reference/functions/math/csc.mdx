@@ -1,58 +1,92 @@
 ---
 title: "CSC"
-description: "CSC: Returns the cosecant of an angle, defined as `1 / SIN(angle)`."
+seoTitle: "CSC function: formula syntax and examples"
+description: "Returns the cosecant of an angle, defined as 1 / SIN(angle). =CSC(number)"
 ---
 
-<FunctionPageSchema id="math/csc" />
-
-## Summary
+Returns the cosecant of an angle, defined as `1 / SIN(angle)`.
 
 Use `CSC` for reciprocal-sine calculations in radian-based formulas.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CSC(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | number | Required | — |
+
+## How it works
+
+Cosecant is 1 / sin(x) for a radian angle x. It is undefined where sine is zero, at integer multiples of π.
 
 ## Remarks
  - Domain: valid for all real angles except where `SIN(angle) = 0`.
  - Radians: input is interpreted in radians.
+
+## Error cases
+
  - Errors: returns `#DIV/0!` at or near integer multiples of `PI()`.
 
 ## Examples
 
-<Tabs items={["Cosecant at PI over 2", "Zero sine denominator"]}>
-<Tab value="Cosecant at PI over 2">
-<FunctionSandbox
-  title="Cosecant at PI over 2"
-  formula={`=CSC(PI()/2)`}
+<FunctionExample
+  title={"Invert the sine of one half radian."}
+  formula={"=CSC(0.5)"}
+  grid={{}}
+  expected={"2.08582964293349"}
+/>
+
+<FunctionExample
+  title={"A negative angle makes the reciprocal of sine negative."}
+  formula={"=CSC(-0.5)"}
+  grid={{}}
+  expected={"-2.08582964293349"}
+/>
+
+<FunctionExample
+  title={"Evaluate close to the sine zero at the origin."}
+  formula={"=CSC(0.01)"}
+  grid={{}}
+  expected={"100.001666686111"}
+/>
+
+<FunctionExample
+  title={"Nonnumeric text cannot be used as the input."}
+  formula={"=CSC(\"invalid\")"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Cosecant at PI over 2"}
+  formula={"=CSC(PI()/2)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Zero sine denominator">
-<FunctionSandbox
-  title="Zero sine denominator"
-  formula={`=CSC(0)`}
+<FunctionExample
+  title={"Zero sine denominator"}
+  formula={"=CSC(0)"}
   grid={{}}
   expected={"#DIV/0!"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SIN](/docs/reference/functions/math/sin)
 - [COT](/docs/reference/functions/math/cot)
 - [SEC](/docs/reference/functions/math/sec)
-- [ACOS](/docs/reference/functions/math/acos)
-- [ACOT](/docs/reference/functions/math/acot)
-- [ACOTH](/docs/reference/functions/math/acoth)
 
 ## FAQ
 
 ### When does CSC return #DIV/0!?
 CSC returns #DIV/0! when SIN(angle) is effectively zero.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/csc" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

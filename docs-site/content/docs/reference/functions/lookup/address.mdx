@@ -1,53 +1,93 @@
 ---
 title: "ADDRESS"
-description: "ADDRESS: Returns a cell reference as text from row and column numbers."
+seoTitle: "ADDRESS function: formula syntax and examples"
+description: "Returns a cell reference as text from row and column numbers. =ADDRESS(row_num, column_num, [abs_num], [a1], [sheet_text])"
 ---
 
-<FunctionPageSchema id="lookup/address" />
-
-## Summary
+Returns a cell reference as text from row and column numbers.
 
 `ADDRESS` can emit either A1 or R1C1 notation and optionally prefix the address with a
  sheet name.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=ADDRESS(row_num, column_num, [abs_num], [a1], [sheet_text])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `row_num` | number | Required | — |
+| `column_num` | number | Required | — |
+| `abs_num` | number | Optional | `1` |
+| `a1` | logical | Optional | `true` |
+| `sheet_text` | text | Optional | — |
+
+## Return type
+
+Can return text.
 
 ## Remarks
  - `abs_num` defaults to `1` (`$A$1`) and supports values `1..4`.
  - `a1` defaults to `TRUE`; `FALSE` returns R1C1-style text.
  - Valid row range is `1..1048576`; valid column range is `1..16384`.
- - Out-of-range row/column values or invalid `abs_num` return `#VALUE!`.
  - If `sheet_text` contains spaces or special characters, it is quoted.
+
+## Error cases
+
+ - Out-of-range row/column values or invalid `abs_num` return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Absolute A1 reference", "Relative R1C1 reference with sheet"]}>
-<Tab value="Absolute A1 reference">
-<FunctionSandbox
-  title="Absolute A1 reference"
-  formula={`=ADDRESS(2,3)`}
+<FunctionExample
+  title={"Build an absolute A1-style address from a row and column."}
+  formula={"=ADDRESS(7,3)"}
+  grid={{}}
+  expected={"$C$7"}
+/>
+
+<FunctionExample
+  title={"Choose relative R1C1 notation and include a sheet name."}
+  formula={"=ADDRESS(7,3,4,FALSE,\"Data\")"}
+  grid={{}}
+  expected={"Data!R[7]C[3]"}
+/>
+
+<FunctionExample
+  title={"Build the address at the first row and first column."}
+  formula={"=ADDRESS(1,1)"}
+  grid={{}}
+  expected={"$A$1"}
+/>
+
+<FunctionExample
+  title={"Row zero is outside the worksheet."}
+  formula={"=ADDRESS(0,3)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Absolute A1 reference"}
+  formula={"=ADDRESS(2,3)"}
   grid={{}}
   expected={"$C$2"}
 />
-</Tab>
 
-<Tab value="Relative R1C1 reference with sheet">
-<FunctionSandbox
-  title="Relative R1C1 reference with sheet"
-  formula={`=ADDRESS(5,3,4,FALSE,"Data Sheet")`}
+<FunctionExample
+  title={"Relative R1C1 reference with sheet"}
+  formula={"=ADDRESS(5,3,4,FALSE,\"Data Sheet\")"}
   grid={{}}
   expected={"'Data Sheet'!R[5]C[3]"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [INDEX](/docs/reference/functions/reference-fns/index-fn)
 - [OFFSET](/docs/reference/functions/reference-fns/offset)
 - [INDIRECT](/docs/reference/functions/reference-fns/indirect)
-- [CHOOSE](/docs/reference/functions/lookup/choose)
-- [HLOOKUP](/docs/reference/functions/lookup/hlookup)
-- [MATCH](/docs/reference/functions/lookup/match)
 
 ## FAQ
 
@@ -57,8 +97,6 @@ ADDRESS returns #VALUE!; only 1 (absolute), 2 (absolute row), 3 (absolute column
 ### Why does sheet_text sometimes add single quotes?
 Sheet names containing spaces or special characters are quoted and internal apostrophes are escaped to keep a valid reference string.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="lookup/address" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/lookup/address.rs)

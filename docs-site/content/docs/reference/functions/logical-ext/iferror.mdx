@@ -1,59 +1,113 @@
 ---
 title: "IFERROR"
-description: "IFERROR: Returns a fallback when the first expression evaluates to any error."
+seoTitle: "IFERROR function: formula syntax and examples"
+description: "Returns a fallback when the first expression evaluates to any error. =IFERROR(value, value_if_error)"
 ---
 
-<FunctionPageSchema id="logical-ext/iferror" />
-
-## Summary
+Returns a fallback when the first expression evaluates to any error.
 
 `IFERROR(value, value_if_error)` is useful for user-friendly error handling.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=IFERROR(value, value_if_error)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `value` | any | Required | — |
+| `value_if_error` | any | Required | — |
 
 ## Remarks
  - Any error kind in the first argument triggers the fallback branch.
  - Non-error results pass through unchanged.
- - Evaluation failures surfaced as interpreter errors are also caught.
+ - Evaluation failures surfaced as interpreter errors are also caught, except
+   cancellation and resource-limit failures, which abort the evaluation
+   request instead of selecting the fallback.
+ - When the first argument is an array or range, each error element is
+   replaced by the matching element of the fallback and other elements pass
+   through. A scalar fallback applies to every error element; an array
+   fallback is paired by position using the same broadcast rule as array
+   operators (a single row or column repeats; other mismatched sizes return
+   `#VALUE!`). Errors inside the fallback are returned as-is.
+ - The fallback is evaluated at most once, and only when an error is
+   present. An array or range with no error elements is returned unchanged,
+   so a larger array fallback does not change the result's size.
+ - A replaced array result larger than 16,777,216 cells, or larger than a
+   sheet in either dimension, returns `#NUM!`.
+
+## Error cases
+
  - Exactly two arguments are required; other arities return `#VALUE!`.
 
 ## Examples
 
-<Tabs items={["Replace division error", "Pass through non-error"]}>
-<Tab value="Replace division error">
-<FunctionSandbox
-  title="Replace division error"
-  formula={`=IFERROR(1/0, "n/a")`}
+<FunctionExample
+  title={"Replace a missing-value error with a readable fallback."}
+  formula={"=IFERROR(NA(),\"Unavailable\")"}
   grid={{}}
-  expected={"n/a"}
+  expected={"Unavailable"}
 />
-</Tab>
 
-<Tab value="Pass through non-error">
-<FunctionSandbox
-  title="Pass through non-error"
-  formula={`=IFERROR(42, 0)`}
+<FunctionExample
+  title={"Preserve a numeric input when there is no error to replace."}
+  formula={"=IFERROR(42,\"Unavailable\")"}
   grid={{}}
   expected={"42"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"A zero result is a valid value and does not need the fallback."}
+  formula={"=IFERROR(0,\"Unavailable\")"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"An error in the fallback becomes the formula result."}
+  formula={"=IFERROR(NA(),1/0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Replace division error"}
+  formula={"=IFERROR(1/0, \"n/a\")"}
+  grid={{}}
+  expected={"n/a"}
+/>
+
+<FunctionExample
+  title={"Pass through non-error"}
+  formula={"=IFERROR(42, 0)"}
+  grid={{}}
+  expected={"42"}
+/>
+
+<FunctionExample
+  title={"Replace errors element by element"}
+  formula={"=IFERROR(1/A1:A3, -1)"}
+  grid={{"A1":"1","A2":"0","A3":"2"}}
+  expected={"{1; -1; 0.5}"}
+/>
 
 ## Related functions
 
 - [IFNA](/docs/reference/functions/logical-ext/ifna)
 - [IF](/docs/reference/functions/logical/if)
 - [ISERROR](/docs/reference/functions/info/iserror)
-- [IFS](/docs/reference/functions/logical-ext/ifs)
-- [NOT](/docs/reference/functions/logical-ext/not)
-- [SWITCH](/docs/reference/functions/logical-ext/switch)
 
 ## FAQ
 
 ### Does IFERROR catch all error types?
-Yes. Any error kind in the first argument triggers the fallback value.
+An error produced while evaluating the first argument triggers the fallback. Dependency preparation, cancellation, and resource-limit failures abort the request instead of selecting the fallback.
 
-## Runtime metadata
+### How does IFERROR handle arrays?
+Each error element of an array or range is replaced by the corresponding fallback element; clean arrays are returned unchanged without evaluating the fallback.
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="logical-ext/iferror" />
-{/* [formualizer-docgen:function-meta:end] */}
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/logical_ext.rs)

@@ -36,6 +36,10 @@ cargo run -p xtask -- schema
 cargo run -p xtask -- schema --apply --allow-dirty
 ```
 
+`cargo run -p xtask -- ref` checks the generated function reference and evaluates every example. Edit argument signatures in `crates/xtask/function-signatures.txt` and worked examples in `crates/xtask/function-examples.txt`. Run `cargo run -p xtask -- ref --apply --allow-dirty` after any docs edit or change to an engine result. The command refreshes the pages, metadata and the content date manifest, which covers `docs/`, `docs-site/content/docs/`, the home page’s source files and `skills/formualizer-recalc/`. Even a typo fix in a guide makes the manifest stale, and the Rust workspace tests fail until it is refreshed. Include the generated files in the same change.
+
+From `docs-site/`, run `pnpm check:wasm-examples` to compare the generated examples with the published browser package. If the report changes, review it, run `pnpm check:wasm-examples --write`, then regenerate the reference from the repository root to update indexing metadata.
+
 For builtin doc comments:
 
 - Use template: `docs/architecture/builtin-doc-comment-template.md`

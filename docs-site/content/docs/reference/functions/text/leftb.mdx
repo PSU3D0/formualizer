@@ -1,19 +1,63 @@
 ---
 title: "LEFTB"
-description: "LEFTB: Returns the leftmost characters using non-DBCS byte-compatible semantics."
+seoTitle: "LEFTB function: formula syntax and examples"
+description: "Returns the leftmost characters using non-DBCS byte-compatible semantics. =LEFTB(text, [num_bytes])"
 ---
 
-<FunctionPageSchema id="text/leftb" />
-
-## Summary
+Returns the leftmost characters using non-DBCS byte-compatible semantics.
 
 In Formualizer's invariant locale, LEFTB delegates to LEFT.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=LEFTB(text, [num_bytes])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `text` | any | Required | — |
+| `num_bytes` | any | Optional | — |
+
+## How it works
+
+Delegates to LEFT. Takes the first n Unicode scalar characters in Formualizer’s invariant locale, so a multibyte character occupies one position. A negative count is invalid.
+
 ## Examples
 
-<FunctionSandbox
-  title="Left byte-compatible characters"
-  formula={`=LEFTB("hello",2)`}
+<FunctionExample
+  title={"Take the first two Unicode scalar characters, é and 界."}
+  formula={"=LEFTB(\"é界xyz\",2)"}
+  grid={{}}
+  expected={"é界"}
+/>
+
+<FunctionExample
+  title={"The default count takes the initial é."}
+  formula={"=LEFTB(\"é界xyz\")"}
+  grid={{}}
+  expected={"é"}
+/>
+
+<FunctionExample
+  title={"A zero count gives empty text."}
+  formula={"=LEFTB(\"é界xyz\",0)"}
+  grid={{}}
+  expected={""}
+/>
+
+<FunctionExample
+  title={"A negative count cannot select a prefix."}
+  formula={"=LEFTB(\"é界xyz\",-1)"}
+  grid={{}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Left byte-compatible characters"}
+  formula={"=LEFTB(\"hello\",2)"}
   grid={{}}
   expected={"he"}
 />
@@ -23,17 +67,12 @@ In Formualizer's invariant locale, LEFTB delegates to LEFT.
 - [LEFT](/docs/reference/functions/text/left)
 - [RIGHTB](/docs/reference/functions/text/rightb)
 - [MIDB](/docs/reference/functions/text/midb)
-- [CONCAT](/docs/reference/functions/text/concat)
-- [CONCATENATE](/docs/reference/functions/text/concatenate)
-- [NUMBERVALUE](/docs/reference/functions/text/numbervalue)
 
 ## FAQ
 
 ### Does LEFTB split UTF-8 bytes?
 No. It follows the non-DBCS behavior and delegates to LEFT.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="text/leftb" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/text/byte.rs)

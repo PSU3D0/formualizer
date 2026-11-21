@@ -5,6 +5,7 @@ on:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -14,7 +15,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  reuse-pr-checks:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/reuse-pr-checks.yml
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    with:
+      workflow-file: wasm.yml
+
   test-wasm:
+    needs: reuse-pr-checks
+    if: ${{ !cancelled() && needs.reuse-pr-checks.outputs.reuse != 'true' }}
     name: test-wasm
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -120,3 +133,8 @@ jobs:
           name: wasm-pkg
           path: bindings/wasm/pkg
           if-no-files-found: error
+
+      - name: Record tested source tree
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: ./.github/actions/record-ci-tree

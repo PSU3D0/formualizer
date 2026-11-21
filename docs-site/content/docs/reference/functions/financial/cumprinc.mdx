@@ -1,60 +1,95 @@
 ---
 title: "CUMPRINC"
-description: "CUMPRINC: Returns cumulative principal paid between two inclusive payment periods."
+seoTitle: "CUMPRINC function: formula syntax and examples"
+description: "Returns cumulative principal paid between two inclusive payment periods. =CUMPRINC(rate, nper, pv, start_period, end_period, type)"
 ---
 
-<FunctionPageSchema id="financial/cumprinc" />
-
-## Summary
+Returns cumulative principal paid between two inclusive payment periods.
 
 Use this to measure principal reduction over a selected amortization window.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CUMPRINC(rate, nper, pv, start_period, end_period, type)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `rate` | number | Required | — |
+| `nper` | number | Required | — |
+| `pv` | number | Required | — |
+| `start_period` | number | Required | — |
+| `end_period` | number | Required | — |
+| `type` | number | Required | — |
 
 ## Remarks
  - `rate` is the interest rate per payment period.
  - `start_period` and `end_period` are 1-based, inclusive integer periods.
  - `type` must be `0` (end-of-period) or `1` (beginning-of-period).
  - Sign convention follows payment direction; with positive `pv`, cumulative principal is typically negative.
+
+## Error cases
+
  - Returns `#NUM!` for invalid domain values (non-positive rate, invalid ranges, invalid type, or non-positive `pv`).
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=CUMPRINC(0.06/12, 360, 300000, 1, 12, 0)`}
+<FunctionExample
+  title={"Calculate the portion paid during the first year of a three-year loan."}
+  formula={"=CUMPRINC(0.05/12,36,10000,1,12,0)"}
   grid={{}}
-  expected={"null"}
+  expected={"-3168.46416620544"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)`}
+<FunctionExample
+  title={"Move payments to the beginning of each month."}
+  formula={"=CUMPRINC(0.05/12,36,10000,1,12,1)"}
   grid={{}}
-  expected={"null"}
+  expected={"-3196.81078792243"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Limit the calculation to the final payment."}
+  formula={"=CUMPRINC(0.05/12,36,10000,36,36,0)"}
+  grid={{}}
+  expected={"-298.465365357663"}
+/>
+
+<FunctionExample
+  title={"The ending period cannot precede the starting period."}
+  formula={"=CUMPRINC(0.05/12,36,10000,12,1,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find how much principal the first 12 mortgage payments retire."}
+  formula={"=CUMPRINC(0.06/12, 360, 300000, 1, 12, 0)"}
+  grid={{}}
+  expected={"-3684.03513683039"}
+/>
+
+<FunctionExample
+  title={"Find how much principal the second year of mortgage payments retires."}
+  formula={"=CUMPRINC(0.06/12, 360, 300000, 13, 24, 0)"}
+  grid={{}}
+  expected={"-3911.25836290202"}
+/>
 
 ## Related functions
 
 - [PPMT](/docs/reference/functions/financial/ppmt)
 - [PMT](/docs/reference/functions/financial/pmt)
 - [CUMIPMT](/docs/reference/functions/financial/cumipmt)
-- [ACCRINT](/docs/reference/functions/financial/accrint)
-- [DOLLARDE](/docs/reference/functions/financial/dollarde)
-- [DOLLARFR](/docs/reference/functions/financial/dollarfr)
 
 ## FAQ
 
 ### Why is `CUMPRINC` often negative for loans?
 With positive `pv`, payment cash outflows are negative in this convention, so cumulative principal is typically negative.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/cumprinc" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

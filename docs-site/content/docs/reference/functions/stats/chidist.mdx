@@ -1,0 +1,74 @@
+---
+title: "CHIDIST"
+seoTitle: "CHIDIST function: formula syntax and examples"
+description: "Returns the right-tailed chi-squared probability (legacy name). =CHIDIST(x, deg_freedom)"
+---
+
+Returns the right-tailed chi-squared probability (legacy name).
+
+`CHIDIST(x, deg_freedom)` is `P(X &gt; x)`, the same as `CHISQ.DIST.RT`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=CHIDIST(x, deg_freedom)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `x` | number | Required | — |
+| `deg_freedom` | number | Required | — |
+
+## How it works
+
+Maps to CHISQ.DIST.RT(x, degrees_freedom), with both arguments in the same order. Integrates the chi-squared density above nonnegative x, with positive degrees of freedom.
+
+## Remarks
+ - `deg_freedom` is truncated to an integer.
+
+## Error cases
+
+ - Returns `#NUM!` when `x &lt; 0`, `deg_freedom &lt; 1`, or `deg_freedom &gt; 10^10`.
+
+## Examples
+
+<FunctionExample
+  title={"Use the legacy name to integrate the chi-square tail above four."}
+  formula={"=CHIDIST(4,3)"}
+  grid={{}}
+  expected={"0.261464129949111"}
+/>
+
+<FunctionExample
+  title={"Increase the degrees of freedom from three to ten while holding the tail cutoff fixed."}
+  formula={"=CHIDIST(4,10)"}
+  grid={{}}
+  expected={"0.947346982656289"}
+/>
+
+<FunctionExample
+  title={"The legacy upper-tail probability above zero is one."}
+  formula={"=CHIDIST(0,3)"}
+  grid={{}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"A negative statistic is outside the chi-square domain."}
+  formula={"=CHIDIST(-1,3)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Find the chi-square probability above 18.307 with ten degrees of freedom."}
+  formula={"=CHIDIST(18.307,10)"}
+  grid={{}}
+  expected={"0.0500005890913982"}
+/>
+
+## Implementation
+
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/stats/legacy.rs)

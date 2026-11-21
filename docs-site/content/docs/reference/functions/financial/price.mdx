@@ -1,14 +1,31 @@
 ---
 title: "PRICE"
-description: "Returns clean price per 100 face value for a coupon-paying security."
+seoTitle: "PRICE function: formula syntax and examples"
+description: "Returns clean price per 100 face value for a coupon-paying security. =PRICE(settlement, maturity, rate, yld, redemption, frequency, [basis])"
 ---
 
-<FunctionPageSchema id="financial/price" />
-
-## Summary
+Returns clean price per 100 face value for a coupon-paying security.
 
 `PRICE` discounts remaining coupons and redemption to settlement and subtracts accrued
  coupon interest according to the chosen day-count basis.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=PRICE(settlement, maturity, rate, yld, redemption, frequency, [basis])`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `settlement` | number | Required | — |
+| `maturity` | number | Required | — |
+| `rate` | number | Required | — |
+| `yld` | number | Required | — |
+| `redemption` | number | Required | — |
+| `frequency` | number | Required | — |
+| `basis` | number | Optional | — |
 
 ## Remarks
  - Date inputs are spreadsheet serial dates and must satisfy `maturity &gt; settlement`.
@@ -20,35 +37,53 @@ description: "Returns clean price per 100 face value for a coupon-paying securit
 
 ## Examples
 
-<Tabs items={["Single remaining coupon period", "Par bond when coupon rate equals yield"]}>
-<Tab value="Single remaining coupon period">
-<FunctionSandbox
-  title="Single remaining coupon period"
-  formula={`=PRICE(DATE(2024,4,1), DATE(2024,7,1), 0.06, 0.05, 100, 2, 0)`}
+<FunctionExample
+  title={"Price a three-year bond at a yield above its coupon rate."}
+  formula={"=PRICE(DATE(2024,2,20),DATE(2027,1,15),0.05,0.06,100,2)"}
   grid={{}}
-  expected={"100.2283950617284"}
+  expected={"97.3660899380187"}
 />
-</Tab>
 
-<Tab value="Par bond when coupon rate equals yield">
-<FunctionSandbox
-  title="Par bond when coupon rate equals yield"
-  formula={`=PRICE(DATE(2024,3,1), DATE(2026,3,1), 0.05, 0.05, 100, 2, 0)`}
+<FunctionExample
+  title={"Switch to an actual-day count with a 365-day year."}
+  formula={"=PRICE(DATE(2024,2,20),DATE(2027,1,15),0.05,0.06,100,2,3)"}
+  grid={{}}
+  expected={"97.3674079817956"}
+/>
+
+<FunctionExample
+  title={"Settle on a coupon date with equal coupon and yield to price the bond at par."}
+  formula={"=PRICE(DATE(2024,7,15),DATE(2027,1,15),0.05,0.05,100,2)"}
   grid={{}}
   expected={"100"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"The coupon frequency of three is unsupported."}
+  formula={"=PRICE(DATE(2024,2,20),DATE(2027,1,15),0.05,0.06,100,3)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Single remaining coupon period"}
+  formula={"=PRICE(DATE(2024,4,1), DATE(2024,7,1), 0.06, 0.05, 100, 2, 0)"}
+  grid={{}}
+  expected={"100.228395061728"}
+/>
+
+<FunctionExample
+  title={"Par bond when coupon rate equals yield"}
+  formula={"=PRICE(DATE(2024,3,1), DATE(2026,3,1), 0.05, 0.05, 100, 2, 0)"}
+  grid={{}}
+  expected={"100"}
+/>
 
 ## Related functions
 
 - [YIELD](/docs/reference/functions/financial/yield)
 - [ACCRINT](/docs/reference/functions/financial/accrint)
 - [ACCRINTM](/docs/reference/functions/financial/accrintm)
-- [DB](/docs/reference/functions/financial/db)
-- [DDB](/docs/reference/functions/financial/ddb)
-- [FV](/docs/reference/functions/financial/fv)
 
 ## FAQ
 
@@ -58,8 +93,6 @@ This implementation follows Excel quoting conventions and returns clean price pe
 ### Which domain checks return `#NUM!`?
 `maturity &lt;= settlement`, invalid `basis`, unsupported `frequency`, negative `rate`/`yld`, or non-positive `redemption`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/price" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/bonds.rs)

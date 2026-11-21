@@ -1,51 +1,85 @@
 ---
 title: "SLN"
-description: "SLN: Returns straight-line depreciation for a single period."
+seoTitle: "SLN function: formula syntax and examples"
+description: "Returns straight-line depreciation for a single period. =SLN(cost, salvage, life)"
 ---
 
-<FunctionPageSchema id="financial/sln" />
-
-## Summary
+Returns straight-line depreciation for a single period.
 
 `SLN` spreads the depreciable amount (`cost - salvage`) evenly across `life` periods.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SLN(cost, salvage, life)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `cost` | number | Required | — |
+| `salvage` | number | Required | — |
+| `life` | number | Required | — |
+
 ## Remarks
  - Formula: `(cost - salvage) / life`.
- - `life` must be non-zero; `life = 0` returns `#DIV/0!`.
  - This function returns the algebraic result: if `salvage &gt; cost`, depreciation is negative.
  - Inputs are interpreted as scalar numeric values in matching currency/period units.
 
+## Error cases
+
+ - `life` must be non-zero; `life = 0` returns `#DIV/0!`.
+
 ## Examples
 
-<Tabs items={["Straight-line yearly depreciation", "Negative depreciation when salvage exceeds cost"]}>
-<Tab value="Straight-line yearly depreciation">
-<FunctionSandbox
-  title="Straight-line yearly depreciation"
-  formula={`=SLN(10000, 1000, 9)`}
+<FunctionExample
+  title={"Spread depreciable value evenly over five periods."}
+  formula={"=SLN(1000,100,5)"}
+  grid={{}}
+  expected={"180"}
+/>
+
+<FunctionExample
+  title={"Depreciate the full cost when there is no salvage value."}
+  formula={"=SLN(1000,0,5)"}
+  grid={{}}
+  expected={"200"}
+/>
+
+<FunctionExample
+  title={"Equal cost and salvage leave nothing to depreciate."}
+  formula={"=SLN(1000,1000,5)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A zero useful life leaves no periods over which to depreciate cost."}
+  formula={"=SLN(1000,100,0)"}
+  grid={{}}
+  expected={"#DIV/0!"}
+/>
+
+<FunctionExample
+  title={"Straight-line yearly depreciation"}
+  formula={"=SLN(10000, 1000, 9)"}
   grid={{}}
   expected={"1000"}
 />
-</Tab>
 
-<Tab value="Negative depreciation when salvage exceeds cost">
-<FunctionSandbox
-  title="Negative depreciation when salvage exceeds cost"
-  formula={`=SLN(1000, 1200, 2)`}
+<FunctionExample
+  title={"Negative depreciation when salvage exceeds cost"}
+  formula={"=SLN(1000, 1200, 2)"}
   grid={{}}
   expected={"-100"}
 />
-</Tab>
-
-</Tabs>
 
 ## Related functions
 
 - [SYD](/docs/reference/functions/financial/syd)
 - [DB](/docs/reference/functions/financial/db)
 - [DDB](/docs/reference/functions/financial/ddb)
-- [MIRR](/docs/reference/functions/financial/mirr)
-- [PDURATION](/docs/reference/functions/financial/pduration)
-- [RRI](/docs/reference/functions/financial/rri)
 
 ## FAQ
 
@@ -55,8 +89,6 @@ Yes. If `salvage &gt; cost`, `(cost - salvage) / life` is negative.
 ### What happens when `life` is zero?
 `SLN` returns `#DIV/0!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/sln" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/depreciation.rs)

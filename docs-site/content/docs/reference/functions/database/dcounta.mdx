@@ -1,58 +1,87 @@
 ---
 title: "DCOUNTA"
-description: "DCOUNTA: Counts non-blank values in a database field for records matching criteria."
+seoTitle: "DCOUNTA function: formula syntax and examples"
+description: "Counts non-blank values in a database field for records matching criteria. =DCOUNTA(database, field, criteria)"
 ---
-
-<FunctionPageSchema id="database/dcounta" />
-
-## Summary
 
 Counts non-blank values in a database field for records matching criteria.
 
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DCOUNTA(database, field, criteria)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `database` | any | Required | — |
+| `field` | any | Required | — |
+| `criteria` | any | Required | — |
+
 ## Remarks
+ - An equality criterion for a date or number (`"10/26/1999"`, `"36459"`, `36459`) also
+   matches text cells holding that date; `&lt;&gt;` and ordering criteria do not read date text.
  - `DCOUNTA` counts both text and numeric non-empty values.
  - Criteria rows are OR-ed; criteria columns in the same row are AND-ed.
  - Blank cells are excluded from the count.
 
 ## Examples
 
-<Tabs items={["Count non-blank names where score > 80", "Count all non-blank values in a field"]}>
-<Tab value="Count non-blank names where score &gt; 80">
-<FunctionSandbox
-  title="Count non-blank names where score &gt; 80"
-  formula={`=DCOUNTA(A1:B4,"Name",D1:D2)`}
-  grid={{"A1":"Name","A2":"Ana","A3":"Bo","A4":"Cy","B1":"Score","B2":"92","B3":"75","B4":"88","D1":"Score","D2":">80"}}
+<FunctionExample
+  title={"Count the populated values in the Score column for the two East records."}
+  formula={"=DCOUNTA(A1:B4,\"Score\",D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
   expected={"2"}
 />
-</Tab>
 
-<Tab value="Count all non-blank values in a field">
-<FunctionSandbox
-  title="Count all non-blank values in a field"
-  formula={`=DCOUNTA(A1:A4,"Item",C1:C1)`}
-  grid={{"A1":"Item","A2":"X","A3":"Y","A4":"","C1":"Item"}}
+<FunctionExample
+  title={"Use field number 2 to get the same populated count for East."}
+  formula={"=DCOUNTA(A1:B4,2,D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
   expected={"2"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"With the West filter, only the score of 3 contributes to the populated count."}
+  formula={"=IFERROR(DCOUNTA(A1:B4,\"Score\",E1:E2),\"Insufficient data\")"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","E1":"\"Team\"","E2":"\"West\""}}
+  expected={"1"}
+/>
+
+<FunctionExample
+  title={"The missing field header prevents calculating the populated count for East."}
+  formula={"=DCOUNTA(A1:B4,\"Missing\",D1:D2)"}
+  grid={{"A1":"\"Team\"","A2":"\"East\"","A3":"\"West\"","A4":"\"East\"","B1":"\"Score\"","B2":"8","B3":"3","B4":"10","D1":"\"Team\"","D2":"\"East\""}}
+  expected={"#VALUE!"}
+/>
+
+<FunctionExample
+  title={"Count non-blank names where score > 80"}
+  formula={"=DCOUNTA(A1:B4,\"Name\",D1:D2)"}
+  grid={{"A1":"\"Name\"","A2":"\"Ana\"","A3":"\"Bo\"","A4":"\"Cy\"","B1":"\"Score\"","B2":"92","B3":"75","B4":"88","D1":"\"Score\"","D2":"\">80\""}}
+  expected={"2"}
+/>
+
+<FunctionExample
+  title={"Count X, Y and the stored empty string as three entries"}
+  formula={"=DCOUNTA(A1:A4,\"Item\",C1:C1)"}
+  grid={{"A1":"\"Item\"","A2":"\"X\"","A3":"\"Y\"","A4":"\"\"","C1":"\"Item\""}}
+  expected={"3"}
+/>
 
 ## Related functions
 
 - [DCOUNT](/docs/reference/functions/database/dcount)
 - [DGET](/docs/reference/functions/database/dget)
 - [COUNTA](/docs/reference/functions/math/counta)
-- [DAVERAGE](/docs/reference/functions/database/daverage)
-- [DMAX](/docs/reference/functions/database/dmax)
-- [DMIN](/docs/reference/functions/database/dmin)
 
 ## FAQ
 
 ### What is treated as blank in DCOUNTA?
 Empty cells and empty strings are treated as blank; other value types are counted when their row matches criteria.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="database/dcounta" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/database.rs)

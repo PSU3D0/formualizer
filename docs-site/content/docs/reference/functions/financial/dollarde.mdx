@@ -1,60 +1,89 @@
 ---
 title: "DOLLARDE"
-description: "DOLLARDE: Converts fractional-dollar notation into a decimal dollar value."
+seoTitle: "DOLLARDE function: formula syntax and examples"
+description: "Converts fractional-dollar notation into a decimal dollar value. =DOLLARDE(fractional_dollar, fraction)"
 ---
 
-<FunctionPageSchema id="financial/dollarde" />
-
-## Summary
+Converts fractional-dollar notation into a decimal dollar value.
 
 This is commonly used for security price formats such as thirty-seconds (`fraction = 32`).
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=DOLLARDE(fractional_dollar, fraction)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `fractional_dollar` | number | Required | — |
+| `fraction` | number | Required | — |
 
 ## Remarks
  - `fraction` is truncated to an integer denominator and must be `&gt;= 1`.
  - Sign convention: sign is preserved (`-x` maps to `-result`).
  - No periodic rate is involved in this conversion.
- - Returns `#NUM!` when `fraction &lt; 1` after truncation.
  - Fractional parsing uses denominator digit width (`ceil(log10(fraction))`).
+
+## Error cases
+
+ - Returns `#NUM!` when `fraction &lt; 1` after truncation.
 
 ## Examples
 
-<Tabs items={["Example", "Example"]}>
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=DOLLARDE(1.02, 16)`}
+<FunctionExample
+  title={"Convert a dollar amount expressed with a 32-part fraction."}
+  formula={"=DOLLARDE(1.25,32)"}
   grid={{}}
-  expected={"null"}
+  expected={"1.78125"}
 />
-</Tab>
 
-<Tab value="Example">
-<FunctionSandbox
-  title="Example"
-  formula={`=DOLLARDE(-3.15, 32)`}
+<FunctionExample
+  title={"Use a negative dollar amount and a different fraction base."}
+  formula={"=DOLLARDE(-1.25,16)"}
   grid={{}}
-  expected={"null"}
+  expected={"-2.5625"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Zero remains zero under the conversion."}
+  formula={"=DOLLARDE(0,32)"}
+  grid={{}}
+  expected={"0"}
+/>
+
+<FunctionExample
+  title={"A zero fraction denominator cannot define the conversion."}
+  formula={"=DOLLARDE(1.25,0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Convert 1 and 2 sixteenths to a decimal dollar quote."}
+  formula={"=DOLLARDE(1.02, 16)"}
+  grid={{}}
+  expected={"1.125"}
+/>
+
+<FunctionExample
+  title={"Convert a negative dollar quote whose fractional part is 15 thirty-seconds."}
+  formula={"=DOLLARDE(-3.15, 32)"}
+  grid={{}}
+  expected={"-3.46875"}
+/>
 
 ## Related functions
 
 - [DOLLARFR](/docs/reference/functions/financial/dollarfr)
-- [EFFECT](/docs/reference/functions/financial/effect)
-- [NOMINAL](/docs/reference/functions/financial/nominal)
-- [CUMIPMT](/docs/reference/functions/financial/cumipmt)
-- [CUMPRINC](/docs/reference/functions/financial/cumprinc)
-- [ISPMT](/docs/reference/functions/financial/ispmt)
 
 ## FAQ
 
 ### Why does `DOLLARDE` truncate `fraction`?
 The denominator is treated as an integer quote base; values below `1` after truncation return `#NUM!`.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/dollarde" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/tvm.rs)

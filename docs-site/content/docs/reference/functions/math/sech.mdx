@@ -1,58 +1,85 @@
 ---
 title: "SECH"
-description: "SECH: Returns the hyperbolic secant of a number, defined as `1 / COSH(x)`."
+seoTitle: "SECH function: formula syntax and examples"
+description: "Returns the hyperbolic secant of a number, defined as 1 / COSH(x). =SECH(number)"
 ---
 
-<FunctionPageSchema id="math/sech" />
-
-## Summary
+Returns the hyperbolic secant of a number, defined as `1 / COSH(x)`.
 
 `SECH` produces values in `(0, 1]` for real inputs.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=SECH(number)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `number` | any | Required | — |
+
+## How it works
+
+Hyperbolic secant is 1 / cosh(x). It is defined for all real x and reaches its maximum of 1 at zero.
 
 ## Remarks
  - Domain: accepts any real number.
  - Radians: this function is hyperbolic, so the input is not treated as an angle in radians.
+
+## Error cases
+
  - Errors: no function-specific domain errors are produced.
 
 ## Examples
 
-<Tabs items={["Hyperbolic secant at zero", "Hyperbolic secant at two"]}>
-<Tab value="Hyperbolic secant at zero">
-<FunctionSandbox
-  title="Hyperbolic secant at zero"
-  formula={`=SECH(0)`}
+<FunctionExample
+  title={"Take the reciprocal of cosh(0.5)."}
+  formula={"=SECH(0.5)"}
+  grid={{}}
+  expected={"0.886818883970074"}
+/>
+
+<FunctionExample
+  title={"Cosh is the same at both inputs, so the reciprocal is unchanged."}
+  formula={"=SECH(-0.5)"}
+  grid={{}}
+  expected={"0.886818883970074"}
+/>
+
+<FunctionExample
+  title={"The hyperbolic secant reaches one at zero."}
+  formula={"=SECH(0)"}
   grid={{}}
   expected={"1"}
 />
-</Tab>
 
-<Tab value="Hyperbolic secant at two">
-<FunctionSandbox
-  title="Hyperbolic secant at two"
-  formula={`=SECH(2)`}
+<FunctionExample
+  title={"The text “invalid” cannot be used as the input to the hyperbolic secant."}
+  formula={"=SECH(\"invalid\")"}
   grid={{}}
-  expected={"0.2658022288340797"}
+  expected={"#VALUE!"}
 />
-</Tab>
 
-</Tabs>
+<FunctionExample
+  title={"Hyperbolic secant at two"}
+  formula={"=SECH(2)"}
+  grid={{}}
+  expected={"0.26580222883408"}
+/>
 
 ## Related functions
 
 - [COSH](/docs/reference/functions/math/cosh)
 - [CSCH](/docs/reference/functions/math/csch)
 - [COTH](/docs/reference/functions/math/coth)
-- [ACOSH](/docs/reference/functions/math/acosh)
-- [ATANH](/docs/reference/functions/math/atanh)
-- [DEGREES](/docs/reference/functions/math/degrees)
 
 ## FAQ
 
 ### Can SECH be negative for real inputs?
 No. For real numbers, SECH = 1/COSH is always positive.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="math/sech" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/math/trig.rs)

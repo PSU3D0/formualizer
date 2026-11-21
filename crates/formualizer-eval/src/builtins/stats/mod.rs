@@ -4435,9 +4435,9 @@ impl Function for ChisqInvFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "F CDF with symmetric 2 and 2 degrees of freedom"
-/// formula: "=F.DIST(1,2,2,TRUE)"
-/// expected: 0.5
+/// title: "Accumulate the F distribution up to 0.8 with two degrees of freedom in each sample."
+/// formula: "=F.DIST(0.8,2,2,TRUE)"
+/// expected: 0.444444444444445
 /// ```
 ///
 /// ```yaml,sandbox
@@ -4517,9 +4517,9 @@ impl Function for FDistFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Median F quantile with symmetric 2 and 2 degrees of freedom"
-/// formula: "=F.INV(0.5,2,2)"
-/// expected: 1
+/// title: "Find the 63rd percentile with two numerator and two denominator degrees of freedom."
+/// formula: "=F.INV(0.63,2,2)"
+/// expected: 1.70270270270271
 /// ```
 ///
 /// ```yaml,sandbox
@@ -5417,9 +5417,9 @@ impl Function for NegbinomDistFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Hypergeometric PMF"
-/// formula: "=HYPGEOM.DIST(1,3,4,10,FALSE)"
-/// expected: 0.5
+/// title: "Find the probability of exactly one success in three draws from ten items, five of which count as successes."
+/// formula: "=HYPGEOM.DIST(1,3,5,10,FALSE)"
+/// expected: 0.416666666666669
 /// ```
 ///
 /// ```yaml,sandbox
@@ -7764,9 +7764,9 @@ impl Function for TTestFn {
 /// # Examples
 ///
 /// ```yaml,sandbox
-/// title: "Identical samples yield p-value 1"
-/// formula: "=F.TEST({1,2,3,4},{1,2,3,4})"
-/// expected: 1
+/// title: "Compare samples of equal size whose spreads differ."
+/// formula: "=F.TEST({1,2,3,4},{3,4,7,9})"
+/// expected: 0.245157188752938
 /// ```
 ///
 /// ```yaml,sandbox

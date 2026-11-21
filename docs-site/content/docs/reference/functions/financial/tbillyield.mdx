@@ -1,28 +1,72 @@
 ---
 title: "TBILLYIELD"
-description: "TBILLYIELD: Returns the yield for a US Treasury bill."
+seoTitle: "TBILLYIELD function: formula syntax and examples"
+description: "Returns the yield for a US Treasury bill. =TBILLYIELD(settlement, maturity, pr)"
 ---
 
-<FunctionPageSchema id="financial/tbillyield" />
-
-## Summary
+Returns the yield for a US Treasury bill.
 
 `TBILLYIELD` computes the discount-rate yield from a T-bill's price using
  `yield = (100 - price) / price * (360 / DSM)`.
+
+The Formualizer engine in this repository at 0.14.0 plus unreleased changes computes the example results. Known differences from Excel are listed on this page.
+
+## Syntax
+
+`=TBILLYIELD(settlement, maturity, pr)`
+
+## Arguments
+
+| Argument | Type | Required | Default |
+| --- | --- | --- | --- |
+| `settlement` | number | Required | — |
+| `maturity` | number | Required | — |
+| `pr` | number | Required | — |
 
 ## Remarks
  - Date inputs are spreadsheet serial dates; `maturity` must be after `settlement`.
  - The T-bill must mature within one year of settlement (DSM &lt;= 365).
  - `price` is the dollar price per $100 face value; must be positive.
+
+## Error cases
+
  - Returns `#NUM!` for invalid dates, non-positive price, or DSM out of range.
 
 ## Examples
 
-<FunctionSandbox
-  title="Yield from quoted T-bill price"
-  formula={`=TBILLYIELD(DATE(2024,1,1), DATE(2024,4,1), 98.5)`}
+<FunctionExample
+  title={"Calculate yield at a price of 98 per 100 face value."}
+  formula={"=TBILLYIELD(DATE(2024,1,1),DATE(2024,4,1),98)"}
   grid={{}}
-  expected={"0.060244324203715074"}
+  expected={"0.0807355909396726"}
+/>
+
+<FunctionExample
+  title={"Compare the result for a higher purchase price."}
+  formula={"=TBILLYIELD(DATE(2024,1,1),DATE(2024,4,1),99)"}
+  grid={{}}
+  expected={"0.03996003996004"}
+/>
+
+<FunctionExample
+  title={"Compute the annualized yield for a bill maturing the next day."}
+  formula={"=TBILLYIELD(DATE(2024,1,1),DATE(2024,1,2),99.9)"}
+  grid={{}}
+  expected={"0.36036036036034"}
+/>
+
+<FunctionExample
+  title={"A zero purchase price cannot serve as a return denominator."}
+  formula={"=TBILLYIELD(DATE(2024,1,1),DATE(2024,4,1),0)"}
+  grid={{}}
+  expected={"#NUM!"}
+/>
+
+<FunctionExample
+  title={"Yield from quoted T-bill price"}
+  formula={"=TBILLYIELD(DATE(2024,1,1), DATE(2024,4,1), 98.5)"}
+  grid={{}}
+  expected={"0.0602443242037151"}
 />
 
 ## Related functions
@@ -30,17 +74,12 @@ description: "TBILLYIELD: Returns the yield for a US Treasury bill."
 - [TBILLPRICE](/docs/reference/functions/financial/tbillprice)
 - [TBILLEQ](/docs/reference/functions/financial/tbilleq)
 - [YIELD](/docs/reference/functions/financial/yield)
-- [MIRR](/docs/reference/functions/financial/mirr)
-- [PDURATION](/docs/reference/functions/financial/pduration)
-- [RRI](/docs/reference/functions/financial/rri)
 
 ## FAQ
 
 ### Is TBILLYIELD the same as bond-equivalent yield?
 No. TBILLYIELD gives the bill's discount-rate yield, while TBILLEQ converts that pricing into a bond-equivalent yield.
 
-## Runtime metadata
+## Implementation
 
-{/* [formualizer-docgen:function-meta:start] */}
-<FunctionMeta id="financial/tbillyield" />
-{/* [formualizer-docgen:function-meta:end] */}
+[Engine source](https://github.com/psu3d0/formualizer/blob/main/crates/formualizer-eval/src/builtins/financial/bonds.rs)
