@@ -1208,12 +1208,24 @@ where
                         && formula.get_formula_type() == &umya_spreadsheet::CellFormulaValues::Array
                     {
                         nonlegacy_cells.insert((row, col));
-                        if let Some(array) = crate::legacy_formula::arrays::ArrayFormula::from_range(
-                            row,
-                            col,
-                            formula.get_reference(),
-                            has_metadata,
-                        ) {
+                        let reference = formula.get_reference().trim();
+                        let array = if !reference.is_empty() {
+                            crate::legacy_formula::arrays::ArrayFormula::from_range(
+                                row,
+                                col,
+                                reference,
+                                has_metadata,
+                            )
+                        } else if !has_metadata
+                            && !cell.get_cell_value().get_formula().trim().is_empty()
+                        {
+                            Some(crate::legacy_formula::arrays::ArrayFormula::single(
+                                row, col, false,
+                            ))
+                        } else {
+                            None
+                        };
+                        if let Some(array) = array {
                             arrays.push(array);
                         }
                     }

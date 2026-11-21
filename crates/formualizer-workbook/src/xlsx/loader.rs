@@ -996,8 +996,8 @@ impl LoadSink<'_> {
             if self.reader_values.is_none()
                 && self
                     .arrays
-                    .iter()
-                    .any(|array| array.row == row && array.col == col)
+                    .last()
+                    .is_some_and(|array| array.row == row && array.col == col)
             {
                 // Retain the cache until parsing confirms anchor ownership.
                 let result = self.values.push_formula_cache(row, col, value, format);
