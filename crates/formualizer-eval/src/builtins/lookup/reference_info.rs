@@ -299,6 +299,10 @@ impl Function for RowsFn {
             let v = args[0].value()?.into_literal();
             let rows = match v {
                 LiteralValue::Array(arr) => arr.len() as i64,
+                // A reference that a delete destroyed has no size.
+                LiteralValue::Error(e) if e.kind == ExcelErrorKind::Ref => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 _ => 1,
             };
             Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(rows)))
@@ -589,6 +593,10 @@ impl Function for ColumnsFn {
             let v = args[0].value()?.into_literal();
             let cols = match v {
                 LiteralValue::Array(arr) => arr.first().map(|r| r.len()).unwrap_or(0) as i64,
+                // A reference that a delete destroyed has no size.
+                LiteralValue::Error(e) if e.kind == ExcelErrorKind::Ref => {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                }
                 _ => 1,
             };
             Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(cols)))

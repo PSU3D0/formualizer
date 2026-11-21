@@ -64,6 +64,7 @@ mod column_operations;
 mod debug_vertex_lifecycle;
 mod dynamic_freshness;
 mod dynamic_topo;
+mod excel_parity_small;
 mod fixed_arrays;
 mod lambda_call_arena;
 mod legacy_semantics_pins;
