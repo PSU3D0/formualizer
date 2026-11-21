@@ -1892,3 +1892,453 @@ fn parallel_lookup_family_builds_its_index_once() {
         );
     }
 }
+
+#[test]
+fn issue_414_approx_and_exact_cache_invalidation_and_unsorted_guard() {
+    let mut engine = engine_with_config(EvalConfig::default());
+    // Rows 1..=80 ascending numeric keys 10, 20, ..., 800; col E = row index.
+    for row in 1..=80u32 {
+        number(&mut engine, "Sheet1", row, 4, row as f64 * 10.0);
+        number(&mut engine, "Sheet1", row, 5, row as f64);
+    }
+    // 10 approximate VLOOKUPs + 10 approximate MATCH(1) + 10 exact VLOOKUPs over the same table.
+    for row in 1..=10u32 {
+        let needle = row as f64 * 50.0 + 5.0; // 55, 105, ..., 505
+        formula(
+            &mut engine,
+            "Sheet1",
+            row,
+            1,
+            &format!("=VLOOKUP({needle}, $D$1:$E$80, 2, TRUE)"),
+        );
+        formula(
+            &mut engine,
+            "Sheet1",
+            row,
+            2,
+            &format!("=MATCH({needle}, $D$1:$D$80, 1)"),
+        );
+        let exact_needle = row as f64 * 50.0;
+        formula(
+            &mut engine,
+            "Sheet1",
+            row,
+            3,
+            &format!("=VLOOKUP({exact_needle}, $D$1:$E$80, 2, FALSE)"),
+        );
+    }
+
+    engine.evaluate_all().unwrap();
+    let report = engine.last_lookup_index_cache_report();
+    assert!(report.builds >= 1, "{report:?}");
+    assert!(report.hits > 0, "{report:?}");
+    for row in 1..=10u32 {
+        let expected = (row * 5) as f64;
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 1),
+            Some(LiteralValue::Number(expected))
+        );
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 2),
+            Some(LiteralValue::Number(expected))
+        );
+        assert_eq!(
+            engine.get_cell_value("Sheet1", row, 3),
+            Some(LiteralValue::Number(expected))
+        );
+    }
+
+    // Edit key inside the table while preserving order: D5 changes from 50 to 56.
+    // Now needle 55 falls back to row 4 (40), while exact 50 becomes #N/A.
+    number(&mut engine, "Sheet1", 5, 4, 56.0);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(4.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 2),
+        Some(LiteralValue::Number(4.0))
+    );
+    assert!(matches!(
+        engine.get_cell_value("Sheet1", 1, 3),
+        Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Na
+    ));
+
+    // Edit breaks ascending order: D40 = 99999. Approximate queries must immediately return #N/A
+    // (#283/#399 guard), while exact VLOOKUP for 100 still finds row 10!
+    number(&mut engine, "Sheet1", 40, 4, 99_999.0);
+    engine.evaluate_all().unwrap();
+    for row in 1..=10u32 {
+        assert!(
+            matches!(engine.get_cell_value("Sheet1", row, 1), Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Na),
+            "unsorted VLOOKUP row {row}"
+        );
+        assert!(
+            matches!(engine.get_cell_value("Sheet1", row, 2), Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Na),
+            "unsorted MATCH row {row}"
+        );
+    }
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 3),
+        Some(LiteralValue::Number(10.0))
+    );
+
+    // Restore ascending order: D40 = 400. Approximate queries recover cleanly.
+    number(&mut engine, "Sheet1", 40, 4, 400.0);
+    engine.evaluate_all().unwrap();
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 1),
+        Some(LiteralValue::Number(10.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 2, 2),
+        Some(LiteralValue::Number(10.0))
+    );
+}
+
+#[test]
+fn issue_414_approx_parity_cached_vs_uncached_asc_desc_mixed_blanks_text_errors() {
+    // Compare max_bytes=0 (zero-alloc streaming path) against default cache (warmed projection)
+    // across ascending, descending, duplicates, blanks, headers, mixed types, text case-insensitivity,
+    // numeric-text needles, errors, and VLOOKUP/HLOOKUP/MATCH parity.
+    let run_suite = |max_bytes: usize| -> Vec<Option<LiteralValue>> {
+        let mut engine = engine_with_config(EvalConfig {
+            lookup_index_cache_max_bytes: max_bytes,
+            ..EvalConfig::default()
+        });
+
+        // Sheet1 D1:E90: ascending numeric with text header, blanks, and duplicate runs.
+        text(&mut engine, "Sheet1", 1, 4, "Header");
+        text(&mut engine, "Sheet1", 1, 5, "Payload");
+        for row in 2..=85u32 {
+            if row % 17 == 0 {
+                // Leave blank
+                number(&mut engine, "Sheet1", row, 5, row as f64);
+                continue;
+            }
+            // Create duplicate runs every 3 rows: 10, 10, 10, 20, 20, 20, ...
+            let key = ((row - 2) / 3 + 1) as f64 * 10.0;
+            number(&mut engine, "Sheet1", row, 4, key);
+            number(&mut engine, "Sheet1", row, 5, row as f64);
+        }
+        // Trailing rows 86..=90 left blank.
+
+        // Sheet1 G1:G85: descending numeric with header, blanks, and duplicate runs.
+        text(&mut engine, "Sheet1", 1, 7, "DescHeader");
+        for row in 2..=85u32 {
+            if row % 19 == 0 {
+                continue;
+            }
+            let key = (30 - (row - 2) / 3) as f64 * 10.0;
+            number(&mut engine, "Sheet1", row, 7, key);
+        }
+
+        // Sheet1 I1:J80: ascending mixed-case ASCII + Unicode text with interspersed numbers & blanks.
+        for row in 1..=80u32 {
+            if row % 11 == 0 {
+                number(&mut engine, "Sheet1", row, 9, row as f64);
+            } else if row % 13 != 0 {
+                let label = if row % 2 == 0 {
+                    format!("ITEM-{:03}", row.div_ceil(2))
+                } else {
+                    format!("item-{:03}", row.div_ceil(2))
+                };
+                text(&mut engine, "Sheet1", row, 9, &label);
+            }
+            number(&mut engine, "Sheet1", row, 10, row as f64);
+        }
+
+        // Sheet1 L1:L80: descending text.
+        for row in 1..=80u32 {
+            let label = format!("Z-{:03}", 100 - (row / 2));
+            text(&mut engine, "Sheet1", row, 12, &label);
+        }
+
+        // Sheet1 N1:O80: ascending numeric WITH an error cell in row 40 (skipped by approx, disables cache).
+        for row in 1..=80u32 {
+            if row == 40 {
+                value(
+                    &mut engine,
+                    "Sheet1",
+                    row,
+                    14,
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Div)),
+                );
+            } else {
+                number(&mut engine, "Sheet1", row, 14, row as f64 * 5.0);
+            }
+            number(&mut engine, "Sheet1", row, 15, row as f64);
+        }
+
+        // Horizontal table on Sheet2 A1:CP2 (94 cols) ascending with header & blanks.
+        text(&mut engine, "Sheet2", 1, 1, "HHeader");
+        text(&mut engine, "Sheet2", 2, 1, "HVal");
+        for col in 2..=94u32 {
+            if col % 15 != 0 {
+                number(
+                    &mut engine,
+                    "Sheet2",
+                    1,
+                    col,
+                    ((col - 2) / 2 + 1) as f64 * 10.0,
+                );
+            }
+            number(&mut engine, "Sheet2", 2, col, col as f64);
+        }
+
+        // Horizontal descending row on Sheet2 A4:CP4.
+        for col in 1..=94u32 {
+            if col % 13 != 0 {
+                number(&mut engine, "Sheet2", 4, col, (50 - col / 2) as f64 * 10.0);
+            }
+        }
+
+        let expressions = [
+            // Ascending VLOOKUP & MATCH(1) (repeated > 4 times so cache warms on max_bytes > 0)
+            "=VLOOKUP(5, Sheet1!$D$1:$E$90, 2, TRUE)",
+            "=VLOOKUP(10, Sheet1!$D$1:$E$90, 2, TRUE)",
+            "=VLOOKUP(25, Sheet1!$D$1:$E$90, 2, TRUE)",
+            "=VLOOKUP(60, Sheet1!$D$1:$E$90, 2, TRUE)",
+            "=VLOOKUP(9999, Sheet1!$D$1:$E$90, 2, TRUE)",
+            "=VLOOKUP(\"60\", Sheet1!$D$1:$E$90, 2, TRUE)",
+            "=MATCH(5, Sheet1!$D$1:$D$90, 1)",
+            "=MATCH(10, Sheet1!$D$1:$D$90, 1)",
+            "=MATCH(25, Sheet1!$D$1:$D$90, 1)",
+            "=MATCH(60, Sheet1!$D$1:$D$90, 1)",
+            "=MATCH(9999, Sheet1!$D$1:$D$90, 1)",
+            // Descending MATCH(-1) with exact duplicates, between values, out of range
+            "=MATCH(9999, Sheet1!$G$1:$G$85, -1)",
+            "=MATCH(300, Sheet1!$G$1:$G$85, -1)",
+            "=MATCH(255, Sheet1!$G$1:$G$85, -1)",
+            "=MATCH(200, Sheet1!$G$1:$G$85, -1)",
+            "=MATCH(5, Sheet1!$G$1:$G$85, -1)",
+            // Wrong direction returns #N/A (#283/#399 guard)
+            "=MATCH(100, Sheet1!$G$1:$G$85, 1)",
+            "=MATCH(100, Sheet1!$D$1:$D$90, -1)",
+            // Ascending text (case-insensitive) VLOOKUP & MATCH(1)
+            "=VLOOKUP(\"aaa\", Sheet1!$I$1:$J$80, 2, TRUE)",
+            "=VLOOKUP(\"ITEM-010\", Sheet1!$I$1:$J$80, 2, TRUE)",
+            "=VLOOKUP(\"item-015z\", Sheet1!$I$1:$J$80, 2, TRUE)",
+            "=VLOOKUP(\"Item-040\", Sheet1!$I$1:$J$80, 2, TRUE)",
+            "=VLOOKUP(\"zzz\", Sheet1!$I$1:$J$80, 2, TRUE)",
+            "=MATCH(\"ITEM-010\", Sheet1!$I$1:$I$80, 1)",
+            "=MATCH(\"item-015z\", Sheet1!$I$1:$I$80, 1)",
+            // Descending text MATCH(-1)
+            "=MATCH(\"Z-999\", Sheet1!$L$1:$L$80, -1)",
+            "=MATCH(\"z-090\", Sheet1!$L$1:$L$80, -1)",
+            "=MATCH(\"Z-085a\", Sheet1!$L$1:$L$80, -1)",
+            "=MATCH(\"a\", Sheet1!$L$1:$L$80, -1)",
+            // Axis with error cell (error skipped, approximate still works)
+            "=VLOOKUP(199, Sheet1!$N$1:$O$80, 2, TRUE)",
+            "=VLOOKUP(200, Sheet1!$N$1:$O$80, 2, TRUE)",
+            "=VLOOKUP(205, Sheet1!$N$1:$O$80, 2, TRUE)",
+            "=VLOOKUP(210, Sheet1!$N$1:$O$80, 2, TRUE)",
+            "=MATCH(205, Sheet1!$N$1:$N$80, 1)",
+            // HLOOKUP & horizontal MATCH(1) & MATCH(-1)
+            "=HLOOKUP(5, Sheet2!$A$1:$CP$2, 2, TRUE)",
+            "=HLOOKUP(10, Sheet2!$A$1:$CP$2, 2, TRUE)",
+            "=HLOOKUP(75, Sheet2!$A$1:$CP$2, 2, TRUE)",
+            "=HLOOKUP(200, Sheet2!$A$1:$CP$2, 2, TRUE)",
+            "=HLOOKUP(9999, Sheet2!$A$1:$CP$2, 2, TRUE)",
+            "=MATCH(75, Sheet2!$A$1:$CP$1, 1)",
+            "=MATCH(200, Sheet2!$A$1:$CP$1, 1)",
+            "=MATCH(500, Sheet2!$A$4:$CP$4, -1)",
+            "=MATCH(455, Sheet2!$A$4:$CP$4, -1)",
+            "=MATCH(300, Sheet2!$A$4:$CP$4, -1)",
+            "=MATCH(5, Sheet2!$A$4:$CP$4, -1)",
+            "=MATCH(9999, Sheet2!$A$4:$CP$4, -1)",
+        ];
+
+        for (idx, expr) in expressions.iter().enumerate() {
+            formula(&mut engine, "Out", (idx + 1) as u32, 1, expr);
+        }
+        engine.evaluate_all().unwrap();
+        if max_bytes > 0 {
+            let report = engine.last_lookup_index_cache_report();
+            assert!(report.builds >= 4, "expected warmed caches: {report:?}");
+            assert!(report.hits >= 8, "expected cache hits: {report:?}");
+        }
+        (1..=expressions.len() as u32)
+            .map(|r| engine.get_cell_value("Out", r, 1))
+            .collect()
+    };
+
+    let uncached = run_suite(0);
+    let cached = run_suite(EvalConfig::default().lookup_index_cache_max_bytes);
+    assert_eq!(cached, uncached);
+
+    // Spot-check key semantic expectations from the suite.
+    // VLOOKUP(5, ...) below min -> #N/A
+    assert!(
+        matches!(uncached[0], Some(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Na)
+    );
+    // VLOOKUP(10, ...) ascending duplicate run rows 2,3,4 -> returns LAST (row 4)
+    assert_eq!(uncached[1], Some(LiteralValue::Number(4.0)));
+    // MATCH(10, ..., 1) agrees with VLOOKUP(10, ..., TRUE)
+    assert_eq!(uncached[7], Some(LiteralValue::Number(4.0)));
+    // MATCH(300, desc, -1) exact duplicate run rows 2,3,4 -> returns FIRST (row 2)
+    assert_eq!(uncached[12], Some(LiteralValue::Number(2.0)));
+    // MATCH(100, desc, 1) wrong direction -> #N/A
+    assert!(
+        matches!(uncached[16], Some(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Na)
+    );
+    // MATCH(100, asc, -1) wrong direction -> #N/A
+    assert!(
+        matches!(uncached[17], Some(LiteralValue::Error(ref e)) if e.kind == ExcelErrorKind::Na)
+    );
+    // Error cell at row 40 (value would be 200) is skipped: VLOOKUP(200) matches row 39 (195)
+    assert_eq!(uncached[30], Some(LiteralValue::Number(39.0)));
+    assert_eq!(uncached[31], Some(LiteralValue::Number(41.0)));
+}
+
+#[test]
+fn issue_414_volatile_outside_table_still_caches_while_inside_skips() {
+    let mut engine = repeated_vlookup_engine(EvalConfig::default());
+    // Volatile cell OUTSIDE $D$1:$E$100 (placed in Z1) must NOT block caching.
+    formula(&mut engine, "Sheet1", 1, 26, "=NOW()");
+    engine.evaluate_all().unwrap();
+    let report = engine.last_lookup_index_cache_report();
+    assert_eq!(report.builds, 1, "{report:?}");
+    assert_eq!(report.skipped_volatile, 0, "{report:?}");
+
+    // Volatile cell INSIDE $D$1:$E$100 must skip caching.
+    formula(&mut engine, "Sheet1", 50, 4, "=NOW()");
+    engine.evaluate_all().unwrap();
+    let report = engine.last_lookup_index_cache_report();
+    assert_eq!(report.builds, 0, "{report:?}");
+    assert!(report.skipped_volatile > 0, "{report:?}");
+}
+
+#[test]
+fn issue_414_mixed_numeric_text_approx_cache_matches_uncached_across_calls() {
+    let run = |max_bytes: usize| -> Vec<Vec<Option<LiteralValue>>> {
+        let mut engine = engine_with_config(EvalConfig {
+            lookup_index_cache_max_bytes: max_bytes,
+            ..EvalConfig::default()
+        });
+
+        // Ascending column D1:D68: ["2", "3", "4", "10", "z", "z", ...]
+        text(&mut engine, "Sheet1", 1, 4, "2");
+        text(&mut engine, "Sheet1", 2, 4, "3");
+        text(&mut engine, "Sheet1", 3, 4, "4");
+        text(&mut engine, "Sheet1", 4, 4, "10");
+        for row in 5..=68u32 {
+            text(&mut engine, "Sheet1", row, 4, "z");
+        }
+
+        // Descending mirror column E1:E68: ["z", ..., "z", "10", "4", "3", "2"]
+        for row in 1..=64u32 {
+            text(&mut engine, "Sheet1", row, 5, "z");
+        }
+        text(&mut engine, "Sheet1", 65, 5, "10");
+        text(&mut engine, "Sheet1", 66, 5, "4");
+        text(&mut engine, "Sheet1", 67, 5, "3");
+        text(&mut engine, "Sheet1", 68, 5, "2");
+
+        // Descending mixed column F1:F68: ["z", ..., "z", "20", "10", "2", "0"]
+        for row in 1..=64u32 {
+            text(&mut engine, "Sheet1", row, 6, "z");
+        }
+        text(&mut engine, "Sheet1", 65, 6, "20");
+        text(&mut engine, "Sheet1", 66, 6, "10");
+        text(&mut engine, "Sheet1", 67, 6, "2");
+        text(&mut engine, "Sheet1", 68, 6, "0");
+
+        let queries = [
+            // Non-numeric-text needles (calls 1..=6 warm ApproxTextProjection on call 4+)
+            "=MATCH(\"1a\", Sheet1!$D$1:$D$68, 1)",
+            // Numeric-text needles on ascending range
+            "=MATCH(\"5\", Sheet1!$D$1:$D$68, 1)",
+            "=MATCH(\"10\", Sheet1!$D$1:$D$68, 1)",
+            // Non-numeric-text needles on descending mirror
+            "=MATCH(\"1a\", Sheet1!$E$1:$E$68, -1)",
+            // Numeric-text needles on descending mirror
+            "=MATCH(\"5\", Sheet1!$E$1:$E$68, -1)",
+            // Non-numeric-text needle on descending mixed column where "10" < "1a" < "2"
+            "=MATCH(\"1a\", Sheet1!$F$1:$F$68, -1)",
+        ];
+
+        for (q_idx, expr) in queries.iter().enumerate() {
+            let col = (q_idx + 1) as u32;
+            for call in 1..=6u32 {
+                formula(&mut engine, "Out", call, col, expr);
+            }
+        }
+
+        engine.evaluate_all().unwrap();
+        if max_bytes > 0 {
+            let report = engine.last_lookup_index_cache_report();
+            assert!(report.builds >= 3, "expected warmed caches: {report:?}");
+            assert!(report.hits >= 3, "expected cache hits: {report:?}");
+        }
+
+        (0..queries.len())
+            .map(|q_idx| {
+                let col = (q_idx + 1) as u32;
+                (1..=6u32)
+                    .map(|call| engine.get_cell_value("Out", call, col))
+                    .collect()
+            })
+            .collect()
+    };
+
+    let uncached = run(0);
+    let cached = run(EvalConfig::default().lookup_index_cache_max_bytes);
+    assert_eq!(cached, uncached);
+
+    // Every query must return the exact same value on calls 1..=6.
+    for (q_idx, calls) in cached.iter().enumerate() {
+        for (call_idx, val) in calls.iter().enumerate() {
+            assert_eq!(
+                val,
+                &calls[0],
+                "query {q_idx} call {} differed from call 1",
+                call_idx + 1
+            );
+        }
+    }
+
+    // Verify expected semantics for key cases:
+    // "1a" on ["2","3","4","10","z",...] -> "10" is at 1-based position 4.
+    assert_eq!(cached[0][0], Some(LiteralValue::Number(4.0)));
+    // "5" on ["2","3","4","10","z",...] -> "4" is at 1-based position 3.
+    assert_eq!(cached[1][0], Some(LiteralValue::Number(3.0)));
+    // "10" on ["2","3","4","10","z",...] -> "10" is at 1-based position 4.
+    assert_eq!(cached[2][0], Some(LiteralValue::Number(4.0)));
+    // "1a" on ["z", ..., "z", "10", "4", "3", "2"] -> "2" is at 1-based position 68.
+    assert_eq!(cached[3][0], Some(LiteralValue::Number(68.0)));
+    // "5" on ["z", ..., "z", "10", "4", "3", "2"] -> "10" is at 1-based position 65.
+    assert_eq!(cached[4][0], Some(LiteralValue::Number(65.0)));
+    // "1a" on ["z", ..., "z", "20", "10", "2", "0"] -> "2" is at 1-based position 67.
+    assert_eq!(cached[5][0], Some(LiteralValue::Number(67.0)));
+}
+
+#[test]
+fn issue_414_deleted_volatile_vertex_restores_has_volatile_in_range_and_caching() {
+    let mut engine = repeated_vlookup_engine(EvalConfig::default());
+    formula(&mut engine, "Sheet1", 50, 4, "=NOW()");
+    engine.evaluate_all().unwrap();
+    let report = engine.last_lookup_index_cache_report();
+    assert_eq!(report.builds, 0, "{report:?}");
+    assert!(report.skipped_volatile > 0, "{report:?}");
+
+    let sheet_id = engine.graph.sheet_id("Sheet1").unwrap();
+    let addr = engine.graph.make_cell_ref("Sheet1", 50, 4);
+    let vid = engine.graph.get_vertex_for_cell(&addr).unwrap();
+    assert!(engine.graph.has_volatile_in_range(sheet_id, 0, 99, 3, 4));
+
+    // Tombstone the volatile vertex without manually removing from `volatile_vertices`.
+    engine.graph.mark_deleted(vid, true);
+    engine.mark_topology_edited();
+
+    assert!(
+        !engine.graph.has_volatile_in_range(sheet_id, 0, 99, 3, 4),
+        "deleted/tombstoned volatile vertex must not keep has_volatile_in_range true"
+    );
+
+    engine.evaluate_all().unwrap();
+    let report = engine.last_lookup_index_cache_report();
+    assert_eq!(report.builds, 1, "{report:?}");
+    assert_eq!(report.skipped_volatile, 0, "{report:?}");
+}

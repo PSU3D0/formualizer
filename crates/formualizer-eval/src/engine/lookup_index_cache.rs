@@ -1,12 +1,16 @@
 use std::hash::{Hash, Hasher};
+use std::ops::ControlFlow;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 
 use formualizer_common::{ExcelError, LiteralValue, SheetId};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::builtins::lookup::lookup_utils::cmp_for_lookup;
+use crate::builtins::lookup::lookup_utils::{
+    binary_search_f64_slice, binary_search_text_slice, cmp_f64_lookup, cmp_for_lookup,
+    fold_text_boxed, is_searchable_for_approximate, try_parse_f64_fast, value_to_f64_lenient,
+};
 use crate::engine::{DateSystem, range_view::RangeView};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -63,6 +67,7 @@ impl Hash for LookupHashKey {
     }
 }
 
+#[cfg(test)]
 impl LookupHashKey {
     fn from_needle(value: &LiteralValue, date_system: DateSystem) -> Option<Self> {
         // Blank needles retain numeric-zero coercion; blank candidates do not.
@@ -77,7 +82,7 @@ impl LookupHashKey {
         match value {
             LiteralValue::Number(n) => Some(Self::Number(normalize_f64_bits(*n))),
             LiteralValue::Int(i) => Some(Self::Number(normalize_f64_bits(*i as f64))),
-            LiteralValue::Text(s) => Some(Self::Text(s.to_lowercase().into_boxed_str())),
+            LiteralValue::Text(s) => Some(Self::Text(fold_text_boxed(s))),
             LiteralValue::Boolean(b) => Some(Self::Boolean(*b)),
             LiteralValue::Empty => None,
             // Temporal values are numbers in Excel: key them by their serial so
@@ -94,9 +99,22 @@ impl LookupHashKey {
     }
 }
 
+#[inline]
 fn normalize_f64_bits(n: f64) -> u64 {
     if n.is_nan() {
         return f64::NAN.to_bits();
+    }
+    // Fast path for exact integer-valued doubles (|n| <= 2^52): avoids libm round().
+    const MAX_EXACT_INT: f64 = 4_503_599_627_370_496.0;
+    if n.abs() <= MAX_EXACT_INT {
+        let trunc = (n as i64) as f64;
+        if trunc == n {
+            return if n == 0.0 {
+                0.0f64.to_bits()
+            } else {
+                n.to_bits()
+            };
+        }
     }
     let rounded = n.round();
     if (n - rounded).abs() < 1e-12 {
@@ -113,17 +131,494 @@ fn normalize_f64_bits(n: f64) -> u64 {
 
 #[derive(Debug, Clone, Default)]
 pub struct DuplicateIndices {
-    pub(crate) first: usize,
-    pub(crate) last: usize,
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) all: SmallVec<[usize; 1]>,
+}
+
+/// Compact duplicate index list (16 bytes inline vs 24 bytes for `SmallVec<[usize; 1]>`
+/// or 32 bytes for an unboxed `Vec<usize>`). Boxing `Vec<usize>` keeps the 99% unique-key
+/// `One` variant compact inside hash buckets.
+#[derive(Debug, Clone)]
+#[allow(clippy::box_collection)]
+enum CompactIndices {
+    One(usize),
+    Many(Box<Vec<usize>>),
+}
+
+impl CompactIndices {
+    #[inline]
+    fn push(&mut self, idx: usize) {
+        match self {
+            Self::One(first) => {
+                let first = *first;
+                *self = Self::Many(Box::new(vec![first, idx]));
+            }
+            Self::Many(list) => list.push(idx),
+        }
+    }
+
+    #[inline]
+    fn as_slice(&self) -> &[usize] {
+        match self {
+            Self::One(idx) => std::slice::from_ref(idx),
+            Self::Many(list) => list.as_slice(),
+        }
+    }
+
+    #[inline]
+    fn heap_bytes(&self) -> usize {
+        match self {
+            Self::One(_) => 0,
+            Self::Many(list) => {
+                std::mem::size_of::<Vec<usize>>()
+                    + list.capacity().saturating_mul(std::mem::size_of::<usize>())
+            }
+        }
+    }
+}
+
+/// Compact 8-byte hash key for normalized numeric/temporal values with SplitMix64
+/// avalanching so integer-valued f64s distribute evenly across FxHashMap buckets.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NumericHashKey(u64);
+
+impl Hash for NumericHashKey {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let mut mixed = self.0;
+        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        state.write_u64(mixed ^ (mixed >> 31));
+    }
+}
+
+/// Exact-match hash index split into a compact numeric map (24 bytes/bucket) and a
+/// general map for text/boolean keys, lazily constructed only when exact lookups hit
+/// the cached `LookupIndex`.
+struct ExactLookupTable {
+    numbers: FxHashMap<NumericHashKey, CompactIndices>,
+    other: FxHashMap<LookupHashKey, CompactIndices>,
+    bytes: usize,
+}
+
+impl ExactLookupTable {
+    fn build(cell_values: &[LiteralValue], date_system: DateSystem) -> Self {
+        let first_is_numeric = cell_values.iter().find_map(|v| match v {
+            LiteralValue::Empty => None,
+            LiteralValue::Number(_)
+            | LiteralValue::Int(_)
+            | LiteralValue::Date(_)
+            | LiteralValue::DateTime(_)
+            | LiteralValue::Time(_) => Some(true),
+            _ => Some(false),
+        });
+
+        let mut numbers: FxHashMap<NumericHashKey, CompactIndices> = match first_is_numeric {
+            Some(true) => {
+                FxHashMap::with_capacity_and_hasher(cell_values.len(), Default::default())
+            }
+            _ => FxHashMap::default(),
+        };
+        let mut other: FxHashMap<LookupHashKey, CompactIndices> = match first_is_numeric {
+            Some(false) => {
+                FxHashMap::with_capacity_and_hasher(cell_values.len(), Default::default())
+            }
+            _ => FxHashMap::default(),
+        };
+
+        for (idx, value) in cell_values.iter().enumerate() {
+            match value {
+                LiteralValue::Number(n) => {
+                    let key = NumericHashKey(normalize_f64_bits(*n));
+                    numbers
+                        .entry(key)
+                        .and_modify(|entry| entry.push(idx))
+                        .or_insert(CompactIndices::One(idx));
+                }
+                LiteralValue::Int(i) => {
+                    let key = NumericHashKey(normalize_f64_bits(*i as f64));
+                    numbers
+                        .entry(key)
+                        .and_modify(|entry| entry.push(idx))
+                        .or_insert(CompactIndices::One(idx));
+                }
+                LiteralValue::Date(_) | LiteralValue::DateTime(_) | LiteralValue::Time(_) => {
+                    if let Some(serial) = value.as_serial_number_for(date_system) {
+                        let key = NumericHashKey(normalize_f64_bits(serial));
+                        numbers
+                            .entry(key)
+                            .and_modify(|entry| entry.push(idx))
+                            .or_insert(CompactIndices::One(idx));
+                    }
+                }
+                LiteralValue::Text(s) => {
+                    let key = LookupHashKey::Text(fold_text_boxed(s));
+                    other
+                        .entry(key)
+                        .and_modify(|entry| entry.push(idx))
+                        .or_insert(CompactIndices::One(idx));
+                }
+                LiteralValue::Boolean(b) => {
+                    let key = LookupHashKey::Boolean(*b);
+                    other
+                        .entry(key)
+                        .and_modify(|entry| entry.push(idx))
+                        .or_insert(CompactIndices::One(idx));
+                }
+                LiteralValue::Empty
+                | LiteralValue::Error(_)
+                | LiteralValue::Array(_)
+                | LiteralValue::Duration(_)
+                | LiteralValue::Pending => {}
+            }
+        }
+
+        if numbers.len().saturating_mul(2) < numbers.capacity() {
+            numbers.shrink_to_fit();
+        }
+        if other.len().saturating_mul(2) < other.capacity() {
+            other.shrink_to_fit();
+        }
+
+        let num_buckets = if numbers.capacity() == 0 {
+            0
+        } else {
+            numbers.capacity().saturating_add(1).next_power_of_two()
+        };
+        let other_buckets = if other.capacity() == 0 {
+            0
+        } else {
+            other.capacity().saturating_add(1).next_power_of_two()
+        };
+        let mut bytes = num_buckets
+            .saturating_mul(std::mem::size_of::<(NumericHashKey, CompactIndices)>() + 1)
+            .saturating_add(
+                other_buckets
+                    .saturating_mul(std::mem::size_of::<(LookupHashKey, CompactIndices)>() + 1),
+            );
+        for indices in numbers.values() {
+            bytes = bytes.saturating_add(indices.heap_bytes());
+        }
+        for (key, indices) in &other {
+            if let LookupHashKey::Text(text) = key {
+                bytes = bytes.saturating_add(text.len());
+            }
+            bytes = bytes.saturating_add(indices.heap_bytes());
+        }
+
+        Self {
+            numbers,
+            other,
+            bytes,
+        }
+    }
+
+    #[inline]
+    fn get_indices(&self, needle: &LiteralValue, date_system: DateSystem) -> Option<&[usize]> {
+        match needle {
+            LiteralValue::Number(n) => self
+                .numbers
+                .get(&NumericHashKey(normalize_f64_bits(*n)))
+                .map(CompactIndices::as_slice),
+            LiteralValue::Int(i) => self
+                .numbers
+                .get(&NumericHashKey(normalize_f64_bits(*i as f64)))
+                .map(CompactIndices::as_slice),
+            LiteralValue::Empty => self
+                .numbers
+                .get(&NumericHashKey(0.0f64.to_bits()))
+                .map(CompactIndices::as_slice),
+            LiteralValue::Date(_) | LiteralValue::DateTime(_) | LiteralValue::Time(_) => {
+                let serial = needle.as_serial_number_for(date_system)?;
+                self.numbers
+                    .get(&NumericHashKey(normalize_f64_bits(serial)))
+                    .map(CompactIndices::as_slice)
+            }
+            LiteralValue::Text(s) => self
+                .other
+                .get(&LookupHashKey::Text(fold_text_boxed(s)))
+                .map(CompactIndices::as_slice),
+            LiteralValue::Boolean(b) => self
+                .other
+                .get(&LookupHashKey::Boolean(*b))
+                .map(CompactIndices::as_slice),
+            LiteralValue::Error(_)
+            | LiteralValue::Array(_)
+            | LiteralValue::Duration(_)
+            | LiteralValue::Pending => None,
+        }
+    }
+}
+
+/// Shared atomic memory budget for one cache generation. Replaced on `clear()`.
+struct CacheBudget {
+    bytes_in_use: AtomicUsize,
+    max_bytes: usize,
+}
+
+impl CacheBudget {
+    fn new(max_bytes: usize) -> Self {
+        Self {
+            bytes_in_use: AtomicUsize::new(0),
+            max_bytes,
+        }
+    }
+
+    #[inline]
+    fn load(&self) -> usize {
+        self.bytes_in_use.load(Ordering::Relaxed)
+    }
+
+    fn try_charge(&self, bytes: usize) -> bool {
+        let mut current = self.bytes_in_use.load(Ordering::Relaxed);
+        loop {
+            if bytes > self.max_bytes.saturating_sub(current) {
+                return false;
+            }
+            match self.bytes_in_use.compare_exchange_weak(
+                current,
+                current + bytes,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(actual) => current = actual,
+            }
+        }
+    }
+}
+
+/// Cached sortedness verdict and compact numeric projection for approximate lookups
+/// (`VLOOKUP`/`HLOOKUP` with `range_lookup=TRUE`, `MATCH` with `match_type` 1/-1).
+struct ApproxNumericProjection {
+    values: Box<[f64]>,
+    /// Original indices into the lookup axis, or `None` when every cell was comparable (1:1).
+    positions: Option<Box<[usize]>>,
+    sorted_asc: bool,
+    sorted_desc: bool,
+    bytes: usize,
+}
+
+impl ApproxNumericProjection {
+    fn build(cell_values: &[LiteralValue], date_system: DateSystem) -> Self {
+        let mut values = Vec::with_capacity(cell_values.len());
+        let mut positions: Option<Vec<usize>> = None;
+        let mut sorted_asc = true;
+        let mut sorted_desc = true;
+        let mut prev: Option<f64> = None;
+
+        for (idx, cell) in cell_values.iter().enumerate() {
+            let num = if matches!(cell, LiteralValue::Empty) {
+                None
+            } else {
+                value_to_f64_lenient(cell, date_system)
+            };
+            if let Some(v) = num {
+                if let Some(p) = prev {
+                    let c = cmp_f64_lookup(p, v);
+                    if c > 0 {
+                        sorted_asc = false;
+                    }
+                    if c < 0 {
+                        sorted_desc = false;
+                    }
+                }
+                prev = Some(v);
+                if let Some(pos) = positions.as_mut() {
+                    pos.push(idx);
+                }
+                values.push(v);
+            } else if positions.is_none() {
+                let mut pos = Vec::with_capacity(cell_values.len().saturating_sub(1));
+                pos.extend(0..idx);
+                positions = Some(pos);
+            }
+        }
+
+        let values = values.into_boxed_slice();
+        let positions = positions.map(Vec::into_boxed_slice);
+        let bytes = values
+            .len()
+            .saturating_mul(std::mem::size_of::<f64>())
+            .saturating_add(
+                positions
+                    .as_ref()
+                    .map_or(0, |p| p.len().saturating_mul(std::mem::size_of::<usize>())),
+            );
+        Self {
+            values,
+            positions,
+            sorted_asc,
+            sorted_desc,
+            bytes,
+        }
+    }
+
+    #[inline]
+    fn original_position(&self, index: usize) -> usize {
+        match &self.positions {
+            Some(pos) => pos[index],
+            None => index,
+        }
+    }
+
+    #[inline]
+    fn search(&self, needle: f64, mode: i32) -> Option<usize> {
+        let is_sorted = match mode {
+            1 => self.sorted_asc,
+            -1 => self.sorted_desc,
+            _ => return None,
+        };
+        if !is_sorted {
+            return None;
+        }
+        binary_search_f64_slice(&self.values, needle, mode).map(|i| self.original_position(i))
+    }
+}
+
+/// Cached sortedness verdict and pre-lowercased text projection for approximate lookups
+/// with non-numeric text needles.
+struct ApproxTextProjection {
+    folded: Box<[Box<str>]>,
+    /// Original indices into the lookup axis, or `None` when every cell was text (1:1).
+    positions: Option<Box<[usize]>>,
+    sorted_asc: bool,
+    sorted_desc: bool,
+    lex_sorted_asc: bool,
+    lex_sorted_desc: bool,
+    bytes: usize,
+}
+
+impl ApproxTextProjection {
+    fn build(cell_values: &[LiteralValue]) -> Self {
+        let mut folded: Vec<Box<str>> = Vec::new();
+        let mut positions: Option<Vec<usize>> = None;
+        let mut sorted_asc = true;
+        let mut sorted_desc = true;
+        let mut lex_sorted_asc = true;
+        let mut lex_sorted_desc = true;
+        let mut prev_num: Option<f64> = None;
+        let mut text_bytes = 0usize;
+
+        for (idx, cell) in cell_values.iter().enumerate() {
+            if let LiteralValue::Text(s) = cell {
+                let curr_folded = fold_text_boxed(s);
+                text_bytes = text_bytes.saturating_add(curr_folded.len());
+                let curr_num = try_parse_f64_fast(s);
+                if let Some(prev_folded) = folded.last() {
+                    let lex_ord = prev_folded.as_ref().cmp(curr_folded.as_ref());
+                    if lex_ord == std::cmp::Ordering::Greater {
+                        lex_sorted_asc = false;
+                    }
+                    if lex_ord == std::cmp::Ordering::Less {
+                        lex_sorted_desc = false;
+                    }
+                    let c = match (prev_num, curr_num) {
+                        (Some(x), Some(y)) => cmp_f64_lookup(x, y),
+                        _ => match lex_ord {
+                            std::cmp::Ordering::Less => -1,
+                            std::cmp::Ordering::Equal => 0,
+                            std::cmp::Ordering::Greater => 1,
+                        },
+                    };
+                    if c > 0 {
+                        sorted_asc = false;
+                    }
+                    if c < 0 {
+                        sorted_desc = false;
+                    }
+                }
+                prev_num = curr_num;
+                if let Some(pos) = positions.as_mut() {
+                    pos.push(idx);
+                }
+                folded.push(curr_folded);
+            } else if positions.is_none() {
+                let mut pos = Vec::with_capacity(cell_values.len().saturating_sub(1));
+                pos.extend(0..idx);
+                positions = Some(pos);
+            }
+        }
+
+        let folded = folded.into_boxed_slice();
+        let positions = positions.map(Vec::into_boxed_slice);
+        let bytes = folded
+            .len()
+            .saturating_mul(std::mem::size_of::<Box<str>>())
+            .saturating_add(text_bytes)
+            .saturating_add(
+                positions
+                    .as_ref()
+                    .map_or(0, |p| p.len().saturating_mul(std::mem::size_of::<usize>())),
+            );
+        Self {
+            folded,
+            positions,
+            sorted_asc,
+            sorted_desc,
+            lex_sorted_asc,
+            lex_sorted_desc,
+            bytes,
+        }
+    }
+
+    #[inline]
+    fn original_position(&self, index: usize) -> usize {
+        match &self.positions {
+            Some(pos) => pos[index],
+            None => index,
+        }
+    }
+
+    #[inline]
+    fn search(&self, needle_str: &str, mode: i32) -> Option<usize> {
+        let (is_sorted, is_lex_sorted) = match mode {
+            1 => (self.sorted_asc, self.lex_sorted_asc),
+            -1 => (self.sorted_desc, self.lex_sorted_desc),
+            _ => return None,
+        };
+        if !is_sorted {
+            return None;
+        }
+        let needle_folded = fold_text_boxed(needle_str);
+        if is_lex_sorted {
+            return binary_search_text_slice(&self.folded, &needle_folded, mode)
+                .map(|i| self.original_position(i));
+        }
+        // Mixed numeric-text + non-numeric-text ranges can satisfy numeric
+        // sortedness (`"2" < "10"`) while breaking lexicographic order
+        // (`"10" < "1a" < "2"`). Match `approximate_search_in_view` linearly.
+        let needle_ref = needle_folded.as_ref();
+        if mode == 1 {
+            self.folded
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, item)| item.as_ref() <= needle_ref)
+                .map(|(i, _)| self.original_position(i))
+        } else {
+            let mut best: Option<usize> = None;
+            for (i, item) in self.folded.iter().enumerate() {
+                match item.as_ref().cmp(needle_ref) {
+                    std::cmp::Ordering::Equal => return Some(self.original_position(i)),
+                    std::cmp::Ordering::Greater => best = Some(self.original_position(i)),
+                    std::cmp::Ordering::Less => {}
+                }
+            }
+            best
+        }
+    }
 }
 
 pub struct LookupIndex {
     pub(crate) len: usize,
     date_system: DateSystem,
     pub(crate) bytes: usize,
-    pub(crate) entries: FxHashMap<LookupHashKey, DuplicateIndices>,
     pub(crate) cell_values: Box<[LiteralValue]>,
+    budget: Option<Arc<CacheBudget>>,
+    exact: OnceLock<Option<ExactLookupTable>>,
+    approx_numeric: OnceLock<Option<ApproxNumericProjection>>,
+    approx_text: OnceLock<Option<ApproxTextProjection>>,
 }
 
 #[cfg(test)]
@@ -163,78 +658,272 @@ impl LookupIndex {
             return Ok(BuildOutcome::Degenerate);
         }
 
-        let mut entries: FxHashMap<LookupHashKey, DuplicateIndices> =
-            FxHashMap::with_capacity_and_hasher(len, Default::default());
         let mut cell_values = Vec::with_capacity(len);
-        let mut error_count = 0usize;
+        let mut payload_bytes = 0usize;
+        let mut has_error = false;
 
-        for idx in 0..len {
-            let value = match axis {
-                LookupAxis::ColumnInView(col) => view.get_cell(idx, col),
-                LookupAxis::RowInView(row) => view.get_cell(row, idx),
-            };
+        view.visit_axis_values(axis, &mut |_idx, value| {
             if matches!(value, LiteralValue::Error(_)) {
-                error_count += 1;
+                has_error = true;
+                return ControlFlow::Break(());
             }
-            if let Some(key) = LookupHashKey::from_literal(&value, date_system) {
-                let dups = entries.entry(key).or_insert_with(|| DuplicateIndices {
-                    first: idx,
-                    last: idx,
-                    all: SmallVec::new(),
-                });
-                if dups.all.is_empty() {
-                    dups.first = idx;
-                }
-                dups.last = idx;
-                dups.all.push(idx);
-            }
+            payload_bytes = payload_bytes.saturating_add(literal_payload_bytes(&value));
             cell_values.push(value);
-        }
+            ControlFlow::Continue(())
+        })?;
 
-        if error_count > 0 {
+        if has_error {
             return Ok(BuildOutcome::ErrorInLookupAxis);
         }
 
-        // Sized for distinct keys up front; a column of repeated keys
-        // gives the unused buckets back.
-        if entries.len().saturating_mul(2) < entries.capacity() {
-            entries.shrink_to_fit();
-        }
-        let bytes = retained_bytes(&cell_values, &entries);
+        let bytes = cell_values
+            .len()
+            .saturating_mul(std::mem::size_of::<LiteralValue>())
+            .saturating_add(payload_bytes)
+            .saturating_add(256);
         Ok(BuildOutcome::Built(Self {
             len,
             date_system,
             bytes,
-            entries,
             cell_values: cell_values.into_boxed_slice(),
+            budget: None,
+            exact: OnceLock::new(),
+            approx_numeric: OnceLock::new(),
+            approx_text: OnceLock::new(),
         }))
     }
 
+    #[inline]
+    fn try_charge_derived(&self, bytes: usize) -> bool {
+        match &self.budget {
+            Some(budget) => budget.try_charge(bytes),
+            None => true,
+        }
+    }
+
+    #[inline]
+    fn exact_table(&self) -> Option<&ExactLookupTable> {
+        self.exact
+            .get_or_init(|| {
+                let table = ExactLookupTable::build(&self.cell_values, self.date_system);
+                if self.try_charge_derived(table.bytes) {
+                    Some(table)
+                } else {
+                    None
+                }
+            })
+            .as_ref()
+    }
+
     pub(crate) fn find_first_exact(&self, needle: &LiteralValue) -> Option<usize> {
-        let hash_key = LookupHashKey::from_needle(needle, self.date_system)?;
-        if let Some(dups) = self.entries.get(&hash_key) {
-            for &idx in &dups.all {
-                if cmp_for_lookup(needle, &self.cell_values[idx], self.date_system) == Some(0) {
-                    return Some(idx);
+        if let Some(table) = self.exact_table() {
+            if let Some(indices) = table.get_indices(needle, self.date_system) {
+                for &idx in indices {
+                    if cmp_for_lookup(needle, &self.cell_values[idx], self.date_system) == Some(0) {
+                        return Some(idx);
+                    }
                 }
             }
+            return None;
         }
-        None
+        // Over-budget fallback when the derived exact hash table could not be admitted.
+        let matcher = crate::builtins::lookup::lookup_utils::PreparedLookupMatcher::new(
+            needle,
+            false,
+            self.date_system,
+        );
+        self.cell_values.iter().position(|v| matcher.matches(v))
     }
 
     pub(crate) fn find_last_exact(&self, needle: &LiteralValue) -> Option<usize> {
-        let hash_key = LookupHashKey::from_needle(needle, self.date_system)?;
-        if let Some(dups) = self.entries.get(&hash_key) {
-            for &idx in dups.all.iter().rev() {
-                if cmp_for_lookup(needle, &self.cell_values[idx], self.date_system) == Some(0) {
-                    return Some(idx);
+        if let Some(table) = self.exact_table() {
+            if let Some(indices) = table.get_indices(needle, self.date_system) {
+                for &idx in indices.iter().rev() {
+                    if cmp_for_lookup(needle, &self.cell_values[idx], self.date_system) == Some(0) {
+                        return Some(idx);
+                    }
                 }
             }
+            return None;
         }
-        None
+        let matcher = crate::builtins::lookup::lookup_utils::PreparedLookupMatcher::new(
+            needle,
+            false,
+            self.date_system,
+        );
+        self.cell_values.iter().rposition(|v| matcher.matches(v))
+    }
+
+    /// Cached O(log N) approximate lookup (with O(1) amortized #283/#399 sortedness
+    /// validation) sharing one projection per comparability class across all calls.
+    pub(crate) fn find_approximate(&self, needle: &LiteralValue, mode: i32) -> Option<usize> {
+        if (mode != 1 && mode != -1) || self.cell_values.is_empty() {
+            return None;
+        }
+        match needle {
+            LiteralValue::Number(_)
+            | LiteralValue::Int(_)
+            | LiteralValue::Boolean(_)
+            | LiteralValue::Empty
+            | LiteralValue::Date(_)
+            | LiteralValue::DateTime(_)
+            | LiteralValue::Time(_) => {
+                let nn = value_to_f64_lenient(needle, self.date_system)?;
+                let proj_opt = self
+                    .approx_numeric
+                    .get_or_init(|| {
+                        let proj =
+                            ApproxNumericProjection::build(&self.cell_values, self.date_system);
+                        if self.try_charge_derived(proj.bytes) {
+                            Some(proj)
+                        } else {
+                            None
+                        }
+                    })
+                    .as_ref();
+                if let Some(proj) = proj_opt {
+                    proj.search(nn, mode)
+                } else {
+                    // Tight-budget fallback: single-pass over cell_values without caching.
+                    let mut prev: Option<f64> = None;
+                    let mut best: Option<usize> = None;
+                    let mut found_exact_desc = false;
+                    for (idx, cell) in self.cell_values.iter().enumerate() {
+                        if matches!(cell, LiteralValue::Empty) {
+                            continue;
+                        }
+                        let Some(val) = value_to_f64_lenient(cell, self.date_system) else {
+                            continue;
+                        };
+                        if let Some(p) = prev {
+                            let c = cmp_f64_lookup(p, val);
+                            if (mode == 1 && c > 0) || (mode == -1 && c < 0) {
+                                return None;
+                            }
+                        }
+                        prev = Some(val);
+                        if mode == 1 {
+                            if val <= nn + 1e-12 && cmp_f64_lookup(val, nn) <= 0 {
+                                best = Some(idx);
+                            }
+                        } else if !found_exact_desc {
+                            let c = cmp_f64_lookup(val, nn);
+                            if c == 0 {
+                                best = Some(idx);
+                                found_exact_desc = true;
+                            } else if c > 0 {
+                                best = Some(idx);
+                            }
+                        }
+                    }
+                    best
+                }
+            }
+            LiteralValue::Text(s) => {
+                if try_parse_f64_fast(s).is_none() {
+                    let proj_opt = self
+                        .approx_text
+                        .get_or_init(|| {
+                            let proj = ApproxTextProjection::build(&self.cell_values);
+                            if self.try_charge_derived(proj.bytes) {
+                                Some(proj)
+                            } else {
+                                None
+                            }
+                        })
+                        .as_ref();
+                    if let Some(proj) = proj_opt {
+                        proj.search(s, mode)
+                    } else {
+                        // Tight-budget fallback: single-pass over cell_values matching
+                        // `approximate_search_in_view` without allocating a projection.
+                        let needle_folded = fold_text_boxed(s);
+                        let mut prev_folded: Option<Box<str>> = None;
+                        let mut prev_num: Option<f64> = None;
+                        let mut best: Option<usize> = None;
+                        let mut found_exact_desc = false;
+                        for (idx, cell) in self.cell_values.iter().enumerate() {
+                            let LiteralValue::Text(cell_str) = cell else {
+                                continue;
+                            };
+                            let curr_folded = fold_text_boxed(cell_str);
+                            let curr_num = try_parse_f64_fast(cell_str);
+                            if let Some(pf) = prev_folded.as_ref() {
+                                let c = match (prev_num, curr_num) {
+                                    (Some(x), Some(y)) => cmp_f64_lookup(x, y),
+                                    _ => match pf.as_ref().cmp(curr_folded.as_ref()) {
+                                        std::cmp::Ordering::Less => -1,
+                                        std::cmp::Ordering::Equal => 0,
+                                        std::cmp::Ordering::Greater => 1,
+                                    },
+                                };
+                                if (mode == 1 && c > 0) || (mode == -1 && c < 0) {
+                                    return None;
+                                }
+                            }
+                            if mode == 1 {
+                                if curr_folded.as_ref() <= needle_folded.as_ref() {
+                                    best = Some(idx);
+                                }
+                            } else if !found_exact_desc {
+                                match curr_folded.as_ref().cmp(needle_folded.as_ref()) {
+                                    std::cmp::Ordering::Equal => {
+                                        best = Some(idx);
+                                        found_exact_desc = true;
+                                    }
+                                    std::cmp::Ordering::Greater => {
+                                        best = Some(idx);
+                                    }
+                                    std::cmp::Ordering::Less => {}
+                                }
+                            }
+                            prev_folded = Some(curr_folded);
+                            prev_num = curr_num;
+                        }
+                        best
+                    }
+                } else {
+                    // Rare numeric-text needle compares with both numbers and text;
+                    // match `approximate_search_in_view` in one pass without allocation.
+                    let mut prev: Option<&LiteralValue> = None;
+                    let mut best: Option<usize> = None;
+                    let mut found_exact_desc = false;
+                    for (idx, val) in self.cell_values.iter().enumerate() {
+                        if !is_searchable_for_approximate(val, needle, self.date_system) {
+                            continue;
+                        }
+                        if let Some(p) = prev {
+                            let ok = cmp_for_lookup(p, val, self.date_system)
+                                .is_some_and(|c| if mode == 1 { c <= 0 } else { c >= 0 });
+                            if !ok {
+                                return None;
+                            }
+                        }
+                        if let Some(c) = cmp_for_lookup(val, needle, self.date_system) {
+                            if mode == 1 {
+                                if c <= 0 {
+                                    best = Some(idx);
+                                }
+                            } else if !found_exact_desc {
+                                if c == 0 {
+                                    best = Some(idx);
+                                    found_exact_desc = true;
+                                } else if c > 0 {
+                                    best = Some(idx);
+                                }
+                            }
+                        }
+                        prev = Some(val);
+                    }
+                    best
+                }
+            }
+            _ => None,
+        }
     }
 }
 
+#[cfg(test)]
 fn retained_bytes(
     values: &[LiteralValue],
     entries: &FxHashMap<LookupHashKey, DuplicateIndices>,
@@ -298,6 +987,7 @@ pub(crate) fn estimate_bytes(len: usize, entries: usize) -> usize {
         .saturating_add(256)
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum BuildOutcome {
     Built(LookupIndex),
     ErrorInLookupAxis,
@@ -327,7 +1017,7 @@ pub struct LookupIndexCache {
     call_counts: RwLock<FxHashMap<LookupIndexKey, u32>>,
     volatile_keys: RwLock<FxHashMap<LookupIndexKey, ()>>,
     build_threshold: u32,
-    bytes_in_use: AtomicUsize,
+    budget: Arc<CacheBudget>,
     max_bytes: usize,
     builds: AtomicUsize,
     hits: AtomicUsize,
@@ -361,7 +1051,7 @@ impl LookupIndexCache {
             call_counts: RwLock::new(FxHashMap::default()),
             volatile_keys: RwLock::new(FxHashMap::default()),
             build_threshold: LOOKUP_INDEX_BUILD_THRESHOLD,
-            bytes_in_use: AtomicUsize::new(0),
+            budget: Arc::new(CacheBudget::new(max_bytes)),
             max_bytes,
             builds: AtomicUsize::new(0),
             hits: AtomicUsize::new(0),
@@ -426,7 +1116,7 @@ impl LookupIndexCache {
             .get_mut()
             .unwrap_or_else(|p| p.into_inner())
             .clear();
-        self.bytes_in_use.store(0, Ordering::Relaxed);
+        self.budget = Arc::new(CacheBudget::new(self.max_bytes));
         self.in_flight
             .get_mut()
             .unwrap_or_else(|p| p.into_inner())
@@ -483,10 +1173,7 @@ impl LookupIndexCache {
     }
 
     pub(crate) fn would_exceed_cap(&self, bytes: usize) -> bool {
-        self.bytes_in_use
-            .load(Ordering::Relaxed)
-            .saturating_add(bytes)
-            > self.max_bytes
+        self.budget.load().saturating_add(bytes) > self.max_bytes
     }
 
     pub(crate) fn is_known_volatile(&self, key: &LookupIndexKey) -> bool {
@@ -509,7 +1196,7 @@ impl LookupIndexCache {
     pub(crate) fn insert_if_room(
         &self,
         key: LookupIndexKey,
-        index: LookupIndex,
+        mut index: LookupIndex,
     ) -> Option<Arc<LookupIndex>> {
         let bytes = index.bytes;
         if let Ok(mut guard) = self.inner.write() {
@@ -519,8 +1206,7 @@ impl LookupIndexCache {
             }
             // Serialize duplicate detection, admission and accounting. The earlier
             // preflight estimate is only a hint and cannot reserve concurrent space.
-            let current = self.bytes_in_use.load(Ordering::Relaxed);
-            if bytes > self.max_bytes.saturating_sub(current) {
+            if !self.budget.try_charge(bytes) {
                 self.skipped_cap.fetch_add(1, Ordering::Relaxed);
                 // Actual payloads (especially text) can exceed the preflight
                 // estimate. Do not rebuild and discard them on every later call.
@@ -529,9 +1215,9 @@ impl LookupIndexCache {
                 }
                 return None;
             }
+            index.budget = Some(Arc::clone(&self.budget));
             let index = Arc::new(index);
             guard.insert(key, index.clone());
-            self.bytes_in_use.fetch_add(bytes, Ordering::Relaxed);
             self.builds.fetch_add(1, Ordering::Relaxed);
             Some(index)
         } else {
@@ -578,7 +1264,7 @@ impl LookupIndexCache {
             skipped_tiny: self.skipped_tiny.load(Ordering::Relaxed),
             skipped_cap: self.skipped_cap.load(Ordering::Relaxed),
             skipped_below_threshold: self.skipped_below_threshold.load(Ordering::Relaxed),
-            bytes_in_cache: self.bytes_in_use.load(Ordering::Relaxed),
+            bytes_in_cache: self.budget.load(),
             entries_count,
         }
     }
@@ -605,8 +1291,11 @@ mod tests {
             len: 0,
             date_system: DateSystem::Excel1900,
             bytes,
-            entries: FxHashMap::default(),
             cell_values: Box::new([]),
+            budget: None,
+            exact: OnceLock::new(),
+            approx_numeric: OnceLock::new(),
+            approx_text: OnceLock::new(),
         }
     }
 
@@ -748,5 +1437,326 @@ mod tests {
         assert_eq!(charged - retained_bytes(&values, &entries), heap_bytes);
         let cache = LookupIndexCache::new(charged - 1);
         assert!(cache.insert_if_room(key(0), index(charged)).is_none());
+    }
+
+    #[test]
+    fn derived_exact_and_approx_projections_respect_tight_budget_and_stay_accurate() {
+        let rows: Vec<Vec<LiteralValue>> = (1..=128)
+            .map(|i| vec![LiteralValue::Number(i as f64 * 10.0)])
+            .collect();
+        let view = RangeView::from_owned_rows(rows, DateSystem::Excel1900);
+        let BuildOutcome::Built(built) =
+            LookupIndex::build(&view, LookupAxis::ColumnInView(0), DateSystem::Excel1900).unwrap()
+        else {
+            panic!("expected built index");
+        };
+        let base_bytes = built.bytes;
+
+        // Budget admits base cell_values, but leaves zero headroom for derived exact/approx tables.
+        let cache = LookupIndexCache::new(base_bytes);
+        let admitted = cache
+            .insert_if_room(key(0), built)
+            .expect("base index should fit");
+        assert_eq!(cache.report().bytes_in_cache, base_bytes);
+
+        // Fallback paths still return exact answers without exceeding max_bytes.
+        assert_eq!(
+            admitted.find_first_exact(&LiteralValue::Number(500.0)),
+            Some(49)
+        );
+        assert_eq!(
+            admitted.find_last_exact(&LiteralValue::Number(500.0)),
+            Some(49)
+        );
+        assert_eq!(
+            admitted.find_approximate(&LiteralValue::Number(505.0), 1),
+            Some(49)
+        );
+        assert_eq!(
+            admitted.find_approximate(&LiteralValue::Number(5.0), 1),
+            None
+        );
+        assert!(
+            cache.report().bytes_in_cache <= base_bytes,
+            "derived projections exceeded budget: {:?}",
+            cache.report()
+        );
+    }
+
+    #[test]
+    fn axis_visitors_and_lookup_index_honor_uniform_range_tails() {
+        use crate::builtins::lookup::lookup_utils::approximate_search_in_view;
+
+        // 2x2 numeric core extended to 1_048_576 x 4 via RangeTail:
+        // col 0: [10, 20, 30, 30, ..., 30] (ascending)
+        // col 1: [50, 40, 30, 30, ..., 30] (descending)
+        // col 2 (right_tail + corner): [100, 200, 300, ..., 300] (ascending)
+        let core_num = RangeView::from_owned_rows(
+            vec![
+                vec![LiteralValue::Number(10.0), LiteralValue::Number(50.0)],
+                vec![LiteralValue::Number(20.0), LiteralValue::Number(40.0)],
+            ],
+            DateSystem::Excel1900,
+        );
+        let tailed_num = RangeView::from_core_and_tail(
+            1_048_576,
+            4,
+            2,
+            2,
+            Arc::new(core_num.sheet().clone()),
+            vec![LiteralValue::Number(100.0), LiteralValue::Number(200.0)],
+            vec![LiteralValue::Number(30.0), LiteralValue::Number(30.0)],
+            LiteralValue::Number(300.0),
+            None,
+            10_000_000,
+        );
+
+        // O(1) tail handling on 1M-row ascending numeric column (last tie is row 1_048_575).
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_num,
+                LookupAxis::ColumnInView(0),
+                &LiteralValue::Number(30.0),
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(1_048_575)
+        );
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_num,
+                LookupAxis::ColumnInView(0),
+                &LiteralValue::Number(25.0),
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(1)
+        );
+        // Descending col 1: exact tie on 30 starts at row 2 (first occurrence), while 35 -> row 1.
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_num,
+                LookupAxis::ColumnInView(1),
+                &LiteralValue::Number(30.0),
+                -1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_num,
+                LookupAxis::ColumnInView(1),
+                &LiteralValue::Number(35.0),
+                -1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(1)
+        );
+        // Right + corner tail column (col 2): [100, 200, 300, ..., 300].
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_num,
+                LookupAxis::ColumnInView(2),
+                &LiteralValue::Number(300.0),
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(1_048_575)
+        );
+        // Row 0 across core + right_tail: [10, 50, 100, 100].
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_num,
+                LookupAxis::RowInView(0),
+                &LiteralValue::Number(100.0),
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(3)
+        );
+        // Row 5 (bottom_tail + corner): [30, 30, 300, 300].
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_num,
+                LookupAxis::RowInView(5),
+                &LiteralValue::Number(50.0),
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(1)
+        );
+
+        // Small tailed text view verifying visit_axis_values, LookupIndex::build,
+        // exact + approximate search, and visit_axis_approx_text parity.
+        let core_text = RangeView::from_owned_rows(
+            vec![
+                vec![LiteralValue::Text("alpha".into())],
+                vec![LiteralValue::Text("beta".into())],
+            ],
+            DateSystem::Excel1900,
+        );
+        let tailed_text = RangeView::from_core_and_tail(
+            6,
+            2,
+            2,
+            1,
+            Arc::new(core_text.sheet().clone()),
+            vec![
+                LiteralValue::Text("x".into()),
+                LiteralValue::Text("y".into()),
+            ],
+            vec![LiteralValue::Text("gamma".into())],
+            LiteralValue::Text("z".into()),
+            None,
+            10_000_000,
+        );
+
+        let BuildOutcome::Built(idx) = LookupIndex::build(
+            &tailed_text,
+            LookupAxis::ColumnInView(0),
+            DateSystem::Excel1900,
+        )
+        .unwrap() else {
+            panic!("expected built index for tailed text view");
+        };
+        assert_eq!(idx.len, 6);
+        assert_eq!(
+            idx.find_first_exact(&LiteralValue::Text("GAMMA".into())),
+            Some(2)
+        );
+        assert_eq!(
+            idx.find_last_exact(&LiteralValue::Text("GAMMA".into())),
+            Some(5)
+        );
+        assert_eq!(
+            idx.find_approximate(&LiteralValue::Text("GAMMA".into()), 1),
+            Some(5)
+        );
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_text,
+                LookupAxis::ColumnInView(0),
+                &LiteralValue::Text("GAMMA".into()),
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(5)
+        );
+        assert_eq!(
+            approximate_search_in_view(
+                &tailed_text,
+                LookupAxis::ColumnInView(1),
+                &LiteralValue::Text("Z".into()),
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap(),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn approx_text_projection_matches_uncached_on_mixed_numeric_text_ranges() {
+        use crate::builtins::lookup::lookup_utils::approximate_search_in_view;
+
+        let asc_values = vec![
+            LiteralValue::Text("2".into()),
+            LiteralValue::Text("3".into()),
+            LiteralValue::Text("4".into()),
+            LiteralValue::Text("10".into()),
+            LiteralValue::Text("z".into()),
+        ];
+        let asc_view = RangeView::from_owned_rows(
+            asc_values.into_iter().map(|v| vec![v]).collect(),
+            DateSystem::Excel1900,
+        );
+        let BuildOutcome::Built(asc_idx) = LookupIndex::build(
+            &asc_view,
+            LookupAxis::ColumnInView(0),
+            DateSystem::Excel1900,
+        )
+        .unwrap() else {
+            panic!("expected built asc index");
+        };
+
+        let pure_text = [
+            LiteralValue::Text("alpha".into()),
+            LiteralValue::Text("beta".into()),
+            LiteralValue::Text("gamma".into()),
+        ];
+        let pure_proj = ApproxTextProjection::build(&pure_text);
+        assert!(pure_proj.sorted_asc);
+        assert!(pure_proj.lex_sorted_asc);
+        assert!(!pure_proj.sorted_desc);
+        assert!(!pure_proj.lex_sorted_desc);
+
+        let mixed_proj = ApproxTextProjection::build(&asc_idx.cell_values);
+        assert!(mixed_proj.sorted_asc);
+        assert!(!mixed_proj.lex_sorted_asc);
+
+        for needle_str in ["1", "1a", "2", "3", "5", "10", "10a", "z", "zz"] {
+            let needle = LiteralValue::Text(needle_str.into());
+            let expected = approximate_search_in_view(
+                &asc_view,
+                LookupAxis::ColumnInView(0),
+                &needle,
+                1,
+                DateSystem::Excel1900,
+            )
+            .unwrap();
+            assert_eq!(
+                asc_idx.find_approximate(&needle, 1),
+                expected,
+                "ascending mode=1 mismatch for needle {needle_str:?}"
+            );
+        }
+
+        let desc_values = vec![
+            LiteralValue::Text("z".into()),
+            LiteralValue::Text("20".into()),
+            LiteralValue::Text("10".into()),
+            LiteralValue::Text("4".into()),
+            LiteralValue::Text("3".into()),
+            LiteralValue::Text("2".into()),
+            LiteralValue::Text("0".into()),
+        ];
+        let desc_view = RangeView::from_owned_rows(
+            desc_values.into_iter().map(|v| vec![v]).collect(),
+            DateSystem::Excel1900,
+        );
+        let BuildOutcome::Built(desc_idx) = LookupIndex::build(
+            &desc_view,
+            LookupAxis::ColumnInView(0),
+            DateSystem::Excel1900,
+        )
+        .unwrap() else {
+            panic!("expected built desc index");
+        };
+
+        for needle_str in ["zz", "z", "20", "15", "10", "1a", "3", "0", "-1"] {
+            let needle = LiteralValue::Text(needle_str.into());
+            let expected = approximate_search_in_view(
+                &desc_view,
+                LookupAxis::ColumnInView(0),
+                &needle,
+                -1,
+                DateSystem::Excel1900,
+            )
+            .unwrap();
+            assert_eq!(
+                desc_idx.find_approximate(&needle, -1),
+                expected,
+                "descending mode=-1 mismatch for needle {needle_str:?}"
+            );
+        }
     }
 }

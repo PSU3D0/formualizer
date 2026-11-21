@@ -5878,6 +5878,51 @@ impl DependencyGraph {
         self.store.is_volatile(vertex_id)
     }
 
+    /// Check whether any volatile vertex lies within the given 0-based inclusive rectangle.
+    ///
+    /// Runs in O(1) when the graph has no volatile vertices, and O(|volatile_vertices|)
+    /// otherwise — avoiding O(rows * cols) cell probes on large lookup tables.
+    pub(crate) fn has_volatile_in_range(
+        &self,
+        sheet_id: SheetId,
+        start_row: usize,
+        end_row: usize,
+        start_col: usize,
+        end_col: usize,
+    ) -> bool {
+        if self.volatile_vertices.is_empty() {
+            return false;
+        }
+        let Ok(sr) = u32::try_from(start_row) else {
+            return true;
+        };
+        let Ok(er) = u32::try_from(end_row) else {
+            return true;
+        };
+        let Ok(sc) = u32::try_from(start_col) else {
+            return true;
+        };
+        let Ok(ec) = u32::try_from(end_col) else {
+            return true;
+        };
+        for &vid in &self.volatile_vertices {
+            if self.store.is_deleted(vid) {
+                continue;
+            }
+            if self.store.sheet_id(vid) != sheet_id {
+                continue;
+            }
+            if let Some(addr) = self.store.grid_addr(vid) {
+                let r = addr.row();
+                let c = addr.col();
+                if r >= sr && r <= er && c >= sc && c <= ec {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub(crate) fn is_dynamic(&self, vertex_id: VertexId) -> bool {
         self.store.is_dynamic(vertex_id)
     }
