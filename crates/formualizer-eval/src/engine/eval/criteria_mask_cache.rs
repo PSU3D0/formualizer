@@ -146,6 +146,7 @@ impl CriteriaMaskCache {
         let sheet = view.sheet();
         if view.criteria_cache_cancelled()
             || !view.is_sheet_backed()
+            || view.tail().is_some()
             || rows == 0
             || rows > MAX_ROWS
             || col >= cols

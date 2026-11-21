@@ -510,22 +510,45 @@ fn eval_if_core<'a, 'b>(
     let mut total_sum = 0.0f64;
     let mut total_count = 0i64;
 
-    // Use a driver view for chunked iteration. Prefer sum_view, else first criteria range.
-    let driver = sum_view
-        .as_ref()
-        .or_else(|| crit_specs.iter().find_map(|(rv, _, _)| rv.as_ref()));
-
-    if let Some(drv) = driver {
-        // We can't easily iterate over union dims if they are larger than driver.
-        // But for most cases they are same.
-        // If driver is smaller, we'll miss some rows.
-        // Actually, if it's SUMIF, we want to iterate over criteria range dims.
-        let driver = if !multi && crit_specs[0].0.is_some() {
-            crit_specs[0].0.as_ref().unwrap()
+    // Use a driver view for chunked iteration. Prefer the default range, then upgrade
+    // to any participating view with greater row coverage (such as a tailed view whose
+    // synthetic tail extends beyond physically stored sheet rows).
+    let effective_row_coverage = |v: &crate::engine::range_view::RangeView<'_>| -> usize {
+        if v.tail().is_some() {
+            v.dims().0
         } else {
-            drv
-        };
+            (v.sheet().nrows as usize)
+                .saturating_sub(v.start_row())
+                .min(v.dims().0)
+        }
+    };
+    let mut driver = if !multi && crit_specs[0].0.is_some() {
+        crit_specs[0].0.as_ref()
+    } else {
+        sum_view
+            .as_ref()
+            .or_else(|| crit_specs.iter().find_map(|(rv, _, _)| rv.as_ref()))
+    };
+    if let Some(mut best) = driver {
+        let mut best_cov = effective_row_coverage(best);
+        let mut best_tailed = best.tail().is_some();
+        for candidate in sum_view
+            .as_ref()
+            .into_iter()
+            .chain(crit_specs.iter().filter_map(|(rv, _, _)| rv.as_ref()))
+        {
+            let cov = effective_row_coverage(candidate);
+            let tailed = candidate.tail().is_some();
+            if cov > best_cov || (tailed && !best_tailed && cov == best_cov) {
+                best = candidate;
+                best_cov = cov;
+                best_tailed = tailed;
+            }
+        }
+        driver = Some(best);
+    }
 
+    if let Some(driver) = driver {
         let mut criteria_masks = CriteriaMaskMemo::default();
         let mut visited_rows = 0usize;
         for res in driver.iter_row_chunks() {

@@ -20797,10 +20797,10 @@ where
         if view.dims().1 == 0 {
             return None;
         }
-        // If the view is logically open-ended but the backing sheet has no physical rows,
-        // treat the mask as empty (0-len) rather than attempting to build a huge mask.
+        // If the view is logically open-ended without a synthetic tail and the backing sheet has
+        // no physical rows, treat the mask as empty (0-len) rather than building a huge mask.
         let sheet_rows = view.sheet().nrows as usize;
-        if sheet_rows == 0 || view.start_row() >= sheet_rows {
+        if view.tail().is_none() && (sheet_rows == 0 || view.start_row() >= sheet_rows) {
             return Some(std::sync::Arc::new(arrow_array::BooleanArray::new_null(0)));
         }
         self.criteria_mask_cache.get_or_build(

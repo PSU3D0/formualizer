@@ -3245,8 +3245,15 @@ impl Function for FilterFn {
                     return true;
                 }
             }
-            if check_cols < include_cols && include_view.right_tail_cell(include_r).is_truthy() {
-                return true;
+            if check_cols < include_cols {
+                let tail_cell = if include_r < include_ar {
+                    include_view.right_tail_cell(include_r)
+                } else {
+                    include_view.corner_tail_cell()
+                };
+                if tail_cell.is_truthy() {
+                    return true;
+                }
             }
             false
         };

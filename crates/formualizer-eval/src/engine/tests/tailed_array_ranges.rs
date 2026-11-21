@@ -232,3 +232,217 @@ fn oversized_tailed_array_still_respects_budget_and_spill_limits() {
         LiteralValue::Error(e) if e.kind == ExcelErrorKind::Spill
     ));
 }
+
+#[test]
+fn blocker1_criteria_mask_preserves_rangetail_on_empty_sheet() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine.add_sheet("S").unwrap();
+    engine.add_sheet("Out").unwrap();
+
+    for (row, formula, expected) in [
+        (1, "=COUNTIF(S!A1:A100+1, 1)", 100.0),
+        (2, "=SUMIF(S!A1:A100+1, 1)", 100.0),
+        (3, "=COUNTIF(S!A1:A100+1, \"\")", 0.0),
+        (4, "=AVERAGEIF(S!A1:A100+1, 1)", 1.0),
+    ] {
+        engine
+            .set_cell_formula("Out", row, 1, parse(formula).unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        assert_eq!(
+            engine.get_cell_value("Out", row, 1),
+            Some(LiteralValue::Number(expected)),
+            "formula: {formula}"
+        );
+    }
+}
+
+#[test]
+fn blocker2_filter_uses_corner_tail_when_array_taller_than_include_active() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine.add_sheet("Data").unwrap();
+    engine.add_sheet("Left").unwrap();
+    engine.add_sheet("Right").unwrap();
+    engine.add_sheet("Out").unwrap();
+
+    for r in 1..=10u32 {
+        engine
+            .set_cell_value("Data", r, 1, LiteralValue::Int(i64::from(r)))
+            .unwrap();
+    }
+    // Left!B1:D10 has active=(2, 1), Right!E1:G1 has active=(1, 1).
+    // In cols C..D vs F..G, Empty=Empty is TRUE in right_tail (rows 0..2) AND corner_tail (rows 2..10).
+    engine
+        .set_cell_value("Left", 1, 2, LiteralValue::Int(5))
+        .unwrap();
+    engine
+        .set_cell_value("Left", 2, 2, LiteralValue::Int(5))
+        .unwrap();
+    engine
+        .set_cell_value("Right", 1, 5, LiteralValue::Int(1))
+        .unwrap();
+
+    engine
+        .set_cell_formula(
+            "Out",
+            1,
+            1,
+            parse("=SUM(FILTER(Data!A1:A10, Left!B1:D10=Right!E1:G1))").unwrap(),
+        )
+        .unwrap();
+    engine
+        .set_cell_formula(
+            "Out",
+            2,
+            1,
+            parse("=ROWS(FILTER(Data!A1:A10, Left!B1:D10=Right!E1:G1))").unwrap(),
+        )
+        .unwrap();
+    engine.evaluate_all().unwrap();
+
+    assert_eq!(
+        engine.get_cell_value("Out", 1, 1),
+        Some(LiteralValue::Number(55.0))
+    );
+    assert_eq!(
+        engine.get_cell_value("Out", 2, 1),
+        Some(LiteralValue::Number(10.0))
+    );
+}
+
+#[test]
+fn blocker3_expand_to_preserves_rangetail_invariants_and_empty_padding() {
+    // Repro A: shrink rows & grow cols on a tailed view must not panic or underflow.
+    let mut engine_a = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine_a.add_sheet("S").unwrap();
+    for r in 1..=10u32 {
+        engine_a
+            .set_cell_value("S", r, 1, LiteralValue::Int(1))
+            .unwrap();
+        engine_a
+            .set_cell_value("S", r, 2, LiteralValue::Int(1))
+            .unwrap();
+    }
+    for r in 1..=50u32 {
+        engine_a
+            .set_cell_value("S", r, 3, LiteralValue::Int(10))
+            .unwrap();
+    }
+    // C1:C100+1 has rows=100, cols=1, active=(50,1), right_tail=[], bottom_tail=[1.0].
+    // expand_to(10, 2) must keep rows 0..10 col 0 (10 * 11 = 110) and pad col 1 with Empty (0).
+    assert_eq!(
+        eval_at(&mut engine_a, 1, 10, "=SUMIF(A1:B10, \">0\", C1:C100+1)"),
+        LiteralValue::Number(110.0)
+    );
+
+    // Repro B: growing rows past a tailed view's original logical bounds must pad with Empty,
+    // not extrapolate bottom_tail.
+    let mut engine_b = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine_b.add_sheet("Crit").unwrap();
+    engine_b.add_sheet("Val").unwrap();
+    engine_b.add_sheet("Out").unwrap();
+    for r in 1..=20u32 {
+        engine_b
+            .set_cell_value("Crit", r, 1, LiteralValue::Int(1))
+            .unwrap();
+    }
+    engine_b
+        .set_cell_value("Val", 1, 2, LiteralValue::Int(10))
+        .unwrap();
+    engine_b
+        .set_cell_value("Val", 2, 2, LiteralValue::Int(10))
+        .unwrap();
+    // Val!B1:B10+1 has 11, 11, and 8 ones => sum 30; rows 11..20 must be Empty, not 1.
+    engine_b
+        .set_cell_formula(
+            "Out",
+            1,
+            1,
+            parse("=SUMIF(Crit!A1:A20, \">0\", Val!B1:B10+1)").unwrap(),
+        )
+        .unwrap();
+    engine_b.evaluate_all().unwrap();
+    assert_eq!(
+        engine_b.get_cell_value("Out", 1, 1),
+        Some(LiteralValue::Number(30.0))
+    );
+}
+
+#[test]
+fn blocker4_eval_if_core_visits_tail_rows_when_driver_is_sparse_untailed() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine.add_sheet("S").unwrap();
+    engine.add_sheet("Out").unwrap();
+
+    // Only row 1 populated on S (sheet.nrows == 1).
+    engine
+        .set_cell_value("S", 1, 1, LiteralValue::Int(1))
+        .unwrap();
+    engine
+        .set_cell_value("S", 1, 2, LiteralValue::Int(10))
+        .unwrap();
+
+    for (row, formula, expected) in [
+        (1, "=SUMIF(S!A1:A100, \"\", S!B1:B100+1)", 99.0),
+        (2, "=AVERAGEIF(S!A1:A100, \"\", S!B1:B100+1)", 1.0),
+        (3, "=COUNTIFS(S!A1:A100, \"\", S!B1:B100+1, 1)", 99.0),
+        (4, "=SUMIFS(S!B1:B100+1, S!A1:A100, \"\")", 99.0),
+        (5, "=AVERAGEIFS(S!B1:B100+1, S!A1:A100, \"\")", 1.0),
+        // Combined BLOCKER 3 + 4: shorter tailed sum_range expanded over sparse criteria range
+        (6, "=SUMIF(S!A1:A100, \"\", S!B1:B10+1)", 9.0),
+    ] {
+        engine
+            .set_cell_formula("Out", row, 1, parse(formula).unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        assert_eq!(
+            engine.get_cell_value("Out", row, 1),
+            Some(LiteralValue::Number(expected)),
+            "formula: {formula}"
+        );
+    }
+}
+
+#[test]
+fn should_fix5_row_major_error_precedence_on_2d_tailed_ranges() {
+    let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+    engine.add_sheet("Left").unwrap();
+    engine.add_sheet("Out").unwrap();
+
+    // Left!A1:D10 has active=(2, 1):
+    //   (0, 0) = 1, (0, 1..4) = Empty -> IF(...="", 1/0, ...) gives (0,0)=1, right_tail[0]=#DIV/0!
+    //   (1, 0) = #N/A                 -> core (1,0)=#N/A
+    // Row-major first error MUST be #DIV/0! (row 0 right_tail), not #N/A (row 1 core).
+    engine
+        .set_cell_value("Left", 1, 1, LiteralValue::Int(1))
+        .unwrap();
+    engine
+        .set_cell_value(
+            "Left",
+            2,
+            1,
+            LiteralValue::Error(formualizer_common::ExcelError::new(ExcelErrorKind::Na)),
+        )
+        .unwrap();
+
+    for (row, formula) in [
+        (1, "=AND(IF(Left!A1:D10=\"\", 1/0, Left!A1:D10))"),
+        (2, "=OR(IF(Left!A1:D10=\"\", 1/0, Left!A1:D10))"),
+        (3, "=XOR(IF(Left!A1:D10=\"\", 1/0, Left!A1:D10))"),
+        (4, "=SUMPRODUCT(IF(Left!A1:D10=\"\", 1/0, Left!A1:D10))"),
+        (5, "=SUMPRODUCT(IF(Left!A1:D10=\"\", 1/0, Left!A1:D10), 1)"),
+    ] {
+        engine
+            .set_cell_formula("Out", row, 1, parse(formula).unwrap())
+            .unwrap();
+        engine.evaluate_all().unwrap();
+        assert!(
+            matches!(
+                engine.get_cell_value("Out", row, 1),
+                Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Div
+            ),
+            "formula {formula} got {:?}",
+            engine.get_cell_value("Out", row, 1)
+        );
+    }
+}
