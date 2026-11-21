@@ -154,6 +154,9 @@ fn resolve_count_argument<'a, 'b>(
                 );
             }
         }
+        if view.tail().is_some() {
+            return Ok((AggregateArgument::Range(view), Some(logical_cells)));
+        }
         let (rows, cols) = view.dims();
         let physical_rows =
             rows.min((view.sheet().nrows as usize).saturating_sub(view.start_row()));
@@ -1781,7 +1784,8 @@ impl Function for CountAFn {
         for a in args {
             match resolve_aggregate_argument(a, ctx)? {
                 AggregateArgument::Range(view) => {
-                    for res in view.type_tags_slices() {
+                    let core = view.core_sub_view();
+                    for res in core.type_tags_slices() {
                         let (_, _, tag_cols) = res?;
                         for col in tag_cols {
                             for i in 0..col.len() {
@@ -1791,6 +1795,12 @@ impl Function for CountAFn {
                             }
                         }
                     }
+                    view.for_each_tail_entry(|val, cell_count| {
+                        if !matches!(val, LiteralValue::Empty) {
+                            cnt += cell_count as i64;
+                        }
+                        Ok(())
+                    })?;
                 }
                 AggregateArgument::ReferenceError(error) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
@@ -1889,36 +1899,72 @@ impl Function for CountBlankFn {
             let (argument, logical_cells) = resolve_count_argument(a, ctx)?;
             match argument {
                 AggregateArgument::Range(view) => {
-                    let mut tag_it = view.type_tags_slices();
-                    let mut text_it = view.text_slices();
-                    let mut visited_cells = 0u64;
-
-                    while let (Some(tag_res), Some(text_res)) = (tag_it.next(), text_it.next()) {
-                        let (_, _, tag_cols) = tag_res?;
-                        let (_, _, text_cols) = text_res?;
-
-                        for (tc, xc) in tag_cols.into_iter().zip(text_cols) {
-                            visited_cells += tc.len() as u64;
-                            let text_arr = xc
-                                .as_any()
-                                .downcast_ref::<arrow_array::StringArray>()
-                                .unwrap();
-                            for i in 0..tc.len() {
-                                let is_blank = tc.value(i)
-                                    == crate::arrow_store::TypeTag::Empty as u8
-                                    || (tc.value(i) == crate::arrow_store::TypeTag::Text as u8
-                                        && !text_arr.is_null(i)
-                                        && text_arr.value(i).is_empty());
-                                if is_blank {
-                                    cnt += 1;
+                    if view.tail().is_some() {
+                        let core = view.core_sub_view();
+                        let mut tag_it = core.type_tags_slices();
+                        let mut text_it = core.text_slices();
+                        while let (Some(tag_res), Some(text_res)) = (tag_it.next(), text_it.next())
+                        {
+                            let (_, _, tag_cols) = tag_res?;
+                            let (_, _, text_cols) = text_res?;
+                            for (tc, xc) in tag_cols.into_iter().zip(text_cols) {
+                                let text_arr = xc
+                                    .as_any()
+                                    .downcast_ref::<arrow_array::StringArray>()
+                                    .unwrap();
+                                for i in 0..tc.len() {
+                                    let is_blank = tc.value(i)
+                                        == crate::arrow_store::TypeTag::Empty as u8
+                                        || (tc.value(i) == crate::arrow_store::TypeTag::Text as u8
+                                            && !text_arr.is_null(i)
+                                            && text_arr.value(i).is_empty());
+                                    if is_blank {
+                                        cnt += 1;
+                                    }
                                 }
                             }
                         }
+                        view.for_each_tail_entry(|val, cell_count| {
+                            let is_blank = matches!(val, LiteralValue::Empty)
+                                || matches!(val, LiteralValue::Text(s) if s.is_empty());
+                            if is_blank {
+                                cnt += cell_count as i64;
+                            }
+                            Ok(())
+                        })?;
+                    } else {
+                        let mut tag_it = view.type_tags_slices();
+                        let mut text_it = view.text_slices();
+                        let mut visited_cells = 0u64;
+
+                        while let (Some(tag_res), Some(text_res)) = (tag_it.next(), text_it.next())
+                        {
+                            let (_, _, tag_cols) = tag_res?;
+                            let (_, _, text_cols) = text_res?;
+
+                            for (tc, xc) in tag_cols.into_iter().zip(text_cols) {
+                                visited_cells += tc.len() as u64;
+                                let text_arr = xc
+                                    .as_any()
+                                    .downcast_ref::<arrow_array::StringArray>()
+                                    .unwrap();
+                                for i in 0..tc.len() {
+                                    let is_blank = tc.value(i)
+                                        == crate::arrow_store::TypeTag::Empty as u8
+                                        || (tc.value(i) == crate::arrow_store::TypeTag::Text as u8
+                                            && !text_arr.is_null(i)
+                                            && text_arr.value(i).is_empty());
+                                    if is_blank {
+                                        cnt += 1;
+                                    }
+                                }
+                            }
+                        }
+                        let (rows, cols) = view.dims();
+                        cnt += logical_cells
+                            .unwrap_or(rows as u64 * cols as u64)
+                            .saturating_sub(visited_cells) as i64;
                     }
-                    let (rows, cols) = view.dims();
-                    cnt += logical_cells
-                        .unwrap_or(rows as u64 * cols as u64)
-                        .saturating_sub(visited_cells) as i64;
                 }
                 AggregateArgument::ReferenceError(error) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));

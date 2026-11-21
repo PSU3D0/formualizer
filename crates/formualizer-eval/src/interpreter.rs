@@ -1348,7 +1348,43 @@ impl<'a> Interpreter<'a> {
         op: UnaryOperator,
         expr: crate::traits::CalcValue<'a>,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
-        // For now, materialize for operators. Future: virtual range ops.
+        if let crate::traits::CalcValue::Range(ref rv) = expr {
+            let dims = rv.dims();
+            if dims == (1, 1) {
+                return self
+                    .eval_unary_scalar(op, rv.get_cell(0, 0))
+                    .map(crate::traits::CalcValue::Scalar);
+            }
+            if rv.has_uniform_tail() {
+                if let Some(error) = crate::engine::resource_ledger::materialized_cells_exceed(
+                    dims.0,
+                    dims.1,
+                    self.context.materialized_array_cells(),
+                ) {
+                    return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+                }
+                let active = rv.active_dims();
+                let view = crate::engine::range_view::build_tailed_range_view(
+                    dims,
+                    active,
+                    self.context.date_system(),
+                    self.context.cancellation_token(),
+                    self.context.materialized_array_cells(),
+                    |pos| {
+                        let cell = match pos {
+                            crate::engine::range_view::TailPos::Core(r, c) => rv.get_cell(r, c),
+                            crate::engine::range_view::TailPos::Right(r) => rv.right_tail_cell(r),
+                            crate::engine::range_view::TailPos::Bottom(c) => rv.bottom_tail_cell(c),
+                            crate::engine::range_view::TailPos::Corner => rv.corner_tail_cell(),
+                        };
+                        Ok(self
+                            .eval_unary_scalar(op, cell)
+                            .unwrap_or_else(LiteralValue::Error))
+                    },
+                )?;
+                return Ok(crate::traits::CalcValue::Range(view));
+            }
+        }
         let v = expr.into_literal();
         match v {
             LiteralValue::Array(arr) => self
@@ -1357,6 +1393,162 @@ impl<'a> Interpreter<'a> {
             other => self
                 .eval_unary_scalar(op, other)
                 .map(crate::traits::CalcValue::Scalar),
+        }
+    }
+
+    /// A binary operator other than `:` on `CalcValue` operands, preserving
+    /// uniform tails on large sparse/open-ended `RangeView` operands.
+    fn apply_binary_op_calc(
+        &self,
+        op: BinaryOperator,
+        left_calc: crate::traits::CalcValue<'a>,
+        right_calc: crate::traits::CalcValue<'a>,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
+        let left_tailed =
+            matches!(&left_calc, crate::traits::CalcValue::Range(rv) if rv.has_uniform_tail());
+        let right_tailed =
+            matches!(&right_calc, crate::traits::CalcValue::Range(rv) if rv.has_uniform_tail());
+        if !left_tailed && !right_tailed {
+            let left_format = left_calc.format_id();
+            let left = left_calc.into_literal();
+            let right_format = right_calc.format_id();
+            let right = right_calc.into_literal();
+            return self.apply_binary_op(op, left, left_format, right, right_format);
+        }
+
+        let is_comparison = matches!(
+            op,
+            BinaryOperator::Equal
+                | BinaryOperator::NotEqual
+                | BinaryOperator::Greater
+                | BinaryOperator::Less
+                | BinaryOperator::GreaterEqual
+                | BinaryOperator::LessEqual
+        );
+
+        let left_op = crate::engine::range_view::TailedOperand::from_calc_value(left_calc);
+        let right_op = crate::engine::range_view::TailedOperand::from_calc_value(right_calc);
+
+        if is_comparison {
+            if let crate::engine::range_view::TailedOperand::Scalar(LiteralValue::Error(e)) =
+                &left_op
+            {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    e.clone(),
+                )));
+            }
+            if let crate::engine::range_view::TailedOperand::Scalar(LiteralValue::Error(e)) =
+                &right_op
+            {
+                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
+                    e.clone(),
+                )));
+            }
+        }
+
+        let target = match broadcast_shape(&[left_op.dims(), right_op.dims()]) {
+            Ok(s) => s,
+            Err(e) => return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e))),
+        };
+        if let Some(e) = crate::engine::resource_ledger::materialized_cells_exceed(
+            target.0,
+            target.1,
+            self.context.materialized_array_cells(),
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
+
+        let active =
+            crate::engine::range_view::combined_active_dims(target, &[&left_op, &right_op]);
+        let eval_pair = |lv: LiteralValue, rv: LiteralValue| -> Result<LiteralValue, ExcelError> {
+            match self.eval_binary_scalar(op, lv, rv) {
+                Ok(v) => Ok(v),
+                Err(e) => Ok(LiteralValue::Error(e)),
+            }
+        };
+
+        let view = crate::engine::range_view::build_tailed_range_view(
+            target,
+            active,
+            self.context.date_system(),
+            self.context.cancellation_token(),
+            self.context.materialized_array_cells(),
+            |pos| match pos {
+                crate::engine::range_view::TailPos::Core(r, c) => {
+                    eval_pair(left_op.get_core(r, c), right_op.get_core(r, c))
+                }
+                crate::engine::range_view::TailPos::Right(r) => {
+                    eval_pair(left_op.get_right_tail(r), right_op.get_right_tail(r))
+                }
+                crate::engine::range_view::TailPos::Bottom(c) => {
+                    eval_pair(left_op.get_bottom_tail(c), right_op.get_bottom_tail(c))
+                }
+                crate::engine::range_view::TailPos::Corner => {
+                    eval_pair(left_op.get_corner_tail(), right_op.get_corner_tail())
+                }
+            },
+        )?;
+        Ok(crate::traits::CalcValue::Range(view))
+    }
+
+    fn eval_binary_scalar(
+        &self,
+        op: BinaryOperator,
+        left: LiteralValue,
+        right: LiteralValue,
+    ) -> Result<LiteralValue, ExcelError> {
+        match op {
+            BinaryOperator::Equal
+            | BinaryOperator::NotEqual
+            | BinaryOperator::Greater
+            | BinaryOperator::Less
+            | BinaryOperator::GreaterEqual
+            | BinaryOperator::LessEqual => self.compare(op, left, right),
+            BinaryOperator::Add
+            | BinaryOperator::Subtract
+            | BinaryOperator::Multiply
+            | BinaryOperator::Divide
+            | BinaryOperator::Power => {
+                let byte = match op {
+                    BinaryOperator::Add => b'+',
+                    BinaryOperator::Subtract => b'-',
+                    BinaryOperator::Multiply => b'*',
+                    BinaryOperator::Divide => b'/',
+                    BinaryOperator::Power => b'^',
+                    _ => unreachable!(),
+                };
+                let a = crate::coercion::to_arithmetic_number_with_locale(
+                    &left,
+                    &self.context.locale(),
+                    self.context.date_system(),
+                );
+                let b = crate::coercion::to_arithmetic_number_with_locale(
+                    &right,
+                    &self.context.locale(),
+                    self.context.date_system(),
+                );
+                match (a, b) {
+                    (Ok(a), Ok(b)) => match arith_f64(byte, a, b) {
+                        Ok(n) => Ok(LiteralValue::Number(n)),
+                        Err(e) => Ok(LiteralValue::Error(e)),
+                    },
+                    (Err(e), _) | (_, Err(e)) => Ok(LiteralValue::Error(e)),
+                }
+            }
+            BinaryOperator::Concat => match (left, right) {
+                (LiteralValue::Error(error), _) | (_, LiteralValue::Error(error)) => {
+                    Ok(LiteralValue::Error(error))
+                }
+                (l, r) => Ok(LiteralValue::Text(format!(
+                    "{}{}",
+                    crate::coercion::to_text_invariant(&l),
+                    crate::coercion::to_text_invariant(&r)
+                ))),
+            },
+            _ => {
+                Err(ExcelError::new(ExcelErrorKind::NImpl)
+                    .with_message(format!("Binary op '{op}'")))
+            }
         }
     }
 
@@ -1610,13 +1802,9 @@ impl<'a> Interpreter<'a> {
 
                 let left_calc =
                     self.evaluate_arena_ast_inner(*left_id, data_store, sheet_registry)?;
-                let left_format = left_calc.format_id();
-                let left = left_calc.into_literal();
                 let right_calc =
                     self.evaluate_arena_ast_inner(*right_id, data_store, sheet_registry)?;
-                let right_format = right_calc.format_id();
-                let right = right_calc.into_literal();
-                self.apply_binary_op(op, left, left_format, right, right_format)
+                self.apply_binary_op_calc(op, left_calc, right_calc)
             }
             AstNodeData::Array { .. } => {
                 let (rows, cols, elements) =
@@ -1749,9 +1937,7 @@ impl<'a> Interpreter<'a> {
             ASTNodeType::UnaryOp { op, expr } if *op == UnaryOperator::Spill => {
                 self.eval_reference_to_calc(&self.ast_spill_reference(expr)?)
             }
-            ASTNodeType::UnaryOp { op, expr } => self
-                .eval_unary(*op, expr)
-                .map(crate::traits::CalcValue::Scalar),
+            ASTNodeType::UnaryOp { op, expr } => self.eval_unary(*op, expr),
             ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(*op, left, right),
             ASTNodeType::Function { name, args } => self.eval_function_to_calc(name, args),
             ASTNodeType::Call { .. } => Err(self.unsupported_call()),
@@ -1775,7 +1961,6 @@ impl<'a> Interpreter<'a> {
                 // For now, reuse existing unary implementation (which recurses).
                 // In a later phase, we can map plan_node.children[0].
                 self.eval_unary(*op, expr)
-                    .map(crate::traits::CalcValue::Scalar)
             }
             ASTNodeType::BinaryOp { op, left, right } => self.eval_binary(*op, left, right),
             ASTNodeType::Function { name, args } => {
@@ -1895,24 +2080,27 @@ impl<'a> Interpreter<'a> {
     }
 
     /* ===================  unary ops  =================== */
-    fn eval_unary(&self, op: UnaryOperator, expr: &ASTNode) -> Result<LiteralValue, ExcelError> {
+    fn eval_unary(
+        &self,
+        op: UnaryOperator,
+        expr: &ASTNode,
+    ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
         if op == UnaryOperator::ImplicitIntersection {
             if let ASTNodeType::Reference { reference, .. } = &expr.node_type {
                 let reference = self.effective_reference(reference)?;
-                return Ok(self.implicit_intersection_of_written_reference(&reference));
+                return Ok(crate::traits::CalcValue::Scalar(
+                    self.implicit_intersection_of_written_reference(&reference),
+                ));
             }
 
             let cv = self.evaluate_ast_uncached(expr)?;
-            return Ok(self.eval_implicit_intersection_calc(cv));
+            return Ok(crate::traits::CalcValue::Scalar(
+                self.eval_implicit_intersection_calc(cv),
+            ));
         }
 
-        let v = self.evaluate_ast_uncached(expr)?.into_literal();
-        match v {
-            LiteralValue::Array(arr) => {
-                self.map_array(arr, |cell| self.eval_unary_scalar(op, cell))
-            }
-            other => self.eval_unary_scalar(op, other),
-        }
+        let cv = self.evaluate_ast_uncached(expr)?;
+        self.apply_unary_op(op, cv)
     }
 
     fn eval_unary_scalar(
@@ -2198,12 +2386,6 @@ impl<'a> Interpreter<'a> {
         left_node: &ASTNode,
         right_node: &ASTNode,
     ) -> Result<crate::traits::CalcValue<'a>, ExcelError> {
-        let left_calc = self.evaluate_ast_uncached(left_node)?;
-        let left_format = left_calc.format_id();
-        let left = left_calc.into_literal();
-        let right_calc = self.evaluate_ast_uncached(right_node)?;
-        let right_format = right_calc.format_id();
-        let right = right_calc.into_literal();
         if op == BinaryOperator::Range {
             let left_ref = self.evaluate_ast_as_reference(left_node)?;
             let right_ref = self.evaluate_ast_as_reference(right_node)?;
@@ -2213,7 +2395,9 @@ impl<'a> Interpreter<'a> {
                 Err(error) => Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error))),
             };
         }
-        self.apply_binary_op(op, left, left_format, right, right_format)
+        let left_calc = self.evaluate_ast_uncached(left_node)?;
+        let right_calc = self.evaluate_ast_uncached(right_node)?;
+        self.apply_binary_op_calc(op, left_calc, right_calc)
     }
 
     /* ===================  function calls  =================== */

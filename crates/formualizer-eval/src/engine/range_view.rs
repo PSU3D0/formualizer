@@ -58,6 +58,190 @@ pub enum RangeBacking<'a> {
     Owned(Arc<arrow_store::ArrowSheet>),
 }
 
+/// Uniform tail values for a [`RangeView`] whose logical shape `(rows, cols)`
+/// extends beyond its active core `(active_rows, active_cols)`.
+///
+/// Layout (relative to the view's origin):
+/// - `r < active_rows, c < active_cols`: stored in `RangeView::backing`
+/// - `r < active_rows, c >= active_cols`: `right_tail[r]`
+/// - `r >= active_rows, c < active_cols`: `bottom_tail[c]`
+/// - `r >= active_rows, c >= active_cols`: `corner_tail`
+#[derive(Clone, Debug)]
+pub(crate) struct RangeTail {
+    pub(crate) active_rows: usize,
+    pub(crate) active_cols: usize,
+    pub(crate) right_tail: Vec<LiteralValue>,
+    pub(crate) bottom_tail: Vec<LiteralValue>,
+    pub(crate) corner_tail: LiteralValue,
+}
+
+/// Numeric value as stored in an Arrow numeric lane (ignoring booleans, text, and blanks).
+#[inline]
+pub(crate) fn range_numeric_value(v: &LiteralValue, date_system: DateSystem) -> Option<f64> {
+    match v {
+        LiteralValue::Number(n) => Some(*n),
+        LiteralValue::Int(i) => Some(*i as f64),
+        LiteralValue::Date(d) => {
+            let dt = d.and_hms_opt(0, 0, 0)?;
+            Some(formualizer_common::datetime_to_serial_for(date_system, &dt))
+        }
+        LiteralValue::DateTime(dt) => {
+            Some(formualizer_common::datetime_to_serial_for(date_system, dt))
+        }
+        LiteralValue::Time(t) => Some(formualizer_common::time_to_fraction(t)),
+        LiteralValue::Duration(dur) => Some(dur.num_seconds() as f64 / 86_400.0),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TailValues<'a> {
+    Constant(&'a LiteralValue),
+    Slice(&'a [LiteralValue]),
+}
+
+impl<'a> TailValues<'a> {
+    #[inline]
+    fn get(&self, idx: usize) -> &'a LiteralValue {
+        match self {
+            TailValues::Constant(v) => v,
+            TailValues::Slice(s) => s.get(idx).unwrap_or(&LiteralValue::Empty),
+        }
+    }
+}
+
+fn tail_numbers_array(
+    vals: TailValues<'_>,
+    len: usize,
+    date_system: DateSystem,
+) -> Arc<arrow_array::Float64Array> {
+    match vals {
+        TailValues::Constant(v) => match range_numeric_value(v, date_system) {
+            Some(n) => Arc::new(arrow_array::Float64Array::from(vec![n; len])),
+            None => Arc::new(arrow_array::Float64Array::new_null(len)),
+        },
+        TailValues::Slice(s) => {
+            let mut b = arrow_array::builder::Float64Builder::with_capacity(len);
+            for i in 0..len {
+                match range_numeric_value(s.get(i).unwrap_or(&LiteralValue::Empty), date_system) {
+                    Some(n) => b.append_value(n),
+                    None => b.append_null(),
+                }
+            }
+            Arc::new(b.finish())
+        }
+    }
+}
+
+fn tail_booleans_array(vals: TailValues<'_>, len: usize) -> Arc<arrow_array::BooleanArray> {
+    match vals {
+        TailValues::Constant(LiteralValue::Boolean(b)) => {
+            Arc::new(arrow_array::BooleanArray::from(vec![*b; len]))
+        }
+        TailValues::Constant(_) => Arc::new(arrow_array::BooleanArray::new_null(len)),
+        TailValues::Slice(s) => {
+            let mut b = arrow_array::builder::BooleanBuilder::with_capacity(len);
+            for i in 0..len {
+                match s.get(i).unwrap_or(&LiteralValue::Empty) {
+                    LiteralValue::Boolean(v) => b.append_value(*v),
+                    _ => b.append_null(),
+                }
+            }
+            Arc::new(b.finish())
+        }
+    }
+}
+
+fn tail_text_array(vals: TailValues<'_>, len: usize) -> arrow_array::ArrayRef {
+    match vals {
+        TailValues::Constant(LiteralValue::Text(t)) => {
+            Arc::new(arrow_array::StringArray::from(vec![t.as_str(); len]))
+        }
+        TailValues::Constant(_) => arrow_array::new_null_array(&DataType::Utf8, len),
+        TailValues::Slice(s) => {
+            let mut b = arrow_array::builder::StringBuilder::with_capacity(len, len * 4);
+            for i in 0..len {
+                match s.get(i).unwrap_or(&LiteralValue::Empty) {
+                    LiteralValue::Text(t) => b.append_value(t),
+                    _ => b.append_null(),
+                }
+            }
+            Arc::new(b.finish())
+        }
+    }
+}
+
+fn tail_lowered_text_array(vals: TailValues<'_>, len: usize) -> Arc<arrow_array::StringArray> {
+    match vals {
+        TailValues::Constant(LiteralValue::Text(t)) => {
+            let lowered = t.to_lowercase();
+            Arc::new(arrow_array::StringArray::from(vec![lowered.as_str(); len]))
+        }
+        TailValues::Constant(_) => Arc::new(arrow_array::StringArray::new_null(len)),
+        TailValues::Slice(s) => {
+            let mut b = arrow_array::builder::StringBuilder::with_capacity(len, len * 4);
+            for i in 0..len {
+                match s.get(i).unwrap_or(&LiteralValue::Empty) {
+                    LiteralValue::Text(t) => b.append_value(t.to_lowercase()),
+                    _ => b.append_null(),
+                }
+            }
+            Arc::new(b.finish())
+        }
+    }
+}
+
+fn tail_errors_array(vals: TailValues<'_>, len: usize) -> Arc<arrow_array::UInt8Array> {
+    match vals {
+        TailValues::Constant(LiteralValue::Error(e)) => {
+            let code = arrow_store::map_error_code(e.kind);
+            Arc::new(arrow_array::UInt8Array::from(vec![code; len]))
+        }
+        TailValues::Constant(_) => Arc::new(arrow_array::UInt8Array::new_null(len)),
+        TailValues::Slice(s) => {
+            let mut b = arrow_array::builder::UInt8Builder::with_capacity(len);
+            for i in 0..len {
+                match s.get(i).unwrap_or(&LiteralValue::Empty) {
+                    LiteralValue::Error(e) => b.append_value(arrow_store::map_error_code(e.kind)),
+                    _ => b.append_null(),
+                }
+            }
+            Arc::new(b.finish())
+        }
+    }
+}
+
+fn tail_type_tag(v: &LiteralValue) -> u8 {
+    match v {
+        LiteralValue::Empty => arrow_store::TypeTag::Empty as u8,
+        LiteralValue::Number(_)
+        | LiteralValue::Int(_)
+        | LiteralValue::Date(_)
+        | LiteralValue::DateTime(_)
+        | LiteralValue::Time(_)
+        | LiteralValue::Duration(_) => arrow_store::TypeTag::Number as u8,
+        LiteralValue::Boolean(_) => arrow_store::TypeTag::Boolean as u8,
+        LiteralValue::Text(_) => arrow_store::TypeTag::Text as u8,
+        LiteralValue::Error(_) | LiteralValue::Array(_) => arrow_store::TypeTag::Error as u8,
+        LiteralValue::Pending => arrow_store::TypeTag::Pending as u8,
+    }
+}
+
+fn tail_type_tags_array(vals: TailValues<'_>, len: usize) -> Arc<arrow_array::UInt8Array> {
+    match vals {
+        TailValues::Constant(v) => {
+            Arc::new(arrow_array::UInt8Array::from(vec![tail_type_tag(v); len]))
+        }
+        TailValues::Slice(_) => {
+            let mut tags = Vec::with_capacity(len);
+            for i in 0..len {
+                tags.push(tail_type_tag(vals.get(i)));
+            }
+            Arc::new(arrow_array::UInt8Array::from(tags))
+        }
+    }
+}
+
 /// Unified view over a 2D range with efficient traversal utilities.
 /// Phase 4: Arrow-only backing.
 #[derive(Clone)]
@@ -74,6 +258,10 @@ pub struct RangeView<'a> {
     /// (`ScratchResourceBudget::materialized_array_cells`). Views resolved
     /// through an evaluation context carry the configured value.
     cell_budget: u64,
+    /// Optional non-empty uniform tail for computed array views extending beyond
+    /// the stored core in `backing`. When `None`, cells outside `backing` are
+    /// implicitly `LiteralValue::Empty`.
+    tail: Option<Arc<RangeTail>>,
 }
 
 impl<'a> core::fmt::Debug for RangeView<'a> {
@@ -108,9 +296,18 @@ pub struct ChunkSlice {
     pub cols: Vec<ChunkCol>,
 }
 
+const SYNTHETIC_TAIL_CHUNK_ROWS: usize = 32 * 1024;
+
+enum SegmentKind {
+    Backing {
+        chunk_idx: usize,
+        chunk_offset: usize,
+    },
+    BottomTail,
+}
+
 struct RowSegment {
-    chunk_idx: usize,
-    chunk_offset: usize,
+    kind: SegmentKind,
     row_start: usize,
     row_len: usize,
 }
@@ -118,6 +315,7 @@ struct RowSegment {
 struct RowSegmentIterator<'a> {
     view: &'a RangeView<'a>,
     chunks: Option<core::ops::Range<usize>>,
+    next_bottom_row: usize,
 }
 
 impl Iterator for RowSegmentIterator<'_> {
@@ -137,9 +335,23 @@ impl Iterator for RowSegmentIterator<'_> {
         let sheet = self.view.sheet();
         let starts = &sheet.chunk_starts;
         let sheet_rows = sheet.nrows as usize;
-        let row_end = self.view.er.min(sheet_rows.saturating_sub(1));
+        let backing_end = match &self.view.tail {
+            Some(tail) if tail.active_rows == 0 => None,
+            Some(tail) => {
+                let active_er = self.view.sr + tail.active_rows - 1;
+                Some(
+                    active_er
+                        .min(self.view.er)
+                        .min(sheet_rows.saturating_sub(1)),
+                )
+            }
+            None => (sheet_rows > 0).then(|| self.view.er.min(sheet_rows.saturating_sub(1))),
+        };
         let chunks = self.chunks.get_or_insert_with(|| {
             // Match row coverage independently of logical column/zero-sized subview dimensions.
+            let Some(row_end) = backing_end else {
+                return 0..0;
+            };
             if sheet_rows == 0 || starts.is_empty() || self.view.sr > row_end {
                 return 0..0;
             }
@@ -157,32 +369,51 @@ impl Iterator for RowSegmentIterator<'_> {
             });
             first..end
         });
-        for ci in chunks.by_ref() {
-            #[cfg(test)]
-            range_work::record(|w| w.candidates += 1);
-            let start = starts[ci];
-            let end = starts.get(ci + 1).copied().unwrap_or(sheet_rows);
-            let len = end.saturating_sub(start);
-            if len == 0 {
-                continue;
+        if let Some(row_end) = backing_end {
+            for ci in chunks.by_ref() {
+                #[cfg(test)]
+                range_work::record(|w| w.candidates += 1);
+                let start = starts[ci];
+                let end = starts.get(ci + 1).copied().unwrap_or(sheet_rows);
+                let len = end.saturating_sub(start);
+                if len == 0 {
+                    continue;
+                }
+                let lo = start.max(self.view.sr);
+                let hi = (start + len - 1).min(row_end);
+                if lo > hi {
+                    continue;
+                }
+                let row_len = hi - lo + 1;
+                #[cfg(test)]
+                range_work::record(|w| {
+                    w.segments += 1;
+                    w.segment_rows += row_len;
+                });
+                return Some(Ok(RowSegment {
+                    kind: SegmentKind::Backing {
+                        chunk_idx: ci,
+                        chunk_offset: lo - start,
+                    },
+                    row_start: lo - self.view.sr,
+                    row_len,
+                }));
             }
-            let lo = start.max(self.view.sr);
-            let hi = (start + len - 1).min(row_end);
-            if lo > hi {
-                continue;
+        }
+        if let Some(tail) = &self.view.tail {
+            if self.next_bottom_row < tail.active_rows {
+                self.next_bottom_row = tail.active_rows;
             }
-            let row_len = hi - lo + 1;
-            #[cfg(test)]
-            range_work::record(|w| {
-                w.segments += 1;
-                w.segment_rows += row_len;
-            });
-            return Some(Ok(RowSegment {
-                chunk_idx: ci,
-                chunk_offset: lo - start,
-                row_start: lo - self.view.sr,
-                row_len,
-            }));
+            if self.next_bottom_row < self.view.rows {
+                let row_start = self.next_bottom_row;
+                let row_len = (self.view.rows - row_start).min(SYNTHETIC_TAIL_CHUNK_ROWS);
+                self.next_bottom_row += row_len;
+                return Some(Ok(RowSegment {
+                    kind: SegmentKind::BottomTail,
+                    row_start,
+                    row_len,
+                }));
+            }
         }
         None
     }
@@ -202,81 +433,127 @@ impl Iterator for RowChunkIterator<'_> {
         };
         let view = self.segments.view;
         let sheet = view.sheet();
-        let ci = segment.chunk_idx;
-        let rel_off = segment.chunk_offset;
         let seg_len = segment.row_len;
         let mut cols = Vec::with_capacity(view.cols);
-        for col_idx in view.sc..=view.ec {
-            #[cfg(test)]
-            range_work::record(|w| w.generic_columns += 1);
-            if col_idx >= sheet.columns.len() {
-                #[cfg(test)]
-                range_work::record(|w| {
-                    w.null_arrays += 4;
-                    w.null_slots += 4 * seg_len;
-                });
-                let numbers = Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
-                let booleans = Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
-                let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
-                let errors = Some(arrow_array::new_null_array(&DataType::UInt8, seg_len));
-                let type_tag: arrow_array::ArrayRef =
-                    Arc::new(arrow_array::UInt8Array::from(vec![
-                        arrow_store::TypeTag::Empty
-                            as u8;
-                        seg_len
-                    ]));
-                cols.push(ChunkCol {
-                    numbers,
-                    booleans,
-                    text,
-                    errors,
-                    type_tag,
-                });
-            } else {
-                let col = &sheet.columns[col_idx];
-                let Some(ch) = col.chunk(ci) else {
-                    #[cfg(test)]
-                    range_work::record(|w| {
-                        w.null_arrays += 4;
-                        w.null_slots += 4 * seg_len;
-                    });
-                    let numbers = Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
-                    let booleans = Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
-                    let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
-                    let errors = Some(arrow_array::new_null_array(&DataType::UInt8, seg_len));
-                    let type_tag: arrow_array::ArrayRef =
-                        Arc::new(arrow_array::UInt8Array::from(vec![
-                            arrow_store::TypeTag::Empty
-                                as u8;
-                            seg_len
-                        ]));
+        match segment.kind {
+            SegmentKind::BottomTail => {
+                let tail = view.tail.as_deref().expect("BottomTail requires tail");
+                for local_c in 0..view.cols {
+                    let val = if local_c < tail.active_cols {
+                        tail.bottom_tail
+                            .get(local_c)
+                            .unwrap_or(&LiteralValue::Empty)
+                    } else {
+                        &tail.corner_tail
+                    };
+                    let tv = TailValues::Constant(val);
                     cols.push(ChunkCol {
-                        numbers,
-                        booleans,
-                        text,
-                        errors,
-                        type_tag,
+                        numbers: Some(tail_numbers_array(tv, seg_len, sheet.date_system)),
+                        booleans: Some(tail_booleans_array(tv, seg_len)),
+                        text: Some(tail_text_array(tv, seg_len)),
+                        errors: Some(tail_errors_array(tv, seg_len)),
+                        type_tag: tail_type_tags_array(tv, seg_len),
                     });
-                    continue;
-                };
+                }
+            }
+            SegmentKind::Backing {
+                chunk_idx: ci,
+                chunk_offset: rel_off,
+            } => {
+                for (local_c, col_idx) in (view.sc..=view.ec).enumerate() {
+                    if let Some(tail) = &view.tail
+                        && local_c >= tail.active_cols
+                    {
+                        let slice =
+                            &tail.right_tail[segment.row_start..segment.row_start + seg_len];
+                        let tv = TailValues::Slice(slice);
+                        cols.push(ChunkCol {
+                            numbers: Some(tail_numbers_array(tv, seg_len, sheet.date_system)),
+                            booleans: Some(tail_booleans_array(tv, seg_len)),
+                            text: Some(tail_text_array(tv, seg_len)),
+                            errors: Some(tail_errors_array(tv, seg_len)),
+                            type_tag: tail_type_tags_array(tv, seg_len),
+                        });
+                        continue;
+                    }
+                    #[cfg(test)]
+                    range_work::record(|w| w.generic_columns += 1);
+                    if col_idx >= sheet.columns.len() {
+                        #[cfg(test)]
+                        range_work::record(|w| {
+                            w.null_arrays += 4;
+                            w.null_slots += 4 * seg_len;
+                        });
+                        let numbers =
+                            Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
+                        let booleans =
+                            Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
+                        let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
+                        let errors = Some(arrow_array::new_null_array(&DataType::UInt8, seg_len));
+                        let type_tag: arrow_array::ArrayRef =
+                            Arc::new(arrow_array::UInt8Array::from(vec![
+                                arrow_store::TypeTag::Empty
+                                    as u8;
+                                seg_len
+                            ]));
+                        cols.push(ChunkCol {
+                            numbers,
+                            booleans,
+                            text,
+                            errors,
+                            type_tag,
+                        });
+                    } else {
+                        let col = &sheet.columns[col_idx];
+                        let Some(ch) = col.chunk(ci) else {
+                            #[cfg(test)]
+                            range_work::record(|w| {
+                                w.null_arrays += 4;
+                                w.null_slots += 4 * seg_len;
+                            });
+                            let numbers =
+                                Some(arrow_array::new_null_array(&DataType::Float64, seg_len));
+                            let booleans =
+                                Some(arrow_array::new_null_array(&DataType::Boolean, seg_len));
+                            let text = Some(arrow_array::new_null_array(&DataType::Utf8, seg_len));
+                            let errors =
+                                Some(arrow_array::new_null_array(&DataType::UInt8, seg_len));
+                            let type_tag: arrow_array::ArrayRef =
+                                Arc::new(arrow_array::UInt8Array::from(vec![
+                                    arrow_store::TypeTag::Empty
+                                        as u8;
+                                    seg_len
+                                ]));
+                            cols.push(ChunkCol {
+                                numbers,
+                                booleans,
+                                text,
+                                errors,
+                                type_tag,
+                            });
+                            continue;
+                        };
 
-                let numbers_base: arrow_array::ArrayRef = ch.numbers_or_null();
-                let booleans_base: arrow_array::ArrayRef = ch.booleans_or_null();
-                let text_base: arrow_array::ArrayRef = ch.text_or_null();
-                let errors_base: arrow_array::ArrayRef = ch.errors_or_null();
+                        let numbers_base: arrow_array::ArrayRef = ch.numbers_or_null();
+                        let booleans_base: arrow_array::ArrayRef = ch.booleans_or_null();
+                        let text_base: arrow_array::ArrayRef = ch.text_or_null();
+                        let errors_base: arrow_array::ArrayRef = ch.errors_or_null();
 
-                let numbers = Some(numbers_base.slice(rel_off, seg_len));
-                let booleans = Some(booleans_base.slice(rel_off, seg_len));
-                let text = Some(text_base.slice(rel_off, seg_len));
-                let errors = Some(errors_base.slice(rel_off, seg_len));
-                let type_tag: arrow_array::ArrayRef = Arc::new(ch.type_tag.slice(rel_off, seg_len));
-                cols.push(ChunkCol {
-                    numbers,
-                    booleans,
-                    text,
-                    errors,
-                    type_tag,
-                });
+                        let numbers = Some(numbers_base.slice(rel_off, seg_len));
+                        let booleans = Some(booleans_base.slice(rel_off, seg_len));
+                        let text = Some(text_base.slice(rel_off, seg_len));
+                        let errors = Some(errors_base.slice(rel_off, seg_len));
+                        let type_tag: arrow_array::ArrayRef =
+                            Arc::new(ch.type_tag.slice(rel_off, seg_len));
+                        cols.push(ChunkCol {
+                            numbers,
+                            booleans,
+                            text,
+                            errors,
+                            type_tag,
+                        });
+                    }
+                }
             }
         }
         Some(Ok(ChunkSlice {
@@ -307,7 +584,233 @@ impl<'a> RangeView<'a> {
             cols,
             cancel_token: None,
             cell_budget: DEFAULT_MATERIALIZED_ARRAY_CELLS,
+            tail: None,
         }
+    }
+
+    /// Build an owned `RangeView` of logical dimensions `(rows, cols)` from an
+    /// active core `core_sheet` (`active_rows x active_cols`) plus uniform tails.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_core_and_tail(
+        rows: usize,
+        cols: usize,
+        active_rows: usize,
+        active_cols: usize,
+        core_sheet: Arc<arrow_store::ArrowSheet>,
+        right_tail: Vec<LiteralValue>,
+        bottom_tail: Vec<LiteralValue>,
+        corner_tail: LiteralValue,
+        cancel_token: Option<CancelToken>,
+        cell_budget: u64,
+    ) -> RangeView<'static> {
+        if rows == 0 || cols == 0 {
+            return RangeView {
+                backing: RangeBacking::Owned(core_sheet),
+                sr: 1,
+                sc: 1,
+                er: 0,
+                ec: 0,
+                rows: 0,
+                cols: 0,
+                cancel_token,
+                cell_budget,
+                tail: None,
+            };
+        }
+        let has_tail = active_rows < rows || active_cols < cols;
+        let tail_all_empty = !has_tail
+            || (right_tail.iter().all(|v| matches!(v, LiteralValue::Empty))
+                && bottom_tail.iter().all(|v| matches!(v, LiteralValue::Empty))
+                && (active_rows == rows
+                    || active_cols == cols
+                    || matches!(corner_tail, LiteralValue::Empty)));
+        let tail = if tail_all_empty {
+            None
+        } else {
+            Some(Arc::new(RangeTail {
+                active_rows,
+                active_cols,
+                right_tail,
+                bottom_tail,
+                corner_tail,
+            }))
+        };
+        RangeView {
+            backing: RangeBacking::Owned(core_sheet),
+            sr: 0,
+            sc: 0,
+            er: rows - 1,
+            ec: cols - 1,
+            rows,
+            cols,
+            cancel_token,
+            cell_budget,
+            tail,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn tail(&self) -> Option<&RangeTail> {
+        self.tail.as_deref()
+    }
+
+    /// Dimensions `(active_rows, active_cols)` of the non-uniform prefix stored in `backing`.
+    /// Every cell outside `(0..active_rows, 0..active_cols)` is uniform along each trailing axis
+    /// (either implicitly `Empty` when `tail` is `None`, or given by `RangeTail`).
+    pub(crate) fn active_dims(&self) -> (usize, usize) {
+        if let Some(tail) = &self.tail {
+            return (tail.active_rows, tail.active_cols);
+        }
+        if self.rows == 0 || self.cols == 0 {
+            return (0, 0);
+        }
+        let sheet = self.sheet();
+        let sheet_rows = sheet.nrows as usize;
+        let max_cols = self.cols.min(sheet.columns.len().saturating_sub(self.sc));
+        let max_rows = self.rows.min(sheet_rows.saturating_sub(self.sr));
+        if max_rows == 0 || max_cols == 0 {
+            return (0, 0);
+        }
+        if max_cols <= 64 {
+            let mut col_end_row = 0usize;
+            for col_idx in self.sc..(self.sc + max_cols) {
+                let col = &sheet.columns[col_idx];
+                let dense_last = col.chunks.len().checked_sub(1);
+                let sparse_last = col.sparse_chunks.keys().copied().max();
+                let last_ci = match (dense_last, sparse_last) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (Some(a), None) | (None, Some(a)) => Some(a),
+                    (None, None) => None,
+                };
+                if let Some(ci) = last_ci {
+                    let chunk_end = sheet
+                        .chunk_starts
+                        .get(ci + 1)
+                        .copied()
+                        .unwrap_or(sheet_rows);
+                    col_end_row = col_end_row.max(chunk_end);
+                }
+            }
+            let active_rows = max_rows.min(col_end_row.saturating_sub(self.sr));
+            if active_rows == 0 {
+                return (0, 0);
+            }
+            return (active_rows, max_cols);
+        }
+        (max_rows, max_cols)
+    }
+
+    #[inline]
+    pub(crate) fn has_uniform_tail(&self) -> bool {
+        self.active_dims() != (self.rows, self.cols)
+    }
+
+    #[inline]
+    pub(crate) fn right_tail_cell(&self, r: usize) -> LiteralValue {
+        match &self.tail {
+            Some(tail) => tail
+                .right_tail
+                .get(r)
+                .cloned()
+                .unwrap_or(LiteralValue::Empty),
+            None => LiteralValue::Empty,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn bottom_tail_cell(&self, c: usize) -> LiteralValue {
+        match &self.tail {
+            Some(tail) => tail
+                .bottom_tail
+                .get(c)
+                .cloned()
+                .unwrap_or(LiteralValue::Empty),
+            None => LiteralValue::Empty,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn corner_tail_cell(&self) -> LiteralValue {
+        match &self.tail {
+            Some(tail) => tail.corner_tail.clone(),
+            None => LiteralValue::Empty,
+        }
+    }
+
+    /// View restricted to the active core `(0..active_rows, 0..active_cols)` with `tail: None`.
+    pub(crate) fn core_sub_view(&self) -> RangeView<'a> {
+        let (ar, ac) = self.active_dims();
+        if ar == 0 || ac == 0 {
+            return RangeView {
+                backing: match &self.backing {
+                    RangeBacking::Borrowed(s) => RangeBacking::Borrowed(s),
+                    RangeBacking::Owned(s) => RangeBacking::Owned(s.clone()),
+                },
+                sr: 1,
+                sc: 1,
+                er: 0,
+                ec: 0,
+                rows: 0,
+                cols: 0,
+                cancel_token: self.cancel_token.clone(),
+                cell_budget: self.cell_budget,
+                tail: None,
+            };
+        }
+        RangeView {
+            backing: match &self.backing {
+                RangeBacking::Borrowed(s) => RangeBacking::Borrowed(s),
+                RangeBacking::Owned(s) => RangeBacking::Owned(s.clone()),
+            },
+            sr: self.sr,
+            sc: self.sc,
+            er: self.sr + ar - 1,
+            ec: self.sc + ac - 1,
+            rows: ar,
+            cols: ac,
+            cancel_token: self.cancel_token.clone(),
+            cell_budget: self.cell_budget,
+            tail: None,
+        }
+    }
+
+    /// Visits each uniform tail entry `(value, cell_count)` outside the active core.
+    /// Does nothing when `active_dims() == dims()`.
+    pub(crate) fn for_each_tail_entry(
+        &self,
+        mut f: impl FnMut(&LiteralValue, u64) -> Result<(), ExcelError>,
+    ) -> Result<(), ExcelError> {
+        let (ar, ac) = self.active_dims();
+        let tail_rows = (self.rows - ar) as u64;
+        let tail_cols = (self.cols - ac) as u64;
+        if tail_rows == 0 && tail_cols == 0 {
+            return Ok(());
+        }
+        if let Some(tail) = &self.tail {
+            if tail_cols > 0 {
+                for r in 0..ar {
+                    let v = tail.right_tail.get(r).unwrap_or(&LiteralValue::Empty);
+                    f(v, tail_cols)?;
+                }
+            }
+            if tail_rows > 0 {
+                for c in 0..ac {
+                    let v = tail.bottom_tail.get(c).unwrap_or(&LiteralValue::Empty);
+                    f(v, tail_rows)?;
+                }
+            }
+            if tail_rows > 0 && tail_cols > 0 {
+                f(&tail.corner_tail, tail_rows * tail_cols)?;
+            }
+        } else {
+            let empty_count = (self.rows as u64)
+                .saturating_mul(self.cols as u64)
+                .saturating_sub((ar as u64).saturating_mul(ac as u64));
+            if empty_count > 0 {
+                f(&LiteralValue::Empty, empty_count)?;
+            }
+        }
+        Ok(())
     }
 
     /// Attaches a shared cancellation handle to cancellation-aware range walks.
@@ -402,6 +905,7 @@ impl<'a> RangeView<'a> {
                 cols: 0,
                 cancel_token,
                 cell_budget: DEFAULT_MATERIALIZED_ARRAY_CELLS,
+                tail: None,
             });
         }
 
@@ -415,6 +919,7 @@ impl<'a> RangeView<'a> {
             cols: ncols,
             cancel_token,
             cell_budget: DEFAULT_MATERIALIZED_ARRAY_CELLS,
+            tail: None,
         })
     }
 
@@ -423,6 +928,9 @@ impl<'a> RangeView<'a> {
     }
 
     pub fn expand_to(&self, rows: usize, cols: usize) -> RangeView<'a> {
+        if self.tail.is_some() && rows <= self.rows && cols <= self.cols {
+            return self.sub_view(0, 0, rows, cols);
+        }
         let er = self.sr + rows.saturating_sub(1);
         let ec = self.sc + cols.saturating_sub(1);
         RangeView {
@@ -438,14 +946,67 @@ impl<'a> RangeView<'a> {
             cols,
             cancel_token: self.cancel_token.clone(),
             cell_budget: self.cell_budget,
+            tail: self.tail.clone(),
         }
     }
 
     pub fn sub_view(&self, rs: usize, cs: usize, rows: usize, cols: usize) -> RangeView<'a> {
+        if rows == 0 || cols == 0 {
+            return RangeView {
+                backing: match &self.backing {
+                    RangeBacking::Borrowed(s) => RangeBacking::Borrowed(s),
+                    RangeBacking::Owned(s) => RangeBacking::Owned(s.clone()),
+                },
+                sr: 1,
+                sc: 1,
+                er: 0,
+                ec: 0,
+                rows: 0,
+                cols: 0,
+                cancel_token: self.cancel_token.clone(),
+                cell_budget: self.cell_budget,
+                tail: None,
+            };
+        }
         let abs_sr = self.sr + rs;
         let abs_sc = self.sc + cs;
         let er = abs_sr + rows.saturating_sub(1);
         let ec = abs_sc + cols.saturating_sub(1);
+        let tail = self.tail.as_ref().and_then(|t| {
+            let new_ar = t.active_rows.saturating_sub(rs).min(rows);
+            let new_ac = t.active_cols.saturating_sub(cs).min(cols);
+            if new_ar == rows && new_ac == cols {
+                return None;
+            }
+            let right_tail = if new_ac < cols && new_ar > 0 {
+                t.right_tail
+                    .get(rs..rs + new_ar)
+                    .map(|s| s.to_vec())
+                    .unwrap_or_else(|| vec![LiteralValue::Empty; new_ar])
+            } else {
+                Vec::new()
+            };
+            let bottom_tail = if new_ar < rows && new_ac > 0 {
+                t.bottom_tail
+                    .get(cs..cs + new_ac)
+                    .map(|s| s.to_vec())
+                    .unwrap_or_else(|| vec![LiteralValue::Empty; new_ac])
+            } else {
+                Vec::new()
+            };
+            let corner_tail = if new_ar < rows && new_ac < cols {
+                t.corner_tail.clone()
+            } else {
+                LiteralValue::Empty
+            };
+            Some(Arc::new(RangeTail {
+                active_rows: new_ar,
+                active_cols: new_ac,
+                right_tail,
+                bottom_tail,
+                corner_tail,
+            }))
+        });
         RangeView {
             backing: match &self.backing {
                 RangeBacking::Borrowed(s) => RangeBacking::Borrowed(s),
@@ -459,6 +1020,7 @@ impl<'a> RangeView<'a> {
             cols,
             cancel_token: self.cancel_token.clone(),
             cell_budget: self.cell_budget,
+            tail,
         }
     }
 
@@ -502,9 +1064,11 @@ impl<'a> RangeView<'a> {
 
         let mut has_num = false;
         let mut has_text = false;
+        let mut is_mixed = false;
+        let (ar, ac) = self.active_dims();
 
-        for r in 0..self.rows {
-            for c in 0..self.cols {
+        for r in 0..ar {
+            for c in 0..ac {
                 match self.get_cell(r, c) {
                     LiteralValue::Empty => {}
                     LiteralValue::Number(_) | LiteralValue::Int(_) => has_num = true,
@@ -515,6 +1079,18 @@ impl<'a> RangeView<'a> {
                     return RangeKind::Mixed;
                 }
             }
+        }
+        let _ = self.for_each_tail_entry(|v, _| {
+            match v {
+                LiteralValue::Empty => {}
+                LiteralValue::Number(_) | LiteralValue::Int(_) => has_num = true,
+                LiteralValue::Text(_) => has_text = true,
+                _ => is_mixed = true,
+            }
+            Ok(())
+        });
+        if is_mixed {
+            return RangeKind::Mixed;
         }
 
         match (has_num, has_text) {
@@ -538,6 +1114,26 @@ impl<'a> RangeView<'a> {
     pub fn get_cell(&self, row: usize, col: usize) -> LiteralValue {
         if row >= self.rows || col >= self.cols {
             return LiteralValue::Empty;
+        }
+        if let Some(tail) = &self.tail {
+            match (row < tail.active_rows, col < tail.active_cols) {
+                (true, true) => {}
+                (true, false) => {
+                    return tail
+                        .right_tail
+                        .get(row)
+                        .cloned()
+                        .unwrap_or(LiteralValue::Empty);
+                }
+                (false, true) => {
+                    return tail
+                        .bottom_tail
+                        .get(col)
+                        .cloned()
+                        .unwrap_or(LiteralValue::Empty);
+                }
+                (false, false) => return tail.corner_tail.clone(),
+            }
         }
         let abs_row = self.sr + row;
         let abs_col = self.sc + col;
@@ -644,6 +1240,7 @@ impl<'a> RangeView<'a> {
         RowSegmentIterator {
             view: self,
             chunks: None,
+            next_bottom_row: 0,
         }
     }
 
@@ -652,6 +1249,29 @@ impl<'a> RangeView<'a> {
         &self,
         f: &mut dyn FnMut(&LiteralValue) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
+        if self.tail.is_some() {
+            let mut since_poll = 4096usize;
+            for r in 0..self.rows {
+                for c in 0..self.cols {
+                    if since_poll >= 4096 {
+                        since_poll = 0;
+                        if self
+                            .cancel_token
+                            .as_ref()
+                            .is_some_and(CancelToken::is_cancelled)
+                        {
+                            return Err(ExcelError::new(
+                                formualizer_common::ExcelErrorKind::Cancelled,
+                            ));
+                        }
+                    }
+                    since_poll += 1;
+                    let tmp = self.get_cell(r, c);
+                    f(&tmp)?;
+                }
+            }
+            return Ok(());
+        }
         for res in self.iter_row_chunks() {
             let cs = res?;
             for r in 0..cs.row_len {
@@ -799,33 +1419,68 @@ impl<'a> RangeView<'a> {
             let segment = res?;
             let mut out_cols = Vec::with_capacity(self.cols);
             let sheet = self.sheet();
-            for col_idx in self.sc..=self.ec {
-                let Some(ch) = sheet
-                    .columns
-                    .get(col_idx)
-                    .and_then(|col| col.chunk(segment.chunk_idx))
-                else {
-                    #[cfg(test)]
-                    range_work::record(|w| {
-                        w.null_arrays += 1;
-                        w.null_slots += segment.row_len;
-                    });
-                    out_cols.push(Arc::new(arrow_array::Float64Array::new_null(
-                        segment.row_len,
-                    )));
-                    continue;
-                };
-                let base = ch
-                    .numbers_or_null()
-                    .slice(segment.chunk_offset, segment.row_len);
-                let range = segment.chunk_offset..segment.chunk_offset + segment.row_len;
-                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
-                out_cols.push(if cascade.has_any_in_range(range.clone()) {
-                    ch.merged_numbers(range.clone())
-                        .unwrap_or_else(|| cascade.select_numbers(range, &base))
-                } else {
-                    Arc::new(base)
-                });
+            match segment.kind {
+                SegmentKind::BottomTail => {
+                    let tail = self.tail.as_deref().expect("BottomTail requires tail");
+                    for local_c in 0..self.cols {
+                        let val = if local_c < tail.active_cols {
+                            tail.bottom_tail
+                                .get(local_c)
+                                .unwrap_or(&LiteralValue::Empty)
+                        } else {
+                            &tail.corner_tail
+                        };
+                        out_cols.push(tail_numbers_array(
+                            TailValues::Constant(val),
+                            segment.row_len,
+                            sheet.date_system,
+                        ));
+                    }
+                }
+                SegmentKind::Backing {
+                    chunk_idx,
+                    chunk_offset,
+                } => {
+                    for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
+                        if let Some(tail) = &self.tail
+                            && local_c >= tail.active_cols
+                        {
+                            let slice = &tail.right_tail
+                                [segment.row_start..segment.row_start + segment.row_len];
+                            out_cols.push(tail_numbers_array(
+                                TailValues::Slice(slice),
+                                segment.row_len,
+                                sheet.date_system,
+                            ));
+                            continue;
+                        }
+                        let Some(ch) = sheet
+                            .columns
+                            .get(col_idx)
+                            .and_then(|col| col.chunk(chunk_idx))
+                        else {
+                            #[cfg(test)]
+                            range_work::record(|w| {
+                                w.null_arrays += 1;
+                                w.null_slots += segment.row_len;
+                            });
+                            out_cols.push(Arc::new(arrow_array::Float64Array::new_null(
+                                segment.row_len,
+                            )));
+                            continue;
+                        };
+                        let base = ch.numbers_or_null().slice(chunk_offset, segment.row_len);
+                        let range = chunk_offset..chunk_offset + segment.row_len;
+                        let cascade =
+                            arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                        out_cols.push(if cascade.has_any_in_range(range.clone()) {
+                            ch.merged_numbers(range.clone())
+                                .unwrap_or_else(|| cascade.select_numbers(range, &base))
+                        } else {
+                            Arc::new(base)
+                        });
+                    }
+                }
             }
             Ok((segment.row_start, segment.row_len, out_cols))
         })
@@ -855,6 +1510,13 @@ impl<'a> RangeView<'a> {
                     .unwrap()
                     .clone();
                 let base_arc = Arc::new(base_ba);
+
+                if let Some(tail) = &self.tail
+                    && (cs.row_start >= tail.active_rows || local_c >= tail.active_cols)
+                {
+                    out_cols.push(base_arc);
+                    continue;
+                }
 
                 // Identify chunk and overlay segment
                 let abs_seg_start = self.sr + cs.row_start;
@@ -906,6 +1568,12 @@ impl<'a> RangeView<'a> {
                     .as_ref()
                     .expect("text lane exists")
                     .clone();
+                if let Some(tail) = &self.tail
+                    && (cs.row_start >= tail.active_rows || local_c >= tail.active_cols)
+                {
+                    out_cols.push(base);
+                    continue;
+                }
                 let abs_seg_start = self.sr + cs.row_start;
                 let ch_idx = match chunk_starts.binary_search(&abs_seg_start) {
                     Ok(i) => i,
@@ -951,6 +1619,30 @@ impl<'a> RangeView<'a> {
             let chunk_starts = &sheet.chunk_starts;
 
             for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
+                if let Some(tail) = &self.tail {
+                    if cs.row_start >= tail.active_rows {
+                        let val = if local_c < tail.active_cols {
+                            tail.bottom_tail
+                                .get(local_c)
+                                .unwrap_or(&LiteralValue::Empty)
+                        } else {
+                            &tail.corner_tail
+                        };
+                        out_cols.push(tail_lowered_text_array(
+                            TailValues::Constant(val),
+                            cs.row_len,
+                        ));
+                        continue;
+                    }
+                    if local_c >= tail.active_cols {
+                        let slice = &tail.right_tail[cs.row_start..cs.row_start + cs.row_len];
+                        out_cols.push(tail_lowered_text_array(
+                            TailValues::Slice(slice),
+                            cs.row_len,
+                        ));
+                        continue;
+                    }
+                }
                 // Identify chunk
                 let abs_seg_start = self.sr + cs.row_start;
                 let ch_idx = match chunk_starts.binary_search(&abs_seg_start) {
@@ -997,31 +1689,63 @@ impl<'a> RangeView<'a> {
             let segment = res?;
             let mut out_cols = Vec::with_capacity(self.cols);
             let sheet = self.sheet();
-            for col_idx in self.sc..=self.ec {
-                let Some(ch) = sheet
-                    .columns
-                    .get(col_idx)
-                    .and_then(|col| col.chunk(segment.chunk_idx))
-                else {
-                    #[cfg(test)]
-                    range_work::record(|w| {
-                        w.null_arrays += 1;
-                        w.null_slots += segment.row_len;
-                    });
-                    out_cols.push(Arc::new(arrow_array::UInt8Array::new_null(segment.row_len)));
-                    continue;
-                };
-                let base = ch
-                    .errors_or_null()
-                    .slice(segment.chunk_offset, segment.row_len);
-                let range = segment.chunk_offset..segment.chunk_offset + segment.row_len;
-                let cascade = arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
-                out_cols.push(if cascade.has_any_in_range(range.clone()) {
-                    ch.merged_errors(range.clone())
-                        .unwrap_or_else(|| cascade.select_errors(range, &base))
-                } else {
-                    Arc::new(base)
-                });
+            match segment.kind {
+                SegmentKind::BottomTail => {
+                    let tail = self.tail.as_deref().expect("BottomTail requires tail");
+                    for local_c in 0..self.cols {
+                        let val = if local_c < tail.active_cols {
+                            tail.bottom_tail
+                                .get(local_c)
+                                .unwrap_or(&LiteralValue::Empty)
+                        } else {
+                            &tail.corner_tail
+                        };
+                        out_cols.push(tail_errors_array(
+                            TailValues::Constant(val),
+                            segment.row_len,
+                        ));
+                    }
+                }
+                SegmentKind::Backing {
+                    chunk_idx,
+                    chunk_offset,
+                } => {
+                    for (local_c, col_idx) in (self.sc..=self.ec).enumerate() {
+                        if let Some(tail) = &self.tail
+                            && local_c >= tail.active_cols
+                        {
+                            let slice = &tail.right_tail
+                                [segment.row_start..segment.row_start + segment.row_len];
+                            out_cols
+                                .push(tail_errors_array(TailValues::Slice(slice), segment.row_len));
+                            continue;
+                        }
+                        let Some(ch) = sheet
+                            .columns
+                            .get(col_idx)
+                            .and_then(|col| col.chunk(chunk_idx))
+                        else {
+                            #[cfg(test)]
+                            range_work::record(|w| {
+                                w.null_arrays += 1;
+                                w.null_slots += segment.row_len;
+                            });
+                            out_cols
+                                .push(Arc::new(arrow_array::UInt8Array::new_null(segment.row_len)));
+                            continue;
+                        };
+                        let base = ch.errors_or_null().slice(chunk_offset, segment.row_len);
+                        let range = chunk_offset..chunk_offset + segment.row_len;
+                        let cascade =
+                            arrow_store::OverlayCascade::new(&ch.overlay, &ch.computed_overlay);
+                        out_cols.push(if cascade.has_any_in_range(range.clone()) {
+                            ch.merged_errors(range.clone())
+                                .unwrap_or_else(|| cascade.select_errors(range, &base))
+                        } else {
+                            Arc::new(base)
+                        });
+                    }
+                }
             }
             Ok((segment.row_start, segment.row_len, out_cols))
         })
@@ -1050,14 +1774,50 @@ impl<'a> RangeView<'a> {
                 .as_ref()
                 .is_some_and(CancelToken::is_cancelled)
         };
+        if self.tail.is_some() {
+            if self
+                .core_sub_view()
+                .try_for_each_error_piece(max_rows, visit)?
+            {
+                return Ok(true);
+            }
+            let mut matched = false;
+            self.for_each_tail_entry(|val, _| {
+                if matched {
+                    return Ok(());
+                }
+                if cancelled() {
+                    return Err(ExcelError::new(
+                        formualizer_common::ExcelErrorKind::Cancelled,
+                    ));
+                }
+                if let LiteralValue::Error(error) = val {
+                    let lane = arrow_array::UInt8Array::from(vec![Some(
+                        arrow_store::map_error_code(error.kind),
+                    )]);
+                    if visit(&lane)? {
+                        matched = true;
+                    }
+                }
+                Ok(())
+            })?;
+            return Ok(matched);
+        }
         let sheet = self.sheet();
         for segment in self.iter_row_segments() {
             let segment = segment?;
+            let SegmentKind::Backing {
+                chunk_idx,
+                chunk_offset,
+            } = segment.kind
+            else {
+                unreachable!("tail.is_none() yields only Backing segments");
+            };
             for col_idx in self.sc..=self.ec {
                 let Some(ch) = sheet
                     .columns
                     .get(col_idx)
-                    .and_then(|col| col.chunk(segment.chunk_idx))
+                    .and_then(|col| col.chunk(chunk_idx))
                 else {
                     continue;
                 };
@@ -1070,7 +1830,7 @@ impl<'a> RangeView<'a> {
                         ));
                     }
                     let len = (segment.row_len - done).min(max_rows);
-                    let start = segment.chunk_offset + done;
+                    let start = chunk_offset + done;
                     let range = start..start + len;
                     done += len;
                     #[cfg(test)]
@@ -1118,6 +1878,13 @@ impl<'a> RangeView<'a> {
                     .clone();
                 let base_arc = Arc::new(base_ta);
 
+                if let Some(tail) = &self.tail
+                    && (cs.row_start >= tail.active_rows || local_c >= tail.active_cols)
+                {
+                    out_cols.push(base_arc);
+                    continue;
+                }
+
                 let abs_seg_start = self.sr + cs.row_start;
                 let ch_idx = match chunk_starts.binary_search(&abs_seg_start) {
                     Ok(i) => i,
@@ -1157,6 +1924,22 @@ impl<'a> RangeView<'a> {
 
         let mut out: Vec<arrow_array::ArrayRef> = Vec::with_capacity(self.cols);
         if self.rows == 0 || self.cols == 0 {
+            return out;
+        }
+        if self.tail.is_some() {
+            for c in 0..self.cols {
+                let mut b = arrow_array::builder::StringBuilder::with_capacity(
+                    self.rows,
+                    self.rows.saturating_mul(4),
+                );
+                for r in 0..self.rows {
+                    match self.get_cell(r, c) {
+                        LiteralValue::Text(t) => b.append_value(t.to_lowercase()),
+                        _ => b.append_null(),
+                    }
+                }
+                out.push(Arc::new(b.finish()));
+            }
             return out;
         }
         let sheet = self.sheet();
@@ -1239,6 +2022,29 @@ impl<'a> RangeView<'a> {
         rel_start: usize,
         len: usize,
     ) -> Vec<Option<Arc<arrow_array::Float64Array>>> {
+        if self.tail.is_some() {
+            let date_system = self.sheet().date_system;
+            let mut out_cols = Vec::with_capacity(self.cols);
+            for c in 0..self.cols {
+                let mut b = arrow_array::builder::Float64Builder::with_capacity(len);
+                let mut has_any = false;
+                for offset in 0..len {
+                    match range_numeric_value(&self.get_cell(rel_start + offset, c), date_system) {
+                        Some(n) => {
+                            b.append_value(n);
+                            has_any = true;
+                        }
+                        None => b.append_null(),
+                    }
+                }
+                if has_any {
+                    out_cols.push(Some(Arc::new(b.finish())));
+                } else {
+                    out_cols.push(None);
+                }
+            }
+            return out_cols;
+        }
         let abs_start = self.sr + rel_start;
         let abs_end = abs_start + len;
         let sheet = self.sheet();
@@ -1351,6 +2157,28 @@ impl<'a> RangeView<'a> {
         rel_start: usize,
         len: usize,
     ) -> Vec<Option<Arc<arrow_array::StringArray>>> {
+        if self.tail.is_some() {
+            let mut out_cols = Vec::with_capacity(self.cols);
+            for c in 0..self.cols {
+                let mut b = arrow_array::builder::StringBuilder::with_capacity(len, len * 4);
+                let mut has_any = false;
+                for offset in 0..len {
+                    match self.get_cell(rel_start + offset, c) {
+                        LiteralValue::Text(t) => {
+                            b.append_value(t.to_lowercase());
+                            has_any = true;
+                        }
+                        _ => b.append_null(),
+                    }
+                }
+                if has_any {
+                    out_cols.push(Some(Arc::new(b.finish())));
+                } else {
+                    out_cols.push(None);
+                }
+            }
+            return out_cols;
+        }
         let abs_start = self.sr + rel_start;
         let abs_end = abs_start + len;
         let sheet = self.sheet();
@@ -1456,6 +2284,260 @@ impl<'a> RangeView<'a> {
         }
         out_cols
     }
+}
+
+/// Uniform-tail-aware operand for elementwise operators and array functions.
+pub(crate) enum TailedOperand<'a> {
+    Range(RangeView<'a>),
+    Array(Vec<Vec<LiteralValue>>),
+    Scalar(LiteralValue),
+}
+
+impl<'a> TailedOperand<'a> {
+    pub(crate) fn from_calc_value(value: crate::traits::CalcValue<'a>) -> Self {
+        match value {
+            crate::traits::CalcValue::Range(rv) => {
+                if rv.dims() == (1, 1) {
+                    Self::Scalar(rv.get_cell(0, 0))
+                } else {
+                    Self::Range(rv)
+                }
+            }
+            crate::traits::CalcValue::Scalar(LiteralValue::Array(rows))
+            | crate::traits::CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => {
+                Self::Array(rows)
+            }
+            other => Self::Scalar(other.into_literal()),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn dims(&self) -> (usize, usize) {
+        match self {
+            Self::Range(rv) => rv.dims(),
+            Self::Array(arr) => (arr.len(), arr.first().map_or(0, Vec::len)),
+            Self::Scalar(_) => (1, 1),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn active_dims(&self) -> (usize, usize) {
+        match self {
+            Self::Range(rv) => rv.active_dims(),
+            Self::Array(arr) => (arr.len(), arr.first().map_or(0, Vec::len)),
+            Self::Scalar(_) => (1, 1),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn has_uniform_tail(&self) -> bool {
+        match self {
+            Self::Range(rv) => rv.has_uniform_tail(),
+            Self::Array(_) | Self::Scalar(_) => false,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get_core(&self, r: usize, c: usize) -> LiteralValue {
+        let shape = self.dims();
+        let (pr, pc) = crate::broadcast::project_index((r, c), shape);
+        match self {
+            Self::Range(rv) => rv.get_cell(pr, pc),
+            Self::Array(arr) => arr
+                .get(pr)
+                .and_then(|row| row.get(pc))
+                .cloned()
+                .unwrap_or(LiteralValue::Empty),
+            Self::Scalar(v) => v.clone(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get_right_tail(&self, r: usize) -> LiteralValue {
+        let (rows, cols) = self.dims();
+        if cols == 1 {
+            return self.get_core(r, 0);
+        }
+        let pr = if rows == 1 { 0 } else { r };
+        match self {
+            Self::Range(rv) => {
+                let (ar, _) = rv.active_dims();
+                if pr < ar {
+                    rv.right_tail_cell(pr)
+                } else {
+                    rv.corner_tail_cell()
+                }
+            }
+            Self::Array(_) | Self::Scalar(_) => {
+                unreachable!("Array/Scalar with cols>1 has no right tail")
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get_bottom_tail(&self, c: usize) -> LiteralValue {
+        let (rows, cols) = self.dims();
+        if rows == 1 {
+            return self.get_core(0, c);
+        }
+        let pc = if cols == 1 { 0 } else { c };
+        match self {
+            Self::Range(rv) => {
+                let (_, ac) = rv.active_dims();
+                if pc < ac {
+                    rv.bottom_tail_cell(pc)
+                } else {
+                    rv.corner_tail_cell()
+                }
+            }
+            Self::Array(_) | Self::Scalar(_) => {
+                unreachable!("Array/Scalar with rows>1 has no bottom tail")
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get_corner_tail(&self) -> LiteralValue {
+        let (rows, cols) = self.dims();
+        match (rows == 1, cols == 1) {
+            (true, true) => self.get_core(0, 0),
+            (true, false) => self.get_right_tail(0),
+            (false, true) => self.get_bottom_tail(0),
+            (false, false) => match self {
+                Self::Range(rv) => rv.corner_tail_cell(),
+                Self::Array(_) | Self::Scalar(_) => {
+                    unreachable!("Array/Scalar with rows>1 && cols>1 has no corner tail")
+                }
+            },
+        }
+    }
+}
+
+/// Computes the combined active core dimensions `(active_rows, active_cols)` for a
+/// broadcast output of logical shape `target` produced elementwise from `operands`.
+pub(crate) fn combined_active_dims(
+    target: (usize, usize),
+    operands: &[&TailedOperand<'_>],
+) -> (usize, usize) {
+    let active_rows = if target.0 == 0 {
+        0
+    } else if target.0 == 1 {
+        1
+    } else {
+        operands
+            .iter()
+            .filter(|op| op.dims().0 > 1)
+            .map(|op| op.active_dims().0)
+            .max()
+            .unwrap_or(1)
+            .min(target.0)
+    };
+    let active_cols = if target.1 == 0 {
+        0
+    } else if target.1 == 1 {
+        1
+    } else {
+        operands
+            .iter()
+            .filter(|op| op.dims().1 > 1)
+            .map(|op| op.active_dims().1)
+            .max()
+            .unwrap_or(1)
+            .min(target.1)
+    };
+    (active_rows, active_cols)
+}
+
+/// Position inside a tailed 2D grid passed to [`build_tailed_range_view`].
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum TailPos {
+    Core(usize, usize),
+    Right(usize),
+    Bottom(usize),
+    Corner,
+}
+
+/// Streams an elementwise core `(0..active.0, 0..active.1)` plus uniform tails into a
+/// compact `RangeView<'static>` of logical shape `target`.
+pub(crate) fn build_tailed_range_view(
+    target: (usize, usize),
+    active: (usize, usize),
+    date_system: DateSystem,
+    cancel_token: Option<CancelToken>,
+    cell_budget: u64,
+    mut eval: impl FnMut(TailPos) -> Result<LiteralValue, ExcelError>,
+) -> Result<RangeView<'static>, ExcelError> {
+    let (rows, cols) = target;
+    let (active_rows, active_cols) = active;
+    let mut ib = IngestBuilder::new("__tmp", active_cols, 32 * 1024, date_system);
+    let mut since_poll = 4096usize;
+    let check_cancel = |since_poll: &mut usize| -> Result<(), ExcelError> {
+        if *since_poll >= 4096 {
+            *since_poll = 0;
+            if cancel_token.as_ref().is_some_and(CancelToken::is_cancelled) {
+                return Err(ExcelError::new(
+                    formualizer_common::ExcelErrorKind::Cancelled,
+                ));
+            }
+        }
+        *since_poll += 1;
+        Ok(())
+    };
+
+    if active_rows > 0 && active_cols > 0 {
+        let mut row_buf = Vec::with_capacity(active_cols);
+        for r in 0..active_rows {
+            row_buf.clear();
+            for c in 0..active_cols {
+                check_cancel(&mut since_poll)?;
+                row_buf.push(eval(TailPos::Core(r, c))?);
+            }
+            ib.append_row(&row_buf)
+                .expect("append_row for tailed RangeView");
+        }
+    }
+    let mut core_sheet = ib.finish();
+    if active_rows > 0 && active_cols == 0 {
+        core_sheet.ensure_row_capacity(active_rows);
+    }
+
+    let mut right_tail = Vec::new();
+    if active_cols < cols && active_rows > 0 {
+        right_tail.reserve(active_rows);
+        for r in 0..active_rows {
+            check_cancel(&mut since_poll)?;
+            right_tail.push(eval(TailPos::Right(r))?);
+        }
+    }
+
+    let mut bottom_tail = Vec::new();
+    if active_rows < rows && active_cols > 0 {
+        bottom_tail.reserve(active_cols);
+        for c in 0..active_cols {
+            check_cancel(&mut since_poll)?;
+            bottom_tail.push(eval(TailPos::Bottom(c))?);
+        }
+    }
+
+    let corner_tail = if active_rows < rows && active_cols < cols {
+        check_cancel(&mut since_poll)?;
+        eval(TailPos::Corner)?
+    } else {
+        LiteralValue::Empty
+    };
+
+    Ok(RangeView::from_core_and_tail(
+        rows,
+        cols,
+        active_rows,
+        active_cols,
+        Arc::new(core_sheet),
+        right_tail,
+        bottom_tail,
+        corner_tail,
+        cancel_token,
+        cell_budget,
+    ))
 }
 
 #[inline]
