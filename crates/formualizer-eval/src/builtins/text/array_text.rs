@@ -28,14 +28,7 @@ fn coerce_text(v: &LiteralValue) -> String {
         LiteralValue::Empty => String::new(),
         LiteralValue::Boolean(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
         LiteralValue::Int(i) => i.to_string(),
-        LiteralValue::Number(f) => {
-            let s = f.to_string();
-            if s.ends_with(".0") {
-                s[..s.len() - 2].to_string()
-            } else {
-                s
-            }
-        }
+        LiteralValue::Number(f) => crate::coercion::number_to_text(*f),
         other => other.to_string(),
     }
 }

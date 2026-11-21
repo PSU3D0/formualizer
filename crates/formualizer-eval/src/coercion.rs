@@ -180,11 +180,21 @@ pub fn to_logical(value: &LiteralValue) -> Result<bool, ExcelError> {
     }
 }
 
+/// A number as Excel writes it into text: rounded to 15 significant digits,
+/// so `0.1+0.2` is `0.3`, not `0.30000000000000004`.
+pub fn number_to_text(n: f64) -> String {
+    if !n.is_finite() {
+        return n.to_string();
+    }
+    let rounded: f64 = format!("{n:.14e}").parse().unwrap_or(n);
+    rounded.to_string()
+}
+
 /// Invariant textification for comparisons/concatenation.
 pub fn to_text_invariant(value: &LiteralValue) -> String {
     match value {
         LiteralValue::Text(s) => s.clone(),
-        LiteralValue::Number(n) => n.to_string(),
+        LiteralValue::Number(n) => number_to_text(*n),
         LiteralValue::Int(i) => i.to_string(),
         LiteralValue::Boolean(b) => if *b { "TRUE" } else { "FALSE" }.into(),
         LiteralValue::Error(e) => e.to_string(),
@@ -220,6 +230,15 @@ pub fn to_datetime_serial(value: &LiteralValue) -> Result<f64, ExcelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn number_to_text_uses_15_significant_digits() {
+        assert_eq!(number_to_text(0.1 + 0.2), "0.3");
+        assert_eq!(number_to_text(1.1 * 1.1), "1.21");
+        assert_eq!(number_to_text(1.0 / 3.0), "0.333333333333333");
+        assert_eq!(number_to_text(5.0), "5");
+        assert_eq!(number_to_text(-2.5), "-2.5");
+    }
 
     #[test]
     fn number_lenient_parses_text_and_booleans() {

@@ -51,14 +51,7 @@ fn literal_to_text(v: &LiteralValue) -> Result<String, ExcelError> {
             }
         }
         LiteralValue::Int(i) => i.to_string(),
-        LiteralValue::Number(f) => {
-            let s = f.to_string();
-            if s.ends_with(".0") {
-                s[..s.len() - 2].into()
-            } else {
-                s
-            }
-        }
+        LiteralValue::Number(f) => crate::coercion::number_to_text(*f),
         LiteralValue::Error(e) => return Err(e.clone()),
         other => other.to_string(),
     })
