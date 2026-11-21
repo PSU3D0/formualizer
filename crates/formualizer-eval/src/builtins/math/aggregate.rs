@@ -129,8 +129,9 @@ impl Function for SumFn {
         for arg in args {
             match resolve_aggregate_argument(arg, ctx)? {
                 AggregateArgument::Range(view) => {
-                    // Propagate errors from range first
-                    for res in view.errors_slices() {
+                    let core = view.core_sub_view();
+                    // Propagate errors from core first, then uniform tails
+                    for res in core.errors_slices() {
                         let (_, _, err_cols) = res?;
                         for col in err_cols {
                             if col.null_count() < col.len() {
@@ -146,11 +147,32 @@ impl Function for SumFn {
                             }
                         }
                     }
+                    let mut tail_err: Option<ExcelError> = None;
+                    view.for_each_tail_entry(|val, _| {
+                        if tail_err.is_none()
+                            && let LiteralValue::Error(e) = val
+                        {
+                            tail_err = Some(e.clone());
+                        }
+                        Ok(())
+                    })?;
+                    if let Some(e) = tail_err {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
 
-                    for res in view.numbers_slices() {
+                    for res in core.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         add_number_columns(&mut total, &num_cols);
                     }
+                    let date_system = view.sheet().date_system;
+                    view.for_each_tail_entry(|val, count| {
+                        if let Some(n) =
+                            crate::engine::range_view::range_numeric_value(val, date_system)
+                        {
+                            total += n * (count as f64);
+                        }
+                        Ok(())
+                    })?;
                 }
                 AggregateArgument::ReferenceError(e) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
@@ -256,12 +278,22 @@ impl Function for CountFn {
         for arg in args {
             match resolve_aggregate_argument(arg, ctx)? {
                 AggregateArgument::Range(view) => {
-                    for res in view.numbers_slices() {
+                    let core = view.core_sub_view();
+                    for res in core.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
                             count += (col.len() - col.null_count()) as i64;
                         }
                     }
+                    let date_system = view.sheet().date_system;
+                    view.for_each_tail_entry(|val, cell_count| {
+                        if crate::engine::range_view::range_numeric_value(val, date_system)
+                            .is_some()
+                        {
+                            count += cell_count as i64;
+                        }
+                        Ok(())
+                    })?;
                 }
                 AggregateArgument::ReferenceError(e) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
@@ -377,8 +409,9 @@ impl Function for AverageFn {
         for arg in args {
             match resolve_aggregate_argument(arg, ctx)? {
                 AggregateArgument::Range(view) => {
-                    // Propagate errors from range first
-                    for res in view.errors_slices() {
+                    let core = view.core_sub_view();
+                    // Propagate errors from core first, then uniform tails
+                    for res in core.errors_slices() {
                         let (_, _, err_cols) = res?;
                         for col in err_cols {
                             if col.null_count() < col.len() {
@@ -394,14 +427,36 @@ impl Function for AverageFn {
                             }
                         }
                     }
+                    let mut tail_err: Option<ExcelError> = None;
+                    view.for_each_tail_entry(|val, _| {
+                        if tail_err.is_none()
+                            && let LiteralValue::Error(e) = val
+                        {
+                            tail_err = Some(e.clone());
+                        }
+                        Ok(())
+                    })?;
+                    if let Some(e) = tail_err {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
 
-                    for res in view.numbers_slices() {
+                    for res in core.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         add_number_columns(&mut sum, &num_cols);
                         for col in num_cols {
                             cnt += (col.len() - col.null_count()) as i64;
                         }
                     }
+                    let date_system = view.sheet().date_system;
+                    view.for_each_tail_entry(|val, cell_count| {
+                        if let Some(n) =
+                            crate::engine::range_view::range_numeric_value(val, date_system)
+                        {
+                            sum += n * (cell_count as f64);
+                            cnt += cell_count as i64;
+                        }
+                        Ok(())
+                    })?;
                 }
                 AggregateArgument::ReferenceError(e) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
@@ -517,42 +572,32 @@ impl Function for SumProductFn {
         args: &'c [ArgumentHandle<'a, 'b>],
         ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
-        use crate::broadcast::{broadcast_shape, project_index};
+        use crate::broadcast::broadcast_shape;
+        use crate::engine::range_view::{TailedOperand, combined_active_dims};
 
         if args.is_empty() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(0.0)));
         }
 
-        // Helper: materialize an argument to a 2D array of LiteralValue
-        let to_array = |ah: &ArgumentHandle<'_, 'b>| -> Result<Vec<Vec<LiteralValue>>, ExcelError> {
-            match resolve_aggregate_argument(ah, ctx)? {
+        // Keep range arguments as views (avoiding dense materialization of large sparse ranges).
+        let mut operands: Vec<TailedOperand<'b>> = Vec::with_capacity(args.len());
+        let mut shapes: Vec<(usize, usize)> = Vec::with_capacity(args.len());
+        for a in args.iter() {
+            let op = match resolve_aggregate_argument(a, ctx)? {
                 AggregateArgument::Range(rv) => {
                     if let Some(error) = rv.materialization_error() {
                         return Err(error);
                     }
-                    let mut rows: Vec<Vec<LiteralValue>> = Vec::new();
-                    rv.for_each_row(&mut |row| {
-                        rows.push(row.to_vec());
-                        Ok(())
-                    })?;
-                    Ok(rows)
+                    TailedOperand::Range(rv)
                 }
-                AggregateArgument::ReferenceError(error) => Err(error),
-                AggregateArgument::Scalar(v) => Ok(match v {
-                    LiteralValue::Array(arr) => arr,
-                    other => vec![vec![other]],
-                }),
-            }
-        };
-
-        // Collect arrays and shapes
-        let mut arrays: Vec<Vec<Vec<LiteralValue>>> = Vec::with_capacity(args.len());
-        let mut shapes: Vec<(usize, usize)> = Vec::with_capacity(args.len());
-        for a in args.iter() {
-            let arr = to_array(a)?;
-            let shape = (arr.len(), arr.first().map(|r| r.len()).unwrap_or(0));
-            arrays.push(arr);
-            shapes.push(shape);
+                AggregateArgument::ReferenceError(error) => return Err(error),
+                AggregateArgument::Scalar(v) => match v {
+                    LiteralValue::Array(arr) => TailedOperand::Array(arr),
+                    other => TailedOperand::Scalar(other),
+                },
+            };
+            shapes.push(op.dims());
+            operands.push(op);
         }
 
         // Compute broadcast target shape across all args
@@ -575,36 +620,88 @@ impl Function for SumProductFn {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
         }
 
-        // Iterate target shape, multiply coerced values across args, sum total
+        let op_refs: Vec<&TailedOperand<'b>> = operands.iter().collect();
+        let (active_rows, active_cols) = combined_active_dims(target, &op_refs);
+        let token = ctx.cancellation_token();
+        let is_cancelled = || {
+            token
+                .as_ref()
+                .is_some_and(crate::engine::CancelToken::is_cancelled)
+        };
+        let mut poll = super::super::utils::CancelPoll::new(&is_cancelled);
+
+        let factor = |lv: LiteralValue| -> Result<f64, ExcelError> {
+            match lv {
+                LiteralValue::Error(e) => Err(e),
+                other => Ok(super::super::utils::coerce_num(&other).unwrap_or(0.0)),
+            }
+        };
+
         let mut total = 0.0f64;
-        for r in 0..target.0 {
-            for c in 0..target.1 {
+        for r in 0..active_rows {
+            for c in 0..active_cols {
+                poll.advance(1)?;
                 let mut prod = 1.0f64;
-                for (arr, &shape) in arrays.iter().zip(shapes.iter()) {
-                    let (rr, cc) = project_index((r, c), shape);
-                    let lv = arr
-                        .get(rr)
-                        .and_then(|row| row.get(cc))
-                        .cloned()
-                        .unwrap_or(LiteralValue::Empty);
-                    match lv {
-                        LiteralValue::Error(e) => {
+                for op in &operands {
+                    match factor(op.get_core(r, c)) {
+                        Ok(n) => prod *= n,
+                        Err(e) => {
                             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
                         }
-                        _ => match super::super::utils::coerce_num(&lv) {
-                            Ok(n) => {
-                                prod *= n;
-                            }
-                            Err(_) => {
-                                // Non-numeric -> treated as 0 in SUMPRODUCT
-                                prod *= 0.0;
-                            }
-                        },
                     }
                 }
                 total += prod;
             }
         }
+
+        let tail_cols = (target.1 - active_cols) as u64;
+        let tail_rows = (target.0 - active_rows) as u64;
+
+        if tail_cols > 0 {
+            for r in 0..active_rows {
+                poll.advance(1)?;
+                let mut prod = 1.0f64;
+                for op in &operands {
+                    match factor(op.get_right_tail(r)) {
+                        Ok(n) => prod *= n,
+                        Err(e) => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                        }
+                    }
+                }
+                total += prod * (tail_cols as f64);
+            }
+        }
+
+        if tail_rows > 0 {
+            for c in 0..active_cols {
+                poll.advance(1)?;
+                let mut prod = 1.0f64;
+                for op in &operands {
+                    match factor(op.get_bottom_tail(c)) {
+                        Ok(n) => prod *= n,
+                        Err(e) => {
+                            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                        }
+                    }
+                }
+                total += prod * (tail_rows as f64);
+            }
+        }
+
+        if tail_rows > 0 && tail_cols > 0 {
+            let mut prod = 1.0f64;
+            for op in &operands {
+                match factor(op.get_corner_tail()) {
+                    Ok(n) => prod *= n,
+                    Err(e) => {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
+                }
+            }
+            total += prod * ((tail_rows as f64) * (tail_cols as f64));
+        }
+
         Ok(crate::traits::CalcValue::Scalar(
             super::super::utils::aggregate_result(total),
         ))

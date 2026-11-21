@@ -169,7 +169,11 @@ impl Function for XorFn {
         _ctx: &dyn FunctionContext<'b>,
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut odd = false;
-        let outcome = super::logical::scan_logical_args(args, "XOR", |b| odd ^= b)?;
+        let outcome = super::logical::scan_logical_args(args, "XOR", |b, count| {
+            if b && (count & 1) == 1 {
+                odd = !odd;
+            }
+        })?;
         Ok(crate::traits::CalcValue::Scalar(
             outcome.unwrap_or(LiteralValue::Boolean(odd)),
         ))
@@ -512,6 +516,55 @@ fn error_guard<'a, 'b, 'c>(
         | CalcValue::AnnotatedScalar(LiteralValue::Array(rows), _) => Grid::Array(rows),
         other => Grid::Scalar(other.into_literal()),
     };
+
+    let has_tail = matches!(&value_grid, Grid::Range(rv) if rv.has_uniform_tail())
+        || matches!(&fallback_grid, Grid::Range(rv) if rv.has_uniform_tail());
+    if has_tail {
+        let value_op = match value_grid {
+            Grid::Range(rv) => crate::engine::range_view::TailedOperand::Range(rv),
+            Grid::Array(arr) => crate::engine::range_view::TailedOperand::Array(arr),
+            Grid::Scalar(v) => crate::engine::range_view::TailedOperand::Scalar(v),
+        };
+        let fallback_op = match fallback_grid {
+            Grid::Range(rv) => crate::engine::range_view::TailedOperand::Range(rv),
+            Grid::Array(arr) => crate::engine::range_view::TailedOperand::Array(arr),
+            Grid::Scalar(v) => crate::engine::range_view::TailedOperand::Scalar(v),
+        };
+        let shape = match broadcast_shape(&[value_op.dims(), fallback_op.dims()]) {
+            Ok(shape) => shape,
+            Err(error) => return Ok(CalcValue::Scalar(LiteralValue::Error(error))),
+        };
+        if let Some(error) = materialized_shape_too_large(shape, ctx.materialized_array_cells()) {
+            return Ok(CalcValue::Scalar(LiteralValue::Error(error)));
+        }
+        let active =
+            crate::engine::range_view::combined_active_dims(shape, &[&value_op, &fallback_op]);
+        let view = crate::engine::range_view::build_tailed_range_view(
+            shape,
+            active,
+            ctx.date_system(),
+            token,
+            ctx.materialized_array_cells(),
+            |pos| {
+                let (cell, fb) = match pos {
+                    crate::engine::range_view::TailPos::Core(r, c) => {
+                        (value_op.get_core(r, c), fallback_op.get_core(r, c))
+                    }
+                    crate::engine::range_view::TailPos::Right(r) => {
+                        (value_op.get_right_tail(r), fallback_op.get_right_tail(r))
+                    }
+                    crate::engine::range_view::TailPos::Bottom(c) => {
+                        (value_op.get_bottom_tail(c), fallback_op.get_bottom_tail(c))
+                    }
+                    crate::engine::range_view::TailPos::Corner => {
+                        (value_op.get_corner_tail(), fallback_op.get_corner_tail())
+                    }
+                };
+                Ok(if guard.matches(&cell) { fb } else { cell })
+            },
+        )?;
+        return Ok(CalcValue::Range(view));
+    }
 
     match select_elementwise(
         &value_grid,

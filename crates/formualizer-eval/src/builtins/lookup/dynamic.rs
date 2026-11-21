@@ -3230,23 +3230,97 @@ impl Function for FilterFn {
             )));
         }
 
-        let mut result: Vec<Vec<LiteralValue>> = Vec::new();
-        for r in 0..array_rows {
-            let include_r = if include_rows == array_rows { r } else { 0 };
-            let mut include = false;
-            for c in 0..include_cols {
+        let (array_ar, _) = array_view.active_dims();
+        let (include_ar, include_ac) = include_view.active_dims();
+        let active_rows = if include_rows == 1 {
+            array_ar
+        } else {
+            array_ar.max(include_ar).min(array_rows)
+        };
+
+        let row_matches_include = |include_r: usize| -> bool {
+            let check_cols = include_ac.min(include_cols);
+            for c in 0..check_cols {
                 if include_view.get_cell(include_r, c).is_truthy() {
-                    include = true;
-                    break;
+                    return true;
                 }
             }
+            if check_cols < include_cols && include_view.right_tail_cell(include_r).is_truthy() {
+                return true;
+            }
+            false
+        };
 
-            if include {
+        let mut result: Vec<Vec<LiteralValue>> = Vec::new();
+        for r in 0..active_rows {
+            let include_r = if include_rows == array_rows { r } else { 0 };
+            if row_matches_include(include_r) {
                 let mut row_out: Vec<LiteralValue> = Vec::with_capacity(array_cols);
                 for c in 0..array_cols {
                     row_out.push(array_view.get_cell(r, c));
                 }
                 result.push(row_out);
+            }
+        }
+
+        let tail_rows = array_rows - active_rows;
+        if tail_rows > 0 {
+            let tail_matches = if include_rows == 1 {
+                row_matches_include(0)
+            } else {
+                let mut matched = false;
+                let check_cols = include_ac.min(include_cols);
+                for c in 0..check_cols {
+                    if include_view.bottom_tail_cell(c).is_truthy() {
+                        matched = true;
+                        break;
+                    }
+                }
+                if !matched
+                    && check_cols < include_cols
+                    && include_view.corner_tail_cell().is_truthy()
+                {
+                    matched = true;
+                }
+                matched
+            };
+
+            if tail_matches {
+                let (_, array_ac) = array_view.active_dims();
+                let mut bottom_tail = Vec::with_capacity(array_cols);
+                for c in 0..array_cols {
+                    if c < array_ac {
+                        bottom_tail.push(array_view.bottom_tail_cell(c));
+                    } else {
+                        bottom_tail.push(array_view.corner_tail_cell());
+                    }
+                }
+                let matched_core_rows = result.len();
+                let total_rows = matched_core_rows + tail_rows;
+                let mut ib = crate::arrow_store::IngestBuilder::new(
+                    "__tmp",
+                    array_cols,
+                    32 * 1024,
+                    _ctx.date_system(),
+                );
+                for row in result {
+                    ib.append_row(&row).expect("append_row for FILTER");
+                }
+                let core_sheet = std::sync::Arc::new(ib.finish());
+                return Ok(crate::traits::CalcValue::Range(
+                    crate::engine::range_view::RangeView::from_core_and_tail(
+                        total_rows,
+                        array_cols,
+                        matched_core_rows,
+                        array_cols,
+                        core_sheet,
+                        Vec::new(),
+                        bottom_tail,
+                        LiteralValue::Empty,
+                        _ctx.cancellation_token(),
+                        _ctx.materialized_array_cells(),
+                    ),
+                ));
             }
         }
 

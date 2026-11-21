@@ -105,8 +105,9 @@ impl Function for MinFn {
             let argument_format = a.value()?.format_id();
             match resolve_aggregate_argument(a, ctx)? {
                 AggregateArgument::Range(view) => {
-                    // Propagate errors from range first
-                    for res in view.errors_slices() {
+                    let core = view.core_sub_view();
+                    // Propagate errors from core first, then uniform tails
+                    for res in core.errors_slices() {
                         let (_, _, err_cols) = res?;
                         for col in err_cols {
                             if col.null_count() < col.len() {
@@ -122,8 +123,20 @@ impl Function for MinFn {
                             }
                         }
                     }
+                    let mut tail_err: Option<ExcelError> = None;
+                    view.for_each_tail_entry(|val, _| {
+                        if tail_err.is_none()
+                            && let LiteralValue::Error(e) = val
+                        {
+                            tail_err = Some(e.clone());
+                        }
+                        Ok(())
+                    })?;
+                    if let Some(e) = tail_err {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
 
-                    for res in view.numbers_slices() {
+                    for res in core.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
                             if let Some(n) = arrow_arith::aggregate::min(col.as_ref())
@@ -135,6 +148,17 @@ impl Function for MinFn {
                             }
                         }
                     }
+                    let date_system = view.sheet().date_system;
+                    view.for_each_tail_entry(|val, _| {
+                        if let Some(n) =
+                            crate::engine::range_view::range_numeric_value(val, date_system)
+                            && mv.is_none_or(|current| n < current)
+                        {
+                            mv = Some(n);
+                            mv_format = None;
+                        }
+                        Ok(())
+                    })?;
                 }
                 AggregateArgument::ReferenceError(e) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
@@ -260,8 +284,9 @@ impl Function for MaxFn {
             let argument_format = a.value()?.format_id();
             match resolve_aggregate_argument(a, ctx)? {
                 AggregateArgument::Range(view) => {
-                    // Propagate errors from range first
-                    for res in view.errors_slices() {
+                    let core = view.core_sub_view();
+                    // Propagate errors from core first, then uniform tails
+                    for res in core.errors_slices() {
                         let (_, _, err_cols) = res?;
                         for col in err_cols {
                             if col.null_count() < col.len() {
@@ -277,8 +302,20 @@ impl Function for MaxFn {
                             }
                         }
                     }
+                    let mut tail_err: Option<ExcelError> = None;
+                    view.for_each_tail_entry(|val, _| {
+                        if tail_err.is_none()
+                            && let LiteralValue::Error(e) = val
+                        {
+                            tail_err = Some(e.clone());
+                        }
+                        Ok(())
+                    })?;
+                    if let Some(e) = tail_err {
+                        return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+                    }
 
-                    for res in view.numbers_slices() {
+                    for res in core.numbers_slices() {
                         let (_, _, num_cols) = res?;
                         for col in num_cols {
                             if let Some(n) = arrow_arith::aggregate::max(col.as_ref())
@@ -290,6 +327,17 @@ impl Function for MaxFn {
                             }
                         }
                     }
+                    let date_system = view.sheet().date_system;
+                    view.for_each_tail_entry(|val, _| {
+                        if let Some(n) =
+                            crate::engine::range_view::range_numeric_value(val, date_system)
+                            && mv.is_none_or(|current| n > current)
+                        {
+                            mv = Some(n);
+                            mv_format = None;
+                        }
+                        Ok(())
+                    })?;
                 }
                 AggregateArgument::ReferenceError(e) => {
                     return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));

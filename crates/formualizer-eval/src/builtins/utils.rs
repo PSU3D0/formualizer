@@ -233,6 +233,44 @@ where
         }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(shape.0);
         if let Ok(view) = args[0].range_view() {
+            if view.has_uniform_tail() {
+                let locale = ctx.locale();
+                let mut eval_cell = |cell: LiteralValue| -> Result<LiteralValue, ExcelError> {
+                    let num_opt = match &cell {
+                        LiteralValue::Error(e) => return Err(e.clone()),
+                        other => {
+                            crate::coercion::to_number_lenient_with_locale(other, &locale).ok()
+                        }
+                    };
+                    match num_opt {
+                        Some(n) => f(n),
+                        None => Ok(LiteralValue::Error(
+                            ExcelError::new_value()
+                                .with_message("Element is not coercible to number"),
+                        )),
+                    }
+                };
+                let active = view.active_dims();
+                let out_view = crate::engine::range_view::build_tailed_range_view(
+                    shape,
+                    active,
+                    ctx.date_system(),
+                    ctx.cancellation_token(),
+                    ctx.materialized_array_cells(),
+                    |pos| {
+                        let cell = match pos {
+                            crate::engine::range_view::TailPos::Core(r, c) => view.get_cell(r, c),
+                            crate::engine::range_view::TailPos::Right(r) => view.right_tail_cell(r),
+                            crate::engine::range_view::TailPos::Bottom(c) => {
+                                view.bottom_tail_cell(c)
+                            }
+                            crate::engine::range_view::TailPos::Corner => view.corner_tail_cell(),
+                        };
+                        eval_cell(cell)
+                    },
+                )?;
+                return Ok(crate::traits::CalcValue::Range(out_view));
+            }
             view.for_each_row(&mut |row| {
                 let mut out_row: Vec<LiteralValue> = Vec::with_capacity(row.len());
                 for cell in row.iter() {
@@ -333,6 +371,63 @@ where
             ctx.materialized_array_cells(),
         ) {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
+        }
+        let has_tail = matches!(&g0, Grid::Range(rv) if rv.has_uniform_tail())
+            || matches!(&g1, Grid::Range(rv) if rv.has_uniform_tail());
+        if has_tail {
+            let op0 = match g0 {
+                Grid::Range(rv) => crate::engine::range_view::TailedOperand::Range(rv),
+                Grid::Array(arr) => crate::engine::range_view::TailedOperand::Array(arr),
+                Grid::Scalar(v) => crate::engine::range_view::TailedOperand::Scalar(v),
+            };
+            let op1 = match g1 {
+                Grid::Range(rv) => crate::engine::range_view::TailedOperand::Range(rv),
+                Grid::Array(arr) => crate::engine::range_view::TailedOperand::Array(arr),
+                Grid::Scalar(v) => crate::engine::range_view::TailedOperand::Scalar(v),
+            };
+            let active = crate::engine::range_view::combined_active_dims(target, &[&op0, &op1]);
+            let locale = ctx.locale();
+            let mut eval_pair = |lv0: LiteralValue,
+                                 lv1: LiteralValue|
+             -> Result<LiteralValue, ExcelError> {
+                let n0 = match &lv0 {
+                    LiteralValue::Error(e) => return Err(e.clone()),
+                    other => crate::coercion::to_number_lenient_with_locale(other, &locale).ok(),
+                };
+                let n1 = match &lv1 {
+                    LiteralValue::Error(e) => return Err(e.clone()),
+                    other => crate::coercion::to_number_lenient_with_locale(other, &locale).ok(),
+                };
+                match (n0, n1) {
+                    (Some(a), Some(b)) => f(a, b),
+                    _ => Ok(LiteralValue::Error(
+                        ExcelError::new_value()
+                            .with_message("Elements are not coercible to numbers"),
+                    )),
+                }
+            };
+            let out_view = crate::engine::range_view::build_tailed_range_view(
+                target,
+                active,
+                ctx.date_system(),
+                ctx.cancellation_token(),
+                ctx.materialized_array_cells(),
+                |pos| match pos {
+                    crate::engine::range_view::TailPos::Core(r, c) => {
+                        eval_pair(op0.get_core(r, c), op1.get_core(r, c))
+                    }
+                    crate::engine::range_view::TailPos::Right(r) => {
+                        eval_pair(op0.get_right_tail(r), op1.get_right_tail(r))
+                    }
+                    crate::engine::range_view::TailPos::Bottom(c) => {
+                        eval_pair(op0.get_bottom_tail(c), op1.get_bottom_tail(c))
+                    }
+                    crate::engine::range_view::TailPos::Corner => {
+                        eval_pair(op0.get_corner_tail(), op1.get_corner_tail())
+                    }
+                },
+            )?;
+            return Ok(crate::traits::CalcValue::Range(out_view));
         }
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(target.0);
         for r in 0..target.0 {
