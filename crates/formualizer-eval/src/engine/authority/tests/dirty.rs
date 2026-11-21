@@ -4,7 +4,7 @@
 use super::super::dirty::DirtyStore;
 use super::super::geom::{Cell, Rect};
 use super::support::Rng;
-use super::support::{Model, build_from, rel};
+use super::support::{Model, build_from, rel, row, row_band, store_closure, store_direct};
 use crate::engine::{Engine, EvalConfig};
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::LiteralValue;
@@ -64,6 +64,62 @@ fn mark_closure_equals_the_model_closure() {
     d.clean(0, &Rect::new(0, 2, 20, 2));
     assert_eq!(d.cell_count(), 9);
     assert!(d.is_dirty((0, 21, 2)) && !d.is_dirty((0, 20, 2)));
+}
+
+/// Whole-row (`1:1`, `3:13`, `$5:$5`) dirty projection and inversion match
+/// the cell-expanding model across near and far (XFD) columns, and edits
+/// outside the row band mark nothing dirty.
+#[test]
+fn whole_row_projection_and_inversion_match_model() {
+    let mut m = Model::default();
+    let f_single = super::support::Formula {
+        refs: vec![row_band(0, 0, 1)],
+        l: 1,
+        literal: 1,
+    };
+    let f_band = super::support::Formula {
+        refs: vec![row_band(2, 12, 1)],
+        l: 2,
+        literal: 1,
+    };
+    let f_abs = super::support::Formula {
+        refs: vec![row(4, 1)],
+        l: 3,
+        literal: 1,
+    };
+    for r in 0..30u32 {
+        m.cells.insert((0, r, 0), f_single.clone());
+        m.cells.insert((0, r, 1), f_band.clone());
+        m.cells.insert((0, r, 2), f_abs.clone());
+    }
+    let s = build_from(&m);
+    for &(r, c) in &[
+        (0u32, 0u32),
+        (4, 50),
+        (14, 16_383),
+        (20, 7),
+        (41, 100),
+        (45, 0),
+    ] {
+        let q = (1, r, c);
+        assert_eq!(
+            store_direct(&s, q),
+            m.direct_dependents(q),
+            "direct dependents mismatch at {q:?}"
+        );
+        assert_eq!(
+            store_closure(&s, q),
+            m.dependents(q),
+            "closure mismatch at {q:?}"
+        );
+    }
+    let hits = store_direct(&s, (1, 14, 16_383));
+    assert_eq!(hits.len(), 1 + 11);
+    assert!(hits.contains(&(0, 14, 0)));
+    for r in 2..=12 {
+        assert!(hits.contains(&(0, r, 1)));
+    }
+    assert!(store_direct(&s, (1, 45, 0)).is_empty());
 }
 
 // Reclassified (M5): dirty propagation is the authority's now, and its

@@ -284,3 +284,4 @@ mod stats_excel_compat;
 mod review_fn_table;
 mod structural_dirty_scaling;
 mod tailed_array_ranges;
+mod whole_row_families;

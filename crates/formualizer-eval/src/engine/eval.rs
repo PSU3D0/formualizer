@@ -1094,6 +1094,8 @@ pub struct Engine<R> {
     #[cfg(test)]
     lane_clean_reads_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
+    aggregate_kernel_members_for_test: std::sync::atomic::AtomicU64,
+    #[cfg(test)]
     criteria_kernel_members_for_test: std::sync::atomic::AtomicU64,
     #[cfg(test)]
     memo_hits_for_test: std::sync::atomic::AtomicU64,
@@ -3264,6 +3266,8 @@ where
             #[cfg(test)]
             lane_clean_reads_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
+            aggregate_kernel_members_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
             criteria_kernel_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             memo_hits_for_test: std::sync::atomic::AtomicU64::new(0),
@@ -3452,6 +3456,8 @@ where
             chained_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             lane_clean_reads_for_test: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            aggregate_kernel_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             criteria_kernel_members_for_test: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
@@ -12552,7 +12558,7 @@ where
         end_row: u32,
     ) -> Option<(u32, u32)> {
         let a = self.sheet_store().sheet(sheet)?;
-        if a.columns.is_empty() {
+        if a.columns.is_empty() || a.chunk_starts.is_empty() {
             return None;
         }
         let sr0 = start_row.saturating_sub(1) as usize;
@@ -12560,26 +12566,31 @@ where
         if sr0 > er0 {
             return None;
         }
-        // Map start/end rows into chunk ranges
-        // We will scan each column for any non-empty within [sr0..=er0]
-        let mut min_c0: Option<usize> = None;
-        let mut max_c0: Option<usize> = None;
-        // Precompute chunk bounds for row range
-        for (ci, col) in a.columns.iter().enumerate() {
-            let mut any_in_range = false;
+        // Binary-search the chunk index range that can intersect [sr0..=er0].
+        let first_ci = a
+            .chunk_starts
+            .partition_point(|&s| s <= sr0)
+            .saturating_sub(1);
+        let end_ci = a.chunk_starts.partition_point(|&s| s <= er0);
+        if first_ci >= end_ci {
+            return None;
+        }
 
-            let scan_chunk = |chunk_idx: usize, chunk: &crate::arrow_store::ColumnChunk| -> bool {
+        let col_has_any = |col: &crate::arrow_store::ArrowColumn| -> bool {
+            for chunk_idx in first_ci..end_ci {
+                let Some(chunk) = col.chunk(chunk_idx) else {
+                    continue;
+                };
                 let Some(&chunk_start) = a.chunk_starts.get(chunk_idx) else {
-                    return false;
+                    continue;
                 };
                 let chunk_len = chunk.type_tag.len();
                 if chunk_len == 0 {
-                    return false;
+                    continue;
                 }
                 let chunk_end = chunk_start + chunk_len.saturating_sub(1);
-                // check intersection
                 if sr0 > chunk_end || er0 < chunk_start {
-                    return false;
+                    continue;
                 }
                 let start_off = sr0.max(chunk_start) - chunk_start;
                 let end_off = er0.min(chunk_end) - chunk_start;
@@ -12599,34 +12610,17 @@ where
                         return true;
                     }
                 }
-                false
-            };
-
-            for (chunk_idx, chunk) in col.chunks.iter().enumerate() {
-                if scan_chunk(chunk_idx, chunk) {
-                    any_in_range = true;
-                    break;
-                }
             }
+            false
+        };
 
-            if !any_in_range && !col.sparse_chunks.is_empty() {
-                for (&chunk_idx, chunk) in col.sparse_chunks.iter() {
-                    if scan_chunk(chunk_idx, chunk) {
-                        any_in_range = true;
-                        break;
-                    }
-                }
-            }
-
-            if any_in_range {
-                min_c0 = Some(min_c0.map(|m| m.min(ci)).unwrap_or(ci));
-                max_c0 = Some(max_c0.map(|m| m.max(ci)).unwrap_or(ci));
-            }
-        }
-        match (min_c0, max_c0) {
-            (Some(a0), Some(b0)) => Some(((a0 as u32) + 1, (b0 as u32) + 1)),
-            _ => None,
-        }
+        // Scan inward from both ends so dense wide sheets touch only 2 columns.
+        let min_c0 = (0..a.columns.len()).find(|&ci| col_has_any(&a.columns[ci]))?;
+        let max_c0 = (min_c0..a.columns.len())
+            .rev()
+            .find(|&ci| col_has_any(&a.columns[ci]))
+            .unwrap_or(min_c0);
+        Some(((min_c0 as u32) + 1, (max_c0 as u32) + 1))
     }
 
     fn formula_row_bounds_for_columns(

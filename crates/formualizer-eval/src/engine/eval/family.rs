@@ -844,8 +844,12 @@ where
             let _ = v;
         }
         #[cfg(test)]
-        self.family_members_for_test
-            .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        {
+            self.family_members_for_test
+                .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            self.aggregate_kernel_members_for_test
+                .fetch_add(members.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        }
         Some(values)
     }
 
@@ -951,6 +955,12 @@ where
     #[cfg(test)]
     pub(crate) fn chained_members_for_test(&self) -> u64 {
         self.chained_members_for_test
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Members evaluated through the aggregate range kernel so far.
+    pub(crate) fn aggregate_kernel_members_for_test(&self) -> u64 {
+        self.aggregate_kernel_members_for_test
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
