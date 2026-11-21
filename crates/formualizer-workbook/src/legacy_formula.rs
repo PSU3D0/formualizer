@@ -1,7 +1,7 @@
 //! Shared Excel legacy token-class lowering for imported formulas.
 use formualizer_parse::parser::{ASTNode, ASTNodeType, ReferenceType};
 use formualizer_parse::tokenizer::{TokenStream, TokenSubType, TokenType};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 pub(crate) mod arrays;
 mod classes;
 
@@ -138,16 +138,37 @@ pub(crate) fn lower(formula: &str) -> Lowering {
     Lowerer::default().lower(formula)
 }
 
-/// Lowers formulas, remembering token shapes that need no rewrite.
+type WrapSpans = Vec<(usize, usize)>;
+
+/// Cached lowering outcome for a formula shape key.
+#[derive(Debug, Clone)]
+enum CachedLowering {
+    Unchanged,
+    Skipped(&'static str),
+    /// Wrap spans stored as `(start_key_offset, end_key_offset)` in `shape_key` coordinates.
+    Rewritten(WrapSpans),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Placeholder {
+    orig_start: usize,
+    orig_end: usize,
+    key_pos: usize,
+}
+
+/// Lowers formulas, remembering token shapes and rewrite patterns.
 ///
 /// The classification depends only on the formula text with single-cell
-/// addresses abstracted: which cell a reference names never changes a
-/// position's class or whether it can hold more than one cell. Formulas
-/// filled down a sheet (`IF(VLOOKUP(S2,…)=…)`, `…S3…`) share one shape, so
-/// only the first is parsed.
+/// addresses and A1 cell ranges abstracted: which cells a reference names
+/// never changes a position's class or whether it can hold more than one cell
+/// (apart from 1x1 vs multi-cell ranges, which use distinct markers).
+/// Formulas filled down a sheet (`INDEX($B$2:$B$5000,MATCH(A2,...))`,
+/// `SUM(B2:M2)`) share one shape, so only the first is tokenized and parsed.
 #[derive(Default)]
 pub(crate) struct Lowerer {
-    unchanged: HashSet<String>,
+    cache: HashMap<String, CachedLowering>,
+    key_buf: String,
+    placeholders: Vec<Placeholder>,
 }
 impl Lowerer {
     /// Imported ordinary formulas have legacy value positions even without a calc chain.
@@ -169,30 +190,84 @@ impl Lowerer {
     }
 
     fn lower_inner(&mut self, formula: &str) -> Result<Option<String>, Skip> {
-        let key = shape_key(formula);
-        if self.unchanged.contains(&key) {
-            return Ok(None);
+        // Control bytes 1..=3 are reserved as shape-key markers; bypass cache if present.
+        let cacheable = !formula.as_bytes().iter().any(|&b| matches!(b, 1..=3));
+        if cacheable {
+            fill_shape_key(formula, &mut self.key_buf, &mut self.placeholders);
+            if let Some(cached) = self.cache.get(self.key_buf.as_str()) {
+                return match cached {
+                    CachedLowering::Unchanged => Ok(None),
+                    CachedLowering::Skipped(reason) => Err(Skip(reason)),
+                    CachedLowering::Rewritten(key_wraps) => {
+                        let orig_wraps: Vec<(usize, usize)> = key_wraps
+                            .iter()
+                            .map(|&(ks, ke)| {
+                                (
+                                    key_to_orig(ks, &self.placeholders),
+                                    key_to_orig(ke, &self.placeholders),
+                                )
+                            })
+                            .collect();
+                        apply_wraps(formula, 0, &orig_wraps).map(Some)
+                    }
+                };
+            }
         }
         let (source, offset) = if formula.starts_with('=') {
-            (formula.to_string(), 0)
+            (std::borrow::Cow::Borrowed(formula), 0)
         } else {
-            (format!("={formula}"), 1)
+            (std::borrow::Cow::Owned(format!("={formula}")), 1)
         };
         let stream = TokenStream::new(&source).map_err(|_| Skip("tokenizer"))?;
         let result = lower_stream(&source, offset, &stream);
-        if matches!(result, Ok(None)) {
-            self.unchanged.insert(key);
+        if cacheable {
+            match &result {
+                Ok(None) => {
+                    self.cache
+                        .insert(self.key_buf.clone(), CachedLowering::Unchanged);
+                }
+                Err(Skip(reason)) => {
+                    self.cache
+                        .insert(self.key_buf.clone(), CachedLowering::Skipped(reason));
+                }
+                Ok(Some((_, wraps))) => {
+                    let key_wraps: Option<Vec<(usize, usize)>> = wraps
+                        .iter()
+                        .map(|&(s, e)| {
+                            Some((
+                                orig_to_key(s - offset, &self.placeholders)?,
+                                orig_to_key(e - offset, &self.placeholders)?,
+                            ))
+                        })
+                        .collect();
+                    if let Some(key_wraps) = key_wraps {
+                        self.cache
+                            .insert(self.key_buf.clone(), CachedLowering::Rewritten(key_wraps));
+                    }
+                }
+            }
         }
-        result
+        result.map(|opt| opt.map(|(text, _)| text))
     }
 }
 
-/// The formula text with each single-cell address replaced by one marker.
-/// Addresses that are range endpoints (next to `:`), function names, sheet
-/// names and text inside string literals or quoted sheet names are kept.
+/// The formula text with single-cell addresses (`\u{1}`), multi-cell A1 ranges
+/// (`\u{2}`), and single-cell A1 ranges (`\u{3}`) replaced by canonical markers.
+/// Function names, sheet names, whole-row/column ranges, 3-D references and text
+/// inside string literals or quoted sheet names are kept verbatim.
+#[cfg(test)]
 fn shape_key(formula: &str) -> String {
+    let mut key = String::new();
+    let mut placeholders = Vec::new();
+    fill_shape_key(formula, &mut key, &mut placeholders);
+    key
+}
+
+fn fill_shape_key(formula: &str, key: &mut String, placeholders: &mut Vec<Placeholder>) {
+    key.clear();
+    placeholders.clear();
     let bytes = formula.as_bytes();
-    let mut key = String::with_capacity(formula.len());
+    key.reserve(formula.len());
     let (mut i, mut at) = (0, 0);
     let (mut in_string, mut in_sheet) = (false, false);
     while i < bytes.len() {
@@ -220,27 +295,132 @@ fn shape_key(formula: &str) -> String {
         }
         let next = bytes.get(i).copied();
         let prev = start.checked_sub(1).map(|p| bytes[p]);
-        if !matches!(next, Some(b'(' | b':' | b'!' | b'['))
-            && prev != Some(b':')
-            && is_single_cell(&formula[start..i])
+        if prev == Some(b':') {
+            continue;
+        }
+        if next == Some(b':') {
+            // Check for an A1:B2 range whose endpoints are both valid cell addresses.
+            let start2 = i + 1;
+            let mut j = start2;
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric() || matches!(bytes[j], b'_' | b'.' | b'$'))
+            {
+                j += 1;
+            }
+            let after2 = bytes.get(j).copied();
+            if j > start2
+                && !matches!(after2, Some(b'(' | b':' | b'!' | b'['))
+                && let (Some(c1), Some(c2)) = (
+                    parse_single_cell(&formula[start..i]),
+                    parse_single_cell(&formula[start2..j]),
+                )
+            {
+                key.push_str(&formula[at..start]);
+                let key_pos = key.len();
+                key.push(if c1 == c2 { '\u{3}' } else { '\u{2}' });
+                placeholders.push(Placeholder {
+                    orig_start: start,
+                    orig_end: j,
+                    key_pos,
+                });
+                at = j;
+                i = j;
+                continue;
+            }
+            continue;
+        }
+        if !matches!(next, Some(b'(' | b'!' | b'['))
+            && parse_single_cell(&formula[start..i]).is_some()
         {
             key.push_str(&formula[at..start]);
+            let key_pos = key.len();
             key.push('\u{1}');
+            placeholders.push(Placeholder {
+                orig_start: start,
+                orig_end: i,
+                key_pos,
+            });
             at = i;
         }
     }
     key.push_str(&formula[at..]);
-    key
+}
+
+fn orig_to_key(pos: usize, placeholders: &[Placeholder]) -> Option<usize> {
+    let mut delta: isize = 0;
+    for ph in placeholders {
+        if pos < ph.orig_start {
+            break;
+        }
+        if pos == ph.orig_start {
+            return Some(ph.key_pos);
+        }
+        if pos == ph.orig_end {
+            return Some(ph.key_pos + 1);
+        }
+        if pos < ph.orig_end {
+            return None;
+        }
+        delta += (ph.orig_end - ph.orig_start) as isize - 1;
+    }
+    usize::try_from(pos as isize - delta).ok()
+}
+
+fn key_to_orig(kpos: usize, placeholders: &[Placeholder]) -> usize {
+    let mut delta: isize = 0;
+    for ph in placeholders {
+        if kpos < ph.key_pos {
+            break;
+        }
+        if kpos == ph.key_pos {
+            return ph.orig_start;
+        }
+        if kpos == ph.key_pos + 1 {
+            return ph.orig_end;
+        }
+        delta += (ph.orig_end - ph.orig_start) as isize - 1;
+    }
+    (kpos as isize + delta) as usize
 }
 
 /// `A1` or `$B$7` within the sheet bounds.
-fn is_single_cell(text: &str) -> bool {
-    is_cell_address(text)
-        && formualizer_common::coord::parse_a1_1based(text)
-            .is_ok_and(|(row, col, _, _)| row <= 1_048_576 && col <= 16_384)
+fn parse_single_cell(text: &str) -> Option<(u32, u32)> {
+    if !is_cell_address(text) {
+        return None;
+    }
+    let (row, col, _, _) = formualizer_common::coord::parse_a1_1based(text).ok()?;
+    (row <= 1_048_576 && col <= 16_384).then_some((row, col))
 }
 
-fn lower_stream(source: &str, offset: usize, stream: &TokenStream) -> Result<Option<String>, Skip> {
+fn apply_wraps(source: &str, offset: usize, wraps: &[(usize, usize)]) -> Result<String, Skip> {
+    // Insert `@(` and `)`. Opens of outer nodes precede inner ones at one
+    // offset, closes of inner nodes precede outer ones.
+    let mut inserts: Vec<(usize, u8, usize, &str)> = Vec::with_capacity(wraps.len() * 2);
+    for &(s, e) in wraps {
+        let len = e - s;
+        inserts.push((s, 1, usize::MAX - len, "@("));
+        inserts.push((e, 0, len, ")"));
+    }
+    inserts.sort();
+    let mut out = String::with_capacity(source.len() + inserts.len() * 2);
+    let mut at = offset;
+    for (pos, _, _, text) in inserts {
+        if pos < at {
+            return Err(Skip("overlapping wraps"));
+        }
+        out.push_str(&source[at..pos]);
+        out.push_str(text);
+        at = pos;
+    }
+    out.push_str(&source[at..]);
+    Ok(out)
+}
+
+fn lower_stream(
+    source: &str,
+    offset: usize,
+    stream: &TokenStream,
+) -> Result<Option<(String, WrapSpans)>, Skip> {
     let ast = formualizer_parse::parser::Parser::from_token_stream(stream)
         .parse()
         .map_err(|_| Skip("parser"))?;
@@ -282,33 +462,14 @@ fn lower_stream(source: &str, offset: usize, stream: &TokenStream) -> Result<Opt
     if walk.wraps.is_empty() {
         return Ok(None);
     }
-    // Insert `@(` and `)`. Opens of outer nodes precede inner ones at one
-    // offset, closes of inner nodes precede outer ones.
-    let mut inserts: Vec<(usize, u8, usize, &str)> = Vec::new();
-    for &(s, e) in &walk.wraps {
-        let len = e - s;
-        inserts.push((s, 1, usize::MAX - len, "@("));
-        inserts.push((e, 0, len, ")"));
-    }
-    inserts.sort();
-    let mut out = String::with_capacity(source.len() + inserts.len() * 2);
-    let mut at = offset;
-    for (pos, _, _, text) in inserts {
-        if pos < at {
-            return Err(Skip("overlapping wraps"));
-        }
-        out.push_str(&source[at..pos]);
-        out.push_str(text);
-        at = pos;
-    }
-    out.push_str(&source[at..]);
+    let out = apply_wraps(source, offset, &walk.wraps)?;
     let check = if offset == 0 {
-        out.clone()
+        std::borrow::Cow::Borrowed(out.as_str())
     } else {
-        format!("={out}")
+        std::borrow::Cow::Owned(format!("={out}"))
     };
     formualizer_parse::parser::parse(&check).map_err(|_| Skip("rewrite does not parse"))?;
-    Ok(Some(out))
+    Ok(Some((out, walk.wraps)))
 }
 
 impl Walk<'_> {

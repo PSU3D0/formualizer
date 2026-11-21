@@ -375,8 +375,10 @@ pub(super) fn scan(
                             if t != Some(b"array")
                                 && !has_cm
                                 && let Some(lowerer) = &mut sink.lowerer
+                                && let std::borrow::Cow::Owned(rewritten) =
+                                    lowerer.evaluation_text(&text)
                             {
-                                text = lowerer.evaluation_text(&text).into_owned();
+                                text = rewritten;
                             }
                             if t == Some(b"array") {
                                 let dynamic = cm_index

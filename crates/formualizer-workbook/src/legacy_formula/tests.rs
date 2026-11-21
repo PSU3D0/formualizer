@@ -214,11 +214,20 @@ fn shape_cache_reuses_only_equivalent_shapes() {
         lowerer.lower("IF(VLOOKUP(S3,$J$1:$L$9,3,FALSE)=1,A3,B3)"),
         Lowering::Unchanged
     );
-    assert_eq!(lowerer.unchanged.len(), 1);
-    // A cell and a range, or a name past the last column, are different shapes.
+    assert_eq!(lowerer.cache.len(), 1);
+    // A cell, a single-cell range, a multi-cell range, and a name past the last column
+    // are distinct shapes.
     assert_eq!(lowerer.lower("A1*2"), Lowering::Unchanged);
     assert_eq!(lowerer.lower("A1:A1*2"), Lowering::Unchanged);
-    assert!(matches!(lowerer.lower("A1:A3*2"), Lowering::Rewritten(_)));
+    assert_eq!(
+        lowerer.lower("A1:A3*2"),
+        Lowering::Rewritten("@(A1:A3)*2".to_string())
+    );
+    // Multi-cell ranges of varying lengths reuse the cached rewrite pattern.
+    assert_eq!(
+        lowerer.lower("AA100:ZZ200*2"),
+        Lowering::Rewritten("@(AA100:ZZ200)*2".to_string())
+    );
     assert!(matches!(lowerer.lower("ZZZ1*2"), Lowering::Rewritten(_)));
     assert!(matches!(
         lowerer.lower("Sheet1:Sheet3!A1*2"),
@@ -228,9 +237,39 @@ fn shape_cache_reuses_only_equivalent_shapes() {
 }
 
 #[test]
-fn shape_key_abstracts_only_single_cells() {
+fn shape_cache_replays_rewrites_identically_to_uncached() {
+    let cases = [
+        "INDEX(Lookup!$B$2:$B$50001,MATCH(A2,Lookup!$A$2:$A$50001,0))",
+        "INDEX(Lookup!$B$2:$B$50001,MATCH(A50001,Lookup!$A$2:$A$50001,0))",
+        "=INDEX(Lookup!$C$2:$C$50001,MATCH(AA999,Lookup!$A$2:$A$50001,0))",
+        "D2*INDEX(Assumptions!$D$16:$D$18,MATCH(D$1,Assumptions!$A$16:$A$18,0))*IF($B2=2026,1,1+Assumptions!$C$12)",
+        "D1048*INDEX(Assumptions!$D$16:$D$18,MATCH(AA$100,Assumptions!$A$16:$A$18,0))*IF($BZ2048=2026,1,1+Assumptions!$C$12)",
+        "IF(A1:A3>0,B1:B3,C1:C3)",
+        "IF(AA10:AA300>0,BB10:BB300,CC10:CC300)",
+        "1+(A1:A3)+2",
+        "1+(AA100:ZZ200)+2",
+        "Sheet1!A1:B2+Sheet2!C3:D4",
+        "Sheet1!AA100:BB200+Sheet2!CC300:DD400",
+        "A1:A1*2",
+        "$B$20:B20*2",
+        "VLOOKUP($B$4:$B$2636,$C$11:$D$17,2,FALSE)",
+        "VLOOKUP($Z$40:$Z$99999,$E$1:$F$2,2,FALSE)",
+        "Table1[Col]*2",
+        "Table1[Col]*2",
+    ];
+    let mut lowerer = Lowerer::default();
+    for f in cases {
+        assert_eq!(lowerer.lower(f), lower(f), "mismatch for {f}");
+    }
+}
+
+#[test]
+fn shape_key_abstracts_cells_and_ranges_distinctly() {
     assert_eq!(shape_key("IF(S2=1,$A$2,B2)"), "IF(\u{1}=1,\u{1},\u{1})");
-    assert_eq!(shape_key("A1:A1+B2"), "A1:A1+\u{1}");
+    assert_eq!(shape_key("A1:A1+B2"), "\u{3}+\u{1}");
+    assert_eq!(shape_key("A1:A3+B2"), "\u{2}+\u{1}");
+    assert_eq!(shape_key("Sheet1:Sheet3!A1"), "Sheet1:Sheet3!\u{1}");
+    assert_eq!(shape_key("A1:B2!C3"), "A1:B2!\u{1}");
     assert_eq!(shape_key("Sheet2!B9&\"C3\""), "Sheet2!\u{1}&\"C3\"");
     assert_eq!(
         shape_key("'Q1 A1'!B2*LOG10(ZZZ1)"),
