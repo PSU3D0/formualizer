@@ -283,3 +283,52 @@ fn test_remove_vertex_event() {
         _ => panic!("Wrong event type"),
     }
 }
+
+#[test]
+fn test_change_log_amortized_eviction_and_dynamic_resize() {
+    let mut log = ChangeLog::with_max_changelog_events(100);
+    for i in 0..50_000 {
+        log.set_actor_id(Some(format!("actor-{}", i % 7)));
+        log.record(create_test_event_with_value(i as f64));
+    }
+
+    assert_eq!(log.len(), 100);
+    let values: Vec<f64> = log
+        .events()
+        .iter()
+        .filter_map(|e| match e {
+            ChangeEvent::SetValue {
+                new: LiteralValue::Number(n),
+                ..
+            } => Some(*n),
+            _ => None,
+        })
+        .collect();
+    let expected: Vec<f64> = (49_900..50_000).map(|i| i as f64).collect();
+    assert_eq!(values, expected);
+    for idx in 0..100 {
+        let (seq, group) = log.meta(idx).unwrap();
+        assert_eq!(seq, (49_900 + idx) as u64);
+        assert_eq!(group, None);
+        assert_eq!(
+            log.event_meta(idx).unwrap().actor_id.as_deref(),
+            Some(format!("actor-{}", (49_900 + idx) % 7).as_str())
+        );
+    }
+
+    log.set_max_changelog_events(Some(10));
+    assert_eq!(log.len(), 10);
+    let shrunk: Vec<f64> = log
+        .events()
+        .iter()
+        .filter_map(|e| match e {
+            ChangeEvent::SetValue {
+                new: LiteralValue::Number(n),
+                ..
+            } => Some(*n),
+            _ => None,
+        })
+        .collect();
+    let expected_shrunk: Vec<f64> = (49_990..50_000).map(|i| i as f64).collect();
+    assert_eq!(shrunk, expected_shrunk);
+}

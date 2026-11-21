@@ -6256,7 +6256,7 @@ where
         log: &mut crate::engine::ChangeLog,
     ) -> Result<(), crate::engine::EditorError> {
         self.ensure_not_poisoned()?;
-        let pending_events = undo.pending_redo_events();
+        let pending_events = undo.pending_redo_events_for_log(log);
         self.preflight_replay_admission(&pending_events, true)?;
         let invalidation_baseline = self.invalidation_baseline();
         self.invalidate_for_change_events(

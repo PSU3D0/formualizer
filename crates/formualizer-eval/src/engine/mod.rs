@@ -969,6 +969,12 @@ pub struct EvalConfig {
     /// estimated usage exceeds this cap.
     pub max_overlay_memory_bytes: Option<usize>,
 
+    /// Optional cap on retained changelog events and undo/redo history stacks.
+    ///
+    /// `None` keeps history unbounded; `Some(n)` retains at most `n` events/actions
+    /// using FIFO eviction.
+    pub max_changelog_events: Option<usize>,
+
     /// Workbook date system: Excel 1900 (default) or 1904.
     pub date_system: DateSystem,
 
@@ -1081,6 +1087,7 @@ impl Default for EvalConfig {
             delta_overlay_enabled: true,
             write_formula_overlay_enabled: true,
             max_overlay_memory_bytes: None,
+            max_changelog_events: None,
             date_system: DateSystem::Excel1900,
             temporal_egress: TemporalEgress::default(),
             formula_parse_policy: FormulaParsePolicy::Strict,
@@ -1146,6 +1153,12 @@ impl EvalConfig {
     #[inline]
     pub fn with_delta_overlay(mut self, enable: bool) -> Self {
         self.delta_overlay_enabled = enable;
+        self
+    }
+
+    #[inline]
+    pub fn with_max_changelog_events(mut self, max: Option<usize>) -> Self {
+        self.max_changelog_events = max;
         self
     }
 

@@ -3,6 +3,7 @@ use super::change_log::{ChangeEvent, ChangeEventMeta, ChangeLog};
 use super::vertex_editor::VertexEditor;
 use crate::engine::graph::DependencyGraph;
 use crate::engine::graph::editor::vertex_editor::EditorError;
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
 pub struct UndoBatchItem {
@@ -12,43 +13,143 @@ pub struct UndoBatchItem {
 
 #[derive(Debug, Default)]
 pub struct UndoEngine {
-    /// Stack of applied groups (their last event index snapshot) for redo separation
-    undone: Vec<Vec<UndoBatchItem>>, // redo stack stores full event batches
+    /// Stack of applied groups for redo separation.
+    undone: VecDeque<Vec<UndoBatchItem>>,
 
     /// Journal-based undo/redo stack for atomic actions.
-    actions_done: Vec<crate::engine::ActionJournal>,
-    actions_undone: Vec<crate::engine::ActionJournal>,
+    actions_done: VecDeque<crate::engine::ActionJournal>,
+    actions_undone: VecDeque<crate::engine::ActionJournal>,
+
+    /// Optional cap on retained undo/redo entries per stack (FIFO eviction).
+    max_actions: Option<usize>,
+
+    /// Last observed `ChangeLog::mutation_epoch` at the end of `undo`/`redo`
+    /// so new forward edits invalidate stale logged redo history.
+    expected_log_epoch: Option<u64>,
+}
+
+fn enforce_stack_cap<T>(stack: &mut VecDeque<T>, max_actions: Option<usize>) {
+    let Some(max) = max_actions else {
+        return;
+    };
+    if max == 0 {
+        stack.clear();
+        return;
+    }
+    while stack.len() > max {
+        stack.pop_front();
+    }
+}
+
+fn is_single_top_level_compound(batch: &[UndoBatchItem]) -> bool {
+    if batch.len() < 2 {
+        return false;
+    }
+    let mut depth = 0usize;
+    for (i, item) in batch.iter().enumerate() {
+        match item.event {
+            ChangeEvent::CompoundStart { .. } => depth += 1,
+            ChangeEvent::CompoundEnd { .. } => {
+                if depth == 0 {
+                    return false;
+                }
+                depth -= 1;
+                if depth == 0 && i + 1 != batch.len() {
+                    return false;
+                }
+            }
+            _ if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 impl UndoEngine {
     pub fn new() -> Self {
         Self {
-            undone: Vec::new(),
-            actions_done: Vec::new(),
-            actions_undone: Vec::new(),
+            undone: VecDeque::new(),
+            actions_done: VecDeque::new(),
+            actions_undone: VecDeque::new(),
+            max_actions: None,
+            expected_log_epoch: None,
+        }
+    }
+
+    pub fn with_max_actions(max: usize) -> Self {
+        let mut out = Self::new();
+        out.max_actions = Some(max);
+        out
+    }
+
+    pub fn max_actions(&self) -> Option<usize> {
+        self.max_actions
+    }
+
+    pub fn set_max_actions(&mut self, max: Option<usize>) {
+        self.max_actions = max;
+        enforce_stack_cap(&mut self.undone, max);
+        enforce_stack_cap(&mut self.actions_done, max);
+        enforce_stack_cap(&mut self.actions_undone, max);
+    }
+
+    pub fn actions_done_len(&self) -> usize {
+        self.actions_done.len()
+    }
+
+    pub fn actions_undone_len(&self) -> usize {
+        self.actions_undone.len()
+    }
+
+    pub fn undone_len(&self) -> usize {
+        self.undone.len()
+    }
+
+    pub fn clear_logged_redo(&mut self) {
+        self.undone.clear();
+        self.expected_log_epoch = None;
+    }
+
+    pub(crate) fn sync_with_log(&mut self, log: &ChangeLog) {
+        let epoch = log.mutation_epoch();
+        if self.expected_log_epoch != Some(epoch) {
+            self.undone.clear();
+            self.expected_log_epoch = Some(epoch);
         }
     }
 
     /// Record a committed atomic action journal for future undo/redo.
     pub fn push_action(&mut self, journal: crate::engine::ActionJournal) {
-        self.actions_done.push(journal);
         self.actions_undone.clear();
+        if self.max_actions == Some(0) {
+            return;
+        }
+        self.actions_done.push_back(journal);
+        enforce_stack_cap(&mut self.actions_done, self.max_actions);
     }
 
     pub fn pop_undo_action(&mut self) -> Option<crate::engine::ActionJournal> {
-        self.actions_done.pop()
+        self.actions_done.pop_back()
     }
 
     pub fn push_redo_action(&mut self, journal: crate::engine::ActionJournal) {
-        self.actions_undone.push(journal);
+        if self.max_actions == Some(0) {
+            return;
+        }
+        self.actions_undone.push_back(journal);
+        enforce_stack_cap(&mut self.actions_undone, self.max_actions);
     }
 
     pub fn pop_redo_action(&mut self) -> Option<crate::engine::ActionJournal> {
-        self.actions_undone.pop()
+        self.actions_undone.pop_back()
     }
 
     pub fn push_done_action(&mut self, journal: crate::engine::ActionJournal) {
-        self.actions_done.push(journal);
+        if self.max_actions == Some(0) {
+            return;
+        }
+        self.actions_done.push_back(journal);
+        enforce_stack_cap(&mut self.actions_done, self.max_actions);
     }
 
     /// Undo last group in the provided change log, applying inverses through a VertexEditor.
@@ -57,6 +158,7 @@ impl UndoEngine {
         graph: &mut DependencyGraph,
         log: &mut ChangeLog,
     ) -> Result<Vec<UndoBatchItem>, EditorError> {
+        self.sync_with_log(log);
         let idxs = log.last_group_indices();
         if idxs.is_empty() {
             return Ok(Vec::new());
@@ -94,16 +196,25 @@ impl UndoEngine {
         replayed?;
 
         // Keep a copy for redo, but also return the batch so callers can mirror side effects.
-        self.undone.push(batch.clone());
+        if self.max_actions != Some(0) {
+            self.undone.push_back(batch.clone());
+            enforce_stack_cap(&mut self.undone, self.max_actions);
+        }
+        self.expected_log_epoch = Some(log.mutation_epoch());
         Ok(batch)
     }
 
     pub(crate) fn pending_redo_events(&self) -> Vec<ChangeEvent> {
         self.undone
-            .last()
+            .back()
             .into_iter()
             .flat_map(|batch| batch.iter().map(|item| item.event.clone()))
             .collect()
+    }
+
+    pub(crate) fn pending_redo_events_for_log(&mut self, log: &ChangeLog) -> Vec<ChangeEvent> {
+        self.sync_with_log(log);
+        self.pending_redo_events()
     }
 
     pub fn redo(
@@ -111,8 +222,33 @@ impl UndoEngine {
         graph: &mut DependencyGraph,
         log: &mut ChangeLog,
     ) -> Result<Vec<UndoBatchItem>, EditorError> {
-        if let Some(batch) = self.undone.pop() {
-            log.begin_compound("redo".to_string());
+        self.sync_with_log(log);
+        if let Some(batch) = self.undone.pop_back() {
+            enum RedoGroupMode {
+                Bare,
+                ReplayGroup,
+                CompoundWrapper,
+            }
+            let mode = if batch.len() == 1
+                && !matches!(
+                    batch[0].event,
+                    ChangeEvent::CompoundStart { .. } | ChangeEvent::CompoundEnd { .. }
+                ) {
+                RedoGroupMode::Bare
+            } else if is_single_top_level_compound(&batch) {
+                RedoGroupMode::ReplayGroup
+            } else {
+                RedoGroupMode::CompoundWrapper
+            };
+            match mode {
+                RedoGroupMode::Bare => {}
+                RedoGroupMode::ReplayGroup => {
+                    log.begin_replay_group();
+                }
+                RedoGroupMode::CompoundWrapper => {
+                    log.begin_compound("redo".to_string());
+                }
+            }
             // Return value for callers (e.g. Arrow mirroring) must remain available even though
             // we apply events by value below.
             let ret = batch.clone();
@@ -226,8 +362,13 @@ impl UndoEngine {
                 Ok::<_, EditorError>(())
             })();
             graph.authority_set_replay(crate::engine::authority::history::Replay::Forward);
+            match mode {
+                RedoGroupMode::Bare => {}
+                RedoGroupMode::ReplayGroup => log.end_replay_group(),
+                RedoGroupMode::CompoundWrapper => log.end_compound(),
+            }
             replayed?;
-            log.end_compound();
+            self.expected_log_epoch = Some(log.mutation_epoch());
             Ok(ret)
         } else {
             Ok(Vec::new())
@@ -483,5 +624,122 @@ mod tests {
         undo.redo(&mut graph, &mut log).unwrap();
         let deps_after_redo = graph.get_dependencies(a2_id);
         assert!(deps_after_redo.is_empty());
+    }
+
+    #[test]
+    fn test_action_journal_stack_caps_fifo() {
+        use crate::engine::ActionJournal;
+
+        let mut undo = UndoEngine::with_max_actions(3);
+        for i in 0..5 {
+            undo.push_action(ActionJournal {
+                name: format!("act-{i}"),
+                ..Default::default()
+            });
+        }
+        assert_eq!(undo.actions_done_len(), 3);
+        assert_eq!(undo.actions_undone_len(), 0);
+
+        let popped: Vec<String> = std::iter::from_fn(|| undo.pop_undo_action())
+            .map(|j| j.name)
+            .collect();
+        assert_eq!(popped, vec!["act-4", "act-3", "act-2"]);
+        assert_eq!(undo.actions_done_len(), 0);
+
+        for name in popped.into_iter().rev() {
+            undo.push_redo_action(ActionJournal {
+                name,
+                ..Default::default()
+            });
+        }
+        assert_eq!(undo.actions_undone_len(), 3);
+        undo.set_max_actions(Some(2));
+        assert_eq!(undo.actions_undone_len(), 2);
+        let redone: Vec<String> = std::iter::from_fn(|| undo.pop_redo_action())
+            .map(|j| j.name)
+            .collect();
+        assert_eq!(redone, vec!["act-4", "act-3"]);
+    }
+
+    #[test]
+    fn test_partial_compound_group_is_not_partially_undone() {
+        let mut graph = create_test_graph();
+        let sheet_id = graph.sheet_id_mut("Sheet1");
+        let a1 = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+        let b1 = CellRef::new(sheet_id, Coord::new(0, 1, true, true));
+        let c1 = CellRef::new(sheet_id, Coord::new(0, 2, true, true));
+        let d1 = CellRef::new(sheet_id, Coord::new(0, 3, true, true));
+
+        let mut log = ChangeLog::with_max_changelog_events(5);
+
+        // Compound 1: 4 events (CompoundStart, SetValue A1, SetValue B1, CompoundEnd).
+        log.begin_compound("c1".into());
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            editor.set_cell_value(a1, LiteralValue::Number(1.0));
+            editor.set_cell_value(b1, LiteralValue::Number(2.0));
+        }
+        log.end_compound();
+
+        // Compound 2: 4 events (CompoundStart, SetValue C1, SetValue D1, CompoundEnd).
+        // Cap 5 evicts the first 3 events of Compound 1, leaving only CompoundEnd of c1.
+        log.begin_compound("c2".into());
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            editor.set_cell_value(c1, LiteralValue::Number(3.0));
+            editor.set_cell_value(d1, LiteralValue::Number(4.0));
+        }
+        log.end_compound();
+
+        assert_eq!(log.len(), 5);
+        let mut undo = UndoEngine::with_max_actions(5);
+
+        // Undo 1 cleanly reverts Compound 2.
+        let undone_c2 = undo.undo(&mut graph, &mut log).unwrap();
+        assert_eq!(undone_c2.len(), 4);
+
+        // Undo 2 must be a clean no-op: Compound 1 was partially evicted.
+        let undone_c1 = undo.undo(&mut graph, &mut log).unwrap();
+        assert!(undone_c1.is_empty());
+
+        // Redo brings Compound 2 back cleanly without inflating event count.
+        let redone_c2 = undo.redo(&mut graph, &mut log).unwrap();
+        assert_eq!(redone_c2.len(), 4);
+    }
+
+    #[test]
+    fn test_ungrouped_edit_after_compound_group_and_redo_invalidation() {
+        let mut graph = create_test_graph();
+        let sheet_id = graph.sheet_id_mut("Sheet1");
+        let a1 = CellRef::new(sheet_id, Coord::new(0, 0, true, true));
+        let b1 = CellRef::new(sheet_id, Coord::new(0, 1, true, true));
+
+        let mut log = ChangeLog::with_max_changelog_events(10);
+        log.begin_compound("group".into());
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            editor.set_cell_value(a1, LiteralValue::Number(1.0));
+        }
+        log.end_compound();
+
+        // Ungrouped edit after a compound group.
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            editor.set_cell_value(b1, LiteralValue::Number(2.0));
+        }
+
+        let mut undo = UndoEngine::new();
+        let u1 = undo.undo(&mut graph, &mut log).unwrap();
+        assert_eq!(u1.len(), 1);
+        assert_eq!(undo.undone_len(), 1);
+
+        // A new forward edit invalidates the logged redo stack.
+        {
+            let mut editor = VertexEditor::with_logger(&mut graph, &mut log);
+            editor.set_cell_value(b1, LiteralValue::Number(99.0));
+        }
+        let r = undo.redo(&mut graph, &mut log).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(undo.undone_len(), 0);
     }
 }

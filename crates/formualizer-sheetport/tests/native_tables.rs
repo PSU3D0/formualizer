@@ -594,3 +594,54 @@ fn native_writes_reject_header_totals_and_duplicate_column_mappings() {
     let error = port.read_inputs().unwrap_err();
     assert!(error.to_string().contains("distinct"), "{error}");
 }
+
+#[test]
+fn sheetport_table_resize_rollback_and_undo_succeed_under_small_history_cap() {
+    for changelog in [false, true] {
+        let mut wb = workbook(changelog, false);
+        wb.set_history_limit(Some(4));
+
+        // Saturate retained history beyond the cap of 4 before SheetPort writes.
+        for i in 0..10 {
+            wb.set_value("Assumptions", 5, 1, LiteralValue::Number(i as f64))
+                .unwrap();
+        }
+        if changelog {
+            assert_eq!(wb.changelog().len(), 4);
+        }
+
+        let mut port = SheetPort::new(&mut wb, Manifest::from_yaml_str(MANIFEST).unwrap()).unwrap();
+        // Resize from 5 rows (end_row=6) down to 4 rows (end_row=5): seats = 1+2+3+4 = 10, EMEA = 1+3 = 4.
+        port.write_inputs(update(4)).unwrap();
+        assert_eq!(port.workbook().table_metadata("Orders").unwrap().end_row, 5);
+        assert_outputs(&mut port, 10.0, 4.0);
+
+        // A failing table resize action must roll back completely even when history is saturated.
+        let rollback_err = port
+            .workbook_mut()
+            .action("failing resize", |tx| {
+                tx.resize_table("Orders", 8)?;
+                tx.set_value("Orders", 2, 3, LiteralValue::Number(999.0))?;
+                Err::<(), _>(formualizer_workbook::IoError::Backend {
+                    backend: "test".into(),
+                    message: "abort after resize".into(),
+                })
+            })
+            .unwrap_err();
+        assert!(rollback_err.to_string().contains("abort after resize"));
+
+        assert_eq!(port.workbook().table_metadata("Orders").unwrap().end_row, 5);
+        assert_eq!(
+            port.workbook().get_value("Orders", 2, 3),
+            Some(LiteralValue::Number(1.0))
+        );
+        assert_outputs(&mut port, 10.0, 4.0);
+
+        if !changelog {
+            // In ActionJournal mode, the successful SheetPort write action is still undoable.
+            port.workbook_mut().undo().unwrap();
+            assert_eq!(port.workbook().table_metadata("Orders").unwrap().end_row, 6);
+            assert_outputs(&mut port, 60.0, 36.0);
+        }
+    }
+}
