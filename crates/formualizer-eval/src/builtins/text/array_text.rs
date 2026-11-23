@@ -431,14 +431,7 @@ fn value_to_text_repr(v: &LiteralValue, strict: bool) -> String {
                 s.clone()
             }
         }
-        LiteralValue::Number(n) => {
-            let s = n.to_string();
-            if s.ends_with(".0") {
-                s[..s.len() - 2].to_string()
-            } else {
-                s
-            }
-        }
+        LiteralValue::Number(n) => crate::coercion::number_to_text(*n),
         LiteralValue::Int(i) => i.to_string(),
         LiteralValue::Boolean(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
         LiteralValue::Empty => String::new(),

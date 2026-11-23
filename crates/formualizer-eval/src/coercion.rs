@@ -182,12 +182,43 @@ pub fn to_logical(value: &LiteralValue) -> Result<bool, ExcelError> {
 
 /// A number as Excel writes it into text: rounded to 15 significant digits,
 /// so `0.1+0.2` is `0.3`, not `0.30000000000000004`.
-pub fn number_to_text(n: f64) -> String {
+pub(crate) fn number_to_text(n: f64) -> String {
     if !n.is_finite() {
         return n.to_string();
     }
-    let rounded: f64 = format!("{n:.14e}").parse().unwrap_or(n);
-    rounded.to_string()
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    if n.abs() < 1e15 && n.fract() == 0.0 {
+        return (n as i64).to_string();
+    }
+    let (mut coefficient, mut exponent) =
+        crate::builtins::math::numeric::fifteen_digit_view(n.abs(), true);
+    while coefficient % 10 == 0 {
+        coefficient /= 10;
+        exponent += 1;
+    }
+    let digits = coefficient.to_string();
+    let mut out = String::with_capacity(digits.len() + exponent.unsigned_abs() as usize + 3);
+    if n < 0.0 {
+        out.push('-');
+    }
+    if exponent >= 0 {
+        out.push_str(&digits);
+        out.push_str(&"0".repeat(exponent as usize));
+    } else {
+        let point = digits.len() as i64 + exponent;
+        if point > 0 {
+            out.push_str(&digits[..point as usize]);
+            out.push('.');
+            out.push_str(&digits[point as usize..]);
+        } else {
+            out.push_str("0.");
+            out.push_str(&"0".repeat((-point) as usize));
+            out.push_str(&digits);
+        }
+    }
+    out
 }
 
 /// Invariant textification for comparisons/concatenation.
@@ -238,6 +269,14 @@ mod tests {
         assert_eq!(number_to_text(1.0 / 3.0), "0.333333333333333");
         assert_eq!(number_to_text(5.0), "5");
         assert_eq!(number_to_text(-2.5), "-2.5");
+    }
+
+    #[test]
+    fn number_to_text_edge_values() {
+        assert_eq!(number_to_text(-0.0), "0");
+        let max_digits = format!("179769313486232{}", "0".repeat(294));
+        assert_eq!(number_to_text(f64::MAX), max_digits);
+        assert_eq!(number_to_text(f64::MIN), format!("-{max_digits}"));
     }
 
     #[test]

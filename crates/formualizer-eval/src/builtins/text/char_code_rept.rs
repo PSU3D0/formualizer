@@ -211,6 +211,7 @@ impl Function for CodeFn {
                 )));
             }
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            LiteralValue::Number(f) => crate::coercion::number_to_text(f),
             other => other.to_string(),
         };
 
