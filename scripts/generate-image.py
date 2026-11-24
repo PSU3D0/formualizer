@@ -15,7 +15,7 @@ Examples:
 
   uv run scripts/generate-image.py \
     --prompt-file docs/prompts/hero.txt \
-    -n 3 --size 1536x1024 --quality auto --model gpt-image-1.5
+    -n 3 --size 1536x1024 --quality auto --model gpt-image-2.6-sunburst
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from typing import Any
 from openai import OpenAI
 
 
-DEFAULT_MODEL = "gpt-image-1.5"
+DEFAULT_MODEL = "gpt-image-2.6-sunburst"
 DEFAULT_N = 1
 DEFAULT_SIZE = "1536x1024"
 DEFAULT_QUALITY = "auto"
