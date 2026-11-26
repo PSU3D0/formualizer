@@ -892,3 +892,91 @@ fn legacy_array_formula_wider_than_linest_pads_na() {
     assert_error(out[3][2].clone(), ExcelErrorKind::Na, "G4");
     assert_error(out[3][3].clone(), ExcelErrorKind::Na, "H4");
 }
+
+fn assert_value_error_without_panic(v: LiteralValue, label: &str) {
+    match v {
+        LiteralValue::Error(e) => {
+            assert_eq!(
+                e.kind,
+                ExcelErrorKind::Value,
+                "{label}: expected #VALUE!, got {e:?}"
+            );
+            assert!(
+                !matches!(
+                    e.extra(),
+                    formualizer_common::ExcelErrorExtra::FunctionPanicked { .. }
+                ),
+                "{label}: returned #VALUE! via FunctionPanicked: {e:?}"
+            );
+        }
+        other => panic!("{label}: expected #VALUE! without panic, got {other:?}"),
+    }
+}
+
+#[test]
+fn regression_functions_blank_known_x_past_used_region_do_not_panic_issue_623() {
+    // Exact reproduction cases from #623 on both an empty sheet and a sheet
+    // with used data above B9:C9.
+    let formulas = [
+        "=LINEST(1,B9:C9)",
+        "=LINEST(1,B9:B9)",
+        "=LOGEST(1,B9:C9)",
+        "=TREND(1,B9:C9)",
+        "=GROWTH(1,B9:C9)",
+        "=LINEST(B9:B10)",
+    ];
+
+    for seed_above in [false, true] {
+        for formula in formulas {
+            let mut e = engine();
+            if seed_above {
+                num(&mut e, "B1", 1.0);
+                num(&mut e, "B2", 2.0);
+                num(&mut e, "B3", 3.0);
+            }
+            e.set_cell_formula(SHEET, 1, 1, parse(formula).unwrap())
+                .unwrap();
+            e.evaluate_all().unwrap();
+            let got = e.get_cell_value(SHEET, 1, 1).unwrap_or(LiteralValue::Empty);
+            assert_value_error_without_panic(got, &format!("{formula} (seed_above={seed_above})"));
+        }
+    }
+}
+
+#[test]
+fn regression_functions_partial_past_used_region_and_blank_new_x_do_not_panic_issue_623() {
+    // Partially-past-used-region known_x's: A1:A5 filled, B1:B3 filled, B4:B5 past used region.
+    for formula in [
+        "=LINEST(A1:A5,B1:B5)",
+        "=LOGEST(A1:A5,B1:B5)",
+        "=TREND(A1:A5,B1:B5)",
+        "=GROWTH(A1:A5,B1:B5)",
+    ] {
+        let mut e = engine();
+        for r in 1..=5 {
+            num(&mut e, &format!("A{r}"), r as f64);
+        }
+        for r in 1..=3 {
+            num(&mut e, &format!("B{r}"), r as f64);
+        }
+        e.set_cell_formula(SHEET, 1, 4, parse(formula).unwrap())
+            .unwrap();
+        e.evaluate_all().unwrap();
+        let got = e.get_cell_value(SHEET, 1, 4).unwrap_or(LiteralValue::Empty);
+        assert_value_error_without_panic(got, formula);
+    }
+
+    // Blank new_x's past used region for TREND and GROWTH.
+    for formula in ["=TREND(A1:A3,B1:B3,C9:C10)", "=GROWTH(A1:A3,B1:B3,C9:C10)"] {
+        let mut e = engine();
+        for r in 1..=3 {
+            num(&mut e, &format!("A{r}"), (r * 2) as f64);
+            num(&mut e, &format!("B{r}"), r as f64);
+        }
+        e.set_cell_formula(SHEET, 1, 4, parse(formula).unwrap())
+            .unwrap();
+        e.evaluate_all().unwrap();
+        let got = e.get_cell_value(SHEET, 1, 4).unwrap_or(LiteralValue::Empty);
+        assert_value_error_without_panic(got, formula);
+    }
+}
