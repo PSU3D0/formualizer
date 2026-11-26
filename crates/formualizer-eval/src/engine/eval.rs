@@ -1394,10 +1394,20 @@ where
     }
 
     #[inline]
-    fn addr_for(&mut self, sheet: &str, row: u32, col: u32) -> crate::reference::CellRef {
+    fn try_addr_for(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+    ) -> Result<crate::reference::CellRef, crate::engine::EditorError> {
+        let coord =
+            crate::reference::Coord::try_from_excel(row, col, true, true).map_err(|err| {
+                crate::engine::EditorError::TransactionFailed {
+                    reason: format!("Cell coordinate {sheet}!R{row}C{col} is out of bounds: {err}"),
+                }
+            })?;
         let sheet_id = self.engine.graph.sheet_id_mut(sheet);
-        let coord = crate::reference::Coord::from_excel(row, col, true, true);
-        crate::reference::CellRef::new(sheet_id, coord)
+        Ok(crate::reference::CellRef::new(sheet_id, coord))
     }
 
     #[inline]
@@ -1415,9 +1425,9 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         self.engine.ensure_not_poisoned()?;
         if self.capture.is_some() {
+            let addr = self.try_addr_for(sheet, row, col)?;
             let old_value = self.engine.read_cell_value(sheet, row, col);
             let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
-            let addr = self.addr_for(sheet, row, col);
             let Some(capture_ptr) = self.capture else {
                 return Err(crate::engine::EditorError::TransactionFailed {
                     reason: "action_with_logger: missing mutation capture".to_string(),
@@ -1532,9 +1542,9 @@ where
     ) -> Result<(), crate::engine::EditorError> {
         self.engine.ensure_not_poisoned()?;
         if self.capture.is_some() {
+            let addr = self.try_addr_for(sheet, row, col)?;
             let old_value = self.engine.read_cell_value(sheet, row, col);
             let mut old_formula = self.engine.read_cell_formula_ast(sheet, row, col);
-            let addr = self.addr_for(sheet, row, col);
             let Some(capture_ptr) = self.capture else {
                 return Err(crate::engine::EditorError::TransactionFailed {
                     reason: "action_with_logger: missing mutation capture".to_string(),
@@ -1542,8 +1552,7 @@ where
             };
 
             let admitted_formula = if self.engine.graph_admission_enabled() {
-                let placement =
-                    CellRef::new(addr.sheet_id, Coord::from_excel(row, col, true, true));
+                let placement = addr;
                 let ingested = self.engine.ingest_pipeline().ingest_formula(
                     FormulaAstInput::Tree(ast.clone()),
                     placement,
@@ -14553,6 +14562,14 @@ where
         }
     }
 
+    fn try_excel_coord(sheet: &str, row: u32, col: u32) -> Result<Coord, ExcelError> {
+        Coord::try_from_excel(row, col, true, true).map_err(|err| {
+            ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                "Cell coordinate {sheet}!R{row}C{col} is out of bounds: {err}"
+            ))
+        })
+    }
+
     /// Set a cell value
     pub fn set_cell_value(
         &mut self,
@@ -14562,10 +14579,11 @@ where
         value: LiteralValue,
     ) -> Result<(), ExcelError> {
         self.ensure_not_poisoned()?;
+        let coord = Self::try_excel_coord(sheet, row, col)?;
         self.observe_function_semantic_epoch()?;
         let sheet_existed = self.graph.sheet_id(sheet).is_some();
         let sheet_id = self.graph.sheet_id_mut(sheet);
-        let cell_ref = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let cell_ref = CellRef::new(sheet_id, coord);
         let replaced = self
             .graph
             .get_vertex_id_for_address(&cell_ref)
@@ -14857,9 +14875,10 @@ where
         ast: ASTNode,
     ) -> Result<(), ExcelError> {
         self.ensure_not_poisoned()?;
+        let coord = Self::try_excel_coord(sheet, row, col)?;
         self.observe_function_semantic_epoch()?;
         let sheet_id = self.graph.sheet_id_mut(sheet);
-        let placement = CellRef::new(sheet_id, Coord::from_excel(row, col, true, true));
+        let placement = CellRef::new(sheet_id, coord);
         let ingested = {
             let mut pipeline = self.ingest_pipeline();
             pipeline.ingest_formula(FormulaAstInput::Tree(ast), placement, None)?
@@ -14897,6 +14916,9 @@ where
     {
         self.ensure_not_poisoned()?;
         let collected: Vec<(u32, u32, ASTNode)> = items.into_iter().collect();
+        for &(row, col, _) in &collected {
+            Self::try_excel_coord(sheet, row, col)?;
+        }
         let edited_cells: Vec<(u32, u32)> = collected.iter().map(|(r, c, _)| (*r, *c)).collect();
         let sheet_id = self.graph.sheet_id_mut(sheet);
         let ingested = {

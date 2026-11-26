@@ -88,6 +88,26 @@ impl Coord {
         Self(RelativeCoord::new(row0, col0, row_abs, col_abs))
     }
 
+    /// Fallible 1-based Excel coordinate constructor.
+    ///
+    /// Rejects row/column 0 as well as coordinates past 1,048,576 rows or
+    /// 16,384 columns without panicking or saturating 0 to 1.
+    #[inline]
+    pub(crate) fn try_from_excel(
+        row: u32,
+        col: u32,
+        row_abs: bool,
+        col_abs: bool,
+    ) -> Result<Self, formualizer_common::CoordError> {
+        let row0 = row
+            .checked_sub(1)
+            .ok_or(formualizer_common::CoordError::NegativeRow(0))?;
+        let col0 = col
+            .checked_sub(1)
+            .ok_or(formualizer_common::CoordError::NegativeCol(0))?;
+        Self::try_new(row0, col0, row_abs, col_abs)
+    }
+
     #[inline]
     pub fn row(self) -> u32 {
         self.0.row()
