@@ -280,6 +280,7 @@ impl MatchFn {
                 match mt_val {
                     LiteralValue::Number(n) => match_type = n,
                     LiteralValue::Int(i) => match_type = i as f64,
+                    LiteralValue::Boolean(b) => match_type = if b { 1.0 } else { 0.0 },
                     LiteralValue::Text(s) => {
                         if let Ok(n) = s.parse::<f64>() {
                             match_type = n;
@@ -2121,5 +2122,76 @@ mod tests {
             .into_literal();
         // match_type -1 finds the smallest value >= 2.5 on descending data: 3 at position 1.
         assert_eq!(v, LiteralValue::Int(1));
+    }
+
+    #[test]
+    fn match_coerces_boolean_match_type_issue_582() {
+        use crate::engine::{Engine, EvalConfig};
+        use formualizer_parse::parse;
+
+        let mut engine = Engine::new(TestWorkbook::new(), EvalConfig::default());
+        // Exact repro layout from #582:
+        // A1:C1 = unsorted text "Zeta", "Alpha", "Mid"
+        // A2:C2 = sorted numbers 1, 2, 3
+        engine
+            .set_cell_value("Sheet1", 1, 1, LiteralValue::Text("Zeta".into()))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 1, 2, LiteralValue::Text("Alpha".into()))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 1, 3, LiteralValue::Text("Mid".into()))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 2, 1, LiteralValue::Number(1.0))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 2, 2, LiteralValue::Number(2.0))
+            .unwrap();
+        engine
+            .set_cell_value("Sheet1", 2, 3, LiteralValue::Number(3.0))
+            .unwrap();
+
+        let formulas = [
+            (1, r#"=MATCH("Alpha",A1:C1,FALSE)"#, Some(2.0)),
+            (2, r#"=MATCH("Alpha",A1:C1,0)"#, Some(2.0)),
+            (3, r#"=MATCH(2.5,A2:C2,FALSE)"#, None),
+            (4, r#"=MATCH(2.5,A2:C2,TRUE)"#, Some(2.0)),
+            (5, r#"=MATCH("Alpha",A1:C1,1=0)"#, Some(2.0)),
+            (6, r#"=MATCH(2.5,A2:C2,1=1)"#, Some(2.0)),
+            (
+                7,
+                r#"=MATCH("Alpha",{"Zeta","Alpha","Mid"},FALSE)"#,
+                Some(2.0),
+            ),
+            (8, r#"=MATCH(2.5,{1,2,3},FALSE)"#, None),
+            (9, r#"=MATCH(2.5,{1,2,3},TRUE)"#, Some(2.0)),
+        ];
+
+        for (row, formula, _) in formulas {
+            engine
+                .set_cell_formula("Sheet1", row, 5, parse(formula).unwrap())
+                .unwrap();
+        }
+        engine.evaluate_all().unwrap();
+
+        for (row, formula, expected) in formulas {
+            let got = engine
+                .get_cell_value("Sheet1", row, 5)
+                .unwrap_or(LiteralValue::Empty);
+            match expected {
+                Some(want) => {
+                    let matched = matches!(got, LiteralValue::Number(n) if n == want)
+                        || matches!(got, LiteralValue::Int(i) if i as f64 == want);
+                    assert!(matched, "E{row} ({formula}): expected {want}, got {got:?}");
+                }
+                None => {
+                    assert!(
+                        matches!(got, LiteralValue::Error(ref e) if e.kind == ExcelErrorKind::Na),
+                        "E{row} ({formula}): expected #N/A, got {got:?}"
+                    );
+                }
+            }
+        }
     }
 }
