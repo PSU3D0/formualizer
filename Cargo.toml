@@ -36,7 +36,7 @@ formualizer-workbook = { version = "0.15.0", path = "crates/formualizer-workbook
 
 chrono = { version = "0.4.41", default-features = false, features = ["std"] }
 serde = "1.0.228"
-serde_json = "1.0.142"
+serde_json = { version = "1.0.142", features = ["float_roundtrip"] }
 serde_yaml = "0.9.34"
 schemars = "1.0.4"
 semver = "1.0.26"
