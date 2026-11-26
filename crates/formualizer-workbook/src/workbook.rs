@@ -1116,6 +1116,73 @@ fn finite_cell_values(cells: &mut BTreeMap<(u32, u32), crate::traits::CellData>)
     }
 }
 
+/// Validate a 1-based Excel cell coordinate (`1..=1_048_576`, `1..=16_384`),
+/// routing through `RelativeCoord::try_new` so row/col `0` and out-of-grid
+/// coordinates return `Err(IoError)` instead of panicking or mapping `0` to `A1`.
+fn validate_excel_coord(
+    sheet: &str,
+    row: u32,
+    col: u32,
+) -> Result<formualizer_eval::reference::Coord, IoError> {
+    let row0 = row.checked_sub(1).ok_or_else(|| {
+        IoError::Engine(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+            "Invalid 1-based cell coordinate {sheet}!R{row}C{col}: row must be in 1..=1048576"
+        )))
+    })?;
+    let col0 = col.checked_sub(1).ok_or_else(|| {
+        IoError::Engine(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+            "Invalid 1-based cell coordinate {sheet}!R{row}C{col}: col must be in 1..=16384"
+        )))
+    })?;
+    formualizer_common::RelativeCoord::try_new(row0, col0, true, true)
+        .map(|rc| {
+            formualizer_eval::reference::Coord::new(rc.row(), rc.col(), rc.row_abs(), rc.col_abs())
+        })
+        .map_err(|err| {
+            IoError::Engine(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                "Cell coordinate {sheet}!R{row}C{col} is out of bounds: {err}"
+            )))
+        })
+}
+
+/// Validate a 1-based batch anchor and the actual written extent (ignoring
+/// trailing empty rows, which write no cells).
+fn validate_excel_block<T>(
+    sheet: &str,
+    start_row: u32,
+    start_col: u32,
+    rows: &[Vec<T>],
+) -> Result<(), IoError> {
+    validate_excel_coord(sheet, start_row, start_col)?;
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
+        && width > 0
+    {
+        let row_offset = u32::try_from(last_row_idx).map_err(|_| {
+            IoError::Engine(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                "Batch row extent at {sheet}!R{start_row}C{start_col} overflows grid bounds"
+            )))
+        })?;
+        let col_offset = u32::try_from(width - 1).map_err(|_| {
+            IoError::Engine(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                "Batch column extent at {sheet}!R{start_row}C{start_col} overflows grid bounds"
+            )))
+        })?;
+        let end_row = start_row.checked_add(row_offset).ok_or_else(|| {
+            IoError::Engine(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                "Batch row extent at {sheet}!R{start_row}C{start_col} overflows grid bounds"
+            )))
+        })?;
+        let end_col = start_col.checked_add(col_offset).ok_or_else(|| {
+            IoError::Engine(ExcelError::new(ExcelErrorKind::Ref).with_message(format!(
+                "Batch column extent at {sheet}!R{start_row}C{start_col} overflows grid bounds"
+            )))
+        })?;
+        validate_excel_coord(sheet, end_row, end_col)?;
+    }
+    Ok(())
+}
+
 /// Transactional edit surface for `Workbook::action`.
 ///
 /// This wrapper exists to avoid aliasing `&mut Workbook` while an Engine transaction is active.
@@ -1152,6 +1219,7 @@ impl WorkbookAction<'_> {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
+        validate_excel_coord(sheet, row, col)?;
         self.ops
             .set_value(sheet, row, col, value.finite_or_num_error())
     }
@@ -1164,6 +1232,7 @@ impl WorkbookAction<'_> {
         col: u32,
         formula: &str,
     ) -> Result<(), IoError> {
+        validate_excel_coord(sheet, row, col)?;
         self.ops.set_formula(sheet, row, col, formula)
     }
 
@@ -1175,6 +1244,7 @@ impl WorkbookAction<'_> {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
+        validate_excel_block(sheet, start_row, start_col, rows)?;
         let rows = finite_rows(rows);
         self.ops.set_values(sheet, start_row, start_col, &rows)
     }
@@ -1186,6 +1256,9 @@ impl WorkbookAction<'_> {
         start: (u32, u32),
         mut cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        for &(r, c) in cells.keys() {
+            validate_excel_coord(sheet, r, c)?;
+        }
         finite_cell_values(&mut cells);
         self.ops.write_range(sheet, start, cells)
     }
@@ -2471,6 +2544,7 @@ impl Workbook {
         col: u32,
         value: LiteralValue,
     ) -> Result<(), IoError> {
+        let coord = validate_excel_coord(sheet, row, col)?;
         // No cell holds NaN or an infinity: store them as #NUM!, as the
         // loaders do.
         let value = value.finite_or_num_error();
@@ -2499,10 +2573,7 @@ impl Workbook {
                 .engine
                 .sheet_id(sheet)
                 .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
-            let cell = formualizer_eval::reference::CellRef::new(
-                sheet_id,
-                formualizer_eval::reference::Coord::from_excel(row, col, true, true),
-            );
+            let cell = formualizer_eval::reference::CellRef::new(sheet_id, coord);
 
             // In Arrow-canonical mode, the graph value cache is disabled, so we must capture
             // the old state from Arrow truth for undo/redo.
@@ -2598,6 +2669,7 @@ impl Workbook {
         col: u32,
         formula: &str,
     ) -> Result<(), IoError> {
+        let coord = validate_excel_coord(sheet, row, col)?;
         #[cfg(feature = "xlsx-recalc")]
         self.refused_external_formulas
             .remove(&(sheet.to_string(), row, col));
@@ -2621,10 +2693,7 @@ impl Workbook {
                         .engine
                         .sheet_id(sheet)
                         .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
-                    let cell = formualizer_eval::reference::CellRef::new(
-                        sheet_id,
-                        formualizer_eval::reference::Coord::from_excel(row, col, true, true),
-                    );
+                    let cell = formualizer_eval::reference::CellRef::new(sheet_id, coord);
 
                     let old_value = self.engine.get_cell_value(sheet, row, col);
                     let old_formula = self.engine.get_cell(sheet, row, col).and_then(|(a, _)| a);
@@ -2677,10 +2746,7 @@ impl Workbook {
                     .engine
                     .sheet_id(sheet)
                     .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
-                let cell = formualizer_eval::reference::CellRef::new(
-                    sheet_id,
-                    formualizer_eval::reference::Coord::from_excel(row, col, true, true),
-                );
+                let cell = formualizer_eval::reference::CellRef::new(sheet_id, coord);
                 self.engine
                     .edit_with_logger(&mut self.log, |editor| {
                         editor.try_set_cell_formula(cell, ast)
@@ -2778,6 +2844,9 @@ impl Workbook {
         _start: (u32, u32),
         mut cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        for &(r, c) in cells.keys() {
+            validate_excel_coord(sheet, r, c)?;
+        }
         finite_cell_values(&mut cells);
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
@@ -2962,6 +3031,7 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
+        validate_excel_block(sheet, start_row, start_col, rows)?;
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
@@ -3092,6 +3162,7 @@ impl Workbook {
         start_col: u32,
         rows: &[Vec<String>],
     ) -> Result<(), IoError> {
+        validate_excel_block(sheet, start_row, start_col, rows)?;
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit

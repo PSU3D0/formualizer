@@ -99,7 +99,14 @@ fn read_matrix(arg: &ArgumentHandle<'_, '_>) -> Result<Matrix, ExcelError> {
     let date_system = arg.date_system();
     if let Some(rows) = arg.inline_array_literal()? {
         let cols = rows.first().map_or(0, Vec::len);
-        let mut data = Vec::with_capacity(rows.len() * cols);
+        let expected = rows
+            .len()
+            .checked_mul(cols)
+            .ok_or_else(ExcelError::new_value)?;
+        if expected == 0 {
+            return Err(ExcelError::new_value());
+        }
+        let mut data = Vec::with_capacity(expected);
         for row in &rows {
             if row.len() != cols {
                 return Err(ExcelError::new_value());
@@ -119,12 +126,21 @@ fn read_matrix(arg: &ArgumentHandle<'_, '_>) -> Result<Matrix, ExcelError> {
             return Err(error);
         }
         let (rows, cols) = view.dims();
+        let expected = rows.checked_mul(cols).ok_or_else(ExcelError::new_value)?;
+        if expected == 0 {
+            return Err(ExcelError::new_value());
+        }
         // rows * cols is within the materialisation budget (checked above).
-        let mut data = Vec::with_capacity(rows * cols);
+        let mut data = Vec::with_capacity(expected);
         view.for_each_cell(&mut |v| {
             data.push(cell_number(v, date_system)?);
             Ok(())
         })?;
+        // Unvisited cells (e.g. a range past the sheet's used region) are blank,
+        // and blanks inside regression data are #VALUE!, matching Excel.
+        if data.len() != expected {
+            return Err(ExcelError::new_value());
+        }
         return Ok(Matrix { rows, cols, data });
     }
     let v = scalar_like_value(arg)?;
@@ -166,7 +182,7 @@ struct Problem {
 
 fn build_problem(y: Matrix, x: Option<Matrix>) -> Result<Problem, ExcelError> {
     let n = y.data.len();
-    if n == 0 {
+    if n == 0 || n != y.rows.saturating_mul(y.cols) {
         return Err(ExcelError::new_value());
     }
     let x = x.unwrap_or_else(|| Matrix {
@@ -174,6 +190,9 @@ fn build_problem(y: Matrix, x: Option<Matrix>) -> Result<Problem, ExcelError> {
         cols: y.cols,
         data: (1..=n).map(|i| i as f64).collect(),
     });
+    if x.data.len() != x.rows.saturating_mul(x.cols) {
+        return Err(ExcelError::new_value());
+    }
     let (layout, vars) = if x.rows == y.rows && x.cols == y.cols {
         (Layout::Single, vec![x.data.clone()])
     } else if y.cols == 1 && x.rows == n {
