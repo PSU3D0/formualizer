@@ -77,6 +77,17 @@
       "wasm": "0.924419035021323"
     },
     {
+      "name": "LOOKUP",
+      "formula": "=LOOKUP(2,1/(A1:E1<>\"\"),A1:E1)",
+      "grid": {
+        "A1": "5",
+        "D1": "7",
+        "E1": "9"
+      },
+      "native": "9",
+      "wasm": "5"
+    },
+    {
       "name": "COUNTIF",
       "formula": "=COUNTIF(A1:A3, \"10/26/1999\")",
       "grid": {

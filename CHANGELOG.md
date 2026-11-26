@@ -4,6 +4,10 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`LOOKUP` searches the way Excel does.** Errors and values of another type in the lookup vector no longer turn the search left: `=LOOKUP(2,1/(A1:E1<>""),A1:E1)` returns the last non-blank value of the row, as in Excel, instead of the first. Values change on unsorted data and runs of duplicates, which now give the position Excel's search reaches (`LOOKUP(1,{1,1,1,1,1,0,1})` is the 5th value, not the 7th). A number no longer matches numeric text, booleans or blank cells (`LOOKUP(2,{1,"2",3})` is 1), texts are compared as texts, and numbers exactly. Whole-column references, including through `INDIRECT`, are searched over all their rows, and the array form over whole columns searches the first column when the reference is taller than wide. A result array that is too short, and a 2-D result, give `#N/A`. A 2-D lookup vector in the vector form is searched like the array form. (#586)
+
 ## [0.15.0] - 2026-11-21
 
 Formualizer 0.15.0 is a **major performance release** alongside a broad wave of **Excel compatibility fixes**. Seven targeted engine and workbook optimizations wipe out quadratic bottlenecks that show up in real-world spreadsheets: full-column array formulas, rolling horizontal `COUNTIFS`/`SUMIFS` across financial-model periods, inserting or deleting rows in large models (and hitting undo/redo), thousands of `VLOOKUP`/`MATCH` lookups into large reference tables, whole-column `SUM(A:A)` summaries, iterative circular-reference models, and long interactive editing sessions.
