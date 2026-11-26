@@ -8144,6 +8144,12 @@ where
                                     "ordered fallback planning snapshot became stale",
                                 ));
                             }
+                            let overlay_clears: Vec<(u32, u32)> =
+                                if self.sheet_has_delta_overlay(&batch.sheet_name) {
+                                    batch.formulas.iter().map(|r| (r.row, r.col)).collect()
+                                } else {
+                                    Vec::new()
+                                };
                             let (plan, formula_count) = match self
                                 .prepare_legacy_batch_fallback(batch, &snapshot)
                             {
@@ -8202,6 +8208,12 @@ where
                             }
                             let graph_formulas =
                                 self.graph.apply_prevalidated_legacy_graph_plan(plan);
+                            if !overlay_clears.is_empty() {
+                                self.clear_delta_overlay_cells_on_sheet(
+                                    preparation.sheet_name.as_ref(),
+                                    overlay_clears,
+                                );
+                            }
                             direct_report.formula_cells_seen = direct_report
                                 .formula_cells_seen
                                 .saturating_add(formula_count);
@@ -8444,6 +8456,15 @@ where
             && !self.graph_admission_enabled()
             && !materialize_batches.iter().all(FormulaIngestBatch::is_empty)
         {
+            let mut overlay_clears: Vec<(String, Vec<(u32, u32)>)> = Vec::new();
+            for batch in &materialize_batches {
+                if !batch.is_empty() && self.sheet_has_delta_overlay(&batch.sheet_name) {
+                    overlay_clears.push((
+                        batch.sheet_name.clone(),
+                        batch.formulas.iter().map(|r| (r.row, r.col)).collect(),
+                    ));
+                }
+            }
             let mut builder =
                 crate::engine::ingest_builder::BulkIngestBuilder::new(&mut self.graph);
             for batch in materialize_batches {
@@ -8471,6 +8492,9 @@ where
                 );
             }
             let summary = builder.finish_with_provider(&self.resolver)?;
+            for (sheet_name, coords) in overlay_clears {
+                self.clear_delta_overlay_cells_on_sheet(&sheet_name, coords);
+            }
             report.graph_formula_cells_materialized = summary.formulas as u64;
             report.graph_vertices_created = summary.vertices as u64;
             report.graph_edges_created = summary.edges as u64;
@@ -8531,6 +8555,19 @@ where
                 self.preflight_graph_admission(admission)?;
             }
 
+            let mut overlay_clears: Vec<(String, Vec<(u32, u32)>)> = Vec::new();
+            for (sheet_name, formulas) in &prepared_by_sheet {
+                if !formulas.is_empty() && self.sheet_has_delta_overlay(sheet_name) {
+                    overlay_clears.push((
+                        sheet_name.clone(),
+                        formulas
+                            .iter()
+                            .map(|(row, col, _, _)| (*row, *col))
+                            .collect(),
+                    ));
+                }
+            }
+
             let mut builder = self.begin_bulk_ingest();
             if admission_preflighted {
                 builder.mark_admission_preflighted();
@@ -8543,6 +8580,9 @@ where
                 builder.add_formula_plans(sheet_id, formulas);
             }
             let summary = builder.finish()?;
+            for (sheet_name, coords) in overlay_clears {
+                self.clear_delta_overlay_cells_on_sheet(&sheet_name, coords);
+            }
             report.graph_formula_cells_materialized = summary.formulas as u64;
             report.graph_vertices_created = summary.vertices as u64;
             report.graph_edges_created = summary.edges as u64;
@@ -10740,6 +10780,7 @@ where
             .graph
             .apply_prevalidated_legacy_graph_plan(legacy_graph);
         for formula in &prepared {
+            self.clear_delta_overlay_cell(&formula.sheet, formula.lease.row, formula.lease.col);
             let removed = self
                 .staged_formulas
                 .get_mut(&formula.sheet)
@@ -10753,6 +10794,14 @@ where
             debug_assert!(index_removed);
         }
         for package in &prepared_packages {
+            if !package.replay_records.is_empty() && self.sheet_has_delta_overlay(&package.sheet) {
+                let coords: Vec<(u32, u32)> = package
+                    .replay_records
+                    .iter()
+                    .map(|record| (record.row, record.col))
+                    .collect();
+                self.clear_delta_overlay_cells_on_sheet(&package.sheet, coords);
+            }
             if let Some(points) = &package.selected_points {
                 let staged = self.staged_formulas.get_mut(&package.sheet).unwrap();
                 let source = staged.deferred_package.as_mut().unwrap();
@@ -12872,6 +12921,55 @@ where
         }
     }
 
+    fn sheet_has_delta_overlay(&self, sheet: &str) -> bool {
+        if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
+            return false;
+        }
+        let Some(asheet) = self.arrow_sheets.sheet(sheet) else {
+            return false;
+        };
+        asheet.columns.iter().any(|col| {
+            col.chunks.iter().any(|ch| !ch.overlay.is_empty())
+                || col.sparse_chunks.values().any(|ch| !ch.overlay.is_empty())
+        })
+    }
+
+    /// Clear delta-overlay entries for a batch of cells on a single sheet that
+    /// have transitioned to formulas, so prior literal/Empty delta overlays do
+    /// not shadow computed formula results under Arrow-canonical reads.
+    fn clear_delta_overlay_cells_on_sheet(
+        &mut self,
+        sheet: &str,
+        coords: impl IntoIterator<Item = (u32, u32)>,
+    ) {
+        if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
+            return;
+        }
+        let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
+            return;
+        };
+        let nrows = asheet.nrows as usize;
+        let ncols = asheet.columns.len();
+        if nrows == 0 || ncols == 0 {
+            return;
+        }
+        for (row, col) in coords {
+            let row0 = row.saturating_sub(1) as usize;
+            let col0 = col.saturating_sub(1) as usize;
+            if row0 >= nrows || col0 >= ncols {
+                continue;
+            }
+            let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) else {
+                continue;
+            };
+            if let Some(ch) = asheet.columns[col0].chunk_mut(ch_idx)
+                && !ch.overlay.is_empty()
+            {
+                let _ = ch.overlay.remove(in_off);
+            }
+        }
+    }
+
     /// Clear an explicit `Empty` delta-overlay tombstone for a cell about to
     /// receive a spilled computed value without resurrecting a deleted base
     /// Arrow value if the computed overlay is later cleared (e.g. `remove_sheet`
@@ -14950,6 +15048,7 @@ where
                 }
                 self.clear_cell_format_state(sheet, cell);
                 self.record_changed_cell(sheet, row, col);
+                self.clear_delta_overlay_cell(sheet, row, col);
             }
             Ok::<_, ExcelError>(())
         })();
