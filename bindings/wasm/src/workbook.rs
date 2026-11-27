@@ -585,6 +585,26 @@ pub(crate) fn js_to_scalar_literal(value: &JsValue) -> Result<formualizer::Liter
         return Ok(LiteralValue::Number(n));
     }
 
+    if value.is_bigint() {
+        const MAX_SAFE_I64: i64 = 1_i64 << 53;
+        let text = js_sys::BigInt::from(value.clone())
+            .to_string(10)
+            .ok()
+            .and_then(|s| s.as_string())
+            .ok_or_else(|| js_type_error("failed to convert BigInt cell value"))?;
+        let parsed = text.parse::<i64>().map_err(|_| {
+            js_type_error(format!(
+                "BigInt value {text} exceeds exact IEEE-754 f64 range (±2^53); cast explicitly to string or number"
+            ))
+        })?;
+        if !(-MAX_SAFE_I64..=MAX_SAFE_I64).contains(&parsed) {
+            return Err(js_type_error(format!(
+                "BigInt value {parsed} exceeds exact IEEE-754 f64 range (±2^53); cast explicitly to string or number"
+            )));
+        }
+        return Ok(LiteralValue::Number(parsed as f64));
+    }
+
     if js_sys::Array::is_array(value) {
         return Err(js_type_error(
             "nested arrays are not valid scalar cell values",
@@ -740,6 +760,64 @@ fn set(obj: &js_sys::Object, key: &str, value: JsValue) -> Result<(), JsValue> {
     js_sys::Reflect::set(obj, &JsValue::from_str(key), &value)
         .map(|_| ())
         .map_err(|err| js_error_with_cause(format!("failed to set `{key}`"), err))
+}
+
+const PACKED_MODE_DENSE_ROW_MAJOR: u8 = 0;
+const PACKED_MODE_DENSE_COL_MAJOR: u8 = 1;
+const PACKED_MODE_SPARSE: u8 = 2;
+const WIRE_TAG_EMPTY: u8 = 0;
+const WIRE_TAG_NUMBER: u8 = 1;
+const WIRE_TAG_SKIP: u8 = 255;
+
+fn write_range_report_to_js(
+    report: formualizer::workbook::WriteRangeReport,
+) -> Result<JsValue, JsValue> {
+    let obj = js_sys::Object::new();
+    set(&obj, "startRow", JsValue::from_f64(report.start_row as f64))?;
+    set(&obj, "startCol", JsValue::from_f64(report.start_col as f64))?;
+    set(&obj, "endRow", JsValue::from_f64(report.end_row as f64))?;
+    set(&obj, "endCol", JsValue::from_f64(report.end_col as f64))?;
+    set(
+        &obj,
+        "historyCleared",
+        JsValue::from_bool(report.history_cleared),
+    )?;
+    Ok(obj.into())
+}
+
+#[cfg(feature = "arrow-ipc")]
+fn format_arrow_ipc_error(err: impl std::fmt::Display) -> JsValue {
+    let msg = err.to_string();
+    let lower = msg.to_ascii_lowercase();
+    if lower.contains("compression")
+        || lower.contains("lz4")
+        || lower.contains("zstd")
+        || lower.contains("codec")
+    {
+        js_error(format!(
+            "Arrow IPC batch uses compression which is disabled in the WASM `arrow-ipc` build (uncompressed IPC streams/files are supported): {msg}"
+        ))
+    } else {
+        js_error(format!("Arrow IPC decode failed: {msg}"))
+    }
+}
+
+#[cfg(feature = "arrow-ipc")]
+fn parse_arrow_ipc_headers_option(options: Option<JsValue>) -> Result<bool, JsValue> {
+    let Some(val) = options else {
+        return Ok(false);
+    };
+    if val.is_null() || val.is_undefined() {
+        return Ok(false);
+    }
+    reject_unknown_keys(&val, "setArrowIpc", &["headers"])?;
+    let headers_val = js_sys::Reflect::get(&val, &JsValue::from_str("headers"))?;
+    if headers_val.is_undefined() {
+        return Ok(false);
+    }
+    headers_val
+        .as_bool()
+        .ok_or_else(|| js_type_error("setArrowIpc: `headers` must be a boolean"))
 }
 
 #[wasm_bindgen(typescript_custom_section)]
@@ -1859,7 +1937,7 @@ impl Sheet {
         start_row: u32,
         start_col: u32,
         data: js_sys::Array,
-    ) -> Result<(), JsValue> {
+    ) -> Result<JsValue, JsValue> {
         // data: Array<Array<any>> — marshal first so block extent is known.
         let mut rows: Vec<Vec<formualizer::LiteralValue>> =
             Vec::with_capacity(data.length() as usize);
@@ -1881,18 +1959,302 @@ impl Sheet {
             .wb
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?;
-        wb.begin_action("batch: set values".to_string());
-        let res = wb
+        let report = wb
             .set_values(&self.name, start_row, start_col, &rows)
-            .map(|_| ())
-            .map_err(|e| {
-                js_error(format!(
-                    "set_values failed for {sheet}!R{start_row}C{start_col}: {e}",
-                    sheet = self.name
-                ))
-            });
-        wb.end_action();
-        res
+            .map_err(workbook_error_to_js)?;
+        write_range_report_to_js(report)
+    }
+
+    /// Single private packed bulk-write entry point backing TS `setValues`, `setColumns`,
+    /// and `setCells`. Hidden from generated `.d.ts`; signature is internal and may evolve.
+    ///
+    /// `mode`:
+    /// - `0`: dense row-major (`start_row`, `start_col`, `nrows`, `ncols`; may contain `255 = Skip` for ragged rows)
+    /// - `1`: dense column-major (`start_row`, `start_col`, `nrows`, `ncols`)
+    /// - `2`: sparse (`rows`, `cols`, `tags`, `numbers`)
+    #[wasm_bindgen(js_name = "_setPackedBlock", skip_typescript)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_packed_block(
+        &self,
+        mode: u8,
+        start_row: u32,
+        start_col: u32,
+        nrows: u32,
+        ncols: u32,
+        tags: &[u8],
+        numbers: &[f64],
+        string_bytes: &[u8],
+        string_offsets: &[u32],
+        rows: &[u32],
+        cols: &[u32],
+    ) -> Result<JsValue, JsValue> {
+        use formualizer::workbook::{CellBatch, ColumnData, PackedColumnBlock, WriteRangeReport};
+
+        if tags.len() != numbers.len() {
+            return Err(js_error(format!(
+                "_setPackedBlock: tags length ({}) does not match numbers length ({})",
+                tags.len(),
+                numbers.len()
+            )));
+        }
+
+        let report = match mode {
+            PACKED_MODE_SPARSE => {
+                if rows.len() != cols.len() || rows.len() != tags.len() {
+                    return Err(js_error(format!(
+                        "_setPackedBlock sparse: mismatched lengths (rows={}, cols={}, tags={}, numbers={})",
+                        rows.len(),
+                        cols.len(),
+                        tags.len(),
+                        numbers.len()
+                    )));
+                }
+                let batch = CellBatch {
+                    rows,
+                    cols,
+                    tags,
+                    numbers,
+                    text_bytes: string_bytes,
+                    text_offsets: string_offsets,
+                };
+                self.wb
+                    .write()
+                    .map_err(|_| js_error("failed to lock workbook for write"))?
+                    .set_cells(&self.name, &batch)
+                    .map_err(workbook_error_to_js)?
+            }
+            PACKED_MODE_DENSE_COL_MAJOR => {
+                if !rows.is_empty() || !cols.is_empty() {
+                    return Err(js_error(
+                        "_setPackedBlock dense column-major mode must not pass sparse rows/cols",
+                    ));
+                }
+                let nrows_usize = nrows as usize;
+                let ncols_usize = ncols as usize;
+                validate_block(start_row, start_col, nrows_usize, ncols_usize)?;
+                let expected = nrows_usize
+                    .checked_mul(ncols_usize)
+                    .ok_or_else(|| js_error("_setPackedBlock: nrows * ncols overflow"))?;
+                if tags.len() != expected {
+                    return Err(js_error(format!(
+                        "_setPackedBlock dense column-major: expected {expected} cells ({nrows}x{ncols}), got {}",
+                        tags.len()
+                    )));
+                }
+                if nrows_usize == 0 || ncols_usize == 0 {
+                    WriteRangeReport::default()
+                } else {
+                    let mut columns: Vec<ColumnData<'_>> = Vec::with_capacity(ncols_usize);
+                    for c in 0..ncols_usize {
+                        let lo = c * nrows_usize;
+                        let hi = lo + nrows_usize;
+                        let col_tags = &tags[lo..hi];
+                        let col_nums = &numbers[lo..hi];
+                        if col_tags.iter().all(|&t| t == WIRE_TAG_NUMBER) {
+                            columns.push(ColumnData::Float64 {
+                                values: col_nums,
+                                validity: None,
+                            });
+                        } else if col_tags.iter().all(|&t| t == WIRE_TAG_EMPTY) {
+                            columns.push(ColumnData::Null { len: nrows_usize });
+                        } else {
+                            columns.push(ColumnData::Mixed(PackedColumnBlock {
+                                tags: col_tags,
+                                numbers: col_nums,
+                                text_bytes: string_bytes,
+                                text_offsets: string_offsets,
+                            }));
+                        }
+                    }
+                    self.wb
+                        .write()
+                        .map_err(|_| js_error("failed to lock workbook for write"))?
+                        .set_columns(&self.name, start_row, start_col, &columns)
+                        .map_err(workbook_error_to_js)?
+                }
+            }
+            PACKED_MODE_DENSE_ROW_MAJOR => {
+                if !rows.is_empty() || !cols.is_empty() {
+                    return Err(js_error(
+                        "_setPackedBlock dense row-major mode must not pass sparse rows/cols",
+                    ));
+                }
+                let nrows_usize = nrows as usize;
+                let ncols_usize = ncols as usize;
+                validate_block(start_row, start_col, nrows_usize, ncols_usize)?;
+                let expected = nrows_usize
+                    .checked_mul(ncols_usize)
+                    .ok_or_else(|| js_error("_setPackedBlock: nrows * ncols overflow"))?;
+                if tags.len() != expected {
+                    return Err(js_error(format!(
+                        "_setPackedBlock dense row-major: expected {expected} cells ({nrows}x{ncols}), got {}",
+                        tags.len()
+                    )));
+                }
+                if nrows_usize == 0 || ncols_usize == 0 {
+                    WriteRangeReport::default()
+                } else if tags.contains(&WIRE_TAG_SKIP) {
+                    // Ragged rows encoded with private Skip = 255 sentinel: emit only non-Skip cells
+                    // through `Workbook::set_cells` so trailing cells past short rows are never overwritten.
+                    let mut sp_rows = Vec::with_capacity(expected);
+                    let mut sp_cols = Vec::with_capacity(expected);
+                    let mut sp_tags = Vec::with_capacity(expected);
+                    let mut sp_nums = Vec::with_capacity(expected);
+                    for r in 0..nrows_usize {
+                        let base = r * ncols_usize;
+                        let abs_row = start_row + r as u32;
+                        for c in 0..ncols_usize {
+                            let tag = tags[base + c];
+                            if tag == WIRE_TAG_SKIP {
+                                continue;
+                            }
+                            sp_rows.push(abs_row);
+                            sp_cols.push(start_col + c as u32);
+                            sp_tags.push(tag);
+                            sp_nums.push(numbers[base + c]);
+                        }
+                    }
+                    let batch = CellBatch {
+                        rows: &sp_rows,
+                        cols: &sp_cols,
+                        tags: &sp_tags,
+                        numbers: &sp_nums,
+                        text_bytes: string_bytes,
+                        text_offsets: string_offsets,
+                    };
+                    self.wb
+                        .write()
+                        .map_err(|_| js_error("failed to lock workbook for write"))?
+                        .set_cells(&self.name, &batch)
+                        .map_err(workbook_error_to_js)?
+                } else if ncols_usize == 1 {
+                    let col = if tags.iter().all(|&t| t == WIRE_TAG_NUMBER) {
+                        ColumnData::Float64 {
+                            values: numbers,
+                            validity: None,
+                        }
+                    } else if tags.iter().all(|&t| t == WIRE_TAG_EMPTY) {
+                        ColumnData::Null { len: nrows_usize }
+                    } else {
+                        ColumnData::Mixed(PackedColumnBlock {
+                            tags,
+                            numbers,
+                            text_bytes: string_bytes,
+                            text_offsets: string_offsets,
+                        })
+                    };
+                    self.wb
+                        .write()
+                        .map_err(|_| js_error("failed to lock workbook for write"))?
+                        .set_columns(&self.name, start_row, start_col, &[col])
+                        .map_err(workbook_error_to_js)?
+                } else {
+                    // Transpose rectangular row-major block into column-major slices so it flows
+                    // directly through `Workbook::set_columns` without allocating `LiteralValue`/`String`s.
+                    let mut col_tags_bufs: Vec<Vec<u8>> = (0..ncols_usize)
+                        .map(|_| Vec::with_capacity(nrows_usize))
+                        .collect();
+                    let mut col_nums_bufs: Vec<Vec<f64>> = (0..ncols_usize)
+                        .map(|_| Vec::with_capacity(nrows_usize))
+                        .collect();
+                    let mut col_all_num = vec![true; ncols_usize];
+                    let mut col_all_empty = vec![true; ncols_usize];
+                    for r in 0..nrows_usize {
+                        let base = r * ncols_usize;
+                        for c in 0..ncols_usize {
+                            let tag = tags[base + c];
+                            let num = numbers[base + c];
+                            if tag != WIRE_TAG_NUMBER {
+                                col_all_num[c] = false;
+                            }
+                            if tag != WIRE_TAG_EMPTY {
+                                col_all_empty[c] = false;
+                            }
+                            col_tags_bufs[c].push(tag);
+                            col_nums_bufs[c].push(num);
+                        }
+                    }
+                    let mut columns: Vec<ColumnData<'_>> = Vec::with_capacity(ncols_usize);
+                    for c in 0..ncols_usize {
+                        if col_all_num[c] {
+                            columns.push(ColumnData::Float64 {
+                                values: &col_nums_bufs[c],
+                                validity: None,
+                            });
+                        } else if col_all_empty[c] {
+                            columns.push(ColumnData::Null { len: nrows_usize });
+                        } else {
+                            columns.push(ColumnData::Mixed(PackedColumnBlock {
+                                tags: &col_tags_bufs[c],
+                                numbers: &col_nums_bufs[c],
+                                text_bytes: string_bytes,
+                                text_offsets: string_offsets,
+                            }));
+                        }
+                    }
+                    self.wb
+                        .write()
+                        .map_err(|_| js_error("failed to lock workbook for write"))?
+                        .set_columns(&self.name, start_row, start_col, &columns)
+                        .map_err(workbook_error_to_js)?
+                }
+            }
+            other => {
+                return Err(js_error(format!(
+                    "_setPackedBlock: unknown mode {other} (expected 0=row-major, 1=col-major, 2=sparse)"
+                )));
+            }
+        };
+
+        write_range_report_to_js(report)
+    }
+
+    /// Stream an uncompressed Apache Arrow IPC stream or file into this worksheet one
+    /// `RecordBatch` at a time starting at 1-based `(startRow, startCol)`.
+    ///
+    /// Available only when `formualizer-wasm` is compiled with `--features arrow-ipc`.
+    #[cfg(feature = "arrow-ipc")]
+    #[wasm_bindgen(js_name = "setArrowIpc")]
+    pub fn set_arrow_ipc(
+        &self,
+        start_row: u32,
+        start_col: u32,
+        bytes: &[u8],
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        validate_cell_coords(start_row, start_col)?;
+        let headers = parse_arrow_ipc_headers_option(options)?;
+        if bytes.is_empty() {
+            return Err(js_error("setArrowIpc: Arrow IPC payload is empty"));
+        }
+
+        let mut wb = self
+            .wb
+            .write()
+            .map_err(|_| js_error("failed to lock workbook for write"))?;
+        let cursor = std::io::Cursor::new(bytes);
+        let report = if bytes.len() >= 6 && &bytes[..6] == b"ARROW1" {
+            let reader = arrow_ipc::reader::FileReader::try_new(cursor, None)
+                .map_err(format_arrow_ipc_error)?;
+            wb.set_record_batches(&self.name, start_row, start_col, reader, headers)
+                .map_err(|e| match e {
+                    formualizer::workbook::IoError::Backend { ref message, .. } => {
+                        format_arrow_ipc_error(message)
+                    }
+                    other => workbook_error_to_js(other),
+                })?
+        } else {
+            let reader = arrow_ipc::reader::StreamReader::try_new(cursor, None)
+                .map_err(format_arrow_ipc_error)?;
+            wb.set_record_batches(&self.name, start_row, start_col, reader, headers)
+                .map_err(|e| match e {
+                    formualizer::workbook::IoError::Backend { ref message, .. } => {
+                        format_arrow_ipc_error(message)
+                    }
+                    other => workbook_error_to_js(other),
+                })?
+        };
+        write_range_report_to_js(report)
     }
 
     #[wasm_bindgen(js_name = "setFormulas")]

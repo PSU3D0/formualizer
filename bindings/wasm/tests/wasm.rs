@@ -2540,3 +2540,164 @@ fn test_changelog_options_and_inspection_methods() {
     .unwrap();
     assert!(!default_json_wb.changelog_enabled().unwrap());
 }
+
+#[wasm_bindgen_test]
+fn test_set_packed_block_dense_ragged_sparse_and_bigint_rules() {
+    let wb = Workbook::new(None).unwrap();
+    wb.add_sheet("Bulk".to_string()).unwrap();
+    let sheet = wb.sheet("Bulk".to_string()).unwrap();
+
+    // 1. Dense column-major (mode = 1): pure number col, null col, mixed col (text/bool/error/date/neg-zero)
+    let str_bytes = b"alpha".to_vec();
+    let str_offsets = vec![0u32, 5u32];
+    // 3 rows x 3 cols (col-major):
+    // col 0: [10.0, -0.0, 30.0] (all Number -> Float64 fast path)
+    // col 1: [Empty, Empty, Empty] (all Empty -> Null zero-chunk path)
+    // col 2: ["alpha", true, #DIV/0!]
+    let tags = vec![1, 1, 1, 0, 0, 0, 3, 2, 4];
+    let nums = vec![10.0, -0.0, 30.0, 0.0, 0.0, 0.0, 0.0, 1.0, 5.0];
+    let report: Object = sheet
+        .set_packed_block(
+            1,
+            1,
+            1,
+            3,
+            3,
+            &tags,
+            &nums,
+            &str_bytes,
+            &str_offsets,
+            &[],
+            &[],
+        )
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    assert_eq!(js_get(&report, "startRow").as_f64(), Some(1.0));
+    assert_eq!(js_get(&report, "startCol").as_f64(), Some(1.0));
+    assert_eq!(js_get(&report, "endRow").as_f64(), Some(3.0));
+    assert_eq!(js_get(&report, "endCol").as_f64(), Some(3.0));
+    assert_eq!(js_get(&report, "historyCleared").as_bool(), Some(false));
+
+    assert_eq!(sheet.get_value(1, 1).unwrap().as_f64(), Some(10.0));
+    let neg_zero = sheet.get_value(2, 1).unwrap().as_f64().unwrap();
+    assert_eq!(neg_zero, 0.0);
+    assert!(neg_zero.is_sign_negative());
+    assert!(sheet.get_value(1, 2).unwrap().is_null());
+    assert_eq!(
+        sheet.get_value(1, 3).unwrap().as_string().as_deref(),
+        Some("alpha")
+    );
+    assert_eq!(sheet.get_value(2, 3).unwrap().as_bool(), Some(true));
+    assert_eq!(
+        sheet.get_value(3, 3).unwrap().as_string().as_deref(),
+        Some("#DIV/0!")
+    );
+
+    // 2. Dense row-major with Skip = 255 (ragged rows) leaves trailing existing cell untouched
+    sheet.set_value(5, 2, JsValue::from_f64(777.0)).unwrap();
+    let ragged_tags = vec![1, 1, 1, 255];
+    let ragged_nums = vec![1.0, 2.0, 3.0, 0.0];
+    let ragged_report: Object = sheet
+        .set_packed_block(
+            0,
+            4,
+            1,
+            2,
+            2,
+            &ragged_tags,
+            &ragged_nums,
+            &[],
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    assert_eq!(js_get(&ragged_report, "startRow").as_f64(), Some(4.0));
+    assert_eq!(js_get(&ragged_report, "endRow").as_f64(), Some(5.0));
+    assert_eq!(js_get(&ragged_report, "endCol").as_f64(), Some(2.0));
+    assert_eq!(sheet.get_value(4, 1).unwrap().as_f64(), Some(1.0));
+    assert_eq!(sheet.get_value(4, 2).unwrap().as_f64(), Some(2.0));
+    assert_eq!(sheet.get_value(5, 1).unwrap().as_f64(), Some(3.0));
+    assert_eq!(sheet.get_value(5, 2).unwrap().as_f64(), Some(777.0));
+
+    // 3. Sparse mode (mode = 2) with duplicate coordinate last-write-wins & atomic invalid-tag rejection
+    let sp_rows = vec![10, 10, 12];
+    let sp_cols = vec![1, 1, 4];
+    let sp_tags = vec![1, 1, 3];
+    let sp_nums = vec![100.0, 200.0, 0.0];
+    let sp_report: Object = sheet
+        .set_packed_block(
+            2,
+            0,
+            0,
+            0,
+            0,
+            &sp_tags,
+            &sp_nums,
+            &str_bytes,
+            &str_offsets,
+            &sp_rows,
+            &sp_cols,
+        )
+        .unwrap()
+        .dyn_into()
+        .unwrap();
+    assert_eq!(js_get(&sp_report, "startRow").as_f64(), Some(10.0));
+    assert_eq!(js_get(&sp_report, "endRow").as_f64(), Some(12.0));
+    assert_eq!(js_get(&sp_report, "endCol").as_f64(), Some(4.0));
+    assert_eq!(sheet.get_value(10, 1).unwrap().as_f64(), Some(200.0));
+    assert_eq!(
+        sheet.get_value(12, 4).unwrap().as_string().as_deref(),
+        Some("alpha")
+    );
+
+    // Pending tag (7) and Skip tag (255) rejected atomically in sparse mode
+    assert!(
+        sheet
+            .set_packed_block(
+                2,
+                0,
+                0,
+                0,
+                0,
+                &[1, 7],
+                &[99.0, 0.0],
+                &[],
+                &[],
+                &[20, 21],
+                &[1, 1]
+            )
+            .is_err()
+    );
+    assert!(sheet.get_value(20, 1).unwrap().is_null());
+    assert!(
+        sheet
+            .set_packed_block(2, 0, 0, 0, 0, &[255], &[0.0], &[], &[], &[20], &[1])
+            .is_err()
+    );
+
+    // 4. BigInt scalar validation: safe within ±2^53 succeeds, beyond ±2^53 throws TypeError
+    let safe_bi = js_sys::BigInt::from(9_007_199_254_740_992_i64);
+    sheet.set_value(30, 1, safe_bi.into()).unwrap();
+    assert_eq!(
+        sheet.get_value(30, 1).unwrap().as_f64(),
+        Some(9_007_199_254_740_992.0)
+    );
+
+    let unsafe_bi = js_sys::BigInt::from(9_007_199_254_740_993_i64);
+    let err = sheet.set_value(30, 2, unsafe_bi.into()).unwrap_err();
+    assert!(err.is_instance_of::<js_sys::TypeError>());
+
+    // 5. Raw Sheet::setValues returns WriteRangeReport
+    let row = js_sys::Array::new();
+    row.push(&JsValue::from_f64(55.0));
+    let grid = js_sys::Array::new();
+    grid.push(&row);
+    let sv_report: Object = sheet.set_values(31, 1, grid).unwrap().dyn_into().unwrap();
+    assert_eq!(js_get(&sv_report, "startRow").as_f64(), Some(31.0));
+    assert_eq!(js_get(&sv_report, "endRow").as_f64(), Some(31.0));
+    assert_eq!(js_get(&sv_report, "historyCleared").as_bool(), Some(false));
+}
