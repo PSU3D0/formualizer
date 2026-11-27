@@ -1,10 +1,14 @@
 pub mod formualizer_workbook
+pub use formualizer_workbook::BulkCellTag
 pub use formualizer_workbook::CancelToken
+pub use formualizer_workbook::CellBatch
 pub use formualizer_workbook::EvaluationTarget
+pub use formualizer_workbook::FormatId
 pub use formualizer_workbook::FormulaSpoolDiskPolicy
 pub use formualizer_workbook::LiteralValue
 pub use formualizer_workbook::OpaquePreparePolicy
 pub use formualizer_workbook::OpaqueReason
+pub use formualizer_workbook::PackedColumnBlock
 pub use formualizer_workbook::PreparationOutcome
 pub use formualizer_workbook::PreparationRevision
 pub use formualizer_workbook::PrepareScope
@@ -13,6 +17,7 @@ pub use formualizer_workbook::RangeAddress
 pub use formualizer_workbook::TableSelection
 pub use formualizer_workbook::TargetEvalOptions
 pub use formualizer_workbook::WorkbookLoadLimits
+pub use formualizer_workbook::WriteRangeReport
 pub mod formualizer_workbook::backends
 pub mod formualizer_workbook::backends::calamine
 pub enum formualizer_workbook::backends::calamine::XlsxPathSource
@@ -752,6 +757,69 @@ pub fn formualizer_workbook::builtins::ensure_builtins_loaded() -> &'static form
 pub fn formualizer_workbook::builtins::load_io_builtins() -> usize
 pub fn formualizer_workbook::builtins::register_function_dynamic(alloc::sync::Arc<dyn formualizer_eval::function::Function>)
 pub fn formualizer_workbook::builtins::try_load_builtins() -> core::result::Result<formualizer_workbook::builtins::BuiltinsGuard, &'static str>
+pub mod formualizer_workbook::bulk
+pub enum formualizer_workbook::bulk::ColumnData<'a>
+pub formualizer_workbook::bulk::ColumnData::Boolean
+pub formualizer_workbook::bulk::ColumnData::Boolean::validity: core::option::Option<&'a [u8]>
+pub formualizer_workbook::bulk::ColumnData::Boolean::values: &'a [bool]
+pub formualizer_workbook::bulk::ColumnData::Float64
+pub formualizer_workbook::bulk::ColumnData::Float64::validity: core::option::Option<&'a [u8]>
+pub formualizer_workbook::bulk::ColumnData::Float64::values: &'a [f64]
+pub formualizer_workbook::bulk::ColumnData::Int64
+pub formualizer_workbook::bulk::ColumnData::Int64::validity: core::option::Option<&'a [u8]>
+pub formualizer_workbook::bulk::ColumnData::Int64::values: &'a [i64]
+pub formualizer_workbook::bulk::ColumnData::Mixed(formualizer_eval::engine::eval::bulk_write::PackedColumnBlock<'a>)
+pub formualizer_workbook::bulk::ColumnData::Null
+pub formualizer_workbook::bulk::ColumnData::Null::len: usize
+pub formualizer_workbook::bulk::ColumnData::Serial
+pub formualizer_workbook::bulk::ColumnData::Serial::format: formualizer_eval::format::FormatId
+pub formualizer_workbook::bulk::ColumnData::Serial::validity: core::option::Option<&'a [u8]>
+pub formualizer_workbook::bulk::ColumnData::Serial::values: &'a [f64]
+pub formualizer_workbook::bulk::ColumnData::Utf8
+pub formualizer_workbook::bulk::ColumnData::Utf8::bytes: &'a [u8]
+pub formualizer_workbook::bulk::ColumnData::Utf8::offsets: &'a [u32]
+pub formualizer_workbook::bulk::ColumnData::Utf8::validity: core::option::Option<&'a [u8]>
+impl<'a> formualizer_workbook::bulk::ColumnData<'a>
+pub fn formualizer_workbook::bulk::ColumnData<'a>::is_empty(&self) -> bool
+pub fn formualizer_workbook::bulk::ColumnData<'a>::len(&self) -> usize
+impl<'a> core::clone::Clone for formualizer_workbook::bulk::ColumnData<'a>
+pub fn formualizer_workbook::bulk::ColumnData<'a>::clone(&self) -> formualizer_workbook::bulk::ColumnData<'a>
+impl<'a> core::fmt::Debug for formualizer_workbook::bulk::ColumnData<'a>
+pub fn formualizer_workbook::bulk::ColumnData<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for formualizer_workbook::bulk::ColumnData<'a>
+pub enum formualizer_workbook::bulk::OwnedColumnData
+pub formualizer_workbook::bulk::OwnedColumnData::Boolean
+pub formualizer_workbook::bulk::OwnedColumnData::Boolean::validity: core::option::Option<alloc::vec::Vec<u8>>
+pub formualizer_workbook::bulk::OwnedColumnData::Boolean::values: alloc::vec::Vec<bool>
+pub formualizer_workbook::bulk::OwnedColumnData::Float64
+pub formualizer_workbook::bulk::OwnedColumnData::Float64::validity: core::option::Option<alloc::vec::Vec<u8>>
+pub formualizer_workbook::bulk::OwnedColumnData::Float64::values: alloc::vec::Vec<f64>
+pub formualizer_workbook::bulk::OwnedColumnData::Int64
+pub formualizer_workbook::bulk::OwnedColumnData::Int64::validity: core::option::Option<alloc::vec::Vec<u8>>
+pub formualizer_workbook::bulk::OwnedColumnData::Int64::values: alloc::vec::Vec<i64>
+pub formualizer_workbook::bulk::OwnedColumnData::Mixed
+pub formualizer_workbook::bulk::OwnedColumnData::Mixed::numbers: alloc::vec::Vec<f64>
+pub formualizer_workbook::bulk::OwnedColumnData::Mixed::tags: alloc::vec::Vec<u8>
+pub formualizer_workbook::bulk::OwnedColumnData::Mixed::text_bytes: alloc::vec::Vec<u8>
+pub formualizer_workbook::bulk::OwnedColumnData::Mixed::text_offsets: alloc::vec::Vec<u32>
+pub formualizer_workbook::bulk::OwnedColumnData::Null
+pub formualizer_workbook::bulk::OwnedColumnData::Null::len: usize
+pub formualizer_workbook::bulk::OwnedColumnData::Serial
+pub formualizer_workbook::bulk::OwnedColumnData::Serial::format: formualizer_eval::format::FormatId
+pub formualizer_workbook::bulk::OwnedColumnData::Serial::validity: core::option::Option<alloc::vec::Vec<u8>>
+pub formualizer_workbook::bulk::OwnedColumnData::Serial::values: alloc::vec::Vec<f64>
+pub formualizer_workbook::bulk::OwnedColumnData::Utf8
+pub formualizer_workbook::bulk::OwnedColumnData::Utf8::bytes: alloc::vec::Vec<u8>
+pub formualizer_workbook::bulk::OwnedColumnData::Utf8::offsets: alloc::vec::Vec<u32>
+pub formualizer_workbook::bulk::OwnedColumnData::Utf8::validity: core::option::Option<alloc::vec::Vec<u8>>
+impl formualizer_workbook::bulk::OwnedColumnData
+pub fn formualizer_workbook::bulk::OwnedColumnData::as_column_data(&self) -> formualizer_workbook::bulk::ColumnData<'_>
+pub fn formualizer_workbook::bulk::OwnedColumnData::is_empty(&self) -> bool
+pub fn formualizer_workbook::bulk::OwnedColumnData::len(&self) -> usize
+impl core::clone::Clone for formualizer_workbook::bulk::OwnedColumnData
+pub fn formualizer_workbook::bulk::OwnedColumnData::clone(&self) -> formualizer_workbook::bulk::OwnedColumnData
+impl core::fmt::Debug for formualizer_workbook::bulk::OwnedColumnData
+pub fn formualizer_workbook::bulk::OwnedColumnData::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod formualizer_workbook::cache_recalculate
 pub enum formualizer_workbook::cache_recalculate::ExternalLinkPolicy
 pub formualizer_workbook::cache_recalculate::ExternalLinkPolicy::Cached
@@ -2104,7 +2172,9 @@ pub fn formualizer_workbook::workbook::Workbook::rename_sheet(&mut self, &str, &
 pub fn formualizer_workbook::workbook::Workbook::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::resolved_name_value(&self, &str, core::option::Option<&str>) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_workbook::workbook::Workbook::set_actor_id(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_workbook::workbook::Workbook::set_cells(&mut self, &str, &formualizer_eval::engine::eval::bulk_write::CellBatch<'_>) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_changelog_enabled(&mut self, bool)
+pub fn formualizer_workbook::workbook::Workbook::set_columns(&mut self, &str, u32, u32, &[formualizer_workbook::bulk::ColumnData<'_>]) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_correlation_id(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::set_deterministic_mode(&mut self, formualizer_eval::engine::DeterministicMode) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_formula(&mut self, &str, u32, u32, &str) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -2114,7 +2184,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_reason(&mut self, core::opt
 pub fn formualizer_workbook::workbook::Workbook::set_row_hidden(&mut self, &str, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_workbook_path(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
@@ -2200,10 +2270,12 @@ pub fn formualizer_workbook::worksheet::WorksheetHandle::get_value(&self, u32, u
 pub fn formualizer_workbook::worksheet::WorksheetHandle::name(&self) -> &str
 pub fn formualizer_workbook::worksheet::WorksheetHandle::new(alloc::sync::Arc<std::sync::poison::rwlock::RwLock<formualizer_workbook::workbook::Workbook>>, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
 pub fn formualizer_workbook::worksheet::WorksheetHandle::read_range(&self, &formualizer_common::range::RangeAddress) -> alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>
+pub fn formualizer_workbook::worksheet::WorksheetHandle::set_cells(&self, &formualizer_eval::engine::eval::bulk_write::CellBatch<'_>) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::worksheet::WorksheetHandle::set_columns(&self, u32, u32, &[formualizer_workbook::bulk::ColumnData<'_>]) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::worksheet::WorksheetHandle::set_formula(&self, u32, u32, &str) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::worksheet::WorksheetHandle::set_formulas(&self, u32, u32, &[alloc::vec::Vec<alloc::string::String>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::worksheet::WorksheetHandle::set_value(&self, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::worksheet::WorksheetHandle::set_values(&self, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::worksheet::WorksheetHandle::set_values(&self, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::worksheet::WorksheetHandle::write_range(&self, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), formualizer_workbook::error::IoError>
 impl core::clone::Clone for formualizer_workbook::worksheet::WorksheetHandle
 pub fn formualizer_workbook::worksheet::WorksheetHandle::clone(&self) -> formualizer_workbook::worksheet::WorksheetHandle
@@ -2250,6 +2322,35 @@ impl core::marker::Copy for formualizer_workbook::source_calculation::Calculatio
 impl core::marker::StructuralPartialEq for formualizer_workbook::source_calculation::CalculationSettingOrigin
 impl serde_core::ser::Serialize for formualizer_workbook::source_calculation::CalculationSettingOrigin
 pub fn formualizer_workbook::source_calculation::CalculationSettingOrigin::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
+pub enum formualizer_workbook::ColumnData<'a>
+pub formualizer_workbook::ColumnData::Boolean
+pub formualizer_workbook::ColumnData::Boolean::validity: core::option::Option<&'a [u8]>
+pub formualizer_workbook::ColumnData::Boolean::values: &'a [bool]
+pub formualizer_workbook::ColumnData::Float64
+pub formualizer_workbook::ColumnData::Float64::validity: core::option::Option<&'a [u8]>
+pub formualizer_workbook::ColumnData::Float64::values: &'a [f64]
+pub formualizer_workbook::ColumnData::Int64
+pub formualizer_workbook::ColumnData::Int64::validity: core::option::Option<&'a [u8]>
+pub formualizer_workbook::ColumnData::Int64::values: &'a [i64]
+pub formualizer_workbook::ColumnData::Mixed(formualizer_eval::engine::eval::bulk_write::PackedColumnBlock<'a>)
+pub formualizer_workbook::ColumnData::Null
+pub formualizer_workbook::ColumnData::Null::len: usize
+pub formualizer_workbook::ColumnData::Serial
+pub formualizer_workbook::ColumnData::Serial::format: formualizer_eval::format::FormatId
+pub formualizer_workbook::ColumnData::Serial::validity: core::option::Option<&'a [u8]>
+pub formualizer_workbook::ColumnData::Serial::values: &'a [f64]
+pub formualizer_workbook::ColumnData::Utf8
+pub formualizer_workbook::ColumnData::Utf8::bytes: &'a [u8]
+pub formualizer_workbook::ColumnData::Utf8::offsets: &'a [u32]
+pub formualizer_workbook::ColumnData::Utf8::validity: core::option::Option<&'a [u8]>
+impl<'a> formualizer_workbook::bulk::ColumnData<'a>
+pub fn formualizer_workbook::bulk::ColumnData<'a>::is_empty(&self) -> bool
+pub fn formualizer_workbook::bulk::ColumnData<'a>::len(&self) -> usize
+impl<'a> core::clone::Clone for formualizer_workbook::bulk::ColumnData<'a>
+pub fn formualizer_workbook::bulk::ColumnData<'a>::clone(&self) -> formualizer_workbook::bulk::ColumnData<'a>
+impl<'a> core::fmt::Debug for formualizer_workbook::bulk::ColumnData<'a>
+pub fn formualizer_workbook::bulk::ColumnData<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for formualizer_workbook::bulk::ColumnData<'a>
 pub enum formualizer_workbook::CsvArrayPolicy
 pub formualizer_workbook::CsvArrayPolicy::Blank
 pub formualizer_workbook::CsvArrayPolicy::Error
@@ -2361,6 +2462,39 @@ impl serde_core::ser::Serialize for formualizer_workbook::traits::NamedRangeScop
 pub fn formualizer_workbook::traits::NamedRangeScope::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for formualizer_workbook::traits::NamedRangeScope
 pub fn formualizer_workbook::traits::NamedRangeScope::deserialize<__D>(__D) -> core::result::Result<Self, <__D as serde_core::de::Deserializer>::Error> where __D: serde_core::de::Deserializer<'de>
+pub enum formualizer_workbook::OwnedColumnData
+pub formualizer_workbook::OwnedColumnData::Boolean
+pub formualizer_workbook::OwnedColumnData::Boolean::validity: core::option::Option<alloc::vec::Vec<u8>>
+pub formualizer_workbook::OwnedColumnData::Boolean::values: alloc::vec::Vec<bool>
+pub formualizer_workbook::OwnedColumnData::Float64
+pub formualizer_workbook::OwnedColumnData::Float64::validity: core::option::Option<alloc::vec::Vec<u8>>
+pub formualizer_workbook::OwnedColumnData::Float64::values: alloc::vec::Vec<f64>
+pub formualizer_workbook::OwnedColumnData::Int64
+pub formualizer_workbook::OwnedColumnData::Int64::validity: core::option::Option<alloc::vec::Vec<u8>>
+pub formualizer_workbook::OwnedColumnData::Int64::values: alloc::vec::Vec<i64>
+pub formualizer_workbook::OwnedColumnData::Mixed
+pub formualizer_workbook::OwnedColumnData::Mixed::numbers: alloc::vec::Vec<f64>
+pub formualizer_workbook::OwnedColumnData::Mixed::tags: alloc::vec::Vec<u8>
+pub formualizer_workbook::OwnedColumnData::Mixed::text_bytes: alloc::vec::Vec<u8>
+pub formualizer_workbook::OwnedColumnData::Mixed::text_offsets: alloc::vec::Vec<u32>
+pub formualizer_workbook::OwnedColumnData::Null
+pub formualizer_workbook::OwnedColumnData::Null::len: usize
+pub formualizer_workbook::OwnedColumnData::Serial
+pub formualizer_workbook::OwnedColumnData::Serial::format: formualizer_eval::format::FormatId
+pub formualizer_workbook::OwnedColumnData::Serial::validity: core::option::Option<alloc::vec::Vec<u8>>
+pub formualizer_workbook::OwnedColumnData::Serial::values: alloc::vec::Vec<f64>
+pub formualizer_workbook::OwnedColumnData::Utf8
+pub formualizer_workbook::OwnedColumnData::Utf8::bytes: alloc::vec::Vec<u8>
+pub formualizer_workbook::OwnedColumnData::Utf8::offsets: alloc::vec::Vec<u32>
+pub formualizer_workbook::OwnedColumnData::Utf8::validity: core::option::Option<alloc::vec::Vec<u8>>
+impl formualizer_workbook::bulk::OwnedColumnData
+pub fn formualizer_workbook::bulk::OwnedColumnData::as_column_data(&self) -> formualizer_workbook::bulk::ColumnData<'_>
+pub fn formualizer_workbook::bulk::OwnedColumnData::is_empty(&self) -> bool
+pub fn formualizer_workbook::bulk::OwnedColumnData::len(&self) -> usize
+impl core::clone::Clone for formualizer_workbook::bulk::OwnedColumnData
+pub fn formualizer_workbook::bulk::OwnedColumnData::clone(&self) -> formualizer_workbook::bulk::OwnedColumnData
+impl core::fmt::Debug for formualizer_workbook::bulk::OwnedColumnData
+pub fn formualizer_workbook::bulk::OwnedColumnData::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub enum formualizer_workbook::RecalculateStatus
 pub formualizer_workbook::RecalculateStatus::ErrorsFound
 pub formualizer_workbook::RecalculateStatus::Success
@@ -3520,7 +3654,9 @@ pub fn formualizer_workbook::workbook::Workbook::rename_sheet(&mut self, &str, &
 pub fn formualizer_workbook::workbook::Workbook::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::resolved_name_value(&self, &str, core::option::Option<&str>) -> core::option::Option<formualizer_common::value::LiteralValue>
 pub fn formualizer_workbook::workbook::Workbook::set_actor_id(&mut self, core::option::Option<alloc::string::String>)
+pub fn formualizer_workbook::workbook::Workbook::set_cells(&mut self, &str, &formualizer_eval::engine::eval::bulk_write::CellBatch<'_>) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_changelog_enabled(&mut self, bool)
+pub fn formualizer_workbook::workbook::Workbook::set_columns(&mut self, &str, u32, u32, &[formualizer_workbook::bulk::ColumnData<'_>]) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_correlation_id(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::set_deterministic_mode(&mut self, formualizer_eval::engine::DeterministicMode) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_formula(&mut self, &str, u32, u32, &str) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -3530,7 +3666,7 @@ pub fn formualizer_workbook::workbook::Workbook::set_reason(&mut self, core::opt
 pub fn formualizer_workbook::workbook::Workbook::set_row_hidden(&mut self, &str, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_rows_hidden(&mut self, &str, u32, u32, bool) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_value(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::workbook::Workbook::set_values(&mut self, &str, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::set_workbook_path(&mut self, core::option::Option<alloc::string::String>)
 pub fn formualizer_workbook::workbook::Workbook::sheet_dimensions(&self, &str) -> core::option::Option<(u32, u32)>
 pub fn formualizer_workbook::workbook::Workbook::sheet_import_diagnostics(&self) -> &[formualizer_workbook::traits::SheetImportDiagnostic]
@@ -3587,10 +3723,12 @@ pub fn formualizer_workbook::worksheet::WorksheetHandle::get_value(&self, u32, u
 pub fn formualizer_workbook::worksheet::WorksheetHandle::name(&self) -> &str
 pub fn formualizer_workbook::worksheet::WorksheetHandle::new(alloc::sync::Arc<std::sync::poison::rwlock::RwLock<formualizer_workbook::workbook::Workbook>>, impl core::convert::Into<alloc::sync::Arc<str>>) -> Self
 pub fn formualizer_workbook::worksheet::WorksheetHandle::read_range(&self, &formualizer_common::range::RangeAddress) -> alloc::vec::Vec<alloc::vec::Vec<formualizer_common::value::LiteralValue>>
+pub fn formualizer_workbook::worksheet::WorksheetHandle::set_cells(&self, &formualizer_eval::engine::eval::bulk_write::CellBatch<'_>) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::worksheet::WorksheetHandle::set_columns(&self, u32, u32, &[formualizer_workbook::bulk::ColumnData<'_>]) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::worksheet::WorksheetHandle::set_formula(&self, u32, u32, &str) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::worksheet::WorksheetHandle::set_formulas(&self, u32, u32, &[alloc::vec::Vec<alloc::string::String>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::worksheet::WorksheetHandle::set_value(&self, u32, u32, formualizer_common::value::LiteralValue) -> core::result::Result<(), formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::worksheet::WorksheetHandle::set_values(&self, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<(), formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::worksheet::WorksheetHandle::set_values(&self, u32, u32, &[alloc::vec::Vec<formualizer_common::value::LiteralValue>]) -> core::result::Result<formualizer_eval::engine::eval::bulk_write::WriteRangeReport, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::worksheet::WorksheetHandle::write_range(&self, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), formualizer_workbook::error::IoError>
 impl core::clone::Clone for formualizer_workbook::worksheet::WorksheetHandle
 pub fn formualizer_workbook::worksheet::WorksheetHandle::clone(&self) -> formualizer_workbook::worksheet::WorksheetHandle
