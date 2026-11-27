@@ -630,9 +630,11 @@ impl Function for SumProductFn {
         };
         let mut poll = super::super::utils::CancelPoll::new(&is_cancelled);
 
+        // Like Excel, text (even "5") and booleans count as 0 unless coerced first (--A1:A5).
         let factor = |lv: LiteralValue| -> Result<f64, ExcelError> {
             match lv {
                 LiteralValue::Error(e) => Err(e),
+                LiteralValue::Text(_) | LiteralValue::Boolean(_) => Ok(0.0),
                 other => Ok(super::super::utils::coerce_num(&other).unwrap_or(0.0)),
             }
         };
@@ -838,6 +840,31 @@ mod tests_sumproduct {
                 .unwrap()
                 .into_literal(),
             LiteralValue::Number(4.0)
+        );
+    }
+
+    #[test]
+    fn sumproduct_numeric_text_and_booleans_treated_as_zero() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(SumProductFn));
+        let ctx = interp(&wb);
+        // {1,"5",TRUE} * {2,2,2} => 1*2 + 0*2 + 0*2 = 2
+        let a = arr(vec![vec![
+            LiteralValue::Int(1),
+            LiteralValue::Text("5".into()),
+            LiteralValue::Boolean(true),
+        ]]);
+        let b = arr(vec![vec![
+            LiteralValue::Int(2),
+            LiteralValue::Int(2),
+            LiteralValue::Int(2),
+        ]]);
+        let args = vec![ArgumentHandle::new(&a, &ctx), ArgumentHandle::new(&b, &ctx)];
+        let f = ctx.context.get_function("", "SUMPRODUCT").unwrap();
+        assert_eq!(
+            f.dispatch(&args, &ctx.function_context(None))
+                .unwrap()
+                .into_literal(),
+            LiteralValue::Number(2.0)
         );
     }
 
