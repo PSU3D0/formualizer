@@ -1733,6 +1733,8 @@ dependencies = [
 name = "formualizer-workbook"
 version = "0.15.0"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "atoi_simd",
  "chrono",
  "csv",

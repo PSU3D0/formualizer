@@ -53,7 +53,9 @@ fn set_value_stores_non_finite_as_num() {
 
 #[test]
 fn set_values_stores_non_finite_as_num() {
-    check(|wb, bad| wb.set_values("S", 1, 1, &column(bad)).unwrap());
+    check(|wb, bad| {
+        wb.set_values("S", 1, 1, &column(bad)).unwrap();
+    });
 }
 
 #[test]

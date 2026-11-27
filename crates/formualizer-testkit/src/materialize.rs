@@ -233,6 +233,7 @@ fn batch_write(
                         })
                         .collect();
                     wb.set_values(sheet, start, col, &rows)
+                        .map(|_| ())
                         .map_err(|e| MaterializeError::Backend(e.to_string()))
                 }
                 Entry::Formula(_) => {

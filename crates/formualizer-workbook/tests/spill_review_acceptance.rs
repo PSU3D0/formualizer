@@ -80,7 +80,9 @@ fn review_all_edit_routes_block_and_recover() {
                     let mut w = make(family, log, defer);
                     match route {
                         0 => w.set_value("S", 4, 2, V::Number(99.)).unwrap(),
-                        1 => w.set_values("S", 4, 2, &[vec![V::Number(99.)]]).unwrap(),
+                        1 => {
+                            w.set_values("S", 4, 2, &[vec![V::Number(99.)]]).unwrap();
+                        }
                         2 => {
                             let mut cells = BTreeMap::new();
                             cells.insert(

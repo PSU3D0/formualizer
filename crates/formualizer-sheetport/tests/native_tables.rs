@@ -487,9 +487,10 @@ fn bulk_and_deferred_writes_materialize_empty_native_tables() {
                 "formulas" => wb
                     .set_formulas("Orders", 2, 3, &[vec!["=7".into()]])
                     .unwrap(),
-                "values" => wb
-                    .set_values("Orders", 2, 3, &[vec![LiteralValue::Number(7.0)]])
-                    .unwrap(),
+                "values" => {
+                    wb.set_values("Orders", 2, 3, &[vec![LiteralValue::Number(7.0)]])
+                        .unwrap();
+                }
                 _ => {
                     let data = if kind == "range_formula" {
                         formualizer_workbook::traits::CellData::from_formula("=7")

@@ -1,5 +1,6 @@
 pub mod backends;
 pub mod builtins;
+pub mod bulk;
 #[cfg(feature = "xlsx-recalc")]
 pub mod cache_recalculate;
 #[cfg(feature = "xlsx-recalc")]
@@ -90,12 +91,15 @@ pub use traits::{
 pub use transaction::{WriteOp, WriteTransaction};
 
 // Re-export for convenience
+pub use bulk::{ColumnData, OwnedColumnData};
 pub use formualizer_common::{LiteralValue, RangeAddress};
 pub use formualizer_eval::engine::{
-    CancelToken, EvaluationTarget, FormulaSpoolDiskPolicy, OpaquePreparePolicy, OpaqueReason,
-    PreparationOutcome, PreparationRevision, PrepareScope, PreparedTargetGraphReport,
-    TableSelection, TargetEvalOptions, WorkbookLoadLimits,
+    BulkCellTag, CancelToken, CellBatch, EvaluationTarget, FormulaSpoolDiskPolicy,
+    OpaquePreparePolicy, OpaqueReason, PackedColumnBlock, PreparationOutcome, PreparationRevision,
+    PrepareScope, PreparedTargetGraphReport, TableSelection, TargetEvalOptions, WorkbookLoadLimits,
+    WriteRangeReport,
 };
+pub use formualizer_eval::format::FormatId;
 pub use workbook::{
     CustomFnHandler, CustomFnInfo, CustomFnOptions, WASM_ABI_VERSION_V1, WASM_CODEC_VERSION_V1,
     WASM_MANIFEST_SCHEMA_V1, WASM_MANIFEST_SECTION_V1, WasmFunctionSpec, WasmManifestFunction,
