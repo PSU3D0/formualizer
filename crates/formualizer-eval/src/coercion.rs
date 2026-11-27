@@ -205,7 +205,7 @@ pub(crate) fn number_to_text(n: f64) -> String {
     }
     if exponent >= 0 {
         out.push_str(&digits);
-        out.push_str(&"0".repeat(exponent as usize));
+        out.extend(std::iter::repeat_n('0', exponent as usize));
     } else {
         let point = digits.len() as i64 + exponent;
         if point > 0 {
@@ -214,7 +214,7 @@ pub(crate) fn number_to_text(n: f64) -> String {
             out.push_str(&digits[point as usize..]);
         } else {
             out.push_str("0.");
-            out.push_str(&"0".repeat((-point) as usize));
+            out.extend(std::iter::repeat_n('0', (-point) as usize));
             out.push_str(&digits);
         }
     }
