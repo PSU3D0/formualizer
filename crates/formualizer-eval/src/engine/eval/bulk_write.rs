@@ -64,8 +64,8 @@ impl<R> Drop for EngineDeferredDirtyGuard<'_, R> {
 /// Declared wire tag enum for packed bulk-write blocks.
 ///
 /// Intentionally decoupled from internal `arrow_store::TypeTag` so storage
-/// renumbering cannot break the wire ABI. Unknown bytes, `TypeTag::Pending` (7),
-/// and internal `Skip` (255) are rejected atomically during preflight.
+/// renumbering cannot break the wire ABI. Unknown bytes (including internal
+/// `Skip` = 255) are rejected atomically during preflight.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BulkCellTag {
@@ -76,6 +76,8 @@ pub enum BulkCellTag {
     Error = 4,
     DateTime = 5,
     Duration = 6,
+    Date = 7,
+    Time = 8,
 }
 
 impl TryFrom<u8> for BulkCellTag {
@@ -91,8 +93,8 @@ impl TryFrom<u8> for BulkCellTag {
             4 => Ok(Self::Error),
             5 => Ok(Self::DateTime),
             6 => Ok(Self::Duration),
-            7 => Err(ExcelError::new(ExcelErrorKind::Value)
-                .with_message("Bulk write wire tag 7 (Pending) is not allowed")),
+            7 => Ok(Self::Date),
+            8 => Ok(Self::Time),
             other => Err(ExcelError::new(ExcelErrorKind::Value)
                 .with_message(format!("Unknown bulk write wire tag: {other}"))),
         }
@@ -289,7 +291,9 @@ fn validate_wire_cells(
             BulkCellTag::Empty
             | BulkCellTag::Number
             | BulkCellTag::DateTime
-            | BulkCellTag::Duration => {}
+            | BulkCellTag::Duration
+            | BulkCellTag::Date
+            | BulkCellTag::Time => {}
             BulkCellTag::Boolean => {
                 if !(num == 0.0 || num == 1.0) {
                     return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
@@ -322,15 +326,6 @@ fn validate_wire_cells(
 }
 
 #[inline]
-fn wire_datetime_format(serial: f64) -> FormatId {
-    if serial.fract() == 0.0 {
-        FormatId::DATE
-    } else {
-        FormatId::DATETIME
-    }
-}
-
-#[inline]
 fn decode_wire_cell<'a>(
     tag: u8,
     num: f64,
@@ -358,7 +353,7 @@ fn decode_wire_cell<'a>(
         4 => DecodedCell::Error(num as u8),
         5 => {
             if num.is_finite() {
-                DecodedCell::DateTime(num, wire_datetime_format(num))
+                DecodedCell::DateTime(num, FormatId::DATETIME)
             } else {
                 DecodedCell::Error(map_error_code(ExcelErrorKind::Num))
             }
@@ -366,6 +361,20 @@ fn decode_wire_cell<'a>(
         6 => {
             if num.is_finite() {
                 DecodedCell::Duration(num, FormatId::DURATION)
+            } else {
+                DecodedCell::Error(map_error_code(ExcelErrorKind::Num))
+            }
+        }
+        7 => {
+            if num.is_finite() {
+                DecodedCell::DateTime(num, FormatId::DATE)
+            } else {
+                DecodedCell::Error(map_error_code(ExcelErrorKind::Num))
+            }
+        }
+        8 => {
+            if num.is_finite() {
+                DecodedCell::DateTime(num, FormatId::TIME)
             } else {
                 DecodedCell::Error(map_error_code(ExcelErrorKind::Num))
             }

@@ -171,13 +171,17 @@ fn subsecond_time_datetime_and_duration_roundtrip_across_all_write_paths() {
                 );
             }
 
-            // 4. set_cells (wire DateTime + Duration; Time is represented via DateTime/Duration tags)
+            // 4. set_cells (explicit wire DateTime, Duration, and Time tags)
             let mut wb = build_workbook(date_system, changelog);
             let batch = CellBatch {
-                rows: &[1, 2],
-                cols: &[1, 1],
-                tags: &[BulkCellTag::DateTime as u8, BulkCellTag::Duration as u8],
-                numbers: &[dt_serial, dur_days],
+                rows: &[1, 2, 3],
+                cols: &[1, 1, 1],
+                tags: &[
+                    BulkCellTag::DateTime as u8,
+                    BulkCellTag::Duration as u8,
+                    BulkCellTag::Time as u8,
+                ],
+                numbers: &[dt_serial, dur_days, time_serial],
                 text_bytes: &[],
                 text_offsets: &[],
             };
@@ -192,9 +196,14 @@ fn subsecond_time_datetime_and_duration_roundtrip_across_all_write_paths() {
                 expected_dur,
                 "set_cells duration ({label})"
             );
+            assert_eq!(
+                wb.get_value("S", 3, 1),
+                expected_time,
+                "set_cells time ({label})"
+            );
 
-            // Also verify Time via set_cells with fractional-only serial (FormatId::DATETIME
-            // serial < 1.0 -> epoch date + 12:00:00.500) matches identically between fast & logged paths.
+            // Also verify fractional-only serial under BulkCellTag::DateTime matches
+            // identically between fast & logged paths.
             let mut wb_time_fast = build_workbook(date_system, false);
             let mut wb_time_logged = build_workbook(date_system, true);
             let time_batch = CellBatch {

@@ -1341,12 +1341,14 @@ pub type formualizer_eval::engine::effects::EffectBatch = alloc::vec::Vec<(formu
 pub mod formualizer_eval::engine::eval
 #[repr(u8)] pub enum formualizer_eval::engine::eval::BulkCellTag
 pub formualizer_eval::engine::eval::BulkCellTag::Boolean = 2
+pub formualizer_eval::engine::eval::BulkCellTag::Date = 7
 pub formualizer_eval::engine::eval::BulkCellTag::DateTime = 5
 pub formualizer_eval::engine::eval::BulkCellTag::Duration = 6
 pub formualizer_eval::engine::eval::BulkCellTag::Empty = 0
 pub formualizer_eval::engine::eval::BulkCellTag::Error = 4
 pub formualizer_eval::engine::eval::BulkCellTag::Number = 1
 pub formualizer_eval::engine::eval::BulkCellTag::Text = 3
+pub formualizer_eval::engine::eval::BulkCellTag::Time = 8
 impl core::clone::Clone for formualizer_eval::engine::BulkCellTag
 pub fn formualizer_eval::engine::BulkCellTag::clone(&self) -> formualizer_eval::engine::BulkCellTag
 impl core::cmp::Eq for formualizer_eval::engine::BulkCellTag
@@ -5159,12 +5161,14 @@ pub fn formualizer_eval::engine::journal::ArrowOp::fmt(&self, &mut core::fmt::Fo
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::journal::ArrowOp
 #[repr(u8)] pub enum formualizer_eval::engine::BulkCellTag
 pub formualizer_eval::engine::BulkCellTag::Boolean = 2
+pub formualizer_eval::engine::BulkCellTag::Date = 7
 pub formualizer_eval::engine::BulkCellTag::DateTime = 5
 pub formualizer_eval::engine::BulkCellTag::Duration = 6
 pub formualizer_eval::engine::BulkCellTag::Empty = 0
 pub formualizer_eval::engine::BulkCellTag::Error = 4
 pub formualizer_eval::engine::BulkCellTag::Number = 1
 pub formualizer_eval::engine::BulkCellTag::Text = 3
+pub formualizer_eval::engine::BulkCellTag::Time = 8
 impl core::clone::Clone for formualizer_eval::engine::BulkCellTag
 pub fn formualizer_eval::engine::BulkCellTag::clone(&self) -> formualizer_eval::engine::BulkCellTag
 impl core::cmp::Eq for formualizer_eval::engine::BulkCellTag
