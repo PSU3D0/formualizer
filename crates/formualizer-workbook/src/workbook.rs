@@ -1116,6 +1116,22 @@ fn finite_cell_values(cells: &mut BTreeMap<(u32, u32), crate::traits::CellData>)
     }
 }
 
+/// Cached external workbook sheets (`[N]Sheet`) are read-only snapshots of
+/// linked workbooks and must not be mutated through any cell write path.
+fn reject_cached_external_sheet(sheet: &str) -> Result<(), IoError> {
+    if sheet
+        .strip_prefix('[')
+        .and_then(|s| s.split_once(']'))
+        .is_some_and(|(index, _)| !index.is_empty() && index.bytes().all(|c| c.is_ascii_digit()))
+    {
+        return Err(IoError::Engine(
+            ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Cached external workbook values are read-only"),
+        ));
+    }
+    Ok(())
+}
+
 /// Validate a 1-based Excel cell coordinate (`1..=1_048_576`, `1..=16_384`),
 /// routing through `RelativeCoord::try_new` so row/col `0` and out-of-grid
 /// coordinates return `Err(IoError)` instead of panicking or mapping `0` to `A1`.
@@ -1220,6 +1236,7 @@ impl WorkbookAction<'_> {
         value: LiteralValue,
     ) -> Result<(), IoError> {
         validate_excel_coord(sheet, row, col)?;
+        reject_cached_external_sheet(sheet)?;
         self.ops
             .set_value(sheet, row, col, value.finite_or_num_error())
     }
@@ -1233,6 +1250,7 @@ impl WorkbookAction<'_> {
         formula: &str,
     ) -> Result<(), IoError> {
         validate_excel_coord(sheet, row, col)?;
+        reject_cached_external_sheet(sheet)?;
         self.ops.set_formula(sheet, row, col, formula)
     }
 
@@ -1245,6 +1263,7 @@ impl WorkbookAction<'_> {
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
+        reject_cached_external_sheet(sheet)?;
         let rows = finite_rows(rows);
         self.ops.set_values(sheet, start_row, start_col, &rows)
     }
@@ -1259,6 +1278,7 @@ impl WorkbookAction<'_> {
         for &(r, c) in cells.keys() {
             validate_excel_coord(sheet, r, c)?;
         }
+        reject_cached_external_sheet(sheet)?;
         finite_cell_values(&mut cells);
         self.ops.write_range(sheet, start, cells)
     }
@@ -2628,21 +2648,12 @@ impl Workbook {
         // No cell holds NaN or an infinity: store them as #NUM!, as the
         // loaders do.
         let value = value.finite_or_num_error();
-        if sheet
-            .strip_prefix('[')
-            .and_then(|s| s.split_once(']'))
-            .is_some_and(|(index, _)| {
-                !index.is_empty() && index.bytes().all(|c| c.is_ascii_digit())
-            })
-        {
-            return Err(IoError::Engine(
-                ExcelError::new(ExcelErrorKind::Ref)
-                    .with_message("Cached external workbook values are read-only"),
-            ));
-        }
+        reject_cached_external_sheet(sheet)?;
         #[cfg(feature = "xlsx-recalc")]
-        self.refused_external_formulas
-            .remove(&(sheet.to_string(), row, col));
+        if !self.refused_external_formulas.is_empty() {
+            self.refused_external_formulas
+                .remove(&(sheet.to_string(), row, col));
+        }
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
@@ -2752,9 +2763,12 @@ impl Workbook {
         formula: &str,
     ) -> Result<(), IoError> {
         let coord = validate_excel_coord(sheet, row, col)?;
+        reject_cached_external_sheet(sheet)?;
         #[cfg(feature = "xlsx-recalc")]
-        self.refused_external_formulas
-            .remove(&(sheet.to_string(), row, col));
+        if !self.refused_external_formulas.is_empty() {
+            self.refused_external_formulas
+                .remove(&(sheet.to_string(), row, col));
+        }
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
@@ -2940,6 +2954,7 @@ impl Workbook {
         for &(r, c) in cells.keys() {
             validate_excel_coord(sheet, r, c)?;
         }
+        reject_cached_external_sheet(sheet)?;
         finite_cell_values(&mut cells);
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
@@ -2960,6 +2975,15 @@ impl Workbook {
         _start: (u32, u32),
         cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        #[cfg(feature = "xlsx-recalc")]
+        if !self.refused_external_formulas.is_empty() {
+            for (&(r, c), d) in &cells {
+                if d.value.is_some() || d.formula.is_some() {
+                    self.refused_external_formulas
+                        .remove(&(sheet.to_string(), r, c));
+                }
+            }
+        }
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -3132,6 +3156,7 @@ impl Workbook {
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
+        reject_cached_external_sheet(sheet)?;
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
@@ -3167,6 +3192,18 @@ impl Workbook {
             let end_row = start_row.saturating_add(last_row_idx as u32);
             let end_col = start_col.saturating_add((width - 1) as u32);
             self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
+        }
+
+        #[cfg(feature = "xlsx-recalc")]
+        if !self.refused_external_formulas.is_empty() {
+            for (ri, rvals) in rows.iter().enumerate() {
+                let r = start_row + ri as u32;
+                for ci in 0..rvals.len() {
+                    let c = start_col + ci as u32;
+                    self.refused_external_formulas
+                        .remove(&(sheet.to_string(), r, c));
+                }
+            }
         }
 
         if self.enable_changelog {
@@ -3272,6 +3309,7 @@ impl Workbook {
         rows: &[Vec<String>],
     ) -> Result<(), IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
+        reject_cached_external_sheet(sheet)?;
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
@@ -3303,6 +3341,18 @@ impl Workbook {
             let end_row = start_row.saturating_add(last_row_idx as u32);
             let end_col = start_col.saturating_add((width - 1) as u32);
             self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
+        }
+
+        #[cfg(feature = "xlsx-recalc")]
+        if !self.refused_external_formulas.is_empty() {
+            for (ri, rforms) in rows.iter().enumerate() {
+                let r = start_row + ri as u32;
+                for ci in 0..rforms.len() {
+                    let c = start_col + ci as u32;
+                    self.refused_external_formulas
+                        .remove(&(sheet.to_string(), r, c));
+                }
+            }
         }
 
         let needs_graph_edit = rows.iter().enumerate().any(|(ri, forms)| {
