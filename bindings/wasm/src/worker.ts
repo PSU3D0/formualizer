@@ -173,6 +173,7 @@ const mutationMethods=new Set(['loadEmpty','loadFromJson','loadFromXlsxBytes','a
   'setValue','setFormula','setValues','setFormulas','editBatch','beginAction','endAction','undo','redo',
   'registerFunctionModule','registerFunctionFromSource','unregisterFunction','session:writeInputs','evaluateSheetPort']);
 const workbookMethods=['addSheet','sheetNames','addTable','getTables','getNamedRanges','setTemporalEgress','setChangelogEnabled',
+  'changelogEnabled','canUndo','canRedo',
   'beginAction','endAction','undo','redo','inspectCell','precedents','dependents','trace','rangePage','getEvalPlan',
   'lastCycleTelemetry','evaluateAll','evaluateCell','evaluateCells','hasPendingInRect','pendingCellsInRect','listFunctions','unregisterFunction'] as const;
 type WorkbookRpc = {

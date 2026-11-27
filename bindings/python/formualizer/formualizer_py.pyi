@@ -1682,6 +1682,21 @@ class Workbook:
         Engine or workbook-lock poison state. True means discard this workbook.
         This health query reports a poisoned lock without recovering its contents.
         """
+    @property
+    def changelog_enabled(self) -> builtins.bool:
+        r"""
+        Whether changelog recording for undo/redo is currently enabled.
+        """
+    @property
+    def can_undo(self) -> builtins.bool:
+        r"""
+        Whether `undo()` currently has an action/change to revert.
+        """
+    @property
+    def can_redo(self) -> builtins.bool:
+        r"""
+        Whether `redo()` currently has an undone action/change to replay.
+        """
     def inspect_cell(self, address: builtins.str, *, include_values: builtins.bool = True) -> CellSnapshotReport:
         r"""
         Inspect one cell without evaluating it. Raises `InspectionError`; inspect its `code` attribute for a stable category.
@@ -1702,9 +1717,9 @@ class Workbook:
         r"""
         Page row-major through a finite or open A1 range without evaluating it.
         """
-    def __new__(cls, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
+    def __new__(cls, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, enable_changelog: typing.Optional[builtins.bool] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> Workbook: ...
     @classmethod
-    def load_path(cls, path: builtins.str, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
+    def load_path(cls, path: builtins.str, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, enable_changelog: typing.Optional[builtins.bool] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
         r"""
         Class method: load an XLSX workbook from a file path.
         
@@ -1750,9 +1765,9 @@ class Workbook:
         ```
         """
     @classmethod
-    def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook: ...
+    def from_path(cls, path: builtins.str, backend: typing.Optional[builtins.str] = None, *, path_source: typing.Optional[XlsxPathSource] = None, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, enable_changelog: typing.Optional[builtins.bool] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook: ...
     @classmethod
-    def from_bytes(cls, data: bytes, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
+    def from_bytes(cls, data: bytes, backend: typing.Optional[builtins.str] = None, *, mode: typing.Optional[WorkbookMode] = None, config: typing.Optional[WorkbookConfig] = None, enable_changelog: typing.Optional[builtins.bool] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
         r"""
         Class method: load an XLSX workbook from in-memory bytes.
         
@@ -2253,7 +2268,7 @@ class XlsxPathSource(enum.Enum):
     def __str__(self) -> builtins.str: ...
     def __repr__(self) -> builtins.str: ...
 
-def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, backend: typing.Optional[builtins.str] = None, path_source: typing.Optional[XlsxPathSource] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
+def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = None, *, backend: typing.Optional[builtins.str] = None, path_source: typing.Optional[XlsxPathSource] = None, enable_changelog: typing.Optional[builtins.bool] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
     r"""
     Load an XLSX workbook from a filesystem path.
     
@@ -2285,7 +2300,7 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
     ```
     """
 
-def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
+def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = None, backend: typing.Optional[builtins.str] = None, *, enable_changelog: typing.Optional[builtins.bool] = None, span_evaluation: typing.Optional[builtins.bool] = None, load_limits: typing.Optional[dict] = None) -> Workbook:
     r"""
     Load an XLSX workbook from in-memory bytes.
     

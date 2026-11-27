@@ -311,13 +311,14 @@ pub struct PyWorkbook {
 #[pymethods]
 impl PyWorkbook {
     #[new]
-    #[pyo3(signature = (*, mode=None, config=None, span_evaluation=None))]
+    #[pyo3(signature = (*, mode=None, config=None, enable_changelog=None, span_evaluation=None))]
     pub fn new(
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
+        enable_changelog: Option<bool>,
         span_evaluation: Option<bool>,
     ) -> PyResult<Self> {
-        let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
+        let cfg = resolve_workbook_config(mode, config, enable_changelog, span_evaluation)?;
         Ok(Self::from_inner_workbook(
             formualizer::workbook::Workbook::new_with_config(cfg),
         ))
@@ -347,7 +348,7 @@ impl PyWorkbook {
     ///     print(wb.sheet_names)
     /// ```
     #[classmethod]
-    #[pyo3(signature = (path, strategy=None, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None, load_limits=None))]
+    #[pyo3(signature = (path, strategy=None, backend=None, *, path_source=None, mode=None, config=None, enable_changelog=None, span_evaluation=None, load_limits=None))]
     #[allow(clippy::too_many_arguments)]
     pub fn load_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
@@ -357,6 +358,7 @@ impl PyWorkbook {
         path_source: Option<PyXlsxPathSource>,
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
+        enable_changelog: Option<bool>,
         span_evaluation: Option<bool>,
         load_limits: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -368,6 +370,7 @@ impl PyWorkbook {
             path_source,
             mode,
             config,
+            enable_changelog,
             span_evaluation,
             load_limits,
         )
@@ -409,7 +412,7 @@ impl PyWorkbook {
     #[classmethod]
     // Keep the existing Python call shape while adding a keyword-only option.
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (path, backend=None, *, path_source=None, mode=None, config=None, span_evaluation=None, load_limits=None))]
+    #[pyo3(signature = (path, backend=None, *, path_source=None, mode=None, config=None, enable_changelog=None, span_evaluation=None, load_limits=None))]
     pub fn from_path(
         _cls: &Bound<'_, pyo3::types::PyType>,
         path: &str,
@@ -417,6 +420,7 @@ impl PyWorkbook {
         path_source: Option<PyXlsxPathSource>,
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
+        enable_changelog: Option<bool>,
         span_evaluation: Option<bool>,
         load_limits: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
@@ -438,7 +442,7 @@ impl PyWorkbook {
                 "path_source=XlsxPathSource.DIRECT_MMAP supports only Calamine `.xlsx` filesystem paths; use SHARED_FILE or an in-memory byte API for other formats",
             ));
         }
-        let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
+        let cfg = resolve_workbook_config(mode, config, enable_changelog, span_evaluation)?;
         match backend {
             "native" | "calamine" => {
                 #[cfg(target_os = "emscripten")]
@@ -508,13 +512,15 @@ impl PyWorkbook {
     ///     mode/config: Optional workbook configuration.
     ///     load_limits: Optional native XLSX package limits; see `load_workbook`.
     #[classmethod]
-    #[pyo3(signature = (data, backend=None, *, mode=None, config=None, span_evaluation=None, load_limits=None))]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (data, backend=None, *, mode=None, config=None, enable_changelog=None, span_evaluation=None, load_limits=None))]
     pub fn from_bytes<'py>(
         _cls: &Bound<'py, pyo3::types::PyType>,
         data: &Bound<'py, PyBytes>,
         backend: Option<&str>,
         mode: Option<PyWorkbookMode>,
         config: Option<PyWorkbookConfig>,
+        enable_changelog: Option<bool>,
         span_evaluation: Option<bool>,
         load_limits: Option<&Bound<'py, PyDict>>,
     ) -> PyResult<Self> {
@@ -528,7 +534,7 @@ impl PyWorkbook {
                 "open failed: XLSX input exceeds max_input_bytes",
             ));
         }
-        let cfg = resolve_workbook_config(mode, config, span_evaluation)?;
+        let cfg = resolve_workbook_config(mode, config, enable_changelog, span_evaluation)?;
         Self::from_bytes_impl(data.as_bytes().to_vec(), backend, cfg, limits)
     }
 
@@ -1386,6 +1392,27 @@ impl PyWorkbook {
     }
 
     // Changelog controls
+    /// Whether changelog recording for undo/redo is currently enabled.
+    #[getter]
+    pub fn changelog_enabled(&self) -> PyResult<bool> {
+        let wb = self.read_inner()?;
+        Ok(wb.changelog_enabled())
+    }
+
+    /// Whether `undo()` currently has an action/change to revert.
+    #[getter]
+    pub fn can_undo(&self) -> PyResult<bool> {
+        let wb = self.read_inner()?;
+        Ok(wb.can_undo())
+    }
+
+    /// Whether `redo()` currently has an undone action/change to replay.
+    #[getter]
+    pub fn can_redo(&self) -> PyResult<bool> {
+        let wb = self.read_inner()?;
+        Ok(wb.can_redo())
+    }
+
     pub fn set_changelog_enabled(&self, enabled: bool) -> PyResult<()> {
         let mut wb = self.write_inner()?;
         wb.set_changelog_enabled(enabled);
@@ -2005,6 +2032,7 @@ impl PyWorkbook {
 fn resolve_workbook_config(
     mode: Option<PyWorkbookMode>,
     config: Option<PyWorkbookConfig>,
+    enable_changelog: Option<bool>,
     span_evaluation: Option<bool>,
 ) -> PyResult<formualizer::workbook::WorkbookConfig> {
     let resolved = if let Some(cfg) = config {
@@ -2024,8 +2052,16 @@ fn resolve_workbook_config(
         } else {
             apply_binding_eval_defaults(&mut base.eval);
         }
-        if let Some(enabled) = cfg.enable_changelog {
-            base.enable_changelog = enabled;
+        match (cfg.enable_changelog, enable_changelog) {
+            (Some(config_value), Some(argument_value)) if config_value != argument_value => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "enable_changelog conflicts with WorkbookConfig.enable_changelog",
+                ));
+            }
+            (Some(enabled), None) | (None, Some(enabled)) | (Some(enabled), Some(_)) => {
+                base = base.with_changelog(enabled);
+            }
+            (None, None) => {}
         }
         match (cfg.span_evaluation, span_evaluation) {
             (Some(config_value), Some(argument_value)) if config_value != argument_value => {
@@ -2045,6 +2081,9 @@ fn resolve_workbook_config(
             PyWorkbookMode::Interactive => formualizer::workbook::WorkbookConfig::interactive(),
         };
         apply_binding_eval_defaults(&mut base.eval);
+        if let Some(enabled) = enable_changelog {
+            base = base.with_changelog(enabled);
+        }
         if let Some(enabled) = span_evaluation {
             base = base.with_span_evaluation(enabled);
         }
@@ -2088,7 +2127,8 @@ mod tests {
 
     #[test]
     fn resolve_workbook_config_applies_host_default_without_explicit_eval_config() {
-        let resolved = resolve_workbook_config(None, None, None).expect("resolve workbook config");
+        let resolved =
+            resolve_workbook_config(None, None, None, None).expect("resolve workbook config");
         assert_eq!(
             resolved.eval.enable_parallel,
             !cfg!(target_os = "emscripten")
@@ -2117,7 +2157,7 @@ mod tests {
         };
 
         let resolved =
-            resolve_workbook_config(None, Some(cfg), None).expect("resolve workbook config");
+            resolve_workbook_config(None, Some(cfg), None, None).expect("resolve workbook config");
         assert_eq!(resolved.eval.enable_parallel, explicit.enable_parallel);
         assert!(!resolved.enable_changelog);
         assert!(resolved.eval.defer_graph_building);
@@ -2127,7 +2167,7 @@ mod tests {
     #[test]
     fn resolve_workbook_config_accepts_span_evaluation_opt_in_argument() {
         let resolved =
-            resolve_workbook_config(None, None, Some(true)).expect("resolve workbook config");
+            resolve_workbook_config(None, None, None, Some(true)).expect("resolve workbook config");
         assert_eq!(
             resolved.eval.formula_plane_mode,
             FormulaPlaneMode::AuthoritativeExperimental
@@ -2138,10 +2178,20 @@ mod tests {
     fn resolve_workbook_config_accepts_span_evaluation_opt_in_config() {
         let cfg = PyWorkbookConfig::new(PyWorkbookMode::Interactive, None, None, Some(true));
         let resolved =
-            resolve_workbook_config(None, Some(cfg), None).expect("resolve workbook config");
+            resolve_workbook_config(None, Some(cfg), None, None).expect("resolve workbook config");
         assert_eq!(
             resolved.eval.formula_plane_mode,
             FormulaPlaneMode::AuthoritativeExperimental
         );
+    }
+
+    #[test]
+    fn resolve_workbook_config_accepts_enable_changelog_opt_in_argument_and_detects_conflict() {
+        let resolved = resolve_workbook_config(None, None, Some(false), None)
+            .expect("resolve workbook config");
+        assert!(!resolved.enable_changelog);
+
+        let cfg = PyWorkbookConfig::new(PyWorkbookMode::Interactive, None, Some(true), None);
+        assert!(resolve_workbook_config(None, Some(cfg), Some(false), None).is_err());
     }
 }

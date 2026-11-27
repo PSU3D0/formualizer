@@ -154,3 +154,55 @@ fn b4_scenario3b_redundant_enable_while_compound_open_closes_compound() {
     ));
     assert_eq!(num(&wb, "S", 1, 1), 10.0);
 }
+
+#[test]
+fn changelog_inspection_and_with_changelog_builder_work_across_modes() {
+    // Default interactive workbook still has changelog enabled in v0.15.1.
+    let mut wb = Workbook::new();
+    assert!(wb.changelog_enabled());
+    assert!(!wb.can_undo());
+    assert!(!wb.can_redo());
+
+    wb.add_sheet("S").unwrap();
+    wb.set_value("S", 1, 1, LiteralValue::Number(1.0)).unwrap();
+    assert!(wb.can_undo());
+    assert!(!wb.can_redo());
+
+    wb.undo().unwrap();
+    assert!(!wb.can_undo());
+    assert!(wb.can_redo());
+
+    // A new forward edit clears the redo stack immediately.
+    wb.set_value("S", 1, 1, LiteralValue::Number(2.0)).unwrap();
+    assert!(wb.can_undo());
+    assert!(!wb.can_redo());
+
+    // Disabling clears logged history so can_undo/can_redo drop to false.
+    wb.set_changelog_enabled(false);
+    assert!(!wb.changelog_enabled());
+    assert!(!wb.can_undo());
+    assert!(!wb.can_redo());
+
+    // Opting out via WorkbookConfig::interactive().with_changelog(false).
+    let mut wb_off = Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(false));
+    assert!(!wb_off.changelog_enabled());
+    assert!(!wb_off.can_undo());
+    assert!(!wb_off.can_redo());
+    wb_off.add_sheet("S").unwrap();
+    wb_off
+        .action("a1", |tx| {
+            tx.set_value("S", 1, 1, LiteralValue::Number(7.0))
+        })
+        .unwrap();
+    assert!(wb_off.can_undo());
+    assert!(!wb_off.can_redo());
+    wb_off.undo().unwrap();
+    assert!(!wb_off.can_undo());
+    assert!(wb_off.can_redo());
+    // Unjournaled mutation clears action-journal undo/redo stacks.
+    wb_off
+        .set_value("S", 1, 1, LiteralValue::Number(9.0))
+        .unwrap();
+    assert!(!wb_off.can_undo());
+    assert!(!wb_off.can_redo());
+}

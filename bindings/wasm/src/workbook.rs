@@ -57,6 +57,8 @@ struct JsWorkbookLoadOptions {
     #[serde(skip)]
     load_limits: Option<JsXlsxLoadLimits>,
     span_evaluation: Option<bool>,
+    /// Enable or disable changelog recording for undo/redo.
+    enable_changelog: Option<bool>,
     /// Cycle detection mode: `"static"` | `"runtime"` (spec §2).
     cycle_detection: Option<String>,
     /// Cycle policy for live cycles: `"error"` | `"iterate"` (spec §2).
@@ -198,6 +200,9 @@ fn workbook_config_from_parsed(
     let mut cfg = formualizer::workbook::WorkbookConfig::interactive();
     if let Some(enabled) = parsed.span_evaluation {
         cfg = cfg.with_span_evaluation(enabled);
+    }
+    if let Some(enabled) = parsed.enable_changelog {
+        cfg = cfg.with_changelog(enabled);
     }
 
     // Cycle / iterative-calculation config (RFC #113, spec §2). Build the
@@ -1616,6 +1621,33 @@ impl Workbook {
     }
 
     // ----- Changelog / Undo / Redo -----
+    #[wasm_bindgen(js_name = "changelogEnabled")]
+    pub fn changelog_enabled(&self) -> Result<bool, JsValue> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        Ok(wb.changelog_enabled())
+    }
+
+    #[wasm_bindgen(js_name = "canUndo")]
+    pub fn can_undo(&self) -> Result<bool, JsValue> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        Ok(wb.can_undo())
+    }
+
+    #[wasm_bindgen(js_name = "canRedo")]
+    pub fn can_redo(&self) -> Result<bool, JsValue> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        Ok(wb.can_redo())
+    }
+
     #[wasm_bindgen(js_name = "setChangelogEnabled")]
     pub fn set_changelog_enabled(&self, enabled: bool) -> Result<(), JsValue> {
         let mut wb = self

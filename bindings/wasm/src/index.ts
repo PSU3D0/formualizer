@@ -602,6 +602,8 @@ export interface WorkbookLoadOptions {
   backend?: 'calamine' | 'native';
   /** Opt into experimental FormulaPlane span evaluation. */
   spanEvaluation?: boolean;
+  /** Enable or disable changelog recording for undo/redo. */
+  enableChangelog?: boolean;
   /** Cycle detection mode (spec §2). */
   cycleDetection?: 'static' | 'runtime';
   /** Cycle policy for live cycles (spec §2). `'iterate'` implies runtime detection. */

@@ -1321,6 +1321,11 @@ impl WorkbookConfig {
         }
     }
 
+    pub fn with_changelog(mut self, enabled: bool) -> Self {
+        self.enable_changelog = enabled;
+        self
+    }
+
     pub fn with_history_limit(mut self, limit: Option<usize>) -> Self {
         self.eval.max_changelog_events = limit;
         self
@@ -1880,6 +1885,28 @@ impl Workbook {
     }
 
     // Changelog controls
+    pub fn changelog_enabled(&self) -> bool {
+        self.enable_changelog
+    }
+
+    /// Whether [`Workbook::undo`] currently has an intact action/change to revert.
+    pub fn can_undo(&self) -> bool {
+        if self.enable_changelog {
+            !self.log.is_empty() && !self.log.last_group_indices().is_empty()
+        } else {
+            self.undo.actions_done_len() > 0
+        }
+    }
+
+    /// Whether [`Workbook::redo`] currently has an undone action/change to replay.
+    pub fn can_redo(&self) -> bool {
+        if self.enable_changelog {
+            self.undo.undone_len() > 0
+        } else {
+            self.undo.actions_undone_len() > 0
+        }
+    }
+
     pub fn set_changelog_enabled(&mut self, enabled: bool) {
         while self.log.compound_depth() > 0 {
             self.log.end_compound();
@@ -1899,6 +1926,14 @@ impl Workbook {
         }
         while self.undo.pop_undo_action().is_some() {}
         while self.undo.pop_redo_action().is_some() {}
+    }
+
+    #[inline]
+    fn on_forward_logged_mutation(&mut self) {
+        if self.undo.undone_len() > 0 {
+            self.undo.clear_logged_redo();
+        }
+        self.clear_action_history_if_non_empty();
     }
 
     #[inline]
@@ -2198,7 +2233,7 @@ impl Workbook {
                 formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
                 other => IoError::from_backend("editor", other),
             })?;
-            self.clear_action_history_if_non_empty();
+            self.on_forward_logged_mutation();
             return Ok(out);
         }
 
@@ -2645,7 +2680,7 @@ impl Workbook {
             if let Some(before) = staged_before {
                 self.record_staged_formula_cell_change(sheet, row, col, before, None);
             }
-            self.clear_action_history_if_non_empty();
+            self.on_forward_logged_mutation();
             self.engine.mark_data_edited();
             Ok(())
         } else {
@@ -2762,7 +2797,7 @@ impl Workbook {
                     if let Some(before) = staged_before {
                         self.record_staged_formula_cell_change(sheet, row, col, before, None);
                     }
-                    self.clear_action_history_if_non_empty();
+                    self.on_forward_logged_mutation();
                     self.engine.mark_data_edited();
                     Ok(())
                 } else {
@@ -2779,7 +2814,7 @@ impl Workbook {
                 if let Some(before) = staged_before {
                     let after = self.staged_formula_cell(sheet, row, col);
                     self.record_staged_formula_cell_change(sheet, row, col, before, after);
-                    self.clear_action_history_if_non_empty();
+                    self.on_forward_logged_mutation();
                 } else {
                     self.invalidate_history_for_unjournaled_mutation();
                 }
@@ -2810,7 +2845,7 @@ impl Workbook {
                 if let Some(before) = staged_before {
                     self.record_staged_formula_cell_change(sheet, row, col, before, None);
                 }
-                self.clear_action_history_if_non_empty();
+                self.on_forward_logged_mutation();
                 self.engine.mark_data_edited();
                 Ok(())
             } else {
@@ -3047,7 +3082,7 @@ impl Workbook {
                 }
             }
             if !items.is_empty() {
-                self.clear_action_history_if_non_empty();
+                self.on_forward_logged_mutation();
             }
             self.engine.mark_data_edited();
             Ok(())
@@ -3202,7 +3237,7 @@ impl Workbook {
                 }
             }
             if had_items {
-                self.clear_action_history_if_non_empty();
+                self.on_forward_logged_mutation();
             }
             self.engine.mark_data_edited();
             Ok(())
@@ -3297,7 +3332,7 @@ impl Workbook {
             }
             if wrote_any {
                 if self.enable_changelog {
-                    self.clear_action_history_if_non_empty();
+                    self.on_forward_logged_mutation();
                 } else {
                     self.invalidate_history_for_unjournaled_mutation();
                 }
@@ -3361,7 +3396,7 @@ impl Workbook {
                 }
             }
             if had_formulas {
-                self.clear_action_history_if_non_empty();
+                self.on_forward_logged_mutation();
             }
             self.engine.mark_data_edited();
             Ok(())
@@ -3838,7 +3873,7 @@ impl Workbook {
             self.engine
                 .define_name_with_logger(&mut self.log, name, definition, scope)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.clear_action_history_if_non_empty();
+            self.on_forward_logged_mutation();
             Ok(())
         } else {
             self.engine
@@ -3860,7 +3895,7 @@ impl Workbook {
             self.engine
                 .update_name_with_logger(&mut self.log, name, definition, scope)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.clear_action_history_if_non_empty();
+            self.on_forward_logged_mutation();
             Ok(())
         } else {
             self.engine
@@ -3882,7 +3917,7 @@ impl Workbook {
             self.engine
                 .delete_name_with_logger(&mut self.log, name, scope)
                 .map_err(|e| IoError::from_backend("editor", e))?;
-            self.clear_action_history_if_non_empty();
+            self.on_forward_logged_mutation();
             Ok(())
         } else {
             self.engine

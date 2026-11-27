@@ -2467,3 +2467,42 @@ fn test_issue_626_from_json_preserves_sheet_insertion_order() {
         3.0
     );
 }
+
+#[wasm_bindgen_test]
+fn test_changelog_options_and_inspection_methods() {
+    let default_wb = Workbook::new(None).unwrap();
+    assert!(default_wb.changelog_enabled().unwrap());
+    assert!(!default_wb.can_undo().unwrap());
+    assert!(!default_wb.can_redo().unwrap());
+
+    default_wb.add_sheet("S".into()).unwrap();
+    default_wb
+        .set_value("S".into(), 1, 1, JsValue::from_f64(10.0))
+        .unwrap();
+    assert!(default_wb.can_undo().unwrap());
+    assert!(!default_wb.can_redo().unwrap());
+
+    default_wb.undo().unwrap();
+    assert!(!default_wb.can_undo().unwrap());
+    assert!(default_wb.can_redo().unwrap());
+
+    default_wb.redo().unwrap();
+    assert!(default_wb.can_undo().unwrap());
+    assert!(!default_wb.can_redo().unwrap());
+
+    let opts = Object::new();
+    set_prop(&opts, "enableChangelog", JsValue::FALSE);
+    let disabled_wb = Workbook::new(Some(opts.into())).unwrap();
+    assert!(!disabled_wb.changelog_enabled().unwrap());
+    assert!(!disabled_wb.can_undo().unwrap());
+    assert!(!disabled_wb.can_redo().unwrap());
+
+    let json_opts = Object::new();
+    set_prop(&json_opts, "enableChangelog", JsValue::FALSE);
+    let json_wb = Workbook::from_json_with_options(
+        r#"{"version":1,"sheets":{"S":{"cells":[]}}}"#.to_string(),
+        Some(json_opts.into()),
+    )
+    .unwrap();
+    assert!(!json_wb.changelog_enabled().unwrap());
+}

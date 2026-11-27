@@ -2023,8 +2023,11 @@ pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan(&self) -> cor
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::cached_external_link_indices(&self) -> &[usize]
+pub fn formualizer_workbook::workbook::Workbook::can_redo(&self) -> bool
+pub fn formualizer_workbook::workbook::Workbook::can_undo(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
 pub fn formualizer_workbook::workbook::Workbook::changelog(&self) -> &formualizer_eval::engine::graph::editor::change_log::ChangeLog
+pub fn formualizer_workbook::workbook::Workbook::changelog_enabled(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::define_named_range(&mut self, &str, &formualizer_common::range::RangeAddress, formualizer_workbook::traits::NamedRangeScope) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::define_table(&mut self, &str, &str, (u32, u32, u32, u32), alloc::vec::Vec<alloc::string::String>, bool, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::delete_named_range(&mut self, &str, formualizer_workbook::traits::NamedRangeScope, core::option::Option<&str>) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -2161,6 +2164,7 @@ pub const formualizer_workbook::workbook::WorkbookConfig::DEFAULT_INTERACTIVE_HI
 pub fn formualizer_workbook::workbook::WorkbookConfig::ephemeral() -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::interactive() -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::span_evaluation_enabled(&self) -> bool
+pub fn formualizer_workbook::workbook::WorkbookConfig::with_changelog(self, bool) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_formula_plane_mode(self, formualizer_eval::engine::FormulaPlaneMode) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_history_limit(self, core::option::Option<usize>) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_ingest_limits(self, formualizer_eval::engine::WorkbookLoadLimits) -> Self
@@ -3435,8 +3439,11 @@ pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan(&self) -> cor
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget]) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::build_recalc_plan_for_targets_with_options(&mut self, &[formualizer_eval::engine::target_preparation::EvaluationTarget], formualizer_eval::engine::target_preparation::TargetEvalOptions<'_>) -> core::result::Result<formualizer_eval::engine::eval::RecalcPlan, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::cached_external_link_indices(&self) -> &[usize]
+pub fn formualizer_workbook::workbook::Workbook::can_redo(&self) -> bool
+pub fn formualizer_workbook::workbook::Workbook::can_undo(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::cancel_recalc(&mut self) -> core::option::Option<formualizer_eval::engine::resumable::StepReport>
 pub fn formualizer_workbook::workbook::Workbook::changelog(&self) -> &formualizer_eval::engine::graph::editor::change_log::ChangeLog
+pub fn formualizer_workbook::workbook::Workbook::changelog_enabled(&self) -> bool
 pub fn formualizer_workbook::workbook::Workbook::define_named_range(&mut self, &str, &formualizer_common::range::RangeAddress, formualizer_workbook::traits::NamedRangeScope) -> core::result::Result<(), formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::workbook::Workbook::define_table(&mut self, &str, &str, (u32, u32, u32, u32), alloc::vec::Vec<alloc::string::String>, bool, bool) -> core::result::Result<(), formualizer_common::error::ExcelError>
 pub fn formualizer_workbook::workbook::Workbook::delete_named_range(&mut self, &str, formualizer_workbook::traits::NamedRangeScope, core::option::Option<&str>) -> core::result::Result<(), formualizer_workbook::error::IoError>
@@ -3563,6 +3570,7 @@ pub const formualizer_workbook::workbook::WorkbookConfig::DEFAULT_INTERACTIVE_HI
 pub fn formualizer_workbook::workbook::WorkbookConfig::ephemeral() -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::interactive() -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::span_evaluation_enabled(&self) -> bool
+pub fn formualizer_workbook::workbook::WorkbookConfig::with_changelog(self, bool) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_formula_plane_mode(self, formualizer_eval::engine::FormulaPlaneMode) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_history_limit(self, core::option::Option<usize>) -> Self
 pub fn formualizer_workbook::workbook::WorkbookConfig::with_ingest_limits(self, formualizer_eval::engine::WorkbookLoadLimits) -> Self
