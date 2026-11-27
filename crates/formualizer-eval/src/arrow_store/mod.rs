@@ -5268,10 +5268,11 @@ impl ArrowSheet {
         }
 
         // "Dense" mode: every column has every chunk (legacy invariant).
-        let dense_aligned = self
-            .columns
-            .iter()
-            .all(|c| c.sparse_chunks.is_empty() && c.chunks.len() == self.chunk_starts.len());
+        let dense_aligned = !self.columns.is_empty()
+            && self
+                .columns
+                .iter()
+                .all(|c| c.sparse_chunks.is_empty() && c.chunks.len() == self.chunk_starts.len());
 
         let insert_at = before.min(total_rows);
         let (split_idx, split_off) = if insert_at == total_rows {
@@ -5455,10 +5456,11 @@ impl ArrowSheet {
         }
 
         // "Dense" mode: every column has every chunk (legacy invariant).
-        let dense_aligned = self
-            .columns
-            .iter()
-            .all(|c| c.sparse_chunks.is_empty() && c.chunks.len() == self.chunk_starts.len());
+        let dense_aligned = !self.columns.is_empty()
+            && self
+                .columns
+                .iter()
+                .all(|c| c.sparse_chunks.is_empty() && c.chunks.len() == self.chunk_starts.len());
 
         if dense_aligned {
             // Dense rebuild by slicing out the deleted window.
@@ -5621,6 +5623,20 @@ impl ArrowSheet {
         }
     }
 
+    /// Ensure at least `min_cols` columns exist without eagerly allocating dense
+    /// empty chunks for intermediate untouched columns (B5).
+    pub(crate) fn ensure_column_capacity_lazy(&mut self, min_cols: usize) {
+        if min_cols > self.columns.len() {
+            let start = self.columns.len();
+            self.columns
+                .extend((start..min_cols).map(|idx| ArrowColumn {
+                    chunks: Vec::new(),
+                    sparse_chunks: FxHashMap::default(),
+                    index: idx as u32,
+                }));
+        }
+    }
+
     /// Insert `count` columns before absolute 0-based column `before` with empty chunks.
     pub fn insert_columns(&mut self, before: usize, count: usize) {
         if count == 0 {
@@ -5651,9 +5667,20 @@ impl ArrowSheet {
                 .map(|c| c.type_tag.len())
                 .collect()
         } else if self.columns.is_empty() {
-            // No columns: single chunk matching nrows if any
+            // Derive chunk lengths from chunk_starts so chunks always align with
+            // chunk boundaries instead of collapsing into one oversized chunk (E1).
             if self.nrows > 0 {
-                vec![self.nrows as usize]
+                if self.chunk_starts.is_empty() {
+                    self.chunk_starts.push(0);
+                }
+                let nrows = self.nrows as usize;
+                (0..self.chunk_starts.len())
+                    .map(|i| {
+                        let start = self.chunk_starts[i];
+                        let end = self.chunk_starts.get(i + 1).copied().unwrap_or(nrows);
+                        end.saturating_sub(start)
+                    })
+                    .collect()
             } else {
                 Vec::new()
             }
@@ -8411,5 +8438,63 @@ mod tests {
         }
         assert_eq!(errs[4], Some(map_error_code(ExcelErrorKind::Div)));
         assert!(errs[3].is_none());
+    }
+
+    #[test]
+    fn insert_columns_on_zero_column_multi_chunk_sheet_matches_chunk_starts() {
+        let mut sheet = ArrowSheet {
+            name: Arc::from("S"),
+            date_system: crate::engine::DateSystem::Excel1900,
+            columns: Vec::new(),
+            nrows: 0,
+            chunk_starts: Vec::new(),
+            chunk_rows: 4,
+        };
+        sheet.ensure_row_capacity(10);
+        assert_eq!(sheet.chunk_starts, vec![0, 4, 8]);
+
+        sheet.insert_columns(0, 2);
+        assert_eq!(sheet.columns.len(), 2);
+        for col in &sheet.columns {
+            let lens: Vec<usize> = col.chunks.iter().map(|ch| ch.type_tag.len()).collect();
+            assert_eq!(lens, vec![4, 4, 2]);
+        }
+        assert_eq!(sheet.chunk_starts, vec![0, 4, 8]);
+    }
+
+    #[test]
+    fn ensure_column_capacity_lazy_works_with_row_structural_ops() {
+        let mut b = IngestBuilder::new("S", 1, 4, crate::engine::DateSystem::Excel1900);
+        for i in 0..8 {
+            b.append_row(&[LiteralValue::Number(i as f64)]).unwrap();
+        }
+        let mut sheet = b.finish();
+        sheet.ensure_column_capacity_lazy(50);
+        assert_eq!(sheet.columns.len(), 50);
+        for col in &sheet.columns[1..] {
+            assert_eq!(col.total_chunk_count(), 0);
+        }
+
+        // Write a single far-right cell and apply row insert/delete across mixed dense+lazy columns.
+        let (ch_idx, off) = sheet.chunk_of_row(5).unwrap();
+        sheet
+            .ensure_column_chunk_mut(49, ch_idx)
+            .unwrap()
+            .overlay
+            .set(off, OverlayValue::Number(99.0));
+        assert_eq!(sheet.get_cell_value(5, 49), LiteralValue::Number(99.0));
+
+        sheet.insert_rows(2, 3);
+        assert_eq!(sheet.get_cell_value(8, 49), LiteralValue::Number(99.0));
+        assert_eq!(sheet.get_cell_value(5, 0), LiteralValue::Number(2.0));
+
+        sheet.delete_rows(2, 3);
+        assert_eq!(sheet.get_cell_value(5, 49), LiteralValue::Number(99.0));
+        assert_eq!(sheet.get_cell_value(5, 0), LiteralValue::Number(5.0));
+
+        // Untouched intermediate columns stay completely lazy through structural row ops.
+        for col in &sheet.columns[1..49] {
+            assert_eq!(col.total_chunk_count(), 0);
+        }
     }
 }

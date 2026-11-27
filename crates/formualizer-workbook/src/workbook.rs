@@ -2490,16 +2490,63 @@ impl Workbook {
             .sheet_mut(sheet)
             .expect("ArrowSheet must exist");
 
-        // Ensure rows first so nrows is set before inserting columns
+        // Ensure rows first so nrows/chunk_starts are updated before extending columns.
         if min_rows > asheet.nrows as usize {
             asheet.ensure_row_capacity(min_rows);
         }
 
-        // Then ensure columns - they will get properly sized chunks since nrows is set
+        // Extend columns lazily (no dense empty chunks allocated for untouched columns, B5).
         let cur_cols = asheet.columns.len();
         if min_cols > cur_cols {
-            asheet.insert_columns(cur_cols, min_cols - cur_cols);
+            asheet.columns.extend((cur_cols..min_cols).map(|idx| {
+                formualizer_eval::arrow_store::ArrowColumn {
+                    chunks: Vec::new(),
+                    sparse_chunks: rustc_hash::FxHashMap::default(),
+                    index: idx as u32,
+                }
+            }));
         }
+    }
+
+    fn enforce_write_limits(
+        &self,
+        sheet: &str,
+        max_row: u32,
+        max_col: u32,
+        written_cells: usize,
+    ) -> Result<(), IoError> {
+        if max_row == 0 || max_col == 0 {
+            return Ok(());
+        }
+        let (cur_rows, cur_cols) = self.sheet_dimensions(sheet).unwrap_or((0, 0));
+        let target_rows = cur_rows.max(max_row);
+        let target_cols = cur_cols.max(max_col);
+        let limits = self.engine.workbook_load_limits();
+        crate::load_limits::enforce_sheet_dimension_limits(
+            "workbook",
+            sheet,
+            target_rows,
+            target_cols,
+            limits,
+        )?;
+        if written_cells as u64 > limits.max_sheet_logical_cells {
+            return Err(IoError::load_budget_exceeded(
+                "workbook",
+                sheet,
+                format!(
+                    "write batch of {written_cells} cells exceeds the configured logical-cell budget of {}",
+                    limits.max_sheet_logical_cells
+                ),
+            ));
+        }
+        crate::load_limits::enforce_sheet_load_limits(
+            "workbook",
+            sheet,
+            target_rows,
+            target_cols,
+            written_cells,
+            limits,
+        )
     }
 
     fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
@@ -2649,6 +2696,7 @@ impl Workbook {
         // loaders do.
         let value = value.finite_or_num_error();
         reject_cached_external_sheet(sheet)?;
+        self.enforce_write_limits(sheet, row, col, 1)?;
         #[cfg(feature = "xlsx-recalc")]
         if !self.refused_external_formulas.is_empty() {
             self.refused_external_formulas
@@ -2764,6 +2812,7 @@ impl Workbook {
     ) -> Result<(), IoError> {
         let coord = validate_excel_coord(sheet, row, col)?;
         reject_cached_external_sheet(sheet)?;
+        self.enforce_write_limits(sheet, row, col, 1)?;
         #[cfg(feature = "xlsx-recalc")]
         if !self.refused_external_formulas.is_empty() {
             self.refused_external_formulas
@@ -2955,6 +3004,11 @@ impl Workbook {
             validate_excel_coord(sheet, r, c)?;
         }
         reject_cached_external_sheet(sheet)?;
+        if !cells.is_empty() {
+            let max_row = cells.keys().map(|&(r, _)| r).max().unwrap_or(0);
+            let max_col = cells.keys().map(|&(_, c)| c).max().unwrap_or(0);
+            self.enforce_write_limits(sheet, max_row, max_col, cells.len())?;
+        }
         finite_cell_values(&mut cells);
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
@@ -3157,6 +3211,15 @@ impl Workbook {
     ) -> Result<(), IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
         reject_cached_external_sheet(sheet)?;
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
+            && width > 0
+        {
+            let end_row = start_row.saturating_add(last_row_idx as u32);
+            let end_col = start_col.saturating_add((width - 1) as u32);
+            let written_cells: usize = rows.iter().map(Vec::len).sum();
+            self.enforce_write_limits(sheet, end_row, end_col, written_cells)?;
+        }
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
@@ -3310,6 +3373,15 @@ impl Workbook {
     ) -> Result<(), IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
         reject_cached_external_sheet(sheet)?;
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
+            && width > 0
+        {
+            let end_row = start_row.saturating_add(last_row_idx as u32);
+            let end_col = start_col.saturating_add((width - 1) as u32);
+            let written_cells: usize = rows.iter().map(Vec::len).sum();
+            self.enforce_write_limits(sheet, end_row, end_col, written_cells)?;
+        }
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
