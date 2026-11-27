@@ -254,9 +254,10 @@ def test_to_dict_full_nested_structure_for_every_report_kind() -> None:
     sheet.set_formula(1, 2, "=A1+SUM(A1:A2)")
     sheet.set_formula(1, 3, "=B1+1")
     wb.evaluate_all()
-    # Logged formula topology edits now advance the mutation stamp as well.
+    # With default-off changelog, two value writes, two staged formulas, sheet creation,
+    # and deferred graph build advance the mutation stamp to 6.
     # This exact fixture value checks serialization, not a one-tick-per-edit API.
-    stamp = {"mutation_revision": 8, "recalc_epoch": 1}
+    stamp = {"mutation_revision": 6, "recalc_epoch": 1}
 
     assert wb.inspect_cell("S!B1").to_dict() == {
         "stamp": stamp,

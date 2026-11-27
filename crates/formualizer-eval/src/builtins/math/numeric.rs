@@ -2501,7 +2501,7 @@ impl Function for SumsqFn {
                             total += n * n;
                         }
                         LiteralValue::Duration(d) => {
-                            let n = d.num_seconds() as f64 / 86_400.0;
+                            let n = formualizer_common::duration_to_days_fraction(d);
                             total += n * n;
                         }
                         _ => {}

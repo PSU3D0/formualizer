@@ -12994,16 +12994,27 @@ where
 
     /// Mirror a single cell value into the Arrow overlay if enabled.
     /// Handles capacity growth, per-chunk overlay set, and heuristic compaction.
-    fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
+    ///
+    /// Internal; not for external use (writes the overlay directly without
+    /// updating dependency-graph or dirty-propagation state).
+    #[doc(hidden)]
+    pub fn mirror_value_to_overlay(
+        &mut self,
+        sheet: &str,
+        row: u32,
+        col: u32,
+        value: &LiteralValue,
+    ) {
         if !(self.config.arrow_storage_enabled && self.config.delta_overlay_enabled) {
             return;
         }
         if self.arrow_sheets.sheet(sheet).is_none() {
-            self.arrow_sheets
+            let date_system = self.config.date_system;
+            self.sheet_store_mut()
                 .sheets
                 .push(crate::arrow_store::ArrowSheet {
                     name: std::sync::Arc::<str>::from(sheet),
-                    date_system: self.config.date_system,
+                    date_system,
                     columns: Vec::new(),
                     nrows: 0,
                     chunk_starts: Vec::new(),
@@ -15361,7 +15372,7 @@ where
         };
         match class {
             Some(FormatClass::Date) if serial.fract() != 0.0 => {
-                formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                formualizer_common::try_serial_to_datetime_subsec_for(date_system, serial)
                     .map(LiteralValue::DateTime)
                     .unwrap_or(LiteralValue::Number(serial))
             }
@@ -15371,27 +15382,19 @@ where
                     .unwrap_or(LiteralValue::Number(serial))
             }
             Some(FormatClass::DateTime) => {
-                formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                formualizer_common::try_serial_to_datetime_subsec_for(date_system, serial)
                     .map(LiteralValue::DateTime)
                     .unwrap_or(LiteralValue::Number(serial))
             }
             Some(FormatClass::Time) if (0.0..1.0).contains(&serial) => {
-                let nanos = (serial * 86_400_000_000_000.0).round() as u64;
-                let nanos = nanos.min(86_400_000_000_000 - 1);
-                chrono::NaiveTime::from_num_seconds_from_midnight_opt(
-                    (nanos / 1_000_000_000) as u32,
-                    (nanos % 1_000_000_000) as u32,
-                )
-                .map(LiteralValue::Time)
-                .unwrap_or(LiteralValue::Number(serial))
+                formualizer_common::fraction_to_time(serial)
+                    .map(LiteralValue::Time)
+                    .unwrap_or(LiteralValue::Number(serial))
             }
             Some(FormatClass::Time | FormatClass::Duration) => {
-                let nanos = (serial * 86_400.0 * 1_000_000_000.0).round();
-                if nanos.is_finite() && nanos >= i64::MIN as f64 && nanos <= i64::MAX as f64 {
-                    LiteralValue::Duration(chrono::Duration::nanoseconds(nanos as i64))
-                } else {
-                    LiteralValue::Number(serial)
-                }
+                formualizer_common::days_fraction_to_duration(serial)
+                    .map(LiteralValue::Duration)
+                    .unwrap_or(LiteralValue::Number(serial))
             }
             _ => LiteralValue::Number(serial),
         }

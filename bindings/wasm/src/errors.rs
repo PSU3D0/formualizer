@@ -44,6 +44,14 @@ pub(crate) fn workbook_error_ref_to_js(error: &formualizer::workbook::IoError) -
             set_string(object, "context", context);
             js_error.into()
         }
+        formualizer::workbook::IoError::HistoryDisabled => {
+            let js_error = js_sys::Error::new(&error.to_string());
+            let object = js_error.unchecked_ref::<js_sys::Object>();
+            set_string(object, "name", "HistoryDisabled");
+            set_string(object, "kind", "HistoryDisabled");
+            set_string(object, "code", "HISTORY_DISABLED");
+            js_error.into()
+        }
         other => JsValue::from(js_sys::Error::new(&other.to_string())),
     }
 }
@@ -121,6 +129,10 @@ mod tests {
             field(&cancelled, "excel_kind"),
             ExcelErrorKind::Cancelled.to_string()
         );
+        let disabled = workbook_error_to_js(IoError::HistoryDisabled);
+        assert_eq!(field(&disabled, "name"), "HistoryDisabled");
+        assert_eq!(field(&disabled, "kind"), "HistoryDisabled");
+        assert_eq!(field(&disabled, "code"), "HISTORY_DISABLED");
     }
 
     #[wasm_bindgen_test]

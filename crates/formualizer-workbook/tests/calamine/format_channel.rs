@@ -132,7 +132,8 @@ fn value_write_paths_clear_derived_formats_in_both_modes() {
 
 #[test]
 fn logged_value_over_derived_formula_undo_rederives_date_format() {
-    let mut workbook = Workbook::new_with_config(WorkbookConfig::interactive());
+    let mut workbook =
+        Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true));
     workbook.add_sheet("Sheet1").ok();
     workbook
         .set_formula("Sheet1", 4, 4, "=DATE(2024,12,1)")

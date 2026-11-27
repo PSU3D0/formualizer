@@ -612,3 +612,81 @@ fn json_load_time_grouping_matches_per_cell_load() {
         }
     }
 }
+
+#[cfg(feature = "json")]
+#[test]
+fn json_subsecond_datetime_and_time_roundtrip() {
+    let mut adapter = JsonAdapter::new();
+    adapter.create_sheet("Sheet1").unwrap();
+
+    let dt_ms = NaiveDate::from_ymd_opt(2024, 6, 15)
+        .unwrap()
+        .and_hms_milli_opt(3, 4, 5, 500)
+        .unwrap();
+    let dt_us = NaiveDate::from_ymd_opt(2024, 6, 15)
+        .unwrap()
+        .and_hms_micro_opt(8, 30, 45, 123_456)
+        .unwrap();
+    let t_ns = NaiveTime::from_hms_nano_opt(12, 34, 56, 789_012_345).unwrap();
+
+    adapter
+        .write_cell(
+            "Sheet1",
+            1,
+            1,
+            CellData::from_value(LiteralValue::DateTime(dt_ms)),
+        )
+        .unwrap();
+    adapter
+        .write_cell(
+            "Sheet1",
+            2,
+            1,
+            CellData::from_value(LiteralValue::DateTime(dt_us)),
+        )
+        .unwrap();
+    adapter
+        .write_cell(
+            "Sheet1",
+            3,
+            1,
+            CellData::from_value(LiteralValue::Time(t_ns)),
+        )
+        .unwrap();
+
+    let bytes = adapter.save_to_bytes().unwrap();
+    let mut adapter2 = JsonAdapter::open_bytes(bytes).unwrap();
+    let sheet = adapter2.read_sheet("Sheet1").unwrap();
+
+    assert_eq!(
+        sheet.cells.get(&(1, 1)).and_then(|c| c.value.clone()),
+        Some(LiteralValue::DateTime(dt_ms))
+    );
+    assert_eq!(
+        sheet.cells.get(&(2, 1)).and_then(|c| c.value.clone()),
+        Some(LiteralValue::DateTime(dt_us))
+    );
+    assert_eq!(
+        sheet.cells.get(&(3, 1)).and_then(|c| c.value.clone()),
+        Some(LiteralValue::Time(t_ns))
+    );
+
+    // Also verify ISO 'T'-separated fractional datetime parsing.
+    let iso_bytes = br#"{
+        "version": 1,
+        "sheets": {
+            "S": {
+                "cells": [
+                    { "row": 1, "col": 1, "value": { "type": "DateTime", "value": "2024-06-15T08:30:45.123456" } }
+                ]
+            }
+        }
+    }"#
+    .to_vec();
+    let mut iso_adapter = JsonAdapter::open_bytes(iso_bytes).unwrap();
+    let iso_sheet = iso_adapter.read_sheet("S").unwrap();
+    assert_eq!(
+        iso_sheet.cells.get(&(1, 1)).and_then(|c| c.value.clone()),
+        Some(LiteralValue::DateTime(dt_us))
+    );
+}

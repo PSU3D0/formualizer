@@ -1,3 +1,5 @@
+import pytest
+
 import formualizer as fz
 
 
@@ -34,13 +36,16 @@ def test_redo_updates_all_public_value_readers():
     assert sheet.get_cell(1, 1).value == "after"
 
 
-def test_undo_redo_are_noops_when_changelog_disabled():
+def test_undo_redo_raise_when_changelog_disabled():
     workbook = fz.Workbook(config=fz.WorkbookConfig(enable_changelog=False))
+    assert not workbook.changelog_enabled
     sheet = workbook.sheet("Sheet1")
     sheet.set_value(1, 1, "value")
 
-    workbook.undo()
+    with pytest.raises(RuntimeError, match="disabled"):
+        workbook.undo()
     assert workbook.get_value("Sheet1", 1, 1) == "value"
 
-    workbook.redo()
+    with pytest.raises(RuntimeError, match="disabled"):
+        workbook.redo()
     assert workbook.get_value("Sheet1", 1, 1) == "value"

@@ -351,6 +351,9 @@ impl core::marker::StructuralPartialEq for formualizer_common::ExcelDateParts
 pub fn formualizer_common::date_serial::date_to_serial_for(formualizer_common::DateSystem, &chrono::naive::date::NaiveDate) -> f64
 pub fn formualizer_common::date_serial::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::date_serial::datetime_to_serial_for(formualizer_common::DateSystem, &chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::date_serial::days_fraction_to_duration(f64) -> core::option::Option<chrono::Duration>
+pub fn formualizer_common::date_serial::duration_to_days_fraction(&chrono::Duration) -> f64
+pub fn formualizer_common::date_serial::fraction_to_time(f64) -> core::option::Option<chrono::naive::time::NaiveTime>
 pub fn formualizer_common::date_serial::max_excel_serial_for(formualizer_common::DateSystem) -> f64
 pub fn formualizer_common::date_serial::parse_excel_date_text(&str) -> core::option::Option<chrono::naive::date::NaiveDate>
 pub fn formualizer_common::date_serial::parse_excel_datetime_text(&str) -> core::option::Option<chrono::naive::datetime::NaiveDateTime>
@@ -360,6 +363,7 @@ pub fn formualizer_common::date_serial::serial_to_datetime(f64) -> chrono::naive
 pub fn formualizer_common::date_serial::time_to_fraction(&chrono::naive::time::NaiveTime) -> f64
 pub fn formualizer_common::date_serial::try_serial_to_date_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::date::NaiveDate, formualizer_common::ExcelError>
 pub fn formualizer_common::date_serial::try_serial_to_datetime_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::datetime::NaiveDateTime, formualizer_common::ExcelError>
+pub fn formualizer_common::date_serial::try_serial_to_datetime_subsec_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::datetime::NaiveDateTime, formualizer_common::ExcelError>
 pub fn formualizer_common::date_serial::try_serial_to_display_date_parts_for(formualizer_common::DateSystem, f64) -> core::result::Result<formualizer_common::ExcelDateParts, formualizer_common::ExcelError>
 pub fn formualizer_common::date_serial::validate_excel_serial(formualizer_common::DateSystem, f64) -> core::result::Result<(), formualizer_common::ExcelError>
 pub mod formualizer_common::error
@@ -1650,7 +1654,10 @@ pub fn formualizer_common::date_to_serial_for(formualizer_common::DateSystem, &c
 pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::datetime_to_serial(&chrono::naive::datetime::NaiveDateTime) -> f64
 pub fn formualizer_common::datetime_to_serial_for(formualizer_common::DateSystem, &chrono::naive::datetime::NaiveDateTime) -> f64
+pub fn formualizer_common::days_fraction_to_duration(f64) -> core::option::Option<chrono::Duration>
+pub fn formualizer_common::duration_to_days_fraction(&chrono::Duration) -> f64
 pub fn formualizer_common::format_a1_sheet_name(&str) -> alloc::borrow::Cow<'_, str>
+pub fn formualizer_common::fraction_to_time(f64) -> core::option::Option<chrono::naive::time::NaiveTime>
 pub fn formualizer_common::max_excel_serial_for(formualizer_common::DateSystem) -> f64
 pub fn formualizer_common::parse_a1_1based(&str) -> core::result::Result<(u32, u32, bool, bool), formualizer_common::A1ParseError>
 pub fn formualizer_common::parse_excel_date_text(&str) -> core::option::Option<chrono::naive::date::NaiveDate>
@@ -1662,6 +1669,7 @@ pub fn formualizer_common::serial_to_datetime(f64) -> chrono::naive::datetime::N
 pub fn formualizer_common::time_to_fraction(&chrono::naive::time::NaiveTime) -> f64
 pub fn formualizer_common::try_serial_to_date_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::date::NaiveDate, formualizer_common::ExcelError>
 pub fn formualizer_common::try_serial_to_datetime_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::datetime::NaiveDateTime, formualizer_common::ExcelError>
+pub fn formualizer_common::try_serial_to_datetime_subsec_for(formualizer_common::DateSystem, f64) -> core::result::Result<chrono::naive::datetime::NaiveDateTime, formualizer_common::ExcelError>
 pub fn formualizer_common::try_serial_to_display_date_parts_for(formualizer_common::DateSystem, f64) -> core::result::Result<formualizer_common::ExcelDateParts, formualizer_common::ExcelError>
 pub fn formualizer_common::validate_excel_serial(formualizer_common::DateSystem, f64) -> core::result::Result<(), formualizer_common::ExcelError>
 pub type formualizer_common::CoordHashMap<K, V> = std::collections::hash::map::HashMap<K, V, formualizer_common::CoordBuildHasher>

@@ -136,7 +136,7 @@ impl LiteralValue {
             LiteralValue::Date(d) => Some(crate::date_to_serial_for(system, d)),
             LiteralValue::DateTime(dt) => Some(crate::datetime_to_serial_for(system, dt)),
             LiteralValue::Time(t) => Some(crate::time_to_fraction(t)),
-            LiteralValue::Duration(d) => Some(d.num_seconds() as f64 / 86_400.0),
+            LiteralValue::Duration(d) => Some(crate::duration_to_days_fraction(d)),
             LiteralValue::Int(i) => Some(*i as f64),
             LiteralValue::Number(n) => Some(*n),
             LiteralValue::Boolean(b) => Some(if *b { 1.0 } else { 0.0 }),

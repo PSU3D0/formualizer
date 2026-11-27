@@ -1678,22 +1678,30 @@ impl Workbook {
         Ok(())
     }
 
+    /// Undo the most recent workbook edit.
+    ///
+    /// Throws an error (`kind: "HistoryDisabled"`, `code: "HISTORY_DISABLED"`)
+    /// if changelog recording is disabled and no explicit action journal is present.
     #[wasm_bindgen]
     pub fn undo(&self) -> Result<(), JsValue> {
         self.inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
             .undo()
-            .map_err(|e| js_error(format!("undo failed: {e}")))
+            .map_err(workbook_error_to_js)
     }
 
+    /// Redo the most recently undone edit.
+    ///
+    /// Throws an error (`kind: "HistoryDisabled"`, `code: "HISTORY_DISABLED"`)
+    /// if changelog recording is disabled and no explicit action journal is present.
     #[wasm_bindgen]
     pub fn redo(&self) -> Result<(), JsValue> {
         self.inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
             .redo()
-            .map_err(|e| js_error(format!("redo failed: {e}")))
+            .map_err(workbook_error_to_js)
     }
 
     /// Telemetry from runtime SCC / iterative-calculation evaluation during

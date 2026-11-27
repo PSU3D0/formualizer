@@ -14,7 +14,9 @@ use libtest_mimic::{Arguments, Failed, Trial};
 use std::{env, str::FromStr, sync::Arc};
 
 fn config(mode: FormulaPlaneMode) -> WorkbookConfig {
-    let mut config = WorkbookConfig::interactive().with_formula_plane_mode(mode);
+    let mut config = WorkbookConfig::interactive()
+        .with_changelog(true)
+        .with_formula_plane_mode(mode);
     config.eval.enable_parallel = false;
     config
 }

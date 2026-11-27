@@ -98,7 +98,7 @@ pub(crate) fn range_numeric_value(v: &LiteralValue, date_system: DateSystem) -> 
             Some(formualizer_common::datetime_to_serial_for(date_system, dt))
         }
         LiteralValue::Time(t) => Some(formualizer_common::time_to_fraction(t)),
-        LiteralValue::Duration(dur) => Some(dur.num_seconds() as f64 / 86_400.0),
+        LiteralValue::Duration(dur) => Some(formualizer_common::duration_to_days_fraction(dur)),
         _ => None,
     }
 }

@@ -20,7 +20,8 @@
 //! and flags telemetry; NaN vs anything else is not converged.
 
 use formualizer_common::{
-    DateSystem, LiteralValue, date_to_serial_for, datetime_to_serial_for, time_to_fraction,
+    DateSystem, LiteralValue, date_to_serial_for, datetime_to_serial_for,
+    duration_to_days_fraction, time_to_fraction,
 };
 
 /// Outcome of one member comparison.
@@ -62,7 +63,7 @@ fn numeric_serial(v: &LiteralValue, date_system: DateSystem) -> Option<f64> {
         LiteralValue::Date(d) => Some(date_to_serial_for(date_system, d)),
         LiteralValue::DateTime(dt) => Some(datetime_to_serial_for(date_system, dt)),
         LiteralValue::Time(t) => Some(time_to_fraction(t)),
-        LiteralValue::Duration(d) => Some(d.num_seconds() as f64 / 86_400.0),
+        LiteralValue::Duration(d) => Some(duration_to_days_fraction(d)),
         _ => None,
     }
 }

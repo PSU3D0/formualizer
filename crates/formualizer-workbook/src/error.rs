@@ -87,6 +87,9 @@ pub enum IoError {
         message: String,
     },
 
+    #[error("Undo/redo history is disabled; enable changelog tracking before calling undo or redo")]
+    HistoryDisabled,
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

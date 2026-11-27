@@ -2,8 +2,11 @@ use super::*;
 
 #[test]
 fn no_spill_action_history_cost_is_linear() {
-    let mut workbook =
-        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(None));
+    let mut workbook = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(None),
+    );
     workbook.add_sheet("S").unwrap();
     let n = 32_000;
     workbook
@@ -39,7 +42,8 @@ fn no_spill_action_history_cost_is_linear() {
 
 #[test]
 fn spill_history_survives_nested_actions_and_resets_between_actions() {
-    let mut workbook = Workbook::new();
+    let mut workbook =
+        Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true));
     workbook.add_sheet("S").unwrap();
     workbook.set_formula("S", 1, 1, "=SEQUENCE(5)").unwrap();
     workbook.evaluate_all().unwrap();
@@ -61,7 +65,7 @@ fn spill_history_survives_nested_actions_and_resets_between_actions() {
 #[test]
 fn interactive_history_caps_both_changelog_and_undo_stacks() {
     let cap = WorkbookConfig::DEFAULT_INTERACTIVE_HISTORY_LIMIT;
-    let mut wb = Workbook::new();
+    let mut wb = Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true));
     wb.add_sheet("S").unwrap();
 
     // Exceed cap in logged mode and check changelog + logged redo stack stay bounded.
@@ -96,8 +100,11 @@ fn interactive_history_caps_both_changelog_and_undo_stacks() {
 #[test]
 fn spill_action_history_survives_mid_action_cap_eviction_and_zero_cap() {
     // Case A: SpillCleared evicted mid-action by subsequent edits under small cap.
-    let mut wb =
-        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(4)));
+    let mut wb = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(Some(4)),
+    );
     wb.add_sheet("S").unwrap();
     wb.set_formula("S", 1, 2, "=SEQUENCE(5)").unwrap();
     wb.evaluate_all().unwrap();
@@ -120,8 +127,11 @@ fn spill_action_history_survives_mid_action_cap_eviction_and_zero_cap() {
     wb.end_action();
 
     // Case B: SpillCleared evicted within a single batch exceeding cap.
-    let mut wb_batch =
-        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(4)));
+    let mut wb_batch = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(Some(4)),
+    );
     wb_batch.add_sheet("S").unwrap();
     wb_batch.set_formula("S", 1, 2, "=SEQUENCE(5)").unwrap();
     wb_batch.evaluate_all().unwrap();
@@ -138,8 +148,11 @@ fn spill_action_history_survives_mid_action_cap_eviction_and_zero_cap() {
     wb_batch.end_action();
 
     // Case C: history_limit = Some(0).
-    let mut wb_zero =
-        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(0)));
+    let mut wb_zero = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(Some(0)),
+    );
     wb_zero.add_sheet("S").unwrap();
     wb_zero.set_formula("S", 1, 2, "=SEQUENCE(5)").unwrap();
     wb_zero.evaluate_all().unwrap();

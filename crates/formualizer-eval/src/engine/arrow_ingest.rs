@@ -169,7 +169,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                     crate::arrow_store::OverlayValue::DateTime(serial)
                                 }
                                 LiteralValue::Duration(d) => {
-                                    let serial = d.num_seconds() as f64 / 86_400.0;
+                                    let serial = formualizer_common::duration_to_days_fraction(&d);
                                     crate::arrow_store::OverlayValue::Duration(serial)
                                 }
                                 LiteralValue::Pending => crate::arrow_store::OverlayValue::Pending,
@@ -255,14 +255,11 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                                 LiteralValue::Empty
                                             } else {
                                                 let serial = fa.value(i);
-                                                let nanos_f = serial * 86_400.0 * 1_000_000_000.0;
-                                                let nanos = nanos_f
-                                                    .round()
-                                                    .clamp(i64::MIN as f64, i64::MAX as f64)
-                                                    as i64;
-                                                LiteralValue::Duration(
-                                                    chrono::Duration::nanoseconds(nanos),
+                                                formualizer_common::days_fraction_to_duration(
+                                                    serial,
                                                 )
+                                                .map(LiteralValue::Duration)
+                                                .unwrap_or(LiteralValue::Number(serial))
                                             }
                                         } else {
                                             LiteralValue::Empty
@@ -404,7 +401,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                 }
                                 LiteralValue::Duration(d) => {
                                     tag_b.append_value(crate::arrow_store::TypeTag::Number as u8);
-                                    let serial = d.num_seconds() as f64 / 86_400.0;
+                                    let serial = formualizer_common::duration_to_days_fraction(&d);
                                     nb.append_value(serial);
                                     non_num += 1;
                                     bb.append_null();

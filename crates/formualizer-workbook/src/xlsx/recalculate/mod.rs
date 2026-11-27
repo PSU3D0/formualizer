@@ -140,14 +140,9 @@ impl Cache {
                 return Err(unsupported("pending formula result", "cache-only writer"));
             }
             value => {
-                let mut serial = value.as_serial_number_for(system).ok_or_else(|| {
+                let serial = value.as_serial_number_for(system).ok_or_else(|| {
                     unsupported("unrepresentable scalar cache", "cache-only writer")
                 })?;
-                // The common helper retains historical whole-second duration
-                // conversion; preserve the fractional remainder here as well.
-                if let LiteralValue::Duration(duration) = value {
-                    serial += f64::from(duration.subsec_nanos()) / 86_400_000_000_000.0;
-                }
                 if !serial.is_finite() {
                     return Err(unsupported("non-finite formula cache", "cache-only writer"));
                 }

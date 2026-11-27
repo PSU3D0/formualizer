@@ -1226,7 +1226,7 @@ impl IngestBuilder {
                     self.err_builders[c].append_null();
                 }
                 LiteralValue::Duration(dur) => {
-                    let serial = dur.num_seconds() as f64 / 86_400.0;
+                    let serial = formualizer_common::duration_to_days_fraction(dur);
                     self.num_builders[c].append_value(serial);
                     self.lane_counts[c].n_num += 1;
                     self.bool_builders[c].append_null();
@@ -1516,7 +1516,9 @@ impl OverlayValue {
             LiteralValue::Time(t) => {
                 OverlayValue::DateTime(formualizer_common::time_to_fraction(t))
             }
-            LiteralValue::Duration(d) => OverlayValue::Duration(d.num_seconds() as f64 / 86_400.0),
+            LiteralValue::Duration(d) => {
+                OverlayValue::Duration(formualizer_common::duration_to_days_fraction(d))
+            }
             LiteralValue::Pending => OverlayValue::Pending,
             LiteralValue::Array(_) => OverlayValue::Error(map_error_code(ExcelErrorKind::Value)),
         }

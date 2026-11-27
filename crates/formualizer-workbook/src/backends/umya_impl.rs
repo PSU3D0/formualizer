@@ -381,7 +381,7 @@ impl UmyaAdapter {
                 cv.set_value_number(serial);
             }
             LiteralValue::Duration(d) => {
-                let serial = d.num_seconds() as f64 / 86_400.0;
+                let serial = formualizer_common::duration_to_days_fraction(d);
                 cv.set_value_number(serial);
             }
             LiteralValue::Pending | LiteralValue::Array(_) => {
@@ -809,7 +809,7 @@ impl SpreadsheetWriter for UmyaAdapter {
                     cell.set_value_number(serial);
                 }
                 LiteralValue::Duration(dur) => {
-                    let serial = dur.num_seconds() as f64 / 86_400.0;
+                    let serial = formualizer_common::duration_to_days_fraction(&dur);
                     cell.set_value_number(serial);
                 }
                 LiteralValue::Pending => {

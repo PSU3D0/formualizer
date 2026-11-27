@@ -416,7 +416,7 @@ impl<'a> DecodedCell<'a> {
                 Self::DateTime(serial, FormatId::TIME)
             }
             LiteralValue::Duration(d) => {
-                let serial = d.num_seconds() as f64 / 86_400.0;
+                let serial = formualizer_common::duration_to_days_fraction(d);
                 Self::Duration(serial, FormatId::DURATION)
             }
             LiteralValue::Pending => Self::Pending,

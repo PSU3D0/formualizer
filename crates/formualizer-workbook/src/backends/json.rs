@@ -764,8 +764,8 @@ fn json_to_literal(
             Err(_) => L::Text(s.clone()),
         },
         JsonValue::DateTime(s) => {
-            let parsed = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
-                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"));
+            let parsed = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f"));
             match parsed {
                 Ok(dt) => L::DateTime(dt),
                 Err(_) if opts.strict_dates => {
@@ -777,7 +777,7 @@ fn json_to_literal(
                 Err(_) => L::Text(s.clone()),
             }
         }
-        JsonValue::Time(s) => match chrono::NaiveTime::parse_from_str(s, "%H:%M:%S") {
+        JsonValue::Time(s) => match chrono::NaiveTime::parse_from_str(s, "%H:%M:%S%.f") {
             Ok(t) => L::Time(t),
             Err(_) if opts.strict_dates => {
                 return Err(IoError::Backend {
