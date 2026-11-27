@@ -89,7 +89,7 @@ feature_profile() {
 excluded_features() {
   case "$1" in
     formualizer)
-      printf '%s\n' 'js-runtime,wasm-js'
+      printf '%s\n' 'arrow,js-runtime,wasm-js'
       ;;
     formualizer-eval)
       printf '%s\n' 'benchmark_internal,js-runtime,legacy_oracle,test-support,unified_authority'

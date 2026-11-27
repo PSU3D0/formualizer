@@ -700,8 +700,10 @@ fn packed_mixed_column_preserves_all_wire_tags() {
         BulkCellTag::Error as u8,
         BulkCellTag::DateTime as u8,
         BulkCellTag::Duration as u8,
+        BulkCellTag::Date as u8,
+        BulkCellTag::Time as u8,
     ];
-    let numbers = [0.0, 42.5, 1.0, 0.0, 5.0, 45292.0, 0.5];
+    let numbers = [0.0, 42.5, 1.0, 0.0, 5.0, 45292.0, 0.5, 45292.0, 0.5];
     let block = PackedColumnBlock {
         tags: &tags,
         numbers: &numbers,
@@ -725,14 +727,171 @@ fn packed_mixed_column_preserves_all_wire_tags() {
         wb.get_value("S", 5, 1),
         Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Div
     ));
-    assert!(matches!(
+    assert_eq!(
         wb.get_value("S", 6, 1),
-        Some(LiteralValue::Date(_))
-    ));
+        Some(LiteralValue::DateTime(
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+        ))
+    );
     assert!(matches!(
         wb.get_value("S", 7, 1),
         Some(LiteralValue::Duration(_))
     ));
+    assert_eq!(
+        wb.get_value("S", 8, 1),
+        Some(LiteralValue::Date(
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+        ))
+    );
+    assert_eq!(
+        wb.get_value("S", 9, 1),
+        Some(LiteralValue::Time(
+            chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap()
+        ))
+    );
+}
+
+#[test]
+fn explicit_temporal_wire_tags_roundtrip_fast_logged_and_undo_redo() {
+    use formualizer_common::{
+        DateSystem, date_to_serial_for, datetime_to_serial_for, duration_to_days_fraction,
+        time_to_fraction,
+    };
+
+    let date_val = chrono::NaiveDate::from_ymd_opt(2024, 5, 17).unwrap();
+    let dt_midnight = date_val.and_hms_opt(0, 0, 0).unwrap();
+    let dt_non_midnight = date_val.and_hms_milli_opt(14, 30, 15, 250).unwrap();
+    let time_midnight = chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap();
+    let time_subsec = chrono::NaiveTime::from_hms_milli_opt(9, 45, 12, 500).unwrap();
+    let dur_val = chrono::Duration::milliseconds(90 * 60 * 1000 + 250); // 01:30:00.250
+
+    let expected = [
+        LiteralValue::Date(date_val),
+        LiteralValue::DateTime(dt_midnight),
+        LiteralValue::DateTime(dt_non_midnight),
+        LiteralValue::Time(time_midnight),
+        LiteralValue::Time(time_subsec),
+        LiteralValue::Duration(dur_val),
+    ];
+
+    for date_system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+        let tags = [
+            BulkCellTag::Date as u8,
+            BulkCellTag::DateTime as u8,
+            BulkCellTag::DateTime as u8,
+            BulkCellTag::Time as u8,
+            BulkCellTag::Time as u8,
+            BulkCellTag::Duration as u8,
+        ];
+        let numbers = [
+            date_to_serial_for(date_system, &date_val),
+            datetime_to_serial_for(date_system, &dt_midnight),
+            datetime_to_serial_for(date_system, &dt_non_midnight),
+            time_to_fraction(&time_midnight),
+            time_to_fraction(&time_subsec),
+            duration_to_days_fraction(&dur_val),
+        ];
+
+        for changelog in [false, true] {
+            let label = format!("date_system={date_system:?}, changelog={changelog}");
+
+            // 1. set_cells
+            let mut cfg = WorkbookConfig::interactive().with_changelog(changelog);
+            cfg.eval.date_system = date_system;
+            let mut wb = Workbook::new_with_config(cfg.clone());
+            wb.add_sheet("S").unwrap();
+            let batch = CellBatch {
+                rows: &[1, 2, 3, 4, 5, 6],
+                cols: &[1, 1, 1, 1, 1, 1],
+                tags: &tags,
+                numbers: &numbers,
+                text_bytes: &[],
+                text_offsets: &[],
+            };
+            let rep = wb.set_cells("S", &batch).unwrap();
+            assert!(!rep.history_cleared, "set_cells history_cleared ({label})");
+            for (idx, exp) in expected.iter().enumerate() {
+                assert_eq!(
+                    wb.get_value("S", (idx + 1) as u32, 1),
+                    Some(exp.clone()),
+                    "set_cells row {} ({label})",
+                    idx + 1
+                );
+            }
+            if changelog {
+                wb.undo().unwrap();
+                for idx in 0..expected.len() {
+                    assert!(
+                        matches!(
+                            wb.get_value("S", (idx + 1) as u32, 1),
+                            None | Some(LiteralValue::Empty)
+                        ),
+                        "set_cells undo row {} ({label})",
+                        idx + 1
+                    );
+                }
+                wb.redo().unwrap();
+                for (idx, exp) in expected.iter().enumerate() {
+                    assert_eq!(
+                        wb.get_value("S", (idx + 1) as u32, 1),
+                        Some(exp.clone()),
+                        "set_cells redo row {} ({label})",
+                        idx + 1
+                    );
+                }
+            }
+
+            // 2. ColumnData::Mixed via set_columns
+            let mut wb_cols = Workbook::new_with_config(cfg);
+            wb_cols.add_sheet("S").unwrap();
+            let block = PackedColumnBlock {
+                tags: &tags,
+                numbers: &numbers,
+                text_bytes: &[],
+                text_offsets: &[],
+            };
+            let rep_cols = wb_cols
+                .set_columns("S", 1, 1, &[ColumnData::Mixed(block)])
+                .unwrap();
+            assert!(
+                !rep_cols.history_cleared,
+                "set_columns history_cleared ({label})"
+            );
+            for (idx, exp) in expected.iter().enumerate() {
+                assert_eq!(
+                    wb_cols.get_value("S", (idx + 1) as u32, 1),
+                    Some(exp.clone()),
+                    "ColumnData::Mixed row {} ({label})",
+                    idx + 1
+                );
+            }
+            if changelog {
+                wb_cols.undo().unwrap();
+                for idx in 0..expected.len() {
+                    assert!(
+                        matches!(
+                            wb_cols.get_value("S", (idx + 1) as u32, 1),
+                            None | Some(LiteralValue::Empty)
+                        ),
+                        "ColumnData::Mixed undo row {} ({label})",
+                        idx + 1
+                    );
+                }
+                wb_cols.redo().unwrap();
+                for (idx, exp) in expected.iter().enumerate() {
+                    assert_eq!(
+                        wb_cols.get_value("S", (idx + 1) as u32, 1),
+                        Some(exp.clone()),
+                        "ColumnData::Mixed redo row {} ({label})",
+                        idx + 1
+                    );
+                }
+            }
+        }
+    }
 }
 
 #[cfg(feature = "arrow")]

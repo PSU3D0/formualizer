@@ -32,6 +32,10 @@ json = ["workbook", "formualizer-workbook/json"]
 csv = ["workbook", "formualizer-workbook/csv"]
 umya = ["workbook", "formualizer-workbook/umya"]
 umya3 = ["workbook", "formualizer-workbook/umya3"]
+# Opt-in Apache Arrow RecordBatch/Array ingest helpers (`ColumnData::try_from_arrow`,
+# `Workbook::set_record_batches`). Version-coupled to `arrow-array`/`arrow-schema` and
+# intentionally excluded from default features and the semver public-API snapshot.
+arrow = ["workbook", "formualizer-workbook/arrow"]
 tracing = ["eval", "workbook", "formualizer-eval/tracing", "formualizer-workbook/tracing"]
 tracing_chrome = ["tracing", "formualizer-eval/tracing_chrome"]
 

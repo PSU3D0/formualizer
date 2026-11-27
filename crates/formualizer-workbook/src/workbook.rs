@@ -1350,21 +1350,10 @@ fn decode_wire_cell_to_literal(
                     None,
                 ));
             }
-            let fmt = if num.fract() == 0.0 {
-                crate::FormatId::DATE
-            } else {
-                crate::FormatId::DATETIME
-            };
-            let val = if fmt == crate::FormatId::DATE {
-                formualizer_common::try_serial_to_date_for(date_system, num)
-                    .map(LiteralValue::Date)
-                    .unwrap_or(LiteralValue::Number(num))
-            } else {
-                formualizer_common::try_serial_to_datetime_subsec_for(date_system, num)
-                    .map(LiteralValue::DateTime)
-                    .unwrap_or(LiteralValue::Number(num))
-            };
-            Ok((val, Some(fmt)))
+            let val = formualizer_common::try_serial_to_datetime_subsec_for(date_system, num)
+                .map(LiteralValue::DateTime)
+                .unwrap_or(LiteralValue::Number(num));
+            Ok((val, Some(crate::FormatId::DATETIME)))
         }
         crate::BulkCellTag::Duration => {
             if !num.is_finite() {
@@ -1377,6 +1366,42 @@ fn decode_wire_cell_to_literal(
                 .map(LiteralValue::Duration)
                 .unwrap_or(LiteralValue::Number(num));
             Ok((val, Some(crate::FormatId::DURATION)))
+        }
+        crate::BulkCellTag::Date => {
+            if !num.is_finite() {
+                return Ok((
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)),
+                    None,
+                ));
+            }
+            let val = if num.fract() == 0.0 {
+                formualizer_common::try_serial_to_date_for(date_system, num)
+                    .map(LiteralValue::Date)
+                    .unwrap_or(LiteralValue::Number(num))
+            } else {
+                formualizer_common::try_serial_to_datetime_subsec_for(date_system, num)
+                    .map(LiteralValue::DateTime)
+                    .unwrap_or(LiteralValue::Number(num))
+            };
+            Ok((val, Some(crate::FormatId::DATE)))
+        }
+        crate::BulkCellTag::Time => {
+            if !num.is_finite() {
+                return Ok((
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)),
+                    None,
+                ));
+            }
+            let val = if (0.0..1.0).contains(&num) {
+                formualizer_common::fraction_to_time(num)
+                    .map(LiteralValue::Time)
+                    .unwrap_or(LiteralValue::Number(num))
+            } else {
+                formualizer_common::days_fraction_to_duration(num)
+                    .map(LiteralValue::Duration)
+                    .unwrap_or(LiteralValue::Number(num))
+            };
+            Ok((val, Some(crate::FormatId::TIME)))
         }
     }
 }

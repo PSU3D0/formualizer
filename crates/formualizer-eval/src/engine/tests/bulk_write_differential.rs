@@ -462,7 +462,7 @@ proptest! {
         seed_base_date_col in any::<bool>(),
         seed_empty_table in any::<bool>(),
         ops in prop::collection::vec(
-            (1u32..=8, 1u32..=6, 0u8..=6, prop::sample::select(vec![-0.0, 0.0, 1.0, 2.0, 5.5, 45292.0, f64::NAN])),
+            (1u32..=8, 1u32..=6, 0u8..=8, prop::sample::select(vec![-0.0, 0.0, 1.0, 2.0, 5.5, 45292.0, f64::NAN])),
             1..=20
         ),
     ) {
@@ -489,6 +489,8 @@ proptest! {
                 4 => (((r + c) % 7) + 1) as f64,
                 5 => if raw_num.is_finite() { 45292.0 } else { raw_num },
                 6 => if raw_num.is_finite() { 1.0 } else { raw_num },
+                7 => if raw_num.is_finite() { 45292.0 } else { raw_num },
+                8 => if raw_num.is_finite() { if raw_num == 0.0 { 0.0 } else { 0.5 } } else { raw_num },
                 _ => raw_num,
             };
             rows.push(r);
@@ -505,8 +507,8 @@ proptest! {
                 4 => LiteralValue::Error(ExcelError::new(crate::arrow_store::unmap_error_code(num as u8))),
                 5 => {
                     if num.is_finite() {
-                        LiteralValue::Date(
-                            formualizer_common::try_serial_to_date_for(DateSystem::Excel1900, num).unwrap()
+                        LiteralValue::DateTime(
+                            formualizer_common::try_serial_to_datetime_subsec_for(DateSystem::Excel1900, num).unwrap()
                         )
                     } else {
                         LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
@@ -515,6 +517,24 @@ proptest! {
                 6 => {
                     if num.is_finite() {
                         LiteralValue::Duration(chrono::Duration::days(1))
+                    } else {
+                        LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
+                    }
+                }
+                7 => {
+                    if num.is_finite() {
+                        LiteralValue::Date(
+                            formualizer_common::try_serial_to_date_for(DateSystem::Excel1900, num).unwrap()
+                        )
+                    } else {
+                        LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
+                    }
+                }
+                8 => {
+                    if num.is_finite() {
+                        LiteralValue::Time(
+                            formualizer_common::fraction_to_time(num).unwrap()
+                        )
                     } else {
                         LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num))
                     }
@@ -724,8 +744,8 @@ fn e5_atomic_preflight_rejects_invalid_inputs_without_mutation() {
         .unwrap_err();
     assert!(err.message().unwrap_or_default().contains("Column 0"));
 
-    // 2. Wire tag 7 (Pending) and 255 (Skip) and unknown tag 99 rejected.
-    for bad_tag in [7u8, 255u8, 99u8] {
+    // 2. Unknown wire tags (9, 255/Skip, 99) rejected.
+    for bad_tag in [9u8, 255u8, 99u8] {
         let block = PackedColumnBlock {
             tags: &[bad_tag],
             numbers: &[0.0],
@@ -1245,7 +1265,7 @@ fn n5_multi_chunk_full_partial_and_light_overlay_parity() {
         let sparse_tags = [
             BulkCellTag::Number as u8,
             BulkCellTag::Number as u8,
-            BulkCellTag::DateTime as u8,
+            BulkCellTag::Date as u8,
         ];
         let sparse_nums = [777.0, 888.0, 45_300.0];
         let batch = CellBatch {
