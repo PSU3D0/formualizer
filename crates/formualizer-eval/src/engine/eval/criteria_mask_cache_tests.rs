@@ -227,3 +227,69 @@ fn typed_criteria_match_uncached_results_and_cancelled_hits_bypass() {
     assert!(called.get());
     assert!(result.is_none());
 }
+
+#[test]
+fn write_built_lazy_column_keeps_dense_prefix_and_hits_criteria_mask_cache() {
+    let mut engine = super::Engine::new(
+        crate::test_workbook::TestWorkbook::new(),
+        crate::engine::EvalConfig::default(),
+    );
+    engine.add_sheet("S").unwrap();
+
+    // Build a sheet purely through cell writes (no bulk ingest), leaving
+    // untouched neighbor columns lazy.
+    for r in 1..=200u32 {
+        engine
+            .set_cell_value("S", r, 1, LiteralValue::Text(format!("k{}", r % 10)))
+            .unwrap();
+        engine
+            .set_cell_value("S", r, 2, LiteralValue::Number(r as f64))
+            .unwrap();
+    }
+    engine
+        .set_cell_value("S", 1, 50, LiteralValue::Number(1.0))
+        .unwrap();
+
+    let sheet = engine.arrow_sheets.sheet("S").expect("arrow sheet exists");
+    assert!(
+        !sheet.columns[0].chunks.is_empty() && sheet.columns[0].sparse_chunks.is_empty(),
+        "written column 0 must maintain a dense prefix with no sparse chunks"
+    );
+    assert!(
+        !sheet.columns[1].chunks.is_empty() && sheet.columns[1].sparse_chunks.is_empty(),
+        "written column 1 must maintain a dense prefix with no sparse chunks"
+    );
+    for col in &sheet.columns[2..49] {
+        assert_eq!(
+            col.total_chunk_count(),
+            0,
+            "untouched neighbor column {} must stay lazy",
+            col.index
+        );
+    }
+
+    let cache = CriteriaMaskCache::default();
+    let builds = Cell::new(0);
+    let view = sheet.range_view(0, 0, 199, 0);
+    let pred = CriteriaPredicate::Eq(LiteralValue::Text("k3".into()));
+    let first = cache
+        .get_or_build(&view, 0, &pred, (0, 0, 0), || {
+            builds.set(builds.get() + 1);
+            compute_criteria_mask(&view, 0, &pred)
+        })
+        .expect("mask should build");
+    let second = cache
+        .get_or_build(&view, 0, &pred, (0, 0, 0), || {
+            builds.set(builds.get() + 1);
+            compute_criteria_mask(&view, 0, &pred)
+        })
+        .expect("mask should hit cache");
+
+    assert_eq!(first.true_count(), 20);
+    assert_eq!(
+        builds.get(),
+        1,
+        "second lookup on write-built column must hit CriteriaMaskCache"
+    );
+    assert!(Arc::ptr_eq(&first, &second));
+}

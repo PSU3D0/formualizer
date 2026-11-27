@@ -2522,31 +2522,34 @@ impl Workbook {
         let target_rows = cur_rows.max(max_row);
         let target_cols = cur_cols.max(max_col);
         let limits = self.engine.workbook_load_limits();
-        crate::load_limits::enforce_sheet_dimension_limits(
-            "workbook",
-            sheet,
-            target_rows,
-            target_cols,
-            limits,
-        )?;
+        if target_rows > limits.max_sheet_rows {
+            return Err(IoError::Backend {
+                backend: "workbook".to_string(),
+                message: format!(
+                    "write extends sheet {sheet} to {target_rows} rows, which exceeds the configured write row budget of {}",
+                    limits.max_sheet_rows
+                ),
+            });
+        }
+        if target_cols > limits.max_sheet_cols {
+            return Err(IoError::Backend {
+                backend: "workbook".to_string(),
+                message: format!(
+                    "write extends sheet {sheet} to {target_cols} columns, which exceeds the configured write column budget of {}",
+                    limits.max_sheet_cols
+                ),
+            });
+        }
         if written_cells as u64 > limits.max_sheet_logical_cells {
-            return Err(IoError::load_budget_exceeded(
-                "workbook",
-                sheet,
-                format!(
-                    "write batch of {written_cells} cells exceeds the configured logical-cell budget of {}",
+            return Err(IoError::Backend {
+                backend: "workbook".to_string(),
+                message: format!(
+                    "write batch of {written_cells} cells on sheet {sheet} exceeds the configured write cell budget of {}",
                     limits.max_sheet_logical_cells
                 ),
-            ));
+            });
         }
-        crate::load_limits::enforce_sheet_load_limits(
-            "workbook",
-            sheet,
-            target_rows,
-            target_cols,
-            written_cells,
-            limits,
-        )
+        Ok(())
     }
 
     fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
@@ -2923,11 +2926,15 @@ impl Workbook {
     }
 
     pub fn set_row_hidden(&mut self, sheet: &str, row: u32, hidden: bool) -> Result<(), IoError> {
-        self.engine
-            .set_row_hidden(sheet, row, hidden, RowVisibilitySource::Manual)
-            .map_err(|e| IoError::from_backend("editor", e))?;
-        self.invalidate_history_for_unjournaled_mutation();
-        Ok(())
+        if self.enable_changelog {
+            self.action("set_row_hidden", |tx| tx.set_row_hidden(sheet, row, hidden))
+        } else {
+            self.engine
+                .set_row_hidden(sheet, row, hidden, RowVisibilitySource::Manual)
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
+        }
     }
 
     pub fn set_rows_hidden(
@@ -2937,17 +2944,23 @@ impl Workbook {
         end_row: u32,
         hidden: bool,
     ) -> Result<(), IoError> {
-        self.engine
-            .set_rows_hidden(
-                sheet,
-                start_row,
-                end_row,
-                hidden,
-                RowVisibilitySource::Manual,
-            )
-            .map_err(|e| IoError::from_backend("editor", e))?;
-        self.invalidate_history_for_unjournaled_mutation();
-        Ok(())
+        if self.enable_changelog {
+            self.action("set_rows_hidden", |tx| {
+                tx.set_rows_hidden(sheet, start_row, end_row, hidden)
+            })
+        } else {
+            self.engine
+                .set_rows_hidden(
+                    sheet,
+                    start_row,
+                    end_row,
+                    hidden,
+                    RowVisibilitySource::Manual,
+                )
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
+        }
     }
 
     pub fn is_row_hidden(&self, sheet: &str, row: u32) -> Result<bool, IoError> {
@@ -3078,6 +3091,12 @@ impl Workbook {
             let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
             let mut staged_forms: Vec<(u32, u32, String)> = Vec::new();
 
+            // Clear logged redo and any prior action-journal stacks before the first
+            // logged write so a partial failure cannot leave stale history behind (B4).
+            if !items.is_empty() {
+                self.on_forward_logged_mutation();
+            }
+
             self.engine
                 .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
                     for (r, c, d, cell, old_value, old_formula, _staged_before) in items.iter() {
@@ -3159,13 +3178,14 @@ impl Workbook {
                     );
                 }
             }
-            if !items.is_empty() {
-                self.on_forward_logged_mutation();
-            }
             self.engine.mark_data_edited();
             Ok(())
         } else {
-            let had_cells = !cells.is_empty();
+            // Invalidate before the first write so a mid-batch `?` error after a
+            // committed prefix cannot leave stale undo/redo stacks intact (B4).
+            if !cells.is_empty() {
+                self.invalidate_history_for_unjournaled_mutation();
+            }
             for ((r, c), d) in cells.into_iter() {
                 if let Some(v) = d.value.clone() {
                     self.engine
@@ -3193,9 +3213,6 @@ impl Workbook {
                 } else if d.value.is_some() {
                     self.engine.clear_staged_formula_text(sheet, r, c);
                 }
-            }
-            if had_cells {
-                self.invalidate_history_for_unjournaled_mutation();
             }
             Ok(())
         }
@@ -3311,6 +3328,9 @@ impl Workbook {
                 }
             }
 
+            if !items.is_empty() {
+                self.on_forward_logged_mutation();
+            }
             self.engine
                 .edit_with_logger(&mut self.log, |editor| {
                     for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
@@ -3327,7 +3347,6 @@ impl Workbook {
                 .map_err(|e| IoError::from_backend("editor", e))?;
             self.sync_spill_action_history();
 
-            let had_items = !items.is_empty();
             for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
                 self.engine.clear_staged_formula_text(sheet, r, c);
@@ -3336,13 +3355,14 @@ impl Workbook {
                     self.record_staged_formula_cell_change(sheet, r, c, staged_before, None);
                 }
             }
-            if had_items {
-                self.on_forward_logged_mutation();
-            }
             self.engine.mark_data_edited();
             Ok(())
         } else {
-            let mut wrote_any = false;
+            // Invalidate before the first write so a mid-batch `?` error after a
+            // committed prefix cannot leave stale undo/redo stacks intact (B4).
+            if rows.iter().any(|r| !r.is_empty()) {
+                self.invalidate_history_for_unjournaled_mutation();
+            }
             for (ri, rvals) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, v) in rvals.iter().enumerate() {
@@ -3351,11 +3371,7 @@ impl Workbook {
                         .set_cell_value(sheet, r, c, v.clone().finite_or_num_error())
                         .map_err(IoError::Engine)?;
                     self.engine.clear_staged_formula_text(sheet, r, c);
-                    wrote_any = true;
                 }
-            }
-            if wrote_any {
-                self.invalidate_history_for_unjournaled_mutation();
             }
             Ok(())
         }
@@ -3476,6 +3492,12 @@ impl Workbook {
                 }
             }
 
+            // Clear logged redo and any prior action-journal stacks before the first
+            // logged write so a partial failure cannot leave stale history behind (B4).
+            if !staged_before.is_empty() {
+                self.on_forward_logged_mutation();
+            }
+
             self.engine
                 .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
                     for (ri, rforms) in rows.iter().enumerate() {
@@ -3503,7 +3525,6 @@ impl Workbook {
                 .map_err(|e| IoError::from_backend("editor", e))??;
             self.sync_spill_action_history();
 
-            let had_formulas = !staged_before.is_empty();
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, _f) in rforms.iter().enumerate() {
@@ -3517,13 +3538,14 @@ impl Workbook {
                     self.record_staged_formula_cell_change(sheet, r, c, before, None);
                 }
             }
-            if had_formulas {
-                self.on_forward_logged_mutation();
-            }
             self.engine.mark_data_edited();
             Ok(())
         } else {
-            let mut wrote_any = false;
+            // Invalidate before the first write so a mid-batch `?` error after a
+            // committed prefix cannot leave stale undo/redo stacks intact (B4).
+            if rows.iter().any(|r| !r.is_empty()) {
+                self.invalidate_history_for_unjournaled_mutation();
+            }
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, f) in rforms.iter().enumerate() {
@@ -3539,11 +3561,7 @@ impl Workbook {
                         .set_cell_formula(sheet, r, c, ast)
                         .map_err(IoError::Engine)?;
                     self.engine.clear_staged_formula_text(sheet, r, c);
-                    wrote_any = true;
                 }
-            }
-            if wrote_any {
-                self.invalidate_history_for_unjournaled_mutation();
             }
             Ok(())
         }

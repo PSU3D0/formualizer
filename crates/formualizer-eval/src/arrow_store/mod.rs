@@ -4410,7 +4410,7 @@ impl ArrowSheet {
         let Some((ch_idx, in_off)) = self.chunk_of_row(abs_row) else {
             return 0;
         };
-        let Some(ch) = self.ensure_column_chunk_mut(abs_col, ch_idx) else {
+        let Some(ch) = self.ensure_sparse_column_chunk_mut(abs_col, ch_idx) else {
             return 0;
         };
         ch.overlay.set(in_off, value)
@@ -4428,7 +4428,7 @@ impl ArrowSheet {
         let Some((ch_idx, in_off)) = self.chunk_of_row(abs_row) else {
             return;
         };
-        if let Some(ch) = self.ensure_column_chunk_mut(abs_col, ch_idx) {
+        if let Some(ch) = self.ensure_sparse_column_chunk_mut(abs_col, ch_idx) {
             ch.overlay.set_format(in_off, format);
         }
     }
@@ -4682,9 +4682,39 @@ impl ArrowSheet {
         }
     }
 
+    /// Ensure a mutable chunk for sparse initial ingest, storing chunks beyond
+    /// `col.chunks.len()` in `sparse_chunks` without promoting to the dense prefix.
+    fn ensure_sparse_column_chunk_mut(
+        &mut self,
+        col_idx: usize,
+        ch_idx: usize,
+    ) -> Option<&mut ColumnChunk> {
+        let start = *self.chunk_starts.get(ch_idx)?;
+        let end = self
+            .chunk_starts
+            .get(ch_idx + 1)
+            .copied()
+            .unwrap_or(self.nrows as usize);
+        let len = end.saturating_sub(start);
+
+        let col = self.columns.get_mut(col_idx)?;
+        if ch_idx < col.chunks.len() {
+            return Some(&mut col.chunks[ch_idx]);
+        }
+        Some(
+            col.sparse_chunks
+                .entry(ch_idx)
+                .or_insert_with(|| Self::make_empty_chunk(len)),
+        )
+    }
+
     /// Ensure a mutable chunk for a given column/chunk index.
     ///
-    /// If the chunk is beyond the column's dense chunk vector, it is stored in `sparse_chunks`.
+    /// When `ch_idx == col.chunks.len()`, the chunk is appended to the column's
+    /// dense prefix (and any immediately contiguous `sparse_chunks` entries are
+    /// pulled forward) so columns written from row 0 stay dense and eligible for
+    /// dense read/cache fast paths without densifying untouched neighbor columns.
+    /// Non-contiguous chunks beyond `col.chunks.len()` are stored in `sparse_chunks`.
     pub fn ensure_column_chunk_mut(
         &mut self,
         col_idx: usize,
@@ -4700,6 +4730,19 @@ impl ArrowSheet {
 
         let col = self.columns.get_mut(col_idx)?;
         if ch_idx < col.chunks.len() {
+            return Some(&mut col.chunks[ch_idx]);
+        }
+        if ch_idx == col.chunks.len() {
+            let chunk = col
+                .sparse_chunks
+                .remove(&ch_idx)
+                .unwrap_or_else(|| Self::make_empty_chunk(len));
+            col.chunks.push(chunk);
+            let mut next_idx = ch_idx + 1;
+            while let Some(next_chunk) = col.sparse_chunks.remove(&next_idx) {
+                col.chunks.push(next_chunk);
+                next_idx += 1;
+            }
             return Some(&mut col.chunks[ch_idx]);
         }
         Some(
@@ -8494,6 +8537,67 @@ mod tests {
 
         // Untouched intermediate columns stay completely lazy through structural row ops.
         for col in &sheet.columns[1..49] {
+            assert_eq!(col.total_chunk_count(), 0);
+        }
+    }
+
+    #[test]
+    fn ensure_column_chunk_mut_promotes_contiguous_prefix_and_pulls_forward_sparse_chunks() {
+        let mut sheet = ArrowSheet {
+            name: Arc::from("S"),
+            date_system: crate::engine::DateSystem::Excel1900,
+            columns: Vec::new(),
+            nrows: 0,
+            chunk_starts: Vec::new(),
+            chunk_rows: 4,
+        };
+        sheet.ensure_row_capacity(14);
+        sheet.ensure_column_capacity_lazy(5);
+        assert_eq!(sheet.chunk_starts, vec![0, 4, 8, 12]);
+
+        // Writing chunks 1 and 2 out of order parks them in sparse_chunks while chunk 0 is missing.
+        sheet
+            .ensure_column_chunk_mut(0, 1)
+            .unwrap()
+            .overlay
+            .set(1, OverlayValue::Number(11.0));
+        sheet
+            .ensure_column_chunk_mut(0, 2)
+            .unwrap()
+            .overlay
+            .set(2, OverlayValue::Number(22.0));
+        assert!(sheet.columns[0].chunks.is_empty());
+        assert_eq!(sheet.columns[0].sparse_chunks.len(), 2);
+
+        // Writing chunk 0 promotes chunk 0 and pulls contiguous chunks 1 and 2 into the dense prefix.
+        sheet
+            .ensure_column_chunk_mut(0, 0)
+            .unwrap()
+            .overlay
+            .set(0, OverlayValue::Number(1.0));
+        assert_eq!(sheet.columns[0].chunks.len(), 3);
+        assert!(sheet.columns[0].sparse_chunks.is_empty());
+        let lens: Vec<usize> = sheet.columns[0]
+            .chunks
+            .iter()
+            .map(|ch| ch.type_tag.len())
+            .collect();
+        assert_eq!(lens, vec![4, 4, 4]);
+        assert_eq!(sheet.get_cell_value(0, 0), LiteralValue::Number(1.0));
+        assert_eq!(sheet.get_cell_value(5, 0), LiteralValue::Number(11.0));
+        assert_eq!(sheet.get_cell_value(10, 0), LiteralValue::Number(22.0));
+
+        // Appending chunk 3 extends the dense prefix cleanly while neighbor columns remain lazy.
+        sheet
+            .ensure_column_chunk_mut(0, 3)
+            .unwrap()
+            .overlay
+            .set(1, OverlayValue::Number(33.0));
+        assert_eq!(sheet.columns[0].chunks.len(), 4);
+        assert!(sheet.columns[0].sparse_chunks.is_empty());
+        assert_eq!(sheet.columns[0].chunks[3].type_tag.len(), 2);
+        assert_eq!(sheet.get_cell_value(13, 0), LiteralValue::Number(33.0));
+        for col in &sheet.columns[1..] {
             assert_eq!(col.total_chunk_count(), 0);
         }
     }
