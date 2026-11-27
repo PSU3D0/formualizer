@@ -2654,7 +2654,36 @@ fn test_set_packed_block_dense_ragged_sparse_and_bigint_rules() {
         Some("alpha")
     );
 
-    // Pending tag (7) and Skip tag (255) rejected atomically in sparse mode
+    // Date tag (7) and Time tag (8) succeed; unknown tag (9) and Skip tag (255) rejected atomically
+    sheet
+        .set_packed_block(
+            2,
+            0,
+            0,
+            0,
+            0,
+            &[7, 8],
+            &[45306.0, 0.5],
+            &[],
+            &[],
+            &[19, 19],
+            &[1, 2],
+        )
+        .unwrap();
+    let date_val = sheet.get_value(19, 1).unwrap();
+    assert!(date_val.is_instance_of::<js_sys::Date>());
+    assert_eq!(
+        js_sys::Date::from(date_val)
+            .to_iso_string()
+            .as_string()
+            .as_deref(),
+        Some("2024-01-15T00:00:00.000Z")
+    );
+    assert_eq!(
+        sheet.get_value(19, 2).unwrap().as_string().as_deref(),
+        Some("12:00:00")
+    );
+
     assert!(
         sheet
             .set_packed_block(
@@ -2663,7 +2692,7 @@ fn test_set_packed_block_dense_ragged_sparse_and_bigint_rules() {
                 0,
                 0,
                 0,
-                &[1, 7],
+                &[1, 9],
                 &[99.0, 0.0],
                 &[],
                 &[],
@@ -2677,6 +2706,22 @@ fn test_set_packed_block_dense_ragged_sparse_and_bigint_rules() {
         sheet
             .set_packed_block(2, 0, 0, 0, 0, &[255], &[0.0], &[], &[], &[20], &[1])
             .is_err()
+    );
+
+    // _dateSystem reports "1900" by default and "1904" on a 1904 workbook
+    assert_eq!(wb.date_system().unwrap(), "1900");
+    assert_eq!(sheet.date_system().unwrap(), "1900");
+    let wb_1904 =
+        Workbook::from_json(r#"{"sheets":{"S":{"cells":[],"date_system_1904":true}}}"#.to_string())
+            .unwrap();
+    assert_eq!(wb_1904.date_system().unwrap(), "1904");
+    assert_eq!(
+        wb_1904
+            .sheet("S".to_string())
+            .unwrap()
+            .date_system()
+            .unwrap(),
+        "1904"
     );
 
     // 4. BigInt scalar validation: safe within ±2^53 succeeds, beyond ±2^53 throws TypeError

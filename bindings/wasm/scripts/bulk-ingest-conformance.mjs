@@ -52,10 +52,11 @@ function makeBitmap(bools) {
   return out;
 }
 
-// 1. Verify default build artifacts do NOT leak _setPackedBlock or arrow-ipc, and dist/arrow.js is zero-WASM.
-await test('default build hides _setPackedBlock, omits setArrowIpc, and arrow adapter has zero WASM imports', () => {
+// 1. Verify default build artifacts do NOT leak _setPackedBlock/_dateSystem or arrow-ipc, and dist/arrow.js is zero-WASM.
+await test('default build hides _setPackedBlock/_dateSystem, omits setArrowIpc, and arrow adapter has zero WASM imports', () => {
   const dts = fs.readFileSync(new URL('../pkg/formualizer_wasm.d.ts', import.meta.url), 'utf8');
   assert.ok(!dts.includes('_setPackedBlock'), '_setPackedBlock must be excluded from .d.ts');
+  assert.ok(!dts.includes('_dateSystem'), '_dateSystem must be excluded from .d.ts');
   assert.ok(!dts.includes('setArrowIpc'), 'setArrowIpc must NOT appear in default build .d.ts');
 
   const arrowJs = fs.readFileSync(new URL('../dist/arrow.js', import.meta.url), 'utf8');
@@ -319,13 +320,22 @@ await test('setCells handles tuples, objects, #627 typed blocks, duplicates, and
   assert.equal(sheet.getValue(7, 1), 'bar');
   assert.equal(sheet.getValue(7, 2), 'foo');
 
-  // Invalid tags (7 = Pending, 255 = Skip) rejected atomically
+  // Date (7) and Time (8) tags succeed; unknown tag (9) and Skip (255) rejected atomically
+  sheet.setCells({
+    rows: new Uint32Array([8, 8]),
+    cols: new Uint32Array([3, 4]),
+    tags: new Uint8Array([CellTag.Date, CellTag.Time]),
+    numbers: new Float64Array([45306, 0.5]),
+  });
+  assert.equal(sheet.getValue(8, 3).toISOString(), '2024-01-15T00:00:00.000Z');
+  assert.equal(sheet.getValue(8, 4), '12:00:00');
+
   assert.throws(
     () =>
       sheet.setCells({
         rows: new Uint32Array([8, 8]),
         cols: new Uint32Array([1, 2]),
-        tags: new Uint8Array([CellTag.Number, 7]),
+        tags: new Uint8Array([CellTag.Number, 9]),
         numbers: new Float64Array([99, 0]),
       }),
   );
@@ -661,6 +671,441 @@ await test('prepareTransferable safely copies subviews, SharedArrayBuffer, WebAs
   detached.buffer.transfer();
   assert.throws(() => prepareTransferable(detached, false), TypeError);
   assert.throws(() => prepareTransferable(detached, true), TypeError);
+
+  // Zero-length view on transfer: true is never placed in transfer list and never detached (B4)
+  const emptyView = new Uint8Array(0);
+  const emptyRes = prepareTransferable(emptyView, true);
+  assert.equal(emptyRes.transfer.length, 0);
+  assert.equal(emptyView.buffer.detached, false);
+  assert.equal(emptyRes.view.byteLength, 0);
+
+  // Subview on transfer: false compact-copies only the slice instead of cloning the full parent buffer
+  const bigBuf = new ArrayBuffer(1024 * 1024);
+  const bigView = new Float64Array(bigBuf, 64, 2);
+  bigView.set([11.5, 22.5]);
+  const subNoTransfer = prepareTransferable(bigView, false);
+  assert.equal(subNoTransfer.transfer.length, 0);
+  assert.equal(subNoTransfer.view.buffer.byteLength, 16);
+  assert.equal(subNoTransfer.view.byteOffset, 0);
+  assert.deepEqual([...subNoTransfer.view], [11.5, 22.5]);
+  assert.equal(bigBuf.detached, false);
+});
+
+// 6b. B2 regression: sliced apache-arrow tables (single & multi-chunk) and Flechette tables
+await test('B2: formualizer/arrow handles sliced apache-arrow tables (single & multi-chunk) and Flechette tables', () => {
+  // Exact apache-arrow `table.slice(2, 8)` layout:
+  // `values` & `valueOffsets` are ALREADY sliced; `offset = 2` applies ONLY to bitmaps (nullBitmap & Bool values).
+  const fullUtf8 = makeInt32OffsetsUtf8(['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9']);
+  const slicedUtf8Offsets = fullUtf8.valueOffsets.subarray(2, 9); // length 7 = 6 + 1, starts at non-zero byte offset 4!
+  const dictUtf8 = makeInt32OffsetsUtf8(['a', 'b', 'c']);
+  const slicedTable = {
+    numRows: 6,
+    schema: {
+      fields: [
+        { name: 'f64', type: { typeId: 3, precision: 2 } },
+        { name: 'i32', type: { typeId: 2, bitWidth: 32, isSigned: true } },
+        { name: 'i64', type: { typeId: 2, bitWidth: 64, isSigned: true } },
+        { name: 'dict', type: { typeId: -1, valueType: { typeId: 5 } } },
+        { name: 'utf8', type: { typeId: 5 } },
+        { name: 'bool', type: { typeId: 6 } },
+      ],
+    },
+    getChildAt: (i) =>
+      [
+        // Float64 sliced(2, 8): [2.5, null, 4.5, 5.5, 6.5, 7.5] (bit 3 in full nullBitmap is 0 -> row 1 of slice!)
+        {
+          data: [
+            {
+              type: { typeId: 3, precision: 2 },
+              length: 6,
+              offset: 2,
+              nullCount: 1,
+              values: new Float64Array([2.5, 0, 4.5, 5.5, 6.5, 7.5]),
+              nullBitmap: makeBitmap([true, true, true, false, true, true, true, true, true, true]),
+            },
+          ],
+        },
+        // Int32 sliced(2, 8): [20, 30, 40, 50, 60, 70]
+        {
+          data: [
+            {
+              type: { typeId: 2, bitWidth: 32, isSigned: true },
+              length: 6,
+              offset: 2,
+              nullCount: 0,
+              values: new Int32Array([20, 30, 40, 50, 60, 70]),
+              nullBitmap: new Uint8Array(0),
+            },
+          ],
+        },
+        // Int64 sliced(2, 8): [2000n..7000n]
+        {
+          data: [
+            {
+              type: { typeId: 2, bitWidth: 64, isSigned: true },
+              length: 6,
+              offset: 2,
+              nullCount: 0,
+              values: new BigInt64Array([2000n, 3000n, 4000n, 5000n, 6000n, 7000n]),
+              nullBitmap: new Uint8Array(0),
+            },
+          ],
+        },
+        // Dictionary<Utf8> sliced(2, 8): keys [2, 0, 1, 2, 0, 1] -> ['c', 'a', 'b', 'c', 'a', 'b']
+        {
+          data: [
+            {
+              type: { typeId: -1, valueType: { typeId: 5 } },
+              length: 6,
+              offset: 2,
+              nullCount: 0,
+              values: new Int32Array([2, 0, 1, 2, 0, 1]),
+              nullBitmap: new Uint8Array(0),
+              dictionary: {
+                data: [
+                  {
+                    type: { typeId: 5 },
+                    length: 3,
+                    offset: 0,
+                    nullCount: 0,
+                    values: dictUtf8.bytes,
+                    valueOffsets: dictUtf8.valueOffsets,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        // Utf8 sliced(2, 8): ['s2', 's3', 's4', 's5', 's6', 's7']
+        {
+          data: [
+            {
+              type: { typeId: 5 },
+              length: 6,
+              offset: 2,
+              nullCount: 0,
+              values: fullUtf8.bytes,
+              valueOffsets: slicedUtf8Offsets,
+              nullBitmap: new Uint8Array(0),
+            },
+          ],
+        },
+        // Bool sliced(2, 8): bit-packed full buffer [F, F, T, F, null(T), T, F, T, F, F] -> [T, F, null, T, F, T]
+        {
+          data: [
+            {
+              type: { typeId: 6 },
+              length: 6,
+              offset: 2,
+              nullCount: 1,
+              values: makeBitmap([false, false, true, false, true, true, false, true, false, false]),
+              nullBitmap: makeBitmap([true, true, true, true, false, true, true, true, true, true]),
+            },
+          ],
+        },
+      ][i],
+  };
+
+  const wb = new Workbook();
+  wb.addSheet('Sliced');
+  const s = wb.sheet('Sliced');
+  s.setColumns(1, 1, arrowColumns(slicedTable));
+  assert.deepEqual(
+    [1, 2, 3, 4, 5, 6].map((r) => s.getValue(r, 1)),
+    [2.5, null, 4.5, 5.5, 6.5, 7.5],
+  );
+  assert.deepEqual(
+    [1, 2, 3, 4, 5, 6].map((r) => s.getValue(r, 2)),
+    [20, 30, 40, 50, 60, 70],
+  );
+  assert.deepEqual(
+    [1, 2, 3, 4, 5, 6].map((r) => s.getValue(r, 3)),
+    [2000, 3000, 4000, 5000, 6000, 7000],
+  );
+  assert.deepEqual(
+    [1, 2, 3, 4, 5, 6].map((r) => s.getValue(r, 4)),
+    ['c', 'a', 'b', 'c', 'a', 'b'],
+  );
+  assert.deepEqual(
+    [1, 2, 3, 4, 5, 6].map((r) => s.getValue(r, 5)),
+    ['s2', 's3', 's4', 's5', 's6', 's7'],
+  );
+  assert.deepEqual(
+    [1, 2, 3, 4, 5, 6].map((r) => s.getValue(r, 6)),
+    [true, false, null, true, false, true],
+  );
+
+  // Multi-chunk sliced table across chunk boundary
+  const c1Utf8 = makeInt32OffsetsUtf8(['a0', 'a1', 'a2', 'a3']);
+  const c2Utf8 = makeInt32OffsetsUtf8(['b0', 'b1', 'b2', 'b3']);
+  const multiSliced = {
+    numRows: 4,
+    schema: {
+      fields: [
+        { name: 'f', type: { typeId: 3, precision: 2 } },
+        { name: 's', type: { typeId: 5 } },
+      ],
+    },
+    getChildAt: (i) =>
+      [
+        {
+          data: [
+            { type: { typeId: 3, precision: 2 }, length: 2, offset: 2, nullCount: 0, values: new Float64Array([2.5, 3.5]) },
+            { type: { typeId: 3, precision: 2 }, length: 2, offset: 0, nullCount: 0, values: new Float64Array([4.5, 5.5]) },
+          ],
+        },
+        {
+          data: [
+            { type: { typeId: 5 }, length: 2, offset: 2, nullCount: 0, values: c1Utf8.bytes, valueOffsets: c1Utf8.valueOffsets.subarray(2, 5) },
+            { type: { typeId: 5 }, length: 2, offset: 0, nullCount: 0, values: c2Utf8.bytes, valueOffsets: c2Utf8.valueOffsets.subarray(0, 3) },
+          ],
+        },
+      ][i],
+  };
+  s.setColumns(10, 1, arrowColumns(multiSliced));
+  assert.deepEqual([10, 11, 12, 13].map((r) => s.getValue(r, 1)), [2.5, 3.5, 4.5, 5.5]);
+  assert.deepEqual([10, 11, 12, 13].map((r) => s.getValue(r, 2)), ['a2', 'a3', 'b0', 'b1']);
+
+  // Exact Flechette layout (`validity`, `offsets`, `signed`, `dictionary` type field)
+  const flechStr = makeInt32OffsetsUtf8(['alpha', '', 'gamma', 'delta']);
+  // Flechette can over-allocate offsets with trailing zeros:
+  const flechOffsets = new Int32Array([...flechStr.valueOffsets, 0]);
+  const flechDict = makeInt32OffsetsUtf8(['x', 'y']);
+  const flechetteTable = {
+    numRows: 4,
+    schema: {
+      fields: [
+        { name: 'fn', type: { typeId: 3, precision: 2 } },
+        { name: 'str', type: { typeId: 5 } },
+        { name: 'cat', type: { typeId: -1, dictionary: { typeId: 5 }, indices: { typeId: 2, bitWidth: 32, signed: true } } },
+        { name: 'u32', type: { typeId: 2, bitWidth: 32, signed: false } },
+      ],
+    },
+    getChildAt: (i) =>
+      [
+        {
+          data: [
+            {
+              type: { typeId: 3, precision: 2 },
+              length: 4,
+              nullCount: 1,
+              values: new Float64Array([1.5, 0, 3.5, 4.5]),
+              validity: makeBitmap([true, false, true, true]),
+            },
+          ],
+        },
+        {
+          data: [
+            {
+              type: { typeId: 5 },
+              length: 4,
+              nullCount: 1,
+              values: flechStr.bytes,
+              offsets: flechOffsets,
+              validity: makeBitmap([true, false, true, true]),
+            },
+          ],
+        },
+        {
+          data: [
+            {
+              type: { typeId: -1, dictionary: { typeId: 5 } },
+              length: 4,
+              nullCount: 1,
+              values: new Int32Array([0, 1, 0, 0]),
+              validity: makeBitmap([true, true, false, true]),
+              dictionary: {
+                type: { typeId: 5 },
+                length: 2,
+                data: [
+                  {
+                    type: { typeId: 5 },
+                    length: 2,
+                    nullCount: 0,
+                    values: flechDict.bytes,
+                    offsets: flechDict.valueOffsets,
+                    validity: new Uint8Array(0),
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        {
+          data: [
+            {
+              type: { typeId: 2, bitWidth: 32, signed: false },
+              length: 4,
+              nullCount: 0,
+              values: new Uint32Array([10, 20, 30, 40]),
+              validity: new Uint8Array(0),
+            },
+          ],
+        },
+      ][i],
+  };
+
+  wb.addSheet('Flechette');
+  const fsSheet = wb.sheet('Flechette');
+  fsSheet.setColumns(1, 1, arrowColumns(flechetteTable), { headers: true });
+  assert.deepEqual([2, 3, 4, 5].map((r) => fsSheet.getValue(r, 1)), [1.5, null, 3.5, 4.5]);
+  assert.deepEqual([2, 3, 4, 5].map((r) => fsSheet.getValue(r, 2)), ['alpha', null, 'gamma', 'delta']);
+  assert.deepEqual([2, 3, 4, 5].map((r) => fsSheet.getValue(r, 3)), ['x', 'y', null, 'x']);
+  assert.deepEqual([2, 3, 4, 5].map((r) => fsSheet.getValue(r, 4)), [10, 20, 30, 40]);
+
+  // Missing both valueOffsets and offsets on Utf8 throws a clear TypeError naming the column
+  const badUtf8 = {
+    schema: { fields: [{ name: 'broken_str', type: { typeId: 5 } }] },
+    getChildAt: () => ({ data: [{ type: { typeId: 5 }, length: 1, values: new Uint8Array(4) }] }),
+  };
+  assert.throws(() => arrowColumns(badUtf8), /broken_str.*valueOffsets|offsets/);
+
+  fsSheet.free();
+  s.free();
+  wb.free();
+});
+
+// 6c. B3 regression: 1904-date-system JS Date conversion matches setValue across all bulk methods
+await test('B3: 1904-date-system workbook preserves JS Date across setValue, setValues, setCells, and setColumns (direct & worker)', async () => {
+  const json1904 = JSON.stringify({ sheets: { S: { cells: [], date_system_1904: true } } });
+  const wb = Workbook.fromJson(json1904);
+  const s = wb.sheet('S');
+  const dt = new Date(Date.UTC(2024, 0, 15, 12, 0, 0));
+  const midnight = new Date(Date.UTC(2024, 0, 15, 0, 0, 0));
+
+  s.setValue(1, 1, dt);
+  s.setValue(1, 2, midnight);
+  s.setValues(2, 1, [[dt, midnight]]);
+  s.setCells([[3, 1, dt], [3, 2, midnight]]);
+  s.setColumns(4, 1, [
+    { kind: 'mixed', values: [dt] },
+    { kind: 'mixed', values: [midnight] },
+  ]);
+
+  for (const row of [1, 2, 3, 4]) {
+    const vDt = s.getValue(row, 1);
+    const vMid = s.getValue(row, 2);
+    assert.ok(vDt instanceof Date, `row ${row} col 1 must be Date`);
+    assert.equal(vDt.toISOString(), '2024-01-15T12:00:00.000Z', `row ${row} col 1 must not shift by 1462 days`);
+    assert.ok(vMid instanceof Date, `row ${row} col 2 must be Date`);
+    assert.equal(vMid.toISOString(), '2024-01-15T00:00:00.000Z', `row ${row} col 2 must not shift by 1462 days`);
+  }
+
+  // Underlying stored 1904 serials match setValue exactly (43844.5 and 43844, not 1900's 45306.5 / 45306)
+  assert.equal(wb.inspectCell({ sheet: 'S', row: 2, column: 1 }).cell.value, wb.inspectCell({ sheet: 'S', row: 1, column: 1 }).cell.value);
+  assert.equal(wb.inspectCell({ sheet: 'S', row: 2, column: 2 }).cell.value, 43844);
+  assert.equal(wb.inspectCell({ sheet: 'S', row: 4, column: 2 }).cell.value, 43844);
+
+  s.free();
+  wb.free();
+
+  // Worker path in a 1904 workbook
+  const client = await createInProcessWorkbookWorker({ runtime, source: { kind: 'json', json: json1904 } });
+  try {
+    await client.setValue('S', 1, 1, dt);
+    await client.setValues('S', 2, 1, [[dt, midnight]]);
+    await client.setCells('S', [[3, 1, dt], [3, 2, midnight]]);
+    await client.setColumns('S', 4, 1, [
+      { kind: 'mixed', values: [dt] },
+      { kind: 'mixed', values: [midnight] },
+    ]);
+    for (const row of [1, 2, 3, 4]) {
+      assert.equal((await client.getValue('S', row, 1)).toISOString(), '2024-01-15T12:00:00.000Z');
+    }
+    for (const row of [2, 3, 4]) {
+      assert.equal((await client.getValue('S', row, 2)).toISOString(), '2024-01-15T00:00:00.000Z');
+    }
+  } finally {
+    await client.dispose();
+  }
+});
+
+// 6d. B5 regression: setColumns(..., { headers: true }) is strictly atomic (direct & worker) and undoes as one action
+await test('B5: setColumns with headers: true is strictly atomic on bad data (direct & worker) and records one undo step', async () => {
+  const wb = new Workbook({ enableChangelog: true });
+  wb.addSheet('Atomic');
+  const s = wb.sheet('Atomic');
+
+  // Fable's exact failing repro: bad nested array in mixed column must NOT commit headers!
+  assert.throws(
+    () =>
+      s.setColumns(
+        1,
+        1,
+        [
+          { kind: 'number', values: new Float64Array([1, 2]), name: 'a' },
+          { kind: 'mixed', values: [1, [2]], name: 'b' },
+        ],
+        { headers: true },
+      ),
+    TypeError,
+  );
+  assert.equal(s.getValue(1, 1), null, 'header cell A1 must remain empty on failed setColumns');
+  assert.equal(s.getValue(1, 2), null, 'header cell B1 must remain empty on failed setColumns');
+  assert.equal(s.getValue(2, 1), null, 'data cell A2 must remain empty on failed setColumns');
+
+  // Valid call with headers: true records a single undo action (one undo removes both headers and data)
+  s.setColumns(
+    1,
+    1,
+    [
+      { kind: 'number', values: new Float64Array([10, 20]), name: 'a' },
+      { kind: 'mixed', values: [1, 'ok'], name: 'b' },
+    ],
+    { headers: true },
+  );
+  assert.equal(s.getValue(1, 1), 'a');
+  assert.equal(s.getValue(2, 1), 10);
+  assert.equal(s.getValue(3, 2), 'ok');
+  assert.equal(wb.canUndo(), true);
+  wb.undo();
+  assert.equal(s.getValue(1, 1), null, 'single undo must clear header row too');
+  assert.equal(s.getValue(2, 1), null, 'single undo must clear data rows too');
+
+  s.free();
+  wb.free();
+
+  // Worker repro: rejection must leave header empty, zero revision drift, and zero mutation frames
+  const client = await createInProcessWorkbookWorker({ runtime });
+  try {
+    await client.addSheet('AtomicW');
+    const frames = [];
+    const sub = await client.subscribeViewport({
+      rect: { sheet: 'AtomicW', startRow: 1, startColumn: 1, endRow: 5, endColumn: 5 },
+      mode: 'deltas',
+      throttleMs: 0,
+      onFrame: (f) => frames.push(f),
+    });
+    await client.sheetNames(); // flush initial frame
+    const revBefore = client.state.revision;
+    const mutFramesBefore = frames.filter((f) => f.reason === 'mutation').length;
+
+    await assert.rejects(
+      client.setColumns(
+        'AtomicW',
+        1,
+        1,
+        [
+          { kind: 'number', values: new Float64Array([1, 2]), name: 'a' },
+          { kind: 'mixed', values: [1, [2]], name: 'b' },
+        ],
+        { headers: true },
+      ),
+      (err) => err?.name === 'TypeError' || /nested arrays/.test(String(err?.message)),
+    );
+    await client.sheetNames();
+    assert.equal(await client.getValue('AtomicW', 1, 1), null, 'worker header cell must remain empty');
+    assert.equal(await client.getValue('AtomicW', 1, 2), null);
+    assert.equal(client.state.revision, revBefore, 'worker revision must not drift on rejected setColumns');
+    assert.equal(
+      frames.filter((f) => f.reason === 'mutation').length,
+      mutFramesBefore,
+      'rejected setColumns must not emit mutation frames',
+    );
+    await sub.unsubscribe();
+  } finally {
+    await client.dispose();
+  }
 });
 
 // 7. Worker client end-to-end: setValues, setColumns, setCells, transfer: false/true, viewport changedRects
@@ -733,6 +1178,22 @@ await test('worker client exposes setValues, setColumns, setCells with safe tran
       assert.equal(rCells.endCol, 2);
       assert.equal(await client.getValue('W', 10, 1), 42.5);
       assert.equal(await client.getValue('W', 11, 2), 'worker-ok');
+
+      // B4 regression: repeated transfer: true setCells without text + setColumns with empty text must never detach shared empty buffers
+      const mkNoTextBlk = (r) => ({
+        rows: new Uint32Array([r]),
+        cols: new Uint32Array([4]),
+        tags: new Uint8Array([CellTag.Number]),
+        numbers: new Float64Array([r * 10]),
+      });
+      await client.setCells('W', mkNoTextBlk(1), { transfer: true });
+      await client.setCells('W', mkNoTextBlk(2), { transfer: true });
+      await client.setCells('W', mkNoTextBlk(3), { transfer: true });
+      await client.setCells('W', mkNoTextBlk(4)); // transfer: false still works
+      await client.setColumns('W', 20, 1, [{ kind: 'text', values: [] }], { transfer: true });
+      assert.equal(await client.getValue('W', 1, 4), 10);
+      assert.equal(await client.getValue('W', 3, 4), 30);
+      assert.equal(await client.getValue('W', 4, 4), 40);
 
       // editBatch supports setColumns and setCells
       await client.editBatch([

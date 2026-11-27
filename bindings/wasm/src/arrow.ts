@@ -1,8 +1,8 @@
 /**
  * Zero-WASM, zero-dependency Arrow JS / Flechette / DuckDB-WASM adapter for `sheet.setColumns(...)`.
  *
- * Structurally reads Arrow Table column internals (`data.values`, `data.valueOffsets`,
- * `data.nullBitmap`) and converts them directly into `DenseColumnInput[]` without
+ * Structurally reads Arrow Table column internals (`data.values`, `data.valueOffsets`/`data.offsets`,
+ * `data.nullBitmap`/`data.validity`) and converts them directly into `DenseColumnInput[]` without
  * importing `apache-arrow` or loading any WebAssembly binary.
  */
 import {
@@ -16,11 +16,15 @@ export interface ArrowTypeLike {
   typeId?: number;
   bitWidth?: number;
   isSigned?: boolean;
+  /** Flechette Int types use `signed` instead of `isSigned`. */
+  signed?: boolean;
   precision?: number;
   unit?: number;
   scale?: number;
   timezone?: string | null;
   valueType?: ArrowTypeLike;
+  /** Flechette Dictionary types store the dictionary value type on `dictionary`. */
+  dictionary?: ArrowTypeLike;
   indices?: ArrowTypeLike;
   toString?: () => string;
 }
@@ -32,7 +36,11 @@ export interface ArrowDataLike {
   nullCount?: number;
   values?: ArrayBufferView | readonly unknown[] | null;
   valueOffsets?: Int32Array | Uint32Array | BigInt64Array | null;
+  /** Flechette variable-width batches expose `offsets` instead of `valueOffsets`. */
+  offsets?: Int32Array | Uint32Array | BigInt64Array | null;
   nullBitmap?: Uint8Array | null;
+  /** Flechette batches expose `validity` instead of `nullBitmap`. */
+  validity?: Uint8Array | null;
   dictionary?: ArrowDataLike | ArrowColumnLike | null;
 }
 
@@ -45,7 +53,9 @@ export interface ArrowColumnLike {
   nullCount?: number;
   values?: ArrayBufferView | readonly unknown[] | null;
   valueOffsets?: Int32Array | Uint32Array | BigInt64Array | null;
+  offsets?: Int32Array | Uint32Array | BigInt64Array | null;
   nullBitmap?: Uint8Array | null;
+  validity?: Uint8Array | null;
   dictionary?: ArrowDataLike | ArrowColumnLike | null;
 }
 
@@ -108,6 +118,17 @@ function arrowColError(colName: string, message: string): TypeError {
   return new TypeError(`Column '${colName}': ${message}`);
 }
 
+function getNullBitmap(chunk: ArrowDataLike): Uint8Array | null {
+  const bm = chunk.nullBitmap ?? chunk.validity;
+  return bm && bm.byteLength > 0 ? bm : null;
+}
+
+function getValueOffsets(
+  chunk: ArrowDataLike | undefined,
+): Int32Array | Uint32Array | BigInt64Array | null | undefined {
+  return chunk?.valueOffsets ?? chunk?.offsets;
+}
+
 function getChunks(
   table: ArrowTableLike,
   colIndex: number,
@@ -127,7 +148,9 @@ function getChunks(
           nullCount: child.nullCount,
           values: child.values,
           valueOffsets: child.valueOffsets,
+          offsets: child.offsets,
           nullBitmap: child.nullBitmap,
+          validity: child.validity,
           dictionary: child.dictionary,
         },
       ];
@@ -148,7 +171,9 @@ function getChunks(
             nullCount: bChild.nullCount,
             values: bChild.values,
             valueOffsets: bChild.valueOffsets,
+            offsets: bChild.offsets,
             nullBitmap: bChild.nullBitmap,
+            validity: bChild.validity,
             dictionary: bChild.dictionary,
           });
         }
@@ -162,7 +187,7 @@ function getChunks(
 }
 
 function isChunkValid(chunk: ArrowDataLike, rowInChunk: number): boolean {
-  const bm = chunk.nullBitmap;
+  const bm = getNullBitmap(chunk);
   if (!bm || chunk.nullCount === 0) return true;
   const bit = (chunk.offset ?? 0) + rowInChunk;
   return ((bm[bit >> 3] >> (bit & 7)) & 1) !== 0;
@@ -171,16 +196,19 @@ function isChunkValid(chunk: ArrowDataLike, rowInChunk: number): boolean {
 function extractCombinedValidity(chunks: readonly ArrowDataLike[], totalRows: number): Uint8Array | undefined {
   let hasNulls = false;
   for (const ch of chunks) {
-    if (ch.nullBitmap && ch.nullCount !== 0) {
+    if (getNullBitmap(ch) && ch.nullCount !== 0) {
       hasNulls = true;
       break;
     }
   }
   if (!hasNulls) return undefined;
 
-  if (chunks.length === 1 && (chunks[0].offset ?? 0) === 0 && chunks[0].nullBitmap) {
+  const firstBm = getNullBitmap(chunks[0]);
+  if (chunks.length === 1 && (chunks[0].offset ?? 0) === 0 && firstBm) {
     const needed = Math.ceil(totalRows / 8);
-    return chunks[0].nullBitmap.subarray(0, needed);
+    if (firstBm.byteLength >= needed) {
+      return firstBm.subarray(0, needed);
+    }
   }
 
   const out = new Uint8Array(Math.ceil(totalRows / 8));
@@ -281,7 +309,7 @@ function resolveArrowType(
   if (rawType && typeof rawType === 'object') {
     const tid = rawType.typeId;
     if (tid === ARROW_TYPE_DICTIONARY || sampleChunk?.dictionary != null) {
-      return { kind: 'dictionary', valueType: rawType.valueType };
+      return { kind: 'dictionary', valueType: rawType.valueType ?? rawType.dictionary };
     }
     switch (tid) {
       case ARROW_TYPE_NULL:
@@ -290,7 +318,7 @@ function resolveArrowType(
         return {
           kind: 'int',
           bitWidth: rawType.bitWidth ?? 32,
-          isSigned: rawType.isSigned ?? true,
+          isSigned: rawType.isSigned ?? rawType.signed ?? true,
         };
       case ARROW_TYPE_FLOAT:
         return { kind: 'float', precision: rawType.precision ?? 2 };
@@ -340,7 +368,7 @@ function resolveArrowType(
   if (vals instanceof Uint32Array) return { kind: 'int', bitWidth: 32, isSigned: false };
   if (vals instanceof BigInt64Array) return { kind: 'int', bitWidth: 64, isSigned: true };
   if (vals instanceof BigUint64Array) return { kind: 'int', bitWidth: 64, isSigned: false };
-  if (vals instanceof Uint8Array && sampleChunk?.valueOffsets) return { kind: 'utf8', large: false };
+  if (vals instanceof Uint8Array && getValueOffsets(sampleChunk)) return { kind: 'utf8', large: false };
 
   return { kind: 'unsupported', label: 'unknown' };
 }
@@ -473,11 +501,11 @@ function convertChunks(
 
   switch (resolved.kind) {
     case 'float': {
-      // Single-chunk zero-offset Float64Array fast path (zero copy!).
+      // Single-chunk Float64Array fast path (zero copy; apache-arrow `Data.slice()` already
+      // slices `values` to the chunk window, while `offset` applies only to bitmaps).
       if (
         resolved.precision === 2 &&
         chunks.length === 1 &&
-        (chunks[0].offset ?? 0) === 0 &&
         chunks[0].values instanceof Float64Array
       ) {
         const vals = chunks[0].values.subarray(0, totalRows);
@@ -486,15 +514,14 @@ function convertChunks(
       const out = new Float64Array(totalRows);
       let dst = 0;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
         const vals = ch.values;
         if (resolved.precision === 0 && vals instanceof Uint16Array) {
           for (let i = 0; i < ch.length; i++, dst++) {
-            out[dst] = isChunkValid(ch, i) ? readFloat16ToNumber(vals[off + i]) : 0;
+            out[dst] = isChunkValid(ch, i) ? readFloat16ToNumber(vals[i]) : 0;
           }
         } else if (vals instanceof Float64Array || vals instanceof Float32Array) {
           for (let i = 0; i < ch.length; i++, dst++) {
-            out[dst] = isChunkValid(ch, i) ? vals[off + i] : 0;
+            out[dst] = isChunkValid(ch, i) ? vals[i] : 0;
           }
         } else {
           throw arrowColError(colName, 'expected Float64Array/Float32Array/Uint16Array values');
@@ -508,7 +535,6 @@ function convertChunks(
         const out = new Float64Array(totalRows);
         let dst = 0;
         for (const ch of chunks) {
-          const off = ch.offset ?? 0;
           const vals = ch.values;
           if (!vals) throw arrowColError(colName, 'missing 64-bit integer values buffer');
           for (let i = 0; i < ch.length; i++, dst++) {
@@ -516,7 +542,7 @@ function convertChunks(
               out[dst] = 0;
               continue;
             }
-            const v = readInt64AsBigInt(vals, off + i, resolved.isSigned, colName);
+            const v = readInt64AsBigInt(vals, i, resolved.isSigned, colName);
             if (v < -MAX_SAFE_F64_BIGINT || v > MAX_SAFE_F64_BIGINT) {
               throw arrowColError(
                 colName,
@@ -529,11 +555,10 @@ function convertChunks(
         return { kind: 'number', values: out, validity, name: colName };
       }
 
-      // Single-chunk zero-offset Int32Array / Uint32Array fast path.
+      // Single-chunk Int32Array / Uint32Array fast path (`values` is already sliced).
       if (
         resolved.bitWidth === 32 &&
         chunks.length === 1 &&
-        (chunks[0].offset ?? 0) === 0 &&
         ((resolved.isSigned && chunks[0].values instanceof Int32Array) ||
           (!resolved.isSigned && chunks[0].values instanceof Uint32Array))
       ) {
@@ -544,18 +569,18 @@ function convertChunks(
       const out = new Float64Array(totalRows);
       let dst = 0;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
         const vals = ch.values as ArrayLike<number> | null | undefined;
         if (!vals) throw arrowColError(colName, 'missing integer values buffer');
         for (let i = 0; i < ch.length; i++, dst++) {
-          out[dst] = isChunkValid(ch, i) ? Number(vals[off + i]) : 0;
+          out[dst] = isChunkValid(ch, i) ? Number(vals[i]) : 0;
         }
       }
       return { kind: 'number', values: out, validity, name: colName };
     }
 
     case 'bool': {
-      // Arrow Bool vectors store 1 bit per boolean (LSB first) in `data.values: Uint8Array`.
+      // Arrow Bool vectors store 1 bit per boolean (LSB first) in `data.values: Uint8Array`;
+      // bit-packed buffers are NOT sliced by `Data.slice()`, so `ch.offset` MUST be applied here.
       const out = new Uint8Array(totalRows);
       let dst = 0;
       for (const ch of chunks) {
@@ -572,7 +597,7 @@ function convertChunks(
           }
         } else if (Array.isArray(vals)) {
           for (let i = 0; i < ch.length; i++, dst++) {
-            out[dst] = isChunkValid(ch, i) && vals[off + i] ? 1 : 0;
+            out[dst] = isChunkValid(ch, i) && vals[i] ? 1 : 0;
           }
         } else {
           throw arrowColError(colName, 'expected bit-packed Uint8Array values for Bool column');
@@ -582,55 +607,65 @@ function convertChunks(
     }
 
     case 'utf8': {
-      // Fast path: single zero-offset chunk with Uint8Array + Uint32Array offsets.
+      // Fast path: single chunk with Uint8Array + Uint32Array offsets starting at byte 0.
+      const firstOffs = chunks.length === 1 ? getValueOffsets(chunks[0]) : undefined;
       if (
         !resolved.large &&
         chunks.length === 1 &&
-        (chunks[0].offset ?? 0) === 0 &&
         chunks[0].values instanceof Uint8Array &&
-        chunks[0].valueOffsets instanceof Uint32Array &&
-        chunks[0].valueOffsets.length >= totalRows + 1
+        firstOffs instanceof Uint32Array &&
+        firstOffs.length >= totalRows + 1 &&
+        firstOffs[0] === 0
       ) {
         return {
           kind: 'text',
           values: {
             bytes: chunks[0].values,
-            offsets: chunks[0].valueOffsets.subarray(0, totalRows + 1),
+            offsets: firstOffs.subarray(0, totalRows + 1),
           },
           validity,
           name: colName,
         };
       }
 
-      // General path: handle Int32Array offsets (standard apache-arrow JS), BigInt64Array (LargeUtf8),
-      // non-zero chunk offsets, and multi-chunk tables.
+      // General path: handle apache-arrow (`valueOffsets`, already sliced so index from 0),
+      // Flechette (`offsets`), LargeUtf8 (`BigInt64Array`), non-zero base byte offsets from
+      // sliced tables, and multi-chunk tables.
       let totalBytes = 0;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
-        const offs = ch.valueOffsets;
+        const offs = getValueOffsets(ch);
         if (!(ch.values instanceof Uint8Array) || !offs) {
-          throw arrowColError(colName, 'Utf8 column must provide Uint8Array values and valueOffsets');
+          throw arrowColError(
+            colName,
+            'Utf8 column must provide Uint8Array values and valueOffsets (apache-arrow) or offsets (Flechette)',
+          );
         }
-        const startByte = Number(offs[off]);
-        const endByte = Number(offs[off + ch.length]);
+        if (offs.length < ch.length + 1) {
+          throw arrowColError(
+            colName,
+            `Utf8 offsets length (${offs.length}) is smaller than chunk length + 1 (${ch.length + 1})`,
+          );
+        }
+        const startByte = Number(offs[0]);
+        const endByte = Number(offs[ch.length]);
         if (startByte < 0 || endByte < startByte || endByte > ch.values.byteLength) {
           throw arrowColError(colName, 'invalid Utf8 valueOffsets bounds');
         }
         totalBytes += endByte - startByte;
       }
 
-      // Single-chunk zero-offset Int32Array offsets can reuse `ch.values` directly while converting offsets to Uint32Array.
+      // Single-chunk Int32Array/BigInt64Array offsets starting at byte 0 can reuse `ch.values`
+      // directly while converting offsets to Uint32Array.
       if (
         chunks.length === 1 &&
-        (chunks[0].offset ?? 0) === 0 &&
         chunks[0].values instanceof Uint8Array &&
-        chunks[0].valueOffsets &&
-        Number(chunks[0].valueOffsets[0]) === 0
+        firstOffs &&
+        firstOffs.length >= totalRows + 1 &&
+        Number(firstOffs[0]) === 0
       ) {
-        const offs = chunks[0].valueOffsets;
         const u32 = new Uint32Array(totalRows + 1);
         for (let i = 0; i <= totalRows; i++) {
-          const v = Number(offs[i]);
+          const v = Number(firstOffs[i]);
           if (v < 0 || v > 0xffffffff) {
             throw arrowColError(colName, `UTF-8 offset ${v} out of u32 range`);
           }
@@ -649,14 +684,13 @@ function convertChunks(
       let bytePos = 0;
       let rowPos = 0;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
         const bytes = ch.values as Uint8Array;
-        const offs = ch.valueOffsets!;
-        const baseByte = Number(offs[off]);
-        const endByte = Number(offs[off + ch.length]);
+        const offs = getValueOffsets(ch)!;
+        const baseByte = Number(offs[0]);
+        const endByte = Number(offs[ch.length]);
         outBytes.set(bytes.subarray(baseByte, endByte), bytePos);
         for (let i = 0; i < ch.length; i++) {
-          const next = Number(offs[off + i + 1]) - baseByte;
+          const next = Number(offs[i + 1]) - baseByte;
           outOffsets[rowPos + i + 1] = bytePos + next;
         }
         bytePos += endByte - baseByte;
@@ -674,7 +708,6 @@ function convertChunks(
       const out = new Float64Array(totalRows);
       let dst = 0;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
         const vals = ch.values;
         if (!vals) throw arrowColError(colName, 'missing Date values buffer');
         for (let i = 0; i < ch.length; i++, dst++) {
@@ -684,14 +717,14 @@ function convertChunks(
           }
           if (resolved.unit === 0) {
             // Date32: Int32Array days since 1970-01-01
-            const days = (vals as Int32Array)[off + i];
+            const days = (vals as Int32Array)[i];
             out[dst] = utcDaysToExcelSerial(days, dateSystem);
           } else {
             // Date64: ms since 1970-01-01 (Float64Array or 64-bit int)
             const ms =
               vals instanceof Float64Array
-                ? vals[off + i]
-                : Number(readInt64AsBigInt(vals, off + i, true, colName));
+                ? vals[i]
+                : Number(readInt64AsBigInt(vals, i, true, colName));
             out[dst] = utcMillisToExcelSerial(ms, dateSystem);
           }
         }
@@ -704,7 +737,6 @@ function convertChunks(
       const out = new Float64Array(totalRows);
       let dst = 0;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
         const vals = ch.values;
         if (!vals) throw arrowColError(colName, 'missing Timestamp values buffer');
         for (let i = 0; i < ch.length; i++, dst++) {
@@ -714,12 +746,12 @@ function convertChunks(
           }
           const raw =
             vals instanceof Float64Array
-              ? BigInt(Math.trunc(vals[off + i]))
-              : readInt64AsBigInt(vals, off + i, true, colName);
+              ? BigInt(Math.trunc(vals[i]))
+              : readInt64AsBigInt(vals, i, true, colName);
           out[dst] = convertBigIntTimestampToSerial(raw, resolved.unit, tzOffsetSecs, dateSystem);
         }
       }
-      return { kind: 'date', values: out, validity, name: colName };
+      return { kind: 'datetime', values: out, validity, name: colName };
     }
 
     case 'time': {
@@ -734,7 +766,6 @@ function convertChunks(
               ? US_PER_DAY
               : NS_PER_DAY;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
         const vals = ch.values;
         if (!vals) throw arrowColError(colName, 'missing Time values buffer');
         for (let i = 0; i < ch.length; i++, dst++) {
@@ -744,8 +775,8 @@ function convertChunks(
           }
           const v =
             vals instanceof Int32Array || vals instanceof Float64Array
-              ? vals[off + i]
-              : Number(readInt64AsBigInt(vals, off + i, true, colName));
+              ? vals[i]
+              : Number(readInt64AsBigInt(vals, i, true, colName));
           out[dst] = v / denom;
         }
       }
@@ -764,7 +795,6 @@ function convertChunks(
               ? US_PER_DAY
               : NS_PER_DAY;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
         const vals = ch.values;
         if (!vals) throw arrowColError(colName, 'missing Duration values buffer');
         for (let i = 0; i < ch.length; i++, dst++) {
@@ -774,8 +804,8 @@ function convertChunks(
           }
           const v =
             vals instanceof Float64Array
-              ? vals[off + i]
-              : Number(readInt64AsBigInt(vals, off + i, true, colName));
+              ? vals[i]
+              : Number(readInt64AsBigInt(vals, i, true, colName));
           out[dst] = v / denom;
         }
       }
@@ -790,7 +820,6 @@ function convertChunks(
       const out = new Float64Array(totalRows);
       let dst = 0;
       for (const ch of chunks) {
-        const off = ch.offset ?? 0;
         const vals = ch.values;
         if (!(vals instanceof Uint32Array) && !(vals instanceof Int32Array)) {
           throw arrowColError(colName, 'Decimal128 column must provide 32-bit word buffer');
@@ -800,7 +829,7 @@ function convertChunks(
             out[dst] = 0;
             continue;
           }
-          const base = (off + i) * 4;
+          const base = i * 4;
           const w0 = BigInt(vals[base] >>> 0);
           const w1 = BigInt(vals[base + 1] >>> 0);
           const w2 = BigInt(vals[base + 2] >>> 0);
@@ -837,27 +866,31 @@ function convertChunks(
             'data' in dictRef && Array.isArray(dictRef.data)
               ? dictRef.data[0]
               : (dictRef as ArrowDataLike);
-          const dictBytes = dictChunk.values as Uint8Array;
-          const dictOffs = dictChunk.valueOffsets!;
-          const dictBaseOff = dictChunk.offset ?? 0;
+          const dictBytes = dictChunk.values;
+          const dictOffs = getValueOffsets(dictChunk);
+          if (!(dictBytes instanceof Uint8Array) || !dictOffs || dictOffs.length < dictChunk.length + 1) {
+            throw arrowColError(
+              colName,
+              'Dictionary Utf8 values must provide Uint8Array values and valueOffsets (apache-arrow) or offsets (Flechette)',
+            );
+          }
           const dictCache = new Array<string | null>(dictChunk.length);
           for (let d = 0; d < dictChunk.length; d++) {
             if (!isChunkValid(dictChunk, d)) {
               dictCache[d] = null;
             } else {
-              const s0 = Number(dictOffs[dictBaseOff + d]);
-              const s1 = Number(dictOffs[dictBaseOff + d + 1]);
+              const s0 = Number(dictOffs[d]);
+              const s1 = Number(dictOffs[d + 1]);
               dictCache[d] = decoder.decode(dictBytes.subarray(s0, s1));
             }
           }
           const keys = ch.values as ArrayLike<number>;
-          const keyOff = ch.offset ?? 0;
           for (let i = 0; i < ch.length; i++, dst++) {
             if (!isChunkValid(ch, i)) {
               outStrings[dst] = null;
               continue;
             }
-            const k = Number(keys[keyOff + i]);
+            const k = Number(keys[i]);
             if (k < 0 || k >= dictCache.length) {
               throw arrowColError(colName, `dictionary key ${k} out of bounds (len ${dictCache.length})`);
             }
@@ -876,13 +909,12 @@ function convertChunks(
         let dst = 0;
         for (const ch of chunks) {
           const keys = ch.values as ArrayLike<number>;
-          const keyOff = ch.offset ?? 0;
           for (let i = 0; i < ch.length; i++, dst++) {
             if (!isChunkValid(ch, i)) {
               anyNull = true;
               continue;
             }
-            const k = Number(keys[keyOff + i]);
+            const k = Number(keys[i]);
             if (k < 0 || k >= dictDecoded.values.length) {
               throw arrowColError(colName, `dictionary key ${k} out of bounds`);
             }

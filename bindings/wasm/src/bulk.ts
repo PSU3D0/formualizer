@@ -49,6 +49,8 @@ export const CellTag = {
   Error: 4,
   DateTime: 5,
   Duration: 6,
+  Date: 7,
+  Time: 8,
 } as const;
 export type CellTag = (typeof CellTag)[keyof typeof CellTag];
 
@@ -142,7 +144,7 @@ export interface SetArrowIpcOptions {
 export interface SparseCellBlockInput {
   rows: Uint32Array;
   cols: Uint32Array;
-  /** Wire tags (`CellTag`: `0..=6`). Alias: `kinds`. */
+  /** Wire tags (`CellTag`: `0..=8`). Alias: `kinds`. */
   tags?: Uint8Array;
   /** Alias for `tags` (`#627` typed columnar ergonomics). */
   kinds?: Uint8Array;
@@ -181,6 +183,7 @@ export interface PackedBlockTarget {
     rows: Uint32Array,
     cols: Uint32Array,
   ): WriteRangeReport;
+  _dateSystem?(): '1900' | '1904';
 }
 
 export const PACKED_MODE_DENSE_ROW_MAJOR = 0;
@@ -258,6 +261,15 @@ export function assertNotDetached(view: ArrayBufferView, label: string): void {
     throw new TypeError(
       `${label}: underlying ArrayBuffer is detached (was it already transferred with transfer: true?)`,
     );
+  }
+  if (typeof buf.detached !== 'boolean' && typeof buf.slice === 'function') {
+    try {
+      buf.slice(0, 0);
+    } catch {
+      throw new TypeError(
+        `${label}: underlying ArrayBuffer is detached (was it already transferred with transfer: true?)`,
+      );
+    }
   }
 }
 
@@ -373,7 +385,7 @@ export function packOrderedStrings(
 ): { bytes: Uint8Array; offsets: Uint32Array } {
   const count = strings.length;
   if (count === 0) {
-    return { bytes: EMPTY_U8, offsets: EMPTY_U32 };
+    return { bytes: new Uint8Array(0), offsets: new Uint32Array(0) };
   }
   let totalUtf16 = hintUtf16Len ?? 0;
   if (hintUtf16Len === undefined) {
@@ -439,12 +451,55 @@ function parseErrorObject(value: Record<string, unknown>): ExcelErrorCode | null
   return parseExcelErrorCode(rawCode);
 }
 
+function resolveTargetDateSystem(
+  target: PackedBlockTarget,
+  dateSystem?: '1900' | '1904',
+): '1900' | '1904' {
+  if (dateSystem !== undefined) return dateSystem;
+  return typeof target._dateSystem === 'function' ? target._dateSystem() : '1900';
+}
+
+function validateScalarValue(value: unknown, columnLabel?: string): void {
+  if (
+    typeof value === 'number' ||
+    value === null ||
+    value === undefined ||
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    value instanceof Date
+  ) {
+    return;
+  }
+  if (typeof value === 'bigint') {
+    if (value < -MAX_SAFE_F64_BIGINT || value > MAX_SAFE_F64_BIGINT) {
+      const prefix = columnLabel ? `Column '${columnLabel}': ` : '';
+      throw new TypeError(
+        `${prefix}BigInt value ${value} exceeds exact IEEE-754 f64 range (±2^53); cast explicitly to string or number`,
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    throw new TypeError('nested arrays are not valid scalar cell values');
+  }
+  if (typeof value === 'object') {
+    const code = parseErrorObject(value as Record<string, unknown>);
+    if (code !== null) {
+      return;
+    }
+  }
+  throw new TypeError(
+    "unsupported cell value: expected null, undefined, boolean, number, safe bigint, string, Date, or error object ({ type: 'Error', value } or { kind: 'error', code })",
+  );
+}
+
 function encodeScalarInto(
   value: unknown,
   idx: number,
   tags: Uint8Array,
   numbers: Float64Array,
   strings: StringTableBuilder,
+  dateSystem: '1900' | '1904' = '1900',
   columnLabel?: string,
 ): void {
   if (typeof value === 'number') {
@@ -487,9 +542,12 @@ function encodeScalarInto(
     throw new TypeError('nested arrays are not valid scalar cell values');
   }
   if (value instanceof Date) {
-    const serial = utcMillisToExcelSerial(value.getTime(), '1900');
+    const ms = value.getTime();
+    const serial = utcMillisToExcelSerial(ms, dateSystem);
     if (Number.isFinite(serial)) {
-      tags[idx] = CellTag.DateTime;
+      const utcDays = Math.floor(ms / MS_PER_DAY);
+      const msOfDay = ms - utcDays * MS_PER_DAY;
+      tags[idx] = msOfDay === 0 ? CellTag.Date : CellTag.DateTime;
       numbers[idx] = serial;
     } else {
       tags[idx] = CellTag.Error;
@@ -520,6 +578,7 @@ export function executeSetValues(
   startRow: number,
   startCol: number,
   rows: readonly (readonly CellScalarInput[])[],
+  dateSystem?: '1900' | '1904',
 ): WriteRangeReport {
   if (!Array.isArray(rows)) {
     throw new TypeError('setValues: rows must be a 2D array');
@@ -540,6 +599,7 @@ export function executeSetValues(
     return emptyWriteRangeReport();
   }
 
+  const resolvedDateSystem = resolveTargetDateSystem(target, dateSystem);
   const rowsPerChunk = Math.max(1, Math.floor(MAX_CELLS_PER_WASM_CALL / ncols));
   let combined = emptyWriteRangeReport();
 
@@ -555,7 +615,7 @@ export function executeSetValues(
       const rowLen = row.length;
       const base = dr * ncols;
       for (let c = 0; c < rowLen; c++) {
-        encodeScalarInto(row[c], base + c, tags, numbers, strings);
+        encodeScalarInto(row[c], base + c, tags, numbers, strings, resolvedDateSystem);
       }
       for (let c = rowLen; c < ncols; c++) {
         tags[base + c] = WIRE_TAG_SKIP;
@@ -829,6 +889,7 @@ export function executeSetColumns(
   startCol: number,
   columns: readonly DenseColumnInput[],
   options?: SetColumnsOptions,
+  dateSystem?: '1900' | '1904',
 ): WriteRangeReport {
   if (!Array.isArray(columns)) {
     throw new TypeError('setColumns: columns must be an array');
@@ -871,24 +932,53 @@ export function executeSetColumns(
     validateBlockBounds(startRow, startCol, nrows, ncols);
   }
 
-  let combined = emptyWriteRangeReport();
-  let dataStartRow = startRow;
-
-  if (headerNames !== null) {
-    const hdrReport = executeSetValues(target, startRow, startCol, [headerNames]);
-    combined = mergeWriteRangeReports(combined, hdrReport);
-    dataStartRow = startRow + 1;
-  }
+  const resolvedDateSystem = resolveTargetDateSystem(target, dateSystem);
 
   if (nrows === 0) {
-    return combined;
+    if (headerNames !== null) {
+      return executeSetValues(target, startRow, startCol, [headerNames], resolvedDateSystem);
+    }
+    return emptyWriteRangeReport();
   }
 
   const rowsPerChunk = Math.max(1, Math.floor(MAX_CELLS_PER_WASM_CALL / ncols));
+  const firstChunkMaxDataRows = headerNames !== null ? Math.max(1, rowsPerChunk - 1) : rowsPerChunk;
 
-  for (let r0 = 0; r0 < nrows; r0 += rowsPerChunk) {
-    const chunkRows = Math.min(rowsPerChunk, nrows - r0);
-    const total = chunkRows * ncols;
+  // If the write spans multiple chunks, pre-validate JS-typed columns across all rows before
+  // committing chunk 0 so invalid values in later chunks never leave partial writes or headers.
+  if (nrows > firstChunkMaxDataRows) {
+    for (let c = 0; c < ncols; c++) {
+      const col = normalized[c];
+      if (col.kind === 'text' && col.textArray) {
+        const arr = col.textArray;
+        const validity = col.validity;
+        for (let r = 0; r < nrows; r++) {
+          if (!isValidityBitSet(validity, r)) continue;
+          const s = arr[r];
+          if (s !== null && s !== undefined && typeof s !== 'string') {
+            throw new TypeError(`${col.label} row ${r}: expected string or null`);
+          }
+        }
+      } else if (col.kind === 'mixed' && col.mixedValues) {
+        const vals = col.mixedValues;
+        for (let r = 0; r < nrows; r++) {
+          validateScalarValue(vals[r], col.label);
+        }
+      }
+    }
+  }
+
+  let combined = emptyWriteRangeReport();
+  const dataStartRow = headerNames !== null ? startRow + 1 : startRow;
+
+  let r0 = 0;
+  while (r0 < nrows) {
+    const includeHeader = headerNames !== null && r0 === 0;
+    const headerRows = includeHeader ? 1 : 0;
+    const maxDataRows = includeHeader ? firstChunkMaxDataRows : rowsPerChunk;
+    const chunkRows = Math.min(maxDataRows, nrows - r0);
+    const blockRows = chunkRows + headerRows;
+    const total = blockRows * ncols;
     const tags = new Uint8Array(total);
     const numbers = new Float64Array(total);
 
@@ -912,7 +1002,12 @@ export function executeSetColumns(
 
     for (let c = 0; c < ncols; c++) {
       const col = normalized[c];
-      const colBase = c * chunkRows;
+      const colBase = c * blockRows;
+      if (includeHeader) {
+        tags[colBase] = CellTag.Text;
+        numbers[colBase] = builderBase + arena.intern(headerNames![c]);
+      }
+      const dataBase = colBase + headerRows;
       const validity = col.validity;
 
       switch (col.kind) {
@@ -921,28 +1016,28 @@ export function executeSetColumns(
           if (validity === undefined && vals instanceof Float64Array) {
             // Fast path: bulk copy Float64Array slice, check non-finite only if needed.
             const sub = r0 === 0 && chunkRows === vals.length ? vals : vals.subarray(r0, r0 + chunkRows);
-            tags.fill(CellTag.Number, colBase, colBase + chunkRows);
-            numbers.set(sub, colBase);
+            tags.fill(CellTag.Number, dataBase, dataBase + chunkRows);
+            numbers.set(sub, dataBase);
             for (let i = 0; i < chunkRows; i++) {
               if (!Number.isFinite(sub[i])) {
-                tags[colBase + i] = CellTag.Error;
-                numbers[colBase + i] = ExcelErrorCode.Num;
+                tags[dataBase + i] = CellTag.Error;
+                numbers[dataBase + i] = ExcelErrorCode.Num;
               }
             }
           } else {
             for (let i = 0; i < chunkRows; i++) {
               const srcIdx = r0 + i;
               if (!isValidityBitSet(validity, srcIdx)) {
-                tags[colBase + i] = CellTag.Empty;
-                numbers[colBase + i] = 0;
+                tags[dataBase + i] = CellTag.Empty;
+                numbers[dataBase + i] = 0;
               } else {
                 const v = vals[srcIdx];
                 if (Number.isFinite(v)) {
-                  tags[colBase + i] = CellTag.Number;
-                  numbers[colBase + i] = v;
+                  tags[dataBase + i] = CellTag.Number;
+                  numbers[dataBase + i] = v;
                 } else {
-                  tags[colBase + i] = CellTag.Error;
-                  numbers[colBase + i] = ExcelErrorCode.Num;
+                  tags[dataBase + i] = CellTag.Error;
+                  numbers[dataBase + i] = ExcelErrorCode.Num;
                 }
               }
             }
@@ -954,17 +1049,17 @@ export function executeSetColumns(
           for (let i = 0; i < chunkRows; i++) {
             const srcIdx = r0 + i;
             if (!isValidityBitSet(validity, srcIdx)) {
-              tags[colBase + i] = CellTag.Empty;
-              numbers[colBase + i] = 0;
+              tags[dataBase + i] = CellTag.Empty;
+              numbers[dataBase + i] = 0;
               continue;
             }
             const v = vals[srcIdx];
             if (v === null || v === undefined) {
-              tags[colBase + i] = CellTag.Empty;
-              numbers[colBase + i] = 0;
+              tags[dataBase + i] = CellTag.Empty;
+              numbers[dataBase + i] = 0;
             } else {
-              tags[colBase + i] = CellTag.Boolean;
-              numbers[colBase + i] = v ? 1 : 0;
+              tags[dataBase + i] = CellTag.Boolean;
+              numbers[dataBase + i] = v ? 1 : 0;
             }
           }
           break;
@@ -975,11 +1070,11 @@ export function executeSetColumns(
             for (let i = 0; i < chunkRows; i++) {
               const srcIdx = r0 + i;
               if (!isValidityBitSet(validity, srcIdx)) {
-                tags[colBase + i] = CellTag.Empty;
-                numbers[colBase + i] = 0;
+                tags[dataBase + i] = CellTag.Empty;
+                numbers[dataBase + i] = 0;
               } else {
-                tags[colBase + i] = CellTag.Text;
-                numbers[colBase + i] = baseStr + i;
+                tags[dataBase + i] = CellTag.Text;
+                numbers[dataBase + i] = baseStr + i;
               }
             }
           } else {
@@ -988,17 +1083,17 @@ export function executeSetColumns(
             for (let i = 0; i < chunkRows; i++) {
               const srcIdx = r0 + i;
               if (!isValidityBitSet(validity, srcIdx)) {
-                tags[colBase + i] = CellTag.Empty;
-                numbers[colBase + i] = 0;
+                tags[dataBase + i] = CellTag.Empty;
+                numbers[dataBase + i] = 0;
                 continue;
               }
               const s = arr[srcIdx];
               if (s === null || s === undefined) {
-                tags[colBase + i] = CellTag.Empty;
-                numbers[colBase + i] = 0;
+                tags[dataBase + i] = CellTag.Empty;
+                numbers[dataBase + i] = 0;
               } else if (typeof s === 'string') {
-                tags[colBase + i] = CellTag.Text;
-                numbers[colBase + i] = builderBase + arena.intern(s);
+                tags[dataBase + i] = CellTag.Text;
+                numbers[dataBase + i] = builderBase + arena.intern(s);
               } else {
                 throw new TypeError(`${col.label} row ${srcIdx}: expected string or null`);
               }
@@ -1009,19 +1104,20 @@ export function executeSetColumns(
         case 'date':
         case 'datetime': {
           const vals = col.numValues!;
+          const wireTag = col.kind === 'date' ? CellTag.Date : CellTag.DateTime;
           for (let i = 0; i < chunkRows; i++) {
             const srcIdx = r0 + i;
             if (!isValidityBitSet(validity, srcIdx)) {
-              tags[colBase + i] = CellTag.Empty;
-              numbers[colBase + i] = 0;
+              tags[dataBase + i] = CellTag.Empty;
+              numbers[dataBase + i] = 0;
             } else {
               const v = vals[srcIdx];
               if (Number.isFinite(v)) {
-                tags[colBase + i] = CellTag.DateTime;
-                numbers[colBase + i] = v;
+                tags[dataBase + i] = wireTag;
+                numbers[dataBase + i] = v;
               } else {
-                tags[colBase + i] = CellTag.Error;
-                numbers[colBase + i] = ExcelErrorCode.Num;
+                tags[dataBase + i] = CellTag.Error;
+                numbers[dataBase + i] = ExcelErrorCode.Num;
               }
             }
           }
@@ -1032,16 +1128,16 @@ export function executeSetColumns(
           for (let i = 0; i < chunkRows; i++) {
             const srcIdx = r0 + i;
             if (!isValidityBitSet(validity, srcIdx)) {
-              tags[colBase + i] = CellTag.Empty;
-              numbers[colBase + i] = 0;
+              tags[dataBase + i] = CellTag.Empty;
+              numbers[dataBase + i] = 0;
             } else {
               const v = vals[srcIdx];
               if (Number.isFinite(v)) {
-                tags[colBase + i] = CellTag.Duration;
-                numbers[colBase + i] = v;
+                tags[dataBase + i] = CellTag.Duration;
+                numbers[dataBase + i] = v;
               } else {
-                tags[colBase + i] = CellTag.Error;
-                numbers[colBase + i] = ExcelErrorCode.Num;
+                tags[dataBase + i] = CellTag.Error;
+                numbers[dataBase + i] = ExcelErrorCode.Num;
               }
             }
           }
@@ -1059,7 +1155,15 @@ export function executeSetColumns(
             intern: (s: string) => builderBase + arena.intern(s),
           } as unknown as StringTableBuilder;
           for (let i = 0; i < chunkRows; i++) {
-            encodeScalarInto(vals[r0 + i], colBase + i, tags, numbers, proxyBuilder, col.label);
+            encodeScalarInto(
+              vals[r0 + i],
+              dataBase + i,
+              tags,
+              numbers,
+              proxyBuilder,
+              resolvedDateSystem,
+              col.label,
+            );
           }
           break;
         }
@@ -1068,11 +1172,12 @@ export function executeSetColumns(
 
     void builderColumns;
     const { bytes, offsets } = arena.finish();
+    const blockStartRow = includeHeader ? startRow : dataStartRow + r0;
     const report = target._setPackedBlock(
       PACKED_MODE_DENSE_COL_MAJOR,
-      dataStartRow + r0,
+      blockStartRow,
       startCol,
-      chunkRows,
+      blockRows,
       ncols,
       tags,
       numbers,
@@ -1082,6 +1187,7 @@ export function executeSetColumns(
       EMPTY_U32,
     );
     combined = mergeWriteRangeReports(combined, report);
+    r0 += chunkRows;
   }
 
   return combined;
@@ -1135,8 +1241,8 @@ export function resolveSparseBlockBuffers(block: SparseCellBlockInput): {
     );
   }
 
-  let textBytes: Uint8Array = EMPTY_U8;
-  let textOffsets: Uint32Array = EMPTY_U32;
+  let textBytes: Uint8Array = new Uint8Array(0);
+  let textOffsets: Uint32Array = new Uint32Array(0);
 
   if (block.texts !== undefined) {
     if (Array.isArray(block.texts)) {
@@ -1180,7 +1286,11 @@ export function resolveSparseBlockBuffers(block: SparseCellBlockInput): {
  * Execute `sheet.setCells(cells)` supporting `[row, col, value][]`, `{ row, col, value }[]`,
  * and typed columnar `SparseCellBlockInput` (`rows`, `cols`, `tags`/`kinds`, `numbers`, `texts`/`strings`/`textBytes`+`textOffsets`).
  */
-export function executeSetCells(target: PackedBlockTarget, cells: SetCellsInput): WriteRangeReport {
+export function executeSetCells(
+  target: PackedBlockTarget,
+  cells: SetCellsInput,
+  dateSystem?: '1900' | '1904',
+): WriteRangeReport {
   if (isSparseCellBlockInput(cells)) {
     const { rows, cols, tags, numbers, textBytes, textOffsets } = resolveSparseBlockBuffers(cells);
     const n = rows.length;
@@ -1233,6 +1343,7 @@ export function executeSetCells(target: PackedBlockTarget, cells: SetCellsInput)
     return emptyWriteRangeReport();
   }
 
+  const resolvedDateSystem = resolveTargetDateSystem(target, dateSystem);
   let combined = emptyWriteRangeReport();
   for (let i0 = 0; i0 < n; i0 += MAX_CELLS_PER_WASM_CALL) {
     const chunkLen = Math.min(MAX_CELLS_PER_WASM_CALL, n - i0);
@@ -1266,7 +1377,7 @@ export function executeSetCells(target: PackedBlockTarget, cells: SetCellsInput)
       validateCoord(row, col, `setCells[${i0 + j}]`);
       rows[j] = row;
       cols[j] = col;
-      encodeScalarInto(value, j, tags, numbers, strings);
+      encodeScalarInto(value, j, tags, numbers, strings, resolvedDateSystem);
     }
 
     const { bytes, offsets } = strings.finish();

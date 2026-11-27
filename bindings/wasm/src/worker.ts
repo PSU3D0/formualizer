@@ -206,7 +206,21 @@ export function prepareTransferableViews<T extends readonly ArrayBufferView[]>(
     }
   }
   if (!transfer) {
-    return { views, transfer: [] };
+    // Even without ownership transfer, compact-copy any sub-range view so
+    // `postMessage` structured-clones only the view's slice rather than the
+    // entire parent `ArrayBuffer` (e.g. a DuckDB-WASM heap or shared pool).
+    let copiedAny = false;
+    const out: ArrayBufferView[] = new Array(views.length);
+    for (let i = 0; i < views.length; i++) {
+      const view = views[i];
+      if (view.byteOffset !== 0 || view.byteLength !== view.buffer.byteLength) {
+        out[i] = copyTypedArrayView(view);
+        copiedAny = true;
+      } else {
+        out[i] = view;
+      }
+    }
+    return { views: (copiedAny ? out : views) as unknown as T, transfer: [] };
   }
 
   const transferredMap = new Map<ArrayBuffer, ArrayBuffer>();
@@ -218,7 +232,9 @@ export function prepareTransferableViews<T extends readonly ArrayBufferView[]>(
     const buf = view.buffer;
     if (mustCopyBuf.has(buf)) {
       const copied = copyTypedArrayView(view);
-      transferSet.add(copied.buffer as ArrayBuffer);
+      if (copied.byteLength > 0) {
+        transferSet.add(copied.buffer as ArrayBuffer);
+      }
       out[i] = copied;
       continue;
     }
@@ -226,6 +242,12 @@ export function prepareTransferableViews<T extends readonly ArrayBufferView[]>(
     const existing = transferredMap.get(ab);
     if (existing) {
       out[i] = rewrapTypedArrayView(view, existing);
+      continue;
+    }
+    // Never include zero-length views in the transfer list so empty buffers
+    // (including any shared empty views) are never detached.
+    if (view.byteLength === 0) {
+      out[i] = copyTypedArrayView(view);
       continue;
     }
     const transferableAb = ab as ArrayBuffer & { transfer?: () => ArrayBuffer };

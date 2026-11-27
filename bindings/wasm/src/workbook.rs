@@ -1861,6 +1861,20 @@ impl Workbook {
         Ok(obj.into())
     }
 
+    /// Internal helper exposing the workbook's active Excel date system (`"1900"` or `"1904"`)
+    /// so JS/TS bulk packers convert JS `Date` values using the workbook's actual epoch.
+    #[wasm_bindgen(js_name = "_dateSystem", skip_typescript)]
+    pub fn date_system(&self) -> Result<String, JsValue> {
+        let wb = self
+            .inner
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        Ok(match wb.eval_config().date_system {
+            formualizer::DateSystem::Excel1900 => "1900".to_string(),
+            formualizer::DateSystem::Excel1904 => "1904".to_string(),
+        })
+    }
+
     pub(crate) fn inner_arc(&self) -> Arc<RwLock<formualizer::workbook::Workbook>> {
         Arc::clone(&self.inner)
     }
@@ -1963,6 +1977,20 @@ impl Sheet {
             .set_values(&self.name, start_row, start_col, &rows)
             .map_err(workbook_error_to_js)?;
         write_range_report_to_js(report)
+    }
+
+    /// Internal helper exposing the workbook's active Excel date system (`"1900"` or `"1904"`)
+    /// so JS/TS bulk packers convert JS `Date` values using the workbook's actual epoch.
+    #[wasm_bindgen(js_name = "_dateSystem", skip_typescript)]
+    pub fn date_system(&self) -> Result<String, JsValue> {
+        let wb = self
+            .wb
+            .read()
+            .map_err(|_| js_error("failed to lock workbook for read"))?;
+        Ok(match wb.eval_config().date_system {
+            formualizer::DateSystem::Excel1900 => "1900".to_string(),
+            formualizer::DateSystem::Excel1904 => "1904".to_string(),
+        })
     }
 
     /// Single private packed bulk-write entry point backing TS `setValues`, `setColumns`,

@@ -1749,7 +1749,6 @@ dependencies = [
  "chrono",
  "console_error_panic_hook",
  "formualizer",
- "formualizer-workbook",
  "js-sys",
  "serde",
  "serde-wasm-bindgen",
