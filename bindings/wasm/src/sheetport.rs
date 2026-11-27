@@ -1,5 +1,5 @@
 use crate::utils::{js_error, js_error_with_cause};
-use crate::workbook::{Workbook, js_to_literal, literal_to_js};
+use crate::workbook::{Workbook, js_to_scalar_literal, literal_to_js};
 use chrono::{DateTime, Utc};
 use formualizer::eval::engine::DeterministicMode;
 use formualizer::eval::timezone::TimeZoneSpec;
@@ -277,7 +277,7 @@ fn js_to_port_value(binding: &PortBinding, value: &JsValue) -> Result<PortValue,
     }
 
     match &binding.kind {
-        BoundPort::Scalar(_) => Ok(PortValue::Scalar(js_to_literal(value))),
+        BoundPort::Scalar(_) => Ok(PortValue::Scalar(js_to_scalar_literal(value)?)),
         BoundPort::Record(record) => {
             let obj = value
                 .clone()
@@ -298,7 +298,7 @@ fn js_to_port_value(binding: &PortBinding, value: &JsValue) -> Result<PortValue,
                     js_sys::Reflect::get(&obj, &JsValue::from_str(&field)).map_err(|err| {
                         js_error_with_cause(format!("failed to read record field `{field}`"), err)
                     })?;
-                map.insert(field, js_to_literal(&js_value));
+                map.insert(field, js_to_scalar_literal(&js_value)?);
             }
             Ok(PortValue::Record(map))
         }
@@ -315,7 +315,7 @@ fn js_to_port_value(binding: &PortBinding, value: &JsValue) -> Result<PortValue,
                     .map_err(|_| js_error(format!("range row {} must be an array", idx + 1)))?;
                 let mut row: Vec<LiteralValue> = Vec::with_capacity(row_arr.length() as usize);
                 for cell in row_arr.iter() {
-                    row.push(js_to_literal(&cell));
+                    row.push(js_to_scalar_literal(&cell)?);
                 }
                 if let Some(width) = expected_width {
                     if width != row.len() {
@@ -363,7 +363,7 @@ fn js_to_table_value(table: &TableBinding, value: &JsValue) -> Result<TableValue
                 js_sys::Reflect::get(&object, &JsValue::from_str(&column)).map_err(|err| {
                     js_error_with_cause(format!("failed to read column `{column}`"), err)
                 })?;
-            map.insert(column, js_to_literal(&cell));
+            map.insert(column, js_to_scalar_literal(&cell)?);
         }
         collected.push(TableRow::new(map));
     }

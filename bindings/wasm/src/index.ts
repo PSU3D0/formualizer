@@ -272,7 +272,12 @@ export async function parse(
   });
 }
 
-export type CellScalar = null | undefined | boolean | number | string;
+export interface CellErrorInput {
+  type: 'Error';
+  value: string;
+  message?: string;
+}
+export type CellScalar = null | undefined | boolean | number | string | Date | CellErrorInput | TraceErrorValue;
 export type CellArray = CellScalar[] | CellScalar[][];
 export type CellValue = CellScalar | CellArray;
 

@@ -1,5 +1,5 @@
 use crate::errors::workbook_error_to_js;
-use crate::utils::{js_error, js_error_with_cause};
+use crate::utils::{js_error, js_error_with_cause, js_type_error};
 use formualizer::common::error::{ExcelError, ExcelErrorKind};
 use serde::Deserialize;
 use std::cell::RefCell;
@@ -318,7 +318,7 @@ impl formualizer::workbook::CustomFnHandler for JsCustomFnHandler {
 
         let value = JS_CALLBACK_REGISTRY
             .with(|registry| registry.borrow().call(self.callback_id, &js_args))?;
-        Ok(js_to_literal(&value))
+        js_to_literal(&value).map_err(js_exception_to_excel_value)
     }
 }
 
@@ -504,27 +504,114 @@ fn js_exception_to_excel_value(err: JsValue) -> ExcelError {
     ExcelError::new(ExcelErrorKind::Value).with_message(format!("JS callback threw: {detail}"))
 }
 
-pub(crate) fn js_to_literal(value: &JsValue) -> formualizer::LiteralValue {
+fn parse_js_error_object(value: &JsValue) -> Result<Option<ExcelError>, JsValue> {
+    if !value.is_object() || value.is_null() {
+        return Ok(None);
+    }
+
+    let type_prop = js_sys::Reflect::get(value, &JsValue::from_str("type"))?;
+    let kind_prop = js_sys::Reflect::get(value, &JsValue::from_str("kind"))?;
+
+    let (code_prop, allowed_keys): (&str, &[&str]) =
+        if type_prop.as_string().as_deref() == Some("Error") {
+            ("value", &["type", "value", "message"])
+        } else if kind_prop.as_string().as_deref() == Some("error") {
+            ("code", &["kind", "code", "message"])
+        } else {
+            return Ok(None);
+        };
+
+    let object: &js_sys::Object = value.unchecked_ref();
+    for key in js_sys::Object::keys(object).iter() {
+        let Some(key_str) = key.as_string() else {
+            continue;
+        };
+        if !allowed_keys.contains(&key_str.as_str()) {
+            return Err(js_type_error(format!(
+                "unexpected error object key `{key_str}`; expected one of {}",
+                allowed_keys.join(", ")
+            )));
+        }
+    }
+
+    let code_val = js_sys::Reflect::get(value, &JsValue::from_str(code_prop))?;
+    let code = code_val.as_string().ok_or_else(|| {
+        js_type_error(format!(
+            "error object requires a string `{code_prop}` (e.g. \"#CIRC!\")"
+        ))
+    })?;
+    let kind = ExcelErrorKind::try_parse(&code)
+        .ok_or_else(|| js_type_error(format!("unknown Excel error code: {code:?}")))?;
+    let mut err = ExcelError::new(kind);
+
+    let message_val = js_sys::Reflect::get(value, &JsValue::from_str("message"))?;
+    if !message_val.is_undefined() && !message_val.is_null() {
+        let msg = message_val
+            .as_string()
+            .ok_or_else(|| js_type_error("error object `message` must be a string"))?;
+        err = err.with_message(msg);
+    }
+
+    Ok(Some(err))
+}
+
+pub(crate) fn js_to_scalar_literal(value: &JsValue) -> Result<formualizer::LiteralValue, JsValue> {
     use formualizer::LiteralValue;
 
     if value.is_null() || value.is_undefined() {
-        return LiteralValue::Empty;
+        return Ok(LiteralValue::Empty);
     }
 
     if let Some(b) = value.as_bool() {
-        return LiteralValue::Boolean(b);
+        return Ok(LiteralValue::Boolean(b));
     }
 
     if let Some(s) = value.as_string() {
-        return LiteralValue::Text(s);
+        return Ok(LiteralValue::Text(s));
     }
 
     if let Some(n) = value.as_f64() {
-        if n.fract() == 0.0 && n.is_finite() && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
-            return LiteralValue::Int(n as i64);
+        if n == 0.0 && n.is_sign_negative() {
+            return Ok(LiteralValue::Number(n));
         }
-        return LiteralValue::Number(n);
+        if n.fract() == 0.0 && n.is_finite() && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
+            return Ok(LiteralValue::Int(n as i64));
+        }
+        return Ok(LiteralValue::Number(n));
     }
+
+    if js_sys::Array::is_array(value) {
+        return Err(js_type_error(
+            "nested arrays are not valid scalar cell values",
+        ));
+    }
+
+    if let Some(date) = value.dyn_ref::<js_sys::Date>() {
+        let ms = date.get_time();
+        if !ms.is_finite() {
+            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)));
+        }
+        let Some(dt_utc) = chrono::DateTime::from_timestamp_millis(ms as i64) else {
+            return Ok(LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)));
+        };
+        let naive = dt_utc.naive_utc();
+        if naive.time() == chrono::NaiveTime::MIN {
+            return Ok(LiteralValue::Date(naive.date()));
+        }
+        return Ok(LiteralValue::DateTime(naive));
+    }
+
+    if let Some(err) = parse_js_error_object(value)? {
+        return Ok(LiteralValue::Error(err));
+    }
+
+    Err(js_type_error(
+        "unsupported cell value: expected null, undefined, boolean, number, string, Date, or error object ({ type: 'Error', value } or { kind: 'error', code })",
+    ))
+}
+
+pub(crate) fn js_to_literal(value: &JsValue) -> Result<formualizer::LiteralValue, JsValue> {
+    use formualizer::LiteralValue;
 
     if js_sys::Array::is_array(value) {
         let arr = js_sys::Array::from(value);
@@ -535,21 +622,26 @@ pub(crate) fn js_to_literal(value: &JsValue) -> formualizer::LiteralValue {
             for item in arr.iter() {
                 if js_sys::Array::is_array(&item) {
                     let row_arr = js_sys::Array::from(&item);
-                    let row = row_arr.iter().map(|cell| js_to_literal(&cell)).collect();
+                    let mut row = Vec::with_capacity(row_arr.length() as usize);
+                    for cell in row_arr.iter() {
+                        row.push(js_to_scalar_literal(&cell)?);
+                    }
                     rows.push(row);
                 } else {
-                    rows.push(vec![js_to_literal(&item)]);
+                    rows.push(vec![js_to_scalar_literal(&item)?]);
                 }
             }
-            return LiteralValue::Array(rows);
+            return Ok(LiteralValue::Array(rows));
         }
 
-        let row = arr.iter().map(|cell| js_to_literal(&cell)).collect();
-        return LiteralValue::Array(vec![row]);
+        let mut row = Vec::with_capacity(arr.length() as usize);
+        for cell in arr.iter() {
+            row.push(js_to_scalar_literal(&cell)?);
+        }
+        return Ok(LiteralValue::Array(vec![row]));
     }
 
-    // Fallback string representation for unsupported objects.
-    LiteralValue::Text(format!("{value:?}"))
+    js_to_scalar_literal(value)
 }
 
 pub(crate) enum BindingValue {
@@ -1344,7 +1436,7 @@ impl Workbook {
     ) -> Result<(), JsValue> {
         validate_cell_coords(row, col)?;
 
-        let lv = js_to_literal(&value);
+        let lv = js_to_scalar_literal(&value)?;
         self.inner
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
@@ -1669,7 +1761,7 @@ impl Sheet {
     pub fn set_value(&self, row: u32, col: u32, value: JsValue) -> Result<(), JsValue> {
         validate_cell_coords(row, col)?;
 
-        let lv = js_to_literal(&value);
+        let lv = js_to_scalar_literal(&value)?;
         self.wb
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
@@ -1733,10 +1825,12 @@ impl Sheet {
             Vec::with_capacity(data.length() as usize);
         for r in 0..data.length() {
             let row_val = data.get(r);
-            let row_arr: js_sys::Array = row_val.into();
+            let row_arr = row_val
+                .dyn_into::<js_sys::Array>()
+                .map_err(|_| js_type_error(format!("setValues row {} must be an array", r + 1)))?;
             let mut row_vec = Vec::with_capacity(row_arr.length() as usize);
             for c in 0..row_arr.length() {
-                row_vec.push(js_to_literal(&row_arr.get(c)));
+                row_vec.push(js_to_scalar_literal(&row_arr.get(c))?);
             }
             rows.push(row_vec);
         }
