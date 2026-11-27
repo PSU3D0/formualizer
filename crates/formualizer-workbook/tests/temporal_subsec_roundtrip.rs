@@ -246,3 +246,40 @@ fn subsecond_negative_and_microsecond_temporals_roundtrip() {
         );
     }
 }
+
+#[test]
+fn datetime_max_stays_datetime_and_year_evaluates_to_9999() {
+    let dt_max = NaiveDate::from_ymd_opt(9999, 12, 31)
+        .unwrap()
+        .and_hms_micro_opt(23, 59, 59, 999_999)
+        .unwrap();
+
+    for date_system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+        for changelog in [false, true] {
+            let mut wb = build_workbook(date_system, changelog);
+            wb.set_value("S", 1, 1, LiteralValue::DateTime(dt_max))
+                .unwrap();
+            wb.set_formula("S", 1, 2, "=YEAR(A1)").unwrap();
+
+            match wb.get_value("S", 1, 1) {
+                Some(LiteralValue::DateTime(got)) => {
+                    assert_eq!(
+                        got.date(),
+                        NaiveDate::from_ymd_opt(9999, 12, 31).unwrap(),
+                        "date_system={date_system:?} changelog={changelog}"
+                    );
+                }
+                other => panic!(
+                    "expected DateTime for datetime.max (date_system={date_system:?}, changelog={changelog}), got {other:?}"
+                ),
+            }
+
+            let year = wb.evaluate_cell("S", 1, 2).unwrap();
+            assert_eq!(
+                year,
+                LiteralValue::Number(9999.0),
+                "YEAR(datetime.max) failed for date_system={date_system:?} changelog={changelog}"
+            );
+        }
+    }
+}

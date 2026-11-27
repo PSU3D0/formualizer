@@ -12994,6 +12994,9 @@ where
 
     /// Mirror a single cell value into the Arrow overlay if enabled.
     /// Handles capacity growth, per-chunk overlay set, and heuristic compaction.
+    ///
+    /// Internal; not for external use (writes the overlay directly without
+    /// updating dependency-graph or dirty-propagation state).
     #[doc(hidden)]
     pub fn mirror_value_to_overlay(
         &mut self,

@@ -961,7 +961,9 @@ fn outcome_error(stage: &str, error: impl std::fmt::Display) -> String {
 }
 
 fn policy_config(mode: FormulaPlaneMode, deferred: bool, strict: bool) -> WorkbookConfig {
-    let mut config = WorkbookConfig::interactive().with_formula_plane_mode(mode);
+    let mut config = WorkbookConfig::interactive()
+        .with_changelog(true)
+        .with_formula_plane_mode(mode);
     config.eval.enable_parallel = false;
     config.eval.defer_graph_building = deferred;
     if strict {

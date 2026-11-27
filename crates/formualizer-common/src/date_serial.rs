@@ -10,6 +10,7 @@ use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Nai
 use crate::{DateSystem, ExcelError};
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
+const MILLIS_PER_DAY: f64 = 86_400_000.0;
 const MICROS_PER_DAY_U64: u64 = 86_400 * 1_000_000;
 const MICROS_PER_DAY: f64 = 86_400_000_000.0;
 const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
@@ -54,8 +55,22 @@ pub fn date_to_serial_for(system: DateSystem, date: &NaiveDate) -> f64 {
 
 /// Convert a datetime to an Excel serial in the selected date system,
 /// preserving sub-second precision via [`time_to_fraction`].
+///
+/// For dates on Excel's maximum supported calendar day (`9999-12-31`), if
+/// adding the sub-second fraction rounds up in IEEE-754 `f64` to the next day
+/// (`max_excel_serial_for(system) + 1.0`), the result is clamped to the largest
+/// `f64` strictly below that next-day boundary so the encoded serial stays
+/// within Excel's valid calendar domain.
 pub fn datetime_to_serial_for(system: DateSystem, datetime: &NaiveDateTime) -> f64 {
-    date_to_serial_for(system, &datetime.date()) + time_to_fraction(&datetime.time())
+    let date_serial = date_to_serial_for(system, &datetime.date());
+    let serial = date_serial + time_to_fraction(&datetime.time());
+    let max_serial = max_excel_serial_for(system);
+    let next_day = max_serial + 1.0;
+    if date_serial <= max_serial && serial >= next_day {
+        next_day.next_down()
+    } else {
+        serial
+    }
 }
 
 /// Convert a time to its fractional-day representation, preserving sub-second
@@ -114,23 +129,54 @@ pub fn duration_to_days_fraction(duration: &ChronoDuration) -> f64 {
 /// Convert fractional Excel days back to a `chrono::Duration` with sub-second
 /// precision (inverse of [`duration_to_days_fraction`]).
 ///
-/// Uses nanosecond precision when within `i64` nanoseconds (±292 years), and
-/// falls back to whole-second precision for larger finite durations.
-/// Returns `None` for non-finite or out-of-range inputs.
+/// Returns the coarsest precision among whole seconds, milliseconds,
+/// microseconds, and nanoseconds whose re-encoding through
+/// [`duration_to_days_fraction`] reproduces the exact `f64` `days` value. This
+/// prevents ±ULP nanosecond noise on whole-second, millisecond, and microsecond
+/// durations beyond ~30 days, allowing exact round-trips up to 10+ years
+/// (positive and negative). Falls back to nanosecond precision within `i64`
+/// nanoseconds (±292 years), or whole-second precision for larger finite
+/// durations. Returns `None` for non-finite or out-of-range inputs.
 pub fn days_fraction_to_duration(days: f64) -> Option<ChronoDuration> {
     if !days.is_finite() {
         return None;
     }
+
+    let secs = (days * SECONDS_PER_DAY).round();
+    if secs.is_finite()
+        && secs >= i64::MIN as f64
+        && secs < I64_UPPER_BOUND_F64
+        && let Some(candidate) = ChronoDuration::try_seconds(secs as i64)
+        && duration_to_days_fraction(&candidate) == days
+    {
+        return Some(candidate);
+    }
+
+    let millis = (days * MILLIS_PER_DAY).round();
+    if millis.is_finite()
+        && millis >= i64::MIN as f64
+        && millis < I64_UPPER_BOUND_F64
+        && let Some(candidate) = ChronoDuration::try_milliseconds(millis as i64)
+        && duration_to_days_fraction(&candidate) == days
+    {
+        return Some(candidate);
+    }
+
+    let micros = (days * MICROS_PER_DAY).round();
+    if micros.is_finite() && micros >= i64::MIN as f64 && micros < I64_UPPER_BOUND_F64 {
+        let candidate = ChronoDuration::microseconds(micros as i64);
+        if duration_to_days_fraction(&candidate) == days {
+            return Some(candidate);
+        }
+    }
+
     let nanos = (days * NANOS_PER_DAY).round();
     if nanos.is_finite() && nanos >= i64::MIN as f64 && nanos < I64_UPPER_BOUND_F64 {
         Some(ChronoDuration::nanoseconds(nanos as i64))
+    } else if secs.is_finite() && secs >= i64::MIN as f64 && secs < I64_UPPER_BOUND_F64 {
+        ChronoDuration::try_seconds(secs as i64)
     } else {
-        let secs = (days * SECONDS_PER_DAY).round();
-        if secs.is_finite() && secs >= i64::MIN as f64 && secs < I64_UPPER_BOUND_F64 {
-            ChronoDuration::try_seconds(secs as i64)
-        } else {
-            None
-        }
+        None
     }
 }
 
@@ -442,15 +488,38 @@ pub fn try_serial_to_datetime_for(
     Ok(NaiveDateTime::new(date, time))
 }
 
+fn datetime_from_serial_micros(
+    system: DateSystem,
+    mut whole_days: i64,
+    mut total_micros: u64,
+) -> Result<NaiveDateTime, ExcelError> {
+    if total_micros >= MICROS_PER_DAY_U64 {
+        whole_days = whole_days.checked_add(1).ok_or_else(ExcelError::new_num)?;
+        if whole_days as f64 > max_excel_serial_for(system) {
+            return Err(ExcelError::new_num());
+        }
+        total_micros = 0;
+    }
+
+    let secs = (total_micros / 1_000_000) as u32;
+    let nanos = ((total_micros % 1_000_000) * 1_000) as u32;
+    let time = NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos)
+        .ok_or_else(ExcelError::new_num)?;
+    let date = date_for_whole_serial(system, whole_days)?;
+    Ok(NaiveDateTime::new(date, time))
+}
+
 /// Convert an Excel serial to a representable `chrono` datetime, preserving
-/// sub-second microsecond precision.
+/// sub-second precision up to microseconds.
 ///
-/// Modern Excel date serials (around 45,000 days) retain ~0.6 µs IEEE-754
-/// `f64` resolution in the fractional day, so rounding to microseconds
-/// round-trips millisecond and microsecond `DateTime` values cleanly without
-/// introducing sub-microsecond ULP jitter. A rounded value of 24:00:00.000000
-/// carries into the next serial day and is rejected if it exceeds Excel's
-/// maximum date.
+/// Decodes at microsecond resolution and returns the coarsest precision among
+/// whole seconds, milliseconds, and microseconds whose re-encoding through
+/// [`datetime_to_serial_for`] reproduces the exact `f64` serial. Sub-second
+/// microsecond precision is exact before ~2079-06-06 (serial 65,536 in the 1900
+/// system, where IEEE-754 `f64` fractional-day spacing crosses 1 µs), while
+/// whole-second and millisecond datetimes round-trip exactly across all eras
+/// through year 9999. A rounded value of 24:00:00.000000 carries into the next
+/// serial day and is rejected if it exceeds Excel's maximum date.
 pub fn try_serial_to_datetime_subsec_for(
     system: DateSystem,
     serial: f64,
@@ -467,12 +536,18 @@ pub fn try_serial_to_datetime_subsec_for(
         total_micros = 0;
     }
 
-    let secs = (total_micros / 1_000_000) as u32;
-    let nanos = ((total_micros % 1_000_000) * 1_000) as u32;
-    let time = NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos)
-        .ok_or_else(ExcelError::new_num)?;
-    let date = date_for_whole_serial(system, whole_days)?;
-    Ok(NaiveDateTime::new(date, time))
+    if !total_micros.is_multiple_of(1_000_000) {
+        for unit_micros in [1_000_000_u64, 1_000_u64] {
+            let rounded_micros = ((total_micros + unit_micros / 2) / unit_micros) * unit_micros;
+            if let Ok(candidate) = datetime_from_serial_micros(system, whole_days, rounded_micros)
+                && datetime_to_serial_for(system, &candidate) == serial
+            {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    datetime_from_serial_micros(system, whole_days, total_micros)
 }
 
 /// Return the date fields Excel displays for a serial.
@@ -775,6 +850,100 @@ mod tests {
             days_fraction_to_duration(duration_to_days_fraction(&neg)),
             Some(neg)
         );
+    }
+
+    #[test]
+    fn far_future_whole_second_and_millisecond_datetimes_roundtrip_exactly() {
+        let cases = [
+            // Whole-second timestamps across post-2079 eras (including review repros)
+            date(2080, 1, 1).and_hms_opt(0, 0, 1).unwrap(),
+            date(2080, 6, 15).and_hms_opt(13, 45, 59).unwrap(),
+            date(2091, 11, 15).and_hms_opt(8, 29, 37).unwrap(),
+            date(2164, 7, 17).and_hms_opt(18, 41, 57).unwrap(),
+            date(2200, 3, 21).and_hms_opt(7, 11, 19).unwrap(),
+            date(5000, 8, 9).and_hms_opt(22, 33, 44).unwrap(),
+            date(9999, 12, 31).and_hms_opt(23, 59, 59).unwrap(),
+            // Millisecond timestamps across post-2079 eras through year 9999
+            date(2080, 1, 1).and_hms_milli_opt(12, 34, 56, 789).unwrap(),
+            date(2091, 11, 15)
+                .and_hms_milli_opt(8, 29, 37, 250)
+                .unwrap(),
+            date(2200, 3, 21).and_hms_milli_opt(7, 11, 19, 1).unwrap(),
+            date(5000, 8, 9).and_hms_milli_opt(22, 33, 44, 555).unwrap(),
+            date(9999, 12, 31)
+                .and_hms_milli_opt(23, 59, 59, 999)
+                .unwrap(),
+        ];
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            for dt in cases {
+                let serial = datetime_to_serial_for(system, &dt);
+                assert_eq!(
+                    try_serial_to_datetime_subsec_for(system, serial).unwrap(),
+                    dt,
+                    "system={system:?} dt={dt}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn datetime_max_clamps_within_excel_calendar_domain() {
+        let dt_max = date(9999, 12, 31)
+            .and_hms_micro_opt(23, 59, 59, 999_999)
+            .unwrap();
+
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let max_serial = max_excel_serial_for(system);
+            let serial = datetime_to_serial_for(system, &dt_max);
+            assert!(
+                serial < max_serial + 1.0,
+                "system={system:?} serial={serial} exceeded max day"
+            );
+            assert_eq!(serial.trunc(), max_serial, "system={system:?}");
+
+            let decoded = try_serial_to_datetime_subsec_for(system, serial).unwrap();
+            assert_eq!(decoded.date(), EXCEL_MAX_DATE, "system={system:?}");
+
+            let parts = try_serial_to_display_date_parts_for(system, serial).unwrap();
+            assert_eq!(
+                parts,
+                ExcelDateParts {
+                    year: 9999,
+                    month: 12,
+                    day: 31,
+                },
+                "system={system:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn long_durations_roundtrip_without_nanosecond_noise() {
+        let day_counts = [30_i64, 64, 104, 3_650, 8_192];
+        let sub_offsets = [
+            ChronoDuration::seconds(1),
+            ChronoDuration::seconds(3_723),
+            ChronoDuration::milliseconds(1_250),
+            ChronoDuration::milliseconds(500),
+            ChronoDuration::microseconds(123_456),
+            ChronoDuration::microseconds(1),
+        ];
+
+        for &days in &day_counts {
+            for offset in &sub_offsets {
+                let pos = ChronoDuration::days(days) + *offset;
+                let neg = -pos;
+                for dur in [pos, neg] {
+                    let frac = duration_to_days_fraction(&dur);
+                    assert_eq!(
+                        days_fraction_to_duration(frac),
+                        Some(dur),
+                        "days={days} offset={offset:?} dur={dur:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

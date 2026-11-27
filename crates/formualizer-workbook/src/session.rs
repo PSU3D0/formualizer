@@ -7,7 +7,9 @@ use formualizer_eval::engine::graph::editor::vertex_editor::{EditorError, Vertex
 /// IO-level configuration toggles.
 #[derive(Clone, Debug, Default)]
 pub struct IoConfig {
-    /// When false, ChangeLog is disabled and undo/redo become no-ops.
+    /// When false, ChangeLog recording is disabled (`EditorSession::undo`/`redo`
+    /// are no-ops; `Workbook::undo`/`redo` return `IoError::HistoryDisabled`
+    /// unless an explicit `Workbook::action` journal is present).
     pub enable_changelog: bool,
 }
 

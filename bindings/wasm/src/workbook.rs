@@ -1678,6 +1678,10 @@ impl Workbook {
         Ok(())
     }
 
+    /// Undo the most recent workbook edit.
+    ///
+    /// Throws an error (`kind: "HistoryDisabled"`, `code: "HISTORY_DISABLED"`)
+    /// if changelog recording is disabled and no explicit action journal is present.
     #[wasm_bindgen]
     pub fn undo(&self) -> Result<(), JsValue> {
         self.inner
@@ -1687,6 +1691,10 @@ impl Workbook {
             .map_err(workbook_error_to_js)
     }
 
+    /// Redo the most recently undone edit.
+    ///
+    /// Throws an error (`kind: "HistoryDisabled"`, `code: "HISTORY_DISABLED"`)
+    /// if changelog recording is disabled and no explicit action journal is present.
     #[wasm_bindgen]
     pub fn redo(&self) -> Result<(), JsValue> {
         self.inner

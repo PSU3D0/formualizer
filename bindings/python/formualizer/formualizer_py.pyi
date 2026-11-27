@@ -2066,10 +2066,16 @@ class Workbook:
     def undo(self) -> None:
         r"""
         Undo the most recent workbook edit.
+        
+        Raises `RuntimeError` if changelog recording is disabled and no explicit
+        action journal is present.
         """
     def redo(self) -> None:
         r"""
         Redo the most recently undone edit.
+        
+        Raises `RuntimeError` if changelog recording is disabled and no explicit
+        action journal is present.
         """
     def set_values_batch(self, sheet: builtins.str, start_row: builtins.int, start_col: builtins.int, data: list) -> None: ...
     def set_formulas_batch(self, sheet: builtins.str, start_row: builtins.int, start_col: builtins.int, formulas: list) -> None: ...

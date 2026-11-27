@@ -1474,6 +1474,9 @@ impl PyWorkbook {
     }
 
     /// Undo the most recent workbook edit.
+    ///
+    /// Raises `RuntimeError` if changelog recording is disabled and no explicit
+    /// action journal is present.
     pub fn undo(&self) -> PyResult<()> {
         let mut wb = self.write_inner()?;
         wb.undo().map_err(crate::errors::workbook_error_to_pyerr)?;
@@ -1482,6 +1485,9 @@ impl PyWorkbook {
     }
 
     /// Redo the most recently undone edit.
+    ///
+    /// Raises `RuntimeError` if changelog recording is disabled and no explicit
+    /// action journal is present.
     pub fn redo(&self) -> PyResult<()> {
         let mut wb = self.write_inner()?;
         wb.redo().map_err(crate::errors::workbook_error_to_pyerr)?;
