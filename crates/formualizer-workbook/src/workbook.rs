@@ -1881,8 +1881,47 @@ impl Workbook {
 
     // Changelog controls
     pub fn set_changelog_enabled(&mut self, enabled: bool) {
+        while self.log.compound_depth() > 0 {
+            self.log.end_compound();
+        }
+        self.spill_action_history.cells.clear();
+        if !enabled {
+            self.clear_logged_history_if_non_empty();
+        }
         self.enable_changelog = enabled;
         self.log.set_enabled(enabled);
+    }
+
+    #[inline]
+    fn clear_action_history_if_non_empty(&mut self) {
+        if self.undo.actions_done_len() == 0 && self.undo.actions_undone_len() == 0 {
+            return;
+        }
+        while self.undo.pop_undo_action().is_some() {}
+        while self.undo.pop_redo_action().is_some() {}
+    }
+
+    #[inline]
+    fn clear_logged_history_if_non_empty(&mut self) {
+        if self.log.is_empty()
+            && self.undo.undone_len() == 0
+            && self.log.compound_depth() == 0
+            && self.spill_action_history.cells.is_empty()
+        {
+            return;
+        }
+        self.log.clear();
+        self.undo.clear_logged_redo();
+        self.spill_action_history.cells.clear();
+    }
+
+    /// Enforce the contiguous-history invariant: any unjournaled mutation clears
+    /// both logged undo/redo and action-journal stacks. Fast-path emptiness
+    /// checks keep the hot path free when no history is present.
+    #[inline]
+    fn invalidate_history_for_unjournaled_mutation(&mut self) {
+        self.clear_logged_history_if_non_empty();
+        self.clear_action_history_if_non_empty();
     }
 
     /// Maximum number of retained changelog events and undo/redo actions (`None` = unbounded).
@@ -2155,10 +2194,12 @@ impl Workbook {
             if let Some(e) = user_err {
                 return Err(e);
             }
-            return res.map_err(|e| match e {
+            let out = res.map_err(|e| match e {
                 formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
                 other => IoError::from_backend("editor", other),
-            });
+            })?;
+            self.clear_action_history_if_non_empty();
+            return Ok(out);
         }
 
         let res = self.engine.action_atomic_journal(name.to_string(), |tx| {
@@ -2317,6 +2358,7 @@ impl Workbook {
             formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
             other => IoError::from_backend("editor", other),
         })?;
+        self.clear_logged_history_if_non_empty();
         self.undo.push_action(journal);
         Ok(v)
     }
@@ -2504,6 +2546,7 @@ impl Workbook {
     }
     pub fn duplicate_sheet(&mut self, source: &str, new_name: &str) -> Result<(), ExcelError> {
         self.engine.duplicate_sheet(source, new_name)?;
+        self.invalidate_history_for_unjournaled_mutation();
         Ok(())
     }
     pub fn delete_sheet(&mut self, name: &str) -> Result<(), ExcelError> {
@@ -2516,6 +2559,7 @@ impl Workbook {
             .sheet_store_mut()
             .sheets
             .retain(|s| s.name.as_ref() != name);
+        self.invalidate_history_for_unjournaled_mutation();
         Ok(())
     }
     /// Give the workbook the path `CELL("filename")` reports, as
@@ -2533,6 +2577,7 @@ impl Workbook {
         if let Some(asheet) = self.engine.sheet_store_mut().sheet_mut(old) {
             asheet.name = std::sync::Arc::<str>::from(new);
         }
+        self.invalidate_history_for_unjournaled_mutation();
         Ok(())
     }
 
@@ -2600,6 +2645,7 @@ impl Workbook {
             if let Some(before) = staged_before {
                 self.record_staged_formula_cell_change(sheet, row, col, before, None);
             }
+            self.clear_action_history_if_non_empty();
             self.engine.mark_data_edited();
             Ok(())
         } else {
@@ -2607,6 +2653,7 @@ impl Workbook {
                 .set_cell_value(sheet, row, col, value)
                 .map_err(IoError::Engine)?;
             self.engine.clear_staged_formula_text(sheet, row, col);
+            self.invalidate_history_for_unjournaled_mutation();
             Ok(())
         }
     }
@@ -2715,6 +2762,7 @@ impl Workbook {
                     if let Some(before) = staged_before {
                         self.record_staged_formula_cell_change(sheet, row, col, before, None);
                     }
+                    self.clear_action_history_if_non_empty();
                     self.engine.mark_data_edited();
                     Ok(())
                 } else {
@@ -2722,6 +2770,7 @@ impl Workbook {
                         .set_cell_formula(sheet, row, col, ast)
                         .map_err(IoError::Engine)?;
                     self.engine.clear_staged_formula_text(sheet, row, col);
+                    self.invalidate_history_for_unjournaled_mutation();
                     Ok(())
                 }
             } else {
@@ -2730,6 +2779,9 @@ impl Workbook {
                 if let Some(before) = staged_before {
                     let after = self.staged_formula_cell(sheet, row, col);
                     self.record_staged_formula_cell_change(sheet, row, col, before, after);
+                    self.clear_action_history_if_non_empty();
+                } else {
+                    self.invalidate_history_for_unjournaled_mutation();
                 }
                 Ok(())
             }
@@ -2758,6 +2810,7 @@ impl Workbook {
                 if let Some(before) = staged_before {
                     self.record_staged_formula_cell_change(sheet, row, col, before, None);
                 }
+                self.clear_action_history_if_non_empty();
                 self.engine.mark_data_edited();
                 Ok(())
             } else {
@@ -2765,6 +2818,7 @@ impl Workbook {
                     .set_cell_formula(sheet, row, col, ast)
                     .map_err(IoError::Engine)?;
                 self.engine.clear_staged_formula_text(sheet, row, col);
+                self.invalidate_history_for_unjournaled_mutation();
                 Ok(())
             }
         }
@@ -2773,7 +2827,9 @@ impl Workbook {
     pub fn set_row_hidden(&mut self, sheet: &str, row: u32, hidden: bool) -> Result<(), IoError> {
         self.engine
             .set_row_hidden(sheet, row, hidden, RowVisibilitySource::Manual)
-            .map_err(|e| IoError::from_backend("editor", e))
+            .map_err(|e| IoError::from_backend("editor", e))?;
+        self.invalidate_history_for_unjournaled_mutation();
+        Ok(())
     }
 
     pub fn set_rows_hidden(
@@ -2791,7 +2847,9 @@ impl Workbook {
                 hidden,
                 RowVisibilitySource::Manual,
             )
-            .map_err(|e| IoError::from_backend("editor", e))
+            .map_err(|e| IoError::from_backend("editor", e))?;
+        self.invalidate_history_for_unjournaled_mutation();
+        Ok(())
     }
 
     pub fn is_row_hidden(&self, sheet: &str, row: u32) -> Result<bool, IoError> {
@@ -2988,9 +3046,13 @@ impl Workbook {
                     );
                 }
             }
+            if !items.is_empty() {
+                self.clear_action_history_if_non_empty();
+            }
             self.engine.mark_data_edited();
             Ok(())
         } else {
+            let had_cells = !cells.is_empty();
             for ((r, c), d) in cells.into_iter() {
                 if let Some(v) = d.value.clone() {
                     self.engine
@@ -3018,6 +3080,9 @@ impl Workbook {
                 } else if d.value.is_some() {
                     self.engine.clear_staged_formula_text(sheet, r, c);
                 }
+            }
+            if had_cells {
+                self.invalidate_history_for_unjournaled_mutation();
             }
             Ok(())
         }
@@ -3127,6 +3192,7 @@ impl Workbook {
                 .map_err(|e| IoError::from_backend("editor", e))?;
             self.sync_spill_action_history();
 
+            let had_items = !items.is_empty();
             for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
                 self.mirror_value_to_overlay(sheet, r, c, &v);
                 self.engine.clear_staged_formula_text(sheet, r, c);
@@ -3135,9 +3201,13 @@ impl Workbook {
                     self.record_staged_formula_cell_change(sheet, r, c, staged_before, None);
                 }
             }
+            if had_items {
+                self.clear_action_history_if_non_empty();
+            }
             self.engine.mark_data_edited();
             Ok(())
         } else {
+            let mut wrote_any = false;
             for (ri, rvals) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, v) in rvals.iter().enumerate() {
@@ -3146,7 +3216,11 @@ impl Workbook {
                         .set_cell_value(sheet, r, c, v.clone().finite_or_num_error())
                         .map_err(IoError::Engine)?;
                     self.engine.clear_staged_formula_text(sheet, r, c);
+                    wrote_any = true;
                 }
+            }
+            if wrote_any {
+                self.invalidate_history_for_unjournaled_mutation();
             }
             Ok(())
         }
@@ -3204,6 +3278,7 @@ impl Workbook {
         if self.engine.config.defer_graph_building && !needs_graph_edit {
             // Per-cell staged-formula deltas (see #126). Capture each cell's prior
             // staged text before overwriting so undo/redo can replay precisely.
+            let mut wrote_any = false;
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, f) in rforms.iter().enumerate() {
@@ -3217,6 +3292,14 @@ impl Workbook {
                         let after = self.staged_formula_cell(sheet, r, c);
                         self.record_staged_formula_cell_change(sheet, r, c, staged_before, after);
                     }
+                    wrote_any = true;
+                }
+            }
+            if wrote_any {
+                if self.enable_changelog {
+                    self.clear_action_history_if_non_empty();
+                } else {
+                    self.invalidate_history_for_unjournaled_mutation();
                 }
             }
             Ok(())
@@ -3263,6 +3346,7 @@ impl Workbook {
                 .map_err(|e| IoError::from_backend("editor", e))??;
             self.sync_spill_action_history();
 
+            let had_formulas = !staged_before.is_empty();
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, _f) in rforms.iter().enumerate() {
@@ -3276,9 +3360,13 @@ impl Workbook {
                     self.record_staged_formula_cell_change(sheet, r, c, before, None);
                 }
             }
+            if had_formulas {
+                self.clear_action_history_if_non_empty();
+            }
             self.engine.mark_data_edited();
             Ok(())
         } else {
+            let mut wrote_any = false;
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, f) in rforms.iter().enumerate() {
@@ -3294,7 +3382,11 @@ impl Workbook {
                         .set_cell_formula(sheet, r, c, ast)
                         .map_err(IoError::Engine)?;
                     self.engine.clear_staged_formula_text(sheet, r, c);
+                    wrote_any = true;
                 }
+            }
+            if wrote_any {
+                self.invalidate_history_for_unjournaled_mutation();
             }
             Ok(())
         }
@@ -3745,11 +3837,15 @@ impl Workbook {
         if self.enable_changelog {
             self.engine
                 .define_name_with_logger(&mut self.log, name, definition, scope)
-                .map_err(|e| IoError::from_backend("editor", e))
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.clear_action_history_if_non_empty();
+            Ok(())
         } else {
             self.engine
                 .define_name(name, definition, scope)
-                .map_err(IoError::Engine)
+                .map_err(IoError::Engine)?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
         }
     }
 
@@ -3763,11 +3859,15 @@ impl Workbook {
         if self.enable_changelog {
             self.engine
                 .update_name_with_logger(&mut self.log, name, definition, scope)
-                .map_err(|e| IoError::from_backend("editor", e))
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.clear_action_history_if_non_empty();
+            Ok(())
         } else {
             self.engine
                 .update_name(name, definition, scope)
-                .map_err(IoError::Engine)
+                .map_err(IoError::Engine)?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
         }
     }
 
@@ -3781,11 +3881,15 @@ impl Workbook {
         if self.enable_changelog {
             self.engine
                 .delete_name_with_logger(&mut self.log, name, scope)
-                .map_err(|e| IoError::from_backend("editor", e))
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.clear_action_history_if_non_empty();
+            Ok(())
         } else {
             self.engine
                 .delete_name(name, scope)
-                .map_err(IoError::Engine)
+                .map_err(IoError::Engine)?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
         }
     }
 
@@ -3876,7 +3980,9 @@ impl Workbook {
             header_row,
             headers,
             totals_row,
-        )
+        )?;
+        self.invalidate_history_for_unjournaled_mutation();
+        Ok(())
     }
 
     /// Resize a native table, retaining at least one body row. Undo/redo restores
