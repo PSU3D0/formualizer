@@ -9,7 +9,7 @@
 
 use formualizer_common::LiteralValue;
 use formualizer_eval::engine::ChangeEvent;
-use formualizer_workbook::Workbook;
+use formualizer_workbook::{Workbook, WorkbookConfig};
 
 fn assert_numeric_eq(v: Option<LiteralValue>, expected: f64) {
     match v {
@@ -47,7 +47,7 @@ fn undo_redo_mixed_sequence_restores_state() {
     // Mixed sequence: several set_formula (some overwriting each other), with
     // interleaved set_value, each wrapped in its own action. Undo all -> original
     // (empty) state. Redo all -> final state.
-    let mut wb = Workbook::new();
+    let mut wb = Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true));
     wb.add_sheet("S").unwrap();
 
     // Action 1: stage formula at A1
@@ -111,7 +111,7 @@ fn undo_redo_mixed_sequence_restores_state() {
 #[test]
 fn undo_redo_overwrite_same_cell_chain() {
     // Repeatedly overwrite the same staged cell, then unwind step by step.
-    let mut wb = Workbook::new();
+    let mut wb = Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true));
     wb.add_sheet("S").unwrap();
 
     let chain = ["1+1", "2+2", "3+3", "4+4"];
@@ -148,7 +148,7 @@ fn staged_formula_changelog_payload_is_linear() {
     //   edit i records ~ (i-1) + i texts  => sum ~ N^2.
     // Per-cell delta design records at most a constant (here 1) per edit => N.
     let n: u32 = 400;
-    let mut wb = Workbook::new();
+    let mut wb = Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true));
     wb.add_sheet("S").unwrap();
 
     for i in 0..n {
@@ -183,7 +183,7 @@ fn assert_emptyish(v: Option<LiteralValue>) {
 #[ignore]
 fn measure_set_formula_scaling() {
     for n in [2000u32, 4000, 8000] {
-        let mut wb = Workbook::new(); // interactive default: changelog on, defer on
+        let mut wb = Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true)); // interactive default: changelog on, defer on
         wb.add_sheet("S").unwrap();
         let start = std::time::Instant::now();
         for i in 0..n {

@@ -20,7 +20,7 @@ use formualizer_workbook::traits::CellData;
 fn wb_changelog_graph_mode() -> Workbook {
     // Changelog on, defer_graph_building OFF so formulas go through the
     // VertexEditor (and write_range emits SetFormula events).
-    let mut cfg = formualizer_workbook::WorkbookConfig::interactive();
+    let mut cfg = formualizer_workbook::WorkbookConfig::interactive().with_changelog(true);
     cfg.eval.defer_graph_building = false;
     Workbook::new_with_config(cfg)
 }
@@ -221,7 +221,9 @@ fn set_values_batch_event_log_golden() {
 /// received the patched old state (it is the cell's last event).
 #[test]
 fn write_range_batch_event_log_golden_deferred() {
-    let mut wb = Workbook::new(); // interactive: changelog on, defer on
+    let mut wb = Workbook::new_with_config(
+        formualizer_workbook::WorkbookConfig::interactive().with_changelog(true),
+    ); // interactive with changelog on, defer on
     wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Int(10)).unwrap(); // A1
     wb.set_value("S", 1, 2, LiteralValue::Int(20)).unwrap(); // B1
@@ -358,7 +360,9 @@ fn undo_redo_batched_writes_round_trip() {
 /// write_range stages formulas; undo must restore prior staged text exactly.
 #[test]
 fn undo_redo_batched_writes_staged_text_round_trip() {
-    let mut wb = Workbook::new();
+    let mut wb = Workbook::new_with_config(
+        formualizer_workbook::WorkbookConfig::interactive().with_changelog(true),
+    );
     wb.add_sheet("S").unwrap();
     wb.set_formula("S", 1, 1, "1+1").unwrap(); // A1 staged
     wb.set_value("S", 1, 2, LiteralValue::Int(20)).unwrap(); // B1 value

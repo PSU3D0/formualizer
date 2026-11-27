@@ -19,7 +19,7 @@ fn num(wb: &Workbook, sheet: &str, row: u32, col: u32) -> f64 {
 
 #[test]
 fn default_interactive_workbook_stays_bounded_over_many_single_cell_edits() {
-    let mut wb = Workbook::new();
+    let mut wb = Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true));
     let expected_cap = WorkbookConfig::DEFAULT_INTERACTIVE_HISTORY_LIMIT;
     assert_eq!(wb.history_limit(), Some(expected_cap));
 
@@ -47,8 +47,11 @@ fn default_interactive_workbook_stays_bounded_over_many_single_cell_edits() {
 
 #[test]
 fn undo_redo_consistency_across_eviction_boundary_single_cell_edits() {
-    let mut wb =
-        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(5)));
+    let mut wb = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(Some(5)),
+    );
     wb.add_sheet("S").unwrap();
 
     // 12 edits to distinct cells under cap=5 -> only edits 8..=12 retained.
@@ -148,8 +151,11 @@ fn undo_redo_consistency_across_eviction_boundary_action_journal_mode() {
 fn compound_actions_and_rollback_under_small_cap() {
     // Each 2-cell compound action emits 4 events: Start, Set, Set, End.
     // With cap=5, action 1 is partially evicted (1 event left) and action 2 is intact (4 events).
-    let mut wb =
-        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(5)));
+    let mut wb = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(Some(5)),
+    );
     wb.add_sheet("S").unwrap();
 
     wb.begin_action("action-1");
@@ -205,8 +211,11 @@ fn compound_actions_and_rollback_under_small_cap() {
 
 #[test]
 fn spill_action_history_handles_front_eviction_inside_open_compound() {
-    let mut wb =
-        Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(Some(4)));
+    let mut wb = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(Some(4)),
+    );
     wb.add_sheet("S").unwrap();
     wb.set_formula("S", 1, 2, "=SEQUENCE(5)").unwrap();
     wb.evaluate_all().unwrap();
@@ -228,7 +237,11 @@ fn spill_action_history_handles_front_eviction_inside_open_compound() {
 
 #[test]
 fn history_limit_opt_out_and_runtime_update() {
-    let mut wb = Workbook::new_with_config(WorkbookConfig::interactive().with_history_limit(None));
+    let mut wb = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(None),
+    );
     assert_eq!(wb.history_limit(), None);
     wb.add_sheet("S").unwrap();
 

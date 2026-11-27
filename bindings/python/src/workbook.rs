@@ -1476,22 +1476,16 @@ impl PyWorkbook {
     /// Undo the most recent workbook edit.
     pub fn undo(&self) -> PyResult<()> {
         let mut wb = self.write_inner()?;
-        {
-            self.sheets_write().clear();
-        }
-        wb.undo()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        wb.undo().map_err(crate::errors::workbook_error_to_pyerr)?;
+        self.sheets_write().clear();
         Ok(())
     }
 
     /// Redo the most recently undone edit.
     pub fn redo(&self) -> PyResult<()> {
         let mut wb = self.write_inner()?;
-        {
-            self.sheets_write().clear();
-        }
-        wb.redo()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        wb.redo().map_err(crate::errors::workbook_error_to_pyerr)?;
+        self.sheets_write().clear();
         Ok(())
     }
 
@@ -2133,7 +2127,7 @@ mod tests {
             resolved.eval.enable_parallel,
             !cfg!(target_os = "emscripten")
         );
-        assert!(resolved.enable_changelog);
+        assert!(!resolved.enable_changelog);
         assert!(resolved.eval.defer_graph_building);
         assert_eq!(resolved.eval.formula_plane_mode, FormulaPlaneMode::Off);
     }
@@ -2187,9 +2181,9 @@ mod tests {
 
     #[test]
     fn resolve_workbook_config_accepts_enable_changelog_opt_in_argument_and_detects_conflict() {
-        let resolved = resolve_workbook_config(None, None, Some(false), None)
-            .expect("resolve workbook config");
-        assert!(!resolved.enable_changelog);
+        let resolved =
+            resolve_workbook_config(None, None, Some(true), None).expect("resolve workbook config");
+        assert!(resolved.enable_changelog);
 
         let cfg = PyWorkbookConfig::new(PyWorkbookMode::Interactive, None, Some(true), None);
         assert!(resolve_workbook_config(None, Some(cfg), Some(false), None).is_err());

@@ -5,18 +5,10 @@ use formualizer_eval::engine::graph::editor::undo_engine::UndoEngine;
 use formualizer_eval::engine::graph::editor::vertex_editor::{EditorError, VertexEditor};
 
 /// IO-level configuration toggles.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct IoConfig {
     /// When false, ChangeLog is disabled and undo/redo become no-ops.
     pub enable_changelog: bool,
-}
-
-impl Default for IoConfig {
-    fn default() -> Self {
-        Self {
-            enable_changelog: true,
-        }
-    }
 }
 
 /// High-level editing session that owns a graph and optional change tracking.

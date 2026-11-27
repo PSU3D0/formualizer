@@ -6,8 +6,12 @@
 //!    compound first so later edits are never merged into a stranded compound.
 
 use formualizer_common::LiteralValue;
-use formualizer_workbook::{CellData, Workbook, WorkbookConfig};
+use formualizer_workbook::{CellData, IoError, Workbook, WorkbookConfig};
 use std::collections::BTreeMap;
+
+fn logged_workbook() -> Workbook {
+    Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true))
+}
 
 fn num(wb: &Workbook, sheet: &str, row: u32, col: u32) -> f64 {
     match wb.get_value(sheet, row, col) {
@@ -19,7 +23,7 @@ fn num(wb: &Workbook, sheet: &str, row: u32, col: u32) -> f64 {
 
 #[test]
 fn b4_scenario1_disable_and_unlogged_write_cannot_revert_on_reenable() {
-    let mut wb = Workbook::new();
+    let mut wb = logged_workbook();
     wb.add_sheet("S").unwrap();
 
     // Logged edit A1: 1 -> 2
@@ -46,7 +50,7 @@ fn b4_scenario1_disable_and_unlogged_write_cannot_revert_on_reenable() {
 
 #[test]
 fn b4_scenario1b_disable_clears_logged_redo_stack() {
-    let mut wb = Workbook::new();
+    let mut wb = logged_workbook();
     wb.add_sheet("S").unwrap();
 
     wb.set_value("S", 1, 1, LiteralValue::Number(1.0)).unwrap();
@@ -64,9 +68,8 @@ fn b4_scenario1b_disable_clears_logged_redo_stack() {
 
 #[test]
 fn b4_scenario2_unjournaled_write_clears_action_journal_when_changelog_off() {
-    let mut cfg = WorkbookConfig::interactive();
-    cfg.enable_changelog = false;
-    let mut wb = Workbook::new_with_config(cfg);
+    let mut wb = Workbook::new();
+    assert!(!wb.changelog_enabled());
     wb.add_sheet("S").unwrap();
 
     wb.set_value("S", 1, 1, LiteralValue::Number(1.0)).unwrap();
@@ -80,7 +83,7 @@ fn b4_scenario2_unjournaled_write_clears_action_journal_when_changelog_off() {
     // clear the action-journal undo/redo stacks.
     wb.set_value("S", 1, 1, LiteralValue::Number(100.0))
         .unwrap();
-    wb.undo().unwrap();
+    assert!(matches!(wb.undo(), Err(IoError::HistoryDisabled)));
     assert_eq!(
         num(&wb, "S", 1, 1),
         100.0,
@@ -97,13 +100,13 @@ fn b4_scenario2_unjournaled_write_clears_action_journal_when_changelog_off() {
     assert_eq!(num(&wb, "S", 1, 1), 100.0);
     wb.set_values("S", 1, 1, &[vec![LiteralValue::Number(200.0)]])
         .unwrap();
-    wb.redo().unwrap();
+    assert!(matches!(wb.redo(), Err(IoError::HistoryDisabled)));
     assert_eq!(num(&wb, "S", 1, 1), 200.0);
 }
 
 #[test]
 fn b4_scenario3_toggle_while_compound_open_closes_compound_first() {
-    let mut wb = Workbook::new();
+    let mut wb = logged_workbook();
     wb.add_sheet("S").unwrap();
 
     wb.begin_action("open-compound");
@@ -136,7 +139,7 @@ fn b4_scenario3_toggle_while_compound_open_closes_compound_first() {
 
 #[test]
 fn b4_scenario3b_redundant_enable_while_compound_open_closes_compound() {
-    let mut wb = Workbook::new();
+    let mut wb = logged_workbook();
     wb.add_sheet("S").unwrap();
 
     wb.begin_action("open-compound");
@@ -158,11 +161,25 @@ fn b4_scenario3b_redundant_enable_while_compound_open_closes_compound() {
 
 #[test]
 fn changelog_inspection_and_with_changelog_builder_work_across_modes() {
-    // Default interactive workbook still has changelog enabled in v0.15.1.
-    let mut wb = Workbook::new();
+    // Default interactive workbook has changelog disabled in v0.16.0, and undo/redo error explicitly.
+    let mut wb_default = Workbook::new();
+    assert!(!wb_default.changelog_enabled());
+    assert!(!wb_default.can_undo());
+    assert!(!wb_default.can_redo());
+    wb_default.begin_action("noop");
+    wb_default.end_action();
+    assert!(matches!(wb_default.undo(), Err(IoError::HistoryDisabled)));
+    assert!(matches!(wb_default.redo(), Err(IoError::HistoryDisabled)));
+
+    // Opting in via WorkbookConfig::interactive().with_changelog(true).
+    let mut wb = logged_workbook();
     assert!(wb.changelog_enabled());
     assert!(!wb.can_undo());
     assert!(!wb.can_redo());
+
+    // When changelog is enabled, undo/redo with nothing recorded remain Ok(()) no-ops.
+    wb.undo().unwrap();
+    wb.redo().unwrap();
 
     wb.add_sheet("S").unwrap();
     wb.set_value("S", 1, 1, LiteralValue::Number(1.0)).unwrap();
@@ -178,13 +195,15 @@ fn changelog_inspection_and_with_changelog_builder_work_across_modes() {
     assert!(wb.can_undo());
     assert!(!wb.can_redo());
 
-    // Disabling clears logged history so can_undo/can_redo drop to false.
+    // Disabling clears logged history so can_undo/can_redo drop to false and undo/redo error.
     wb.set_changelog_enabled(false);
     assert!(!wb.changelog_enabled());
     assert!(!wb.can_undo());
     assert!(!wb.can_redo());
+    assert!(matches!(wb.undo(), Err(IoError::HistoryDisabled)));
+    assert!(matches!(wb.redo(), Err(IoError::HistoryDisabled)));
 
-    // Opting out via WorkbookConfig::interactive().with_changelog(false).
+    // Explicit action journals still replay when changelog is off.
     let mut wb_off = Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(false));
     assert!(!wb_off.changelog_enabled());
     assert!(!wb_off.can_undo());
@@ -206,6 +225,8 @@ fn changelog_inspection_and_with_changelog_builder_work_across_modes() {
         .unwrap();
     assert!(!wb_off.can_undo());
     assert!(!wb_off.can_redo());
+    assert!(matches!(wb_off.undo(), Err(IoError::HistoryDisabled)));
+    assert!(matches!(wb_off.redo(), Err(IoError::HistoryDisabled)));
 }
 
 #[test]
@@ -229,7 +250,7 @@ fn b4_f2_failing_unlogged_batch_writes_invalidate_action_history_before_partial_
         assert_eq!(wb.get_formula("S", 1, 1).as_deref(), Some("=100"));
         assert!(!wb.can_undo(), "partial unlogged batch must clear history");
 
-        wb.undo().unwrap();
+        assert!(matches!(wb.undo(), Err(IoError::HistoryDisabled)));
         assert_eq!(
             wb.get_formula("S", 1, 1).as_deref(),
             Some("=100"),
@@ -264,7 +285,7 @@ fn b4_f2_failing_unlogged_batch_writes_invalidate_action_history_before_partial_
             "partial unlogged write_range must clear history"
         );
 
-        wb.undo().unwrap();
+        assert!(matches!(wb.undo(), Err(IoError::HistoryDisabled)));
         assert_eq!(
             wb.get_formula("S", 1, 1).as_deref(),
             Some("=100"),
@@ -299,7 +320,7 @@ fn b4_f2_failing_unlogged_batch_writes_invalidate_action_history_before_partial_
         )
         .unwrap();
         assert!(!wb.can_undo());
-        wb.undo().unwrap();
+        assert!(matches!(wb.undo(), Err(IoError::HistoryDisabled)));
         assert_eq!(num(&wb, "S", 1, 1), 100.0);
         assert_eq!(num(&wb, "S", 2, 1), 200.0);
     }
@@ -353,7 +374,7 @@ fn b4_f2_failing_logged_batch_clears_prior_action_and_redo_stacks() {
         // Disable changelog again: the old action journal must have been cleared.
         wb.set_changelog_enabled(false);
         assert!(!wb.can_undo());
-        wb.undo().unwrap();
+        assert!(matches!(wb.undo(), Err(IoError::HistoryDisabled)));
         assert_eq!(
             wb.get_formula("S", 1, 1).as_deref(),
             Some("=100"),
@@ -365,7 +386,7 @@ fn b4_f2_failing_logged_batch_clears_prior_action_and_redo_stacks() {
 #[test]
 fn d1_row_visibility_is_journaled_when_changelog_on_and_invalidates_when_off() {
     // Changelog ON: set_row_hidden / set_rows_hidden preserve prior undo history and are undoable.
-    let mut wb = Workbook::new();
+    let mut wb = logged_workbook();
     wb.add_sheet("S").unwrap();
 
     wb.set_value("S", 1, 1, LiteralValue::Number(10.0)).unwrap();

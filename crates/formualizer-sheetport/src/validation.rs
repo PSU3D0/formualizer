@@ -461,19 +461,15 @@ fn coerce_literal_to_declared(
     system: DateSystem,
 ) -> LiteralValue {
     use formualizer_common::{
-        date_to_serial_for, datetime_to_serial_for, time_to_fraction, try_serial_to_date_for,
-        try_serial_to_datetime_for,
+        date_to_serial_for, datetime_to_serial_for, duration_to_days_fraction, time_to_fraction,
+        try_serial_to_date_for, try_serial_to_datetime_subsec_for,
     };
     match value_type {
         ValueType::Number | ValueType::Integer => match value {
             LiteralValue::Date(d) => LiteralValue::Number(date_to_serial_for(system, &d)),
             LiteralValue::DateTime(dt) => LiteralValue::Number(datetime_to_serial_for(system, &dt)),
             LiteralValue::Time(t) => LiteralValue::Number(time_to_fraction(&t)),
-            LiteralValue::Duration(d) => LiteralValue::Number(
-                d.num_nanoseconds()
-                    .map(|n| n as f64 / (86_400.0 * 1_000_000_000.0))
-                    .unwrap_or_else(|| d.num_seconds() as f64 / 86_400.0),
-            ),
+            LiteralValue::Duration(d) => LiteralValue::Number(duration_to_days_fraction(&d)),
             other => other,
         },
         ValueType::Date => match value {
@@ -483,7 +479,7 @@ fn coerce_literal_to_declared(
             other => other,
         },
         ValueType::Datetime => match value {
-            LiteralValue::Number(n) => try_serial_to_datetime_for(system, n)
+            LiteralValue::Number(n) => try_serial_to_datetime_subsec_for(system, n)
                 .map(LiteralValue::DateTime)
                 .unwrap_or(LiteralValue::Number(n)),
             other => other,

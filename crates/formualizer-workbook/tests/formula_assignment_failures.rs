@@ -124,7 +124,7 @@ fn rejected_new_graph_assignment_leaves_no_formula_or_history() {
 
 #[test]
 fn logged_assignment_propagates_resource_admission_rejection() {
-    let mut cfg = WorkbookConfig::interactive();
+    let mut cfg = WorkbookConfig::interactive().with_changelog(true);
     cfg.eval.defer_graph_building = false;
     cfg.eval.evaluation_budgets.admission.graph_edge_hard_limit = Some(0);
     let mut wb = Workbook::new_with_config(cfg);

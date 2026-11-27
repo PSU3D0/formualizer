@@ -93,6 +93,7 @@ def test_whole_shared_family_target_retains_unrelated_failure_and_edit_history(
     book = fz.Workbook.from_bytes(
         shared_bytes(xlsx_builder(populate), records),
         config=strict_config(),
+        enable_changelog=True,
         span_evaluation=span_evaluation,
     )
     expected = count * (count + 1) // 2 + count

@@ -1684,7 +1684,7 @@ impl Workbook {
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
             .undo()
-            .map_err(|e| js_error(format!("undo failed: {e}")))
+            .map_err(workbook_error_to_js)
     }
 
     #[wasm_bindgen]
@@ -1693,7 +1693,7 @@ impl Workbook {
             .write()
             .map_err(|_| js_error("failed to lock workbook for write"))?
             .redo()
-            .map_err(|e| js_error(format!("redo failed: {e}")))
+            .map_err(workbook_error_to_js)
     }
 
     /// Telemetry from runtime SCC / iterative-calculation evaluation during

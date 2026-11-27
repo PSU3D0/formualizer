@@ -1360,7 +1360,7 @@ fn decode_wire_cell_to_literal(
                     .map(LiteralValue::Date)
                     .unwrap_or(LiteralValue::Number(num))
             } else {
-                formualizer_common::try_serial_to_datetime_for(date_system, num)
+                formualizer_common::try_serial_to_datetime_subsec_for(date_system, num)
                     .map(LiteralValue::DateTime)
                     .unwrap_or(LiteralValue::Number(num))
             };
@@ -1373,11 +1373,10 @@ fn decode_wire_cell_to_literal(
                     None,
                 ));
             }
-            let secs = (num * 86_400.0).round() as i64;
-            Ok((
-                LiteralValue::Duration(chrono::Duration::seconds(secs)),
-                Some(crate::FormatId::DURATION),
-            ))
+            let val = formualizer_common::days_fraction_to_duration(num)
+                .map(LiteralValue::Duration)
+                .unwrap_or(LiteralValue::Number(num));
+            Ok((val, Some(crate::FormatId::DURATION)))
         }
     }
 }
@@ -1398,36 +1397,28 @@ fn decode_serial_for_logged_path(
                     .map(LiteralValue::Date)
                     .unwrap_or(LiteralValue::Number(serial))
             } else {
-                formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                formualizer_common::try_serial_to_datetime_subsec_for(date_system, serial)
                     .map(LiteralValue::DateTime)
                     .unwrap_or(LiteralValue::Number(serial))
             };
             (val, None)
         }
         Some(FormatClass::DateTime) => {
-            let val = formualizer_common::try_serial_to_datetime_for(date_system, serial)
+            let val = formualizer_common::try_serial_to_datetime_subsec_for(date_system, serial)
                 .map(LiteralValue::DateTime)
                 .unwrap_or(LiteralValue::Number(serial));
             (val, None)
         }
         Some(FormatClass::Time) if (0.0..1.0).contains(&serial) => {
-            let nanos = (serial * 86_400_000_000_000.0).round() as u64;
-            let nanos = nanos.min(86_400_000_000_000 - 1);
-            let val = chrono::NaiveTime::from_num_seconds_from_midnight_opt(
-                (nanos / 1_000_000_000) as u32,
-                (nanos % 1_000_000_000) as u32,
-            )
-            .map(LiteralValue::Time)
-            .unwrap_or(LiteralValue::Number(serial));
+            let val = formualizer_common::fraction_to_time(serial)
+                .map(LiteralValue::Time)
+                .unwrap_or(LiteralValue::Number(serial));
             (val, None)
         }
         Some(FormatClass::Time | FormatClass::Duration) => {
-            let secs = (serial * 86_400.0).round();
-            let val = if secs.is_finite() && secs >= i64::MIN as f64 && secs <= i64::MAX as f64 {
-                LiteralValue::Duration(chrono::Duration::seconds(secs as i64))
-            } else {
-                LiteralValue::Number(serial)
-            };
+            let val = formualizer_common::days_fraction_to_duration(serial)
+                .map(LiteralValue::Duration)
+                .unwrap_or(LiteralValue::Number(serial));
             (val, None)
         }
         _ => {
@@ -1709,7 +1700,7 @@ impl WorkbookAction<'_> {
 pub enum WorkbookMode {
     /// Fastpath parity with direct Engine usage.
     Ephemeral,
-    /// Default workbook behavior (changelog + deferred graph build).
+    /// Default workbook behavior (deferred graph build; changelog disabled by default).
     Interactive,
 }
 
@@ -1741,7 +1732,7 @@ impl WorkbookConfig {
         };
         Self {
             eval,
-            enable_changelog: true,
+            enable_changelog: false,
             ingest_limits: formualizer_eval::engine::WorkbookLoadLimits::default(),
         }
     }
@@ -2842,16 +2833,23 @@ impl Workbook {
         unsafe { &mut *wb_ptr }.undo_inner()
     }
 
+    #[inline]
+    fn has_action_journal(&self) -> bool {
+        self.undo.actions_done_len() > 0 || self.undo.actions_undone_len() > 0
+    }
+
     fn undo_inner(&mut self) -> Result<(), IoError> {
         if self.enable_changelog {
             self.engine
                 .undo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
             self.sync_spill_action_history();
-        } else {
+        } else if self.has_action_journal() {
             self.engine
                 .undo_action(&mut self.undo)
                 .map_err(|e| IoError::from_backend("editor", e))?;
+        } else {
+            return Err(IoError::HistoryDisabled);
         }
         Ok(())
     }
@@ -2871,10 +2869,12 @@ impl Workbook {
                 .redo_logged(&mut self.undo, &mut self.log)
                 .map_err(|e| IoError::from_backend("editor", e))?;
             self.sync_spill_action_history();
-        } else {
+        } else if self.has_action_journal() {
             self.engine
                 .redo_action(&mut self.undo)
                 .map_err(|e| IoError::from_backend("editor", e))?;
+        } else {
+            return Err(IoError::HistoryDisabled);
         }
         Ok(())
     }
@@ -2968,58 +2968,7 @@ impl Workbook {
     }
 
     fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
-        use formualizer_eval::arrow_store::OverlayValue;
-        if !(self.engine.config.arrow_storage_enabled && self.engine.config.delta_overlay_enabled) {
-            return;
-        }
-        let date_system = self.engine.config.date_system;
-        let row0 = row.saturating_sub(1) as usize;
-        let col0 = col.saturating_sub(1) as usize;
-        self.ensure_arrow_sheet_capacity(sheet, row0 + 1, col0 + 1);
-        let asheet = self
-            .engine
-            .sheet_store_mut()
-            .sheet_mut(sheet)
-            .expect("ArrowSheet must exist");
-        if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
-            let ov = match value {
-                LiteralValue::Empty => OverlayValue::Empty,
-                LiteralValue::Int(i) => OverlayValue::Number(*i as f64),
-                LiteralValue::Number(n) => OverlayValue::Number(*n),
-                LiteralValue::Boolean(b) => OverlayValue::Boolean(*b),
-                LiteralValue::Text(s) => OverlayValue::Text(std::sync::Arc::from(s.clone())),
-                LiteralValue::Error(e) => {
-                    OverlayValue::Error(formualizer_eval::arrow_store::map_error_code(e.kind))
-                }
-                LiteralValue::Date(d) => {
-                    let dt = d.and_hms_opt(0, 0, 0).unwrap();
-                    let serial = formualizer_common::datetime_to_serial_for(date_system, &dt);
-                    OverlayValue::DateTime(serial)
-                }
-                LiteralValue::DateTime(dt) => {
-                    let serial = formualizer_common::datetime_to_serial_for(date_system, dt);
-                    OverlayValue::DateTime(serial)
-                }
-                LiteralValue::Time(t) => {
-                    let serial = formualizer_common::time_to_fraction(t);
-                    OverlayValue::DateTime(serial)
-                }
-                LiteralValue::Duration(d) => {
-                    let serial = d.num_seconds() as f64 / 86_400.0;
-                    OverlayValue::Duration(serial)
-                }
-                LiteralValue::Pending => OverlayValue::Pending,
-                LiteralValue::Array(_) => {
-                    OverlayValue::Error(formualizer_eval::arrow_store::map_error_code(
-                        formualizer_common::ExcelErrorKind::Value,
-                    ))
-                }
-            };
-            // Use ensure_column_chunk_mut to lazily create chunk if needed
-            if let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx) {
-                ch.overlay.set(in_off, ov);
-            }
-        }
+        self.engine.mirror_value_to_overlay(sheet, row, col, value);
     }
 
     /// Non-calculating sheets omitted during loading, in no guaranteed order.
@@ -3909,7 +3858,6 @@ impl Workbook {
         }
         this.sync_spill_action_history();
 
-        let date_system = this.engine.config.date_system;
         for (r, c, v, fmt, _cell, _old_value, _old_formula, staged_before) in items {
             this.mirror_value_to_overlay(sheet, r, c, &v);
             if let Some(explicit_fmt) = fmt.filter(|f| *f != crate::FormatId::GENERAL)
@@ -3924,28 +3872,7 @@ impl Workbook {
                 {
                     ch.overlay.set_format(in_off, Some(explicit_fmt));
                 }
-            } else if this.engine.config.arrow_storage_enabled
-                && this.engine.config.delta_overlay_enabled
-            {
-                let inferred = match &v {
-                    LiteralValue::Date(_) => Some(crate::FormatId::DATE),
-                    LiteralValue::DateTime(_) => Some(crate::FormatId::DATETIME),
-                    LiteralValue::Time(_) => Some(crate::FormatId::TIME),
-                    LiteralValue::Duration(_) => Some(crate::FormatId::DURATION),
-                    _ => None,
-                };
-                if inferred.is_some() {
-                    let row0 = r.saturating_sub(1) as usize;
-                    let col0 = c.saturating_sub(1) as usize;
-                    if let Some(asheet) = this.engine.sheet_store_mut().sheet_mut(sheet)
-                        && let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0)
-                        && let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx)
-                    {
-                        ch.overlay.set_format(in_off, inferred);
-                    }
-                }
             }
-            let _ = date_system;
             this.engine.clear_staged_formula_text(sheet, r, c);
             if staged_before.is_some() {
                 this.record_staged_formula_cell_change(sheet, r, c, staged_before, None);

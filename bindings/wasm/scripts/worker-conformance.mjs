@@ -13,7 +13,13 @@ for (const mode of ['channel','thread']) {
  const client = mode === 'channel' ? await createInProcessWorkbookWorker({runtime,allowFunctionFromSource:true,functions:{DOUBLE:x=>x*2}}) :
  await createWorkbookWorker(new Worker(new URL('./worker-test-host.mjs',import.meta.url)),{terminateOnDispose:true});
  try {
-  await client.addSheet('S'); await client.setChangelogEnabled(true);
+  await client.addSheet('S');
+  assert.equal(await client.changelogEnabled(),false);
+  const revBeforeDisabledUndo=client.state.revision;
+  await assert.rejects(client.undo(),e=>e.code==='HISTORY_DISABLED'&&e.kind==='HistoryDisabled');
+  await assert.rejects(client.redo(),e=>e.code==='HISTORY_DISABLED'&&e.kind==='HistoryDisabled');
+  assert.equal(client.state.revision,revBeforeDisabledUndo,'disabled undo/redo must not bump worker revision');
+  await client.setChangelogEnabled(true);
   await client.editBatch([{kind:'setValue',sheet:'S',row:1,column:1,value:2},{kind:'setFormula',sheet:'S',row:2,column:1,formula:'=A1*2'}],{actionDescription:'setup'});
   await client.undo(); assert.equal(await client.getFormula('S',2,1),undefined); await client.redo();
   await client.evaluateAll(); assert.equal(await client.getValue('S',2,1),4);

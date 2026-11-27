@@ -4,8 +4,18 @@ All notable changes to Formualizer will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking changes and upgrading
+
+- **Changelog recording is now disabled by default (`enable_changelog: false`) across Rust, Python, WASM, and CFFI.** `WorkbookConfig::interactive()`, `Workbook::new()`, `IoConfig::default()`, Python `Workbook(...)`, WASM `new Workbook(...)` / `fromJson` / `fromXlsxBytes`, and CFFI workbook constructors now default to `enable_changelog = false` so bulk writes and ordinary edits avoid per-cell changelog overhead unless undo/redo is requested.
+  - **Migration one-liner:**
+    - Rust: `Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true))` or `wb.set_changelog_enabled(true)`
+    - Python: `fz.Workbook(enable_changelog=True)` or `wb.set_changelog_enabled(True)`
+    - JS/WASM: `new Workbook({ enableChangelog: true })` or `wb.setChangelogEnabled(true)`
+- **Calling `undo()` or `redo()` while changelog recording is disabled now returns an explicit error instead of a silent no-op.** When `enable_changelog` is `false` and no explicit `Workbook::action(...)` journal is present, `undo()` / `redo()` return `Err(IoError::HistoryDisabled)` in Rust, raise `RuntimeError` in Python, and throw / reject with a structured error (`code: "HISTORY_DISABLED"`, `kind: "HistoryDisabled"`) in WASM and `formualizer/worker` (without bumping worker revision). When changelog is enabled with nothing to undo/redo, `undo()` / `redo()` remain `Ok` no-ops; `begin_action` / `end_action` remain no-ops when disabled; and UI callers should gate on `changelog_enabled` / `can_undo` / `can_redo`.
+
 ### Fixed
 
+- **Sub-second temporal precision across `Time`, `DateTime`, and `Duration`.** `formualizer_common::time_to_fraction` and new shared fractional-day helpers (`fraction_to_time`, `duration_to_days_fraction`, `days_fraction_to_duration`, `try_serial_to_datetime_subsec_for`) preserve sub-second nanoseconds/microseconds instead of truncating to whole seconds across all scalar, batch, and bulk write paths (`set_value`, `set_values`, `set_columns`, `set_cells`, both logged and fast paths).
 - **`LOOKUP` searches the way Excel does.** Errors and values of another type in the lookup vector no longer turn the search left: `=LOOKUP(2,1/(A1:E1<>""),A1:E1)` returns the last non-blank value of the row, as in Excel, instead of the first. Values change on unsorted data and runs of duplicates, which now give the position Excel's search reaches (`LOOKUP(1,{1,1,1,1,1,0,1})` is the 5th value, not the 7th). A number no longer matches numeric text, booleans or blank cells (`LOOKUP(2,{1,"2",3})` is 1), texts are compared as texts, and numbers exactly. Whole-column references, including through `INDIRECT`, are searched over all their rows, and the array form over whole columns searches the first column when the reference is taller than wide. A result array that is too short, and a 2-D result, give `#N/A`. A 2-D lookup vector in the vector form is searched like the array form. (#586)
 
 ## [0.15.0] - 2026-11-21

@@ -9,7 +9,7 @@ class TestUndoRedo:
     """Basic undo/redo on single operations."""
 
     def test_undo_set_value(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 42)
         wb.evaluate_all()
@@ -20,7 +20,7 @@ class TestUndoRedo:
         assert wb.get_value("S1", 1, 1) is None
 
     def test_redo_set_value(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 42)
         wb.evaluate_all()
@@ -40,7 +40,7 @@ class TestUndoRedo:
     )
     def test_undo_formula_on_fresh_cell(self):
         """Undo formula creation clears C1 without changing its inputs."""
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 10)
         s.set_value(1, 2, 20)
@@ -59,7 +59,7 @@ class TestUndoRedo:
         assert wb.get_value("S1", 1, 2) == 20.0
 
     def test_undo_overwrite_value(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 10)
         wb.evaluate_all()
@@ -75,7 +75,7 @@ class TestUndoRedo:
 
     def test_undo_propagation(self):
         """Undo a value change should also undo dependent recalculations."""
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 10)
         s.set_formula(1, 2, "=A1*2")
@@ -92,7 +92,7 @@ class TestUndoRedo:
         assert wb.get_value("S1", 1, 2) == 20.0
 
     def test_multiple_undos(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 1)
         s.set_value(1, 2, 2)
@@ -114,7 +114,7 @@ class TestUndoRedo:
         assert wb.get_value("S1", 1, 1) is None
 
     def test_redo_chain(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 10)
         wb.evaluate_all()
@@ -143,7 +143,7 @@ class TestCompoundActions:
     """Tests for begin_action/end_action grouping."""
 
     def test_begin_end_groups_into_one_undo(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         wb.begin_action("set two values")
         s.set_value(1, 1, 10)
@@ -159,7 +159,7 @@ class TestCompoundActions:
         assert wb.get_value("S1", 1, 2) is None
 
     def test_redo_compound_action(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         wb.begin_action("batch edit")
         s.set_value(1, 1, 100)
@@ -180,7 +180,7 @@ class TestCompoundActions:
         assert wb.get_value("S1", 1, 2) == 200.0
 
     def test_compound_action_with_evaluation(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 1)
         s.set_value(1, 2, 2)
@@ -202,7 +202,7 @@ class TestCompoundActions:
         assert wb.get_value("S1", 1, 3) == 15.0
 
     def test_nested_begin_end_is_single_group(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         wb.begin_action("outer")
         s.set_value(1, 1, 1)
@@ -258,14 +258,26 @@ class TestCancel:
 class TestEdgeCases:
     """Edge cases for undo/redo and changelog."""
 
-    def test_undo_without_changes_is_noop(self):
+    def test_default_workbook_has_changelog_disabled_and_undo_errors(self):
         wb = fz.Workbook()
+        assert not wb.changelog_enabled
+        assert not wb.can_undo
+        assert not wb.can_redo
+        wb.begin_action("noop")
+        wb.end_action()
+        with pytest.raises(RuntimeError, match="disabled"):
+            wb.undo()
+        with pytest.raises(RuntimeError, match="disabled"):
+            wb.redo()
+
+    def test_undo_without_changes_is_noop(self):
+        wb = fz.Workbook(enable_changelog=True)
         names = wb.sheet_names
         assert wb.undo() is None
         assert wb.sheet_names == names
 
     def test_redo_without_undo_is_noop(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         names = wb.sheet_names
         assert wb.redo() is None
         assert wb.sheet_names == names
@@ -300,7 +312,7 @@ class TestEdgeCases:
         assert wb.get_value("S1", 1, 1) == 10.0
 
     def test_undo_after_sheet_add_delete(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         wb.add_sheet("Temp")
         s = wb.sheet("Temp")
         s.set_value(1, 1, 99)
@@ -313,7 +325,7 @@ class TestEdgeCases:
         assert "Temp" in wb.sheet_names
 
     def test_evaluate_cells_after_undo(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 10)
         s.set_formula(1, 2, "=A1*3")
@@ -331,7 +343,7 @@ class TestEdgeCases:
 # #301 is fixed by the dependency authority (Program 1): dependencies are
 # derived from formulas, so undo cannot leave a rewritten precedent unlinked.
 def test_rewrite_previously_empty_precedent_after_undo():
-    wb = fz.Workbook()
+    wb = fz.Workbook(enable_changelog=True)
     sheet = wb.sheet("S1")
     sheet.set_formula(4, 4, "=C6+1")
     assert wb.evaluate_cell("S1", 4, 4) == 1.0
@@ -347,7 +359,7 @@ class TestSheetLevelUndoRedo:
     """Undo/redo through the Sheet API."""
 
     def test_sheet_set_value_undo(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 42)
         wb.evaluate_all()
@@ -364,7 +376,7 @@ class TestSheetLevelUndoRedo:
     )
     def test_sheet_set_formula_undo(self):
         """Sheet-level undo clears the created formula and its computed value."""
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_value(1, 1, 10)
         s.set_value(1, 2, 20)
@@ -380,7 +392,7 @@ class TestSheetLevelUndoRedo:
         assert wb.get_formula("S1", 1, 3) is None
 
     def test_sheet_batch_set_undo(self):
-        wb = fz.Workbook()
+        wb = fz.Workbook(enable_changelog=True)
         s = wb.sheet("S1")
         s.set_values_batch(1, 1, 2, 2, [[1, 2], [3, 4]])
         wb.evaluate_all()

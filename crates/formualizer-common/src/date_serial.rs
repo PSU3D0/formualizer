@@ -10,6 +10,14 @@ use chrono::{Datelike, Duration as ChronoDuration, NaiveDate, NaiveDateTime, Nai
 use crate::{DateSystem, ExcelError};
 
 const SECONDS_PER_DAY: f64 = 86_400.0;
+const MICROS_PER_DAY_U64: u64 = 86_400 * 1_000_000;
+const MICROS_PER_DAY: f64 = 86_400_000_000.0;
+const NANOS_PER_SECOND: f64 = 1_000_000_000.0;
+const NANOS_PER_DAY_U64: u64 = 86_400 * 1_000_000_000;
+const NANOS_PER_DAY: f64 = 86_400_000_000_000.0;
+/// `i64::MAX as f64` rounds up to `2^63`; strict `< I64_UPPER_BOUND_F64` guarantees
+/// casting a finite `f64` to `i64` never saturates at the upper bound.
+const I64_UPPER_BOUND_F64: f64 = 9_223_372_036_854_775_808.0;
 const EXCEL_1900_EPOCH: NaiveDate = NaiveDate::from_ymd_opt(1899, 12, 31).unwrap();
 const EXCEL_1904_EPOCH: NaiveDate = NaiveDate::from_ymd_opt(1904, 1, 1).unwrap();
 const EXCEL_MAX_DATE: NaiveDate = NaiveDate::from_ymd_opt(9999, 12, 31).unwrap();
@@ -44,20 +52,86 @@ pub fn date_to_serial_for(system: DateSystem, date: &NaiveDate) -> f64 {
     }
 }
 
-/// Convert a datetime to an Excel serial in the selected date system.
-///
-/// Formualizer's existing temporal representation is second-precision:
-/// subsecond nanoseconds are intentionally not encoded.
+/// Convert a datetime to an Excel serial in the selected date system,
+/// preserving sub-second precision via [`time_to_fraction`].
 pub fn datetime_to_serial_for(system: DateSystem, datetime: &NaiveDateTime) -> f64 {
     date_to_serial_for(system, &datetime.date()) + time_to_fraction(&datetime.time())
 }
 
-/// Convert a time to its fractional-day representation.
+/// Convert a time to its fractional-day representation, preserving sub-second
+/// nanoseconds.
 ///
-/// Subsecond nanoseconds are intentionally ignored for compatibility with the
-/// existing Formualizer temporal model.
+/// Whole-second times use exact `seconds / 86_400.0` division for bit-exact
+/// compatibility with existing whole-second serials. Sub-second times encode
+/// total nanoseconds divided by `86_400_000_000_000.0`.
 pub fn time_to_fraction(time: &NaiveTime) -> f64 {
-    time.num_seconds_from_midnight() as f64 / SECONDS_PER_DAY
+    let secs = time.num_seconds_from_midnight();
+    // Clamp leap-second nanoseconds (>= 1e9) so the fraction stays strictly in [0.0, 1.0).
+    let nanos = time.nanosecond().min(999_999_999);
+    if nanos == 0 {
+        secs as f64 / SECONDS_PER_DAY
+    } else {
+        let total_nanos = u64::from(secs) * 1_000_000_000 + u64::from(nanos);
+        total_nanos as f64 / NANOS_PER_DAY
+    }
+}
+
+/// Convert a fractional day in `[0.0, 1.0)` back to a `NaiveTime` with
+/// sub-second nanosecond precision (inverse of [`time_to_fraction`]).
+///
+/// Returns `None` if `fraction` is non-finite or outside `[0.0, 1.0)`.
+pub fn fraction_to_time(fraction: f64) -> Option<NaiveTime> {
+    if !fraction.is_finite() || !(0.0..1.0).contains(&fraction) {
+        return None;
+    }
+    let nanos = (fraction * NANOS_PER_DAY).round() as u64;
+    let nanos = nanos.min(NANOS_PER_DAY_U64 - 1);
+    NaiveTime::from_num_seconds_from_midnight_opt(
+        (nanos / 1_000_000_000) as u32,
+        (nanos % 1_000_000_000) as u32,
+    )
+}
+
+/// Convert a `chrono::Duration` to fractional Excel days, preserving sub-second
+/// nanoseconds/microseconds for both positive and negative durations.
+///
+/// Whole-second durations use exact `seconds / 86_400.0` division for bit-exact
+/// compatibility. Sub-second durations within `i64` nanosecond range (±292 years)
+/// convert via total nanoseconds; larger durations fall back to seconds plus
+/// sub-second fractional seconds.
+pub fn duration_to_days_fraction(duration: &ChronoDuration) -> f64 {
+    let subsec_nanos = duration.subsec_nanos();
+    if subsec_nanos == 0 {
+        duration.num_seconds() as f64 / SECONDS_PER_DAY
+    } else if let Some(total_nanos) = duration.num_nanoseconds() {
+        total_nanos as f64 / NANOS_PER_DAY
+    } else {
+        (duration.num_seconds() as f64 + f64::from(subsec_nanos) / NANOS_PER_SECOND)
+            / SECONDS_PER_DAY
+    }
+}
+
+/// Convert fractional Excel days back to a `chrono::Duration` with sub-second
+/// precision (inverse of [`duration_to_days_fraction`]).
+///
+/// Uses nanosecond precision when within `i64` nanoseconds (±292 years), and
+/// falls back to whole-second precision for larger finite durations.
+/// Returns `None` for non-finite or out-of-range inputs.
+pub fn days_fraction_to_duration(days: f64) -> Option<ChronoDuration> {
+    if !days.is_finite() {
+        return None;
+    }
+    let nanos = (days * NANOS_PER_DAY).round();
+    if nanos.is_finite() && nanos >= i64::MIN as f64 && nanos < I64_UPPER_BOUND_F64 {
+        Some(ChronoDuration::nanoseconds(nanos as i64))
+    } else {
+        let secs = (days * SECONDS_PER_DAY).round();
+        if secs.is_finite() && secs >= i64::MIN as f64 && secs < I64_UPPER_BOUND_F64 {
+            ChronoDuration::try_seconds(secs as i64)
+        } else {
+            None
+        }
+    }
 }
 
 /// Parse date text using Formualizer's deterministic en-US spreadsheet convention.
@@ -354,15 +428,49 @@ pub fn try_serial_to_date_for(system: DateSystem, serial: f64) -> Result<NaiveDa
 
 /// Convert an Excel serial to a representable `chrono` datetime.
 ///
-/// Fractional days are rounded to the nearest second. A rounded value of
-/// 24:00 carries into the next serial day and is rejected if it exceeds
-/// Excel's maximum date. In the 1900 system, carrying into phantom serial 60
-/// still aliases to representable 1900-02-28.
+/// Fractional days are rounded to the nearest second (matching Excel's
+/// `HOUR`/`MINUTE`/`SECOND` semantics). A rounded value of 24:00 carries into
+/// the next serial day and is rejected if it exceeds Excel's maximum date. In
+/// the 1900 system, carrying into phantom serial 60 still aliases to
+/// representable 1900-02-28.
 pub fn try_serial_to_datetime_for(
     system: DateSystem,
     serial: f64,
 ) -> Result<NaiveDateTime, ExcelError> {
     let (whole_days, time) = normalized_serial_parts(system, serial)?;
+    let date = date_for_whole_serial(system, whole_days)?;
+    Ok(NaiveDateTime::new(date, time))
+}
+
+/// Convert an Excel serial to a representable `chrono` datetime, preserving
+/// sub-second microsecond precision.
+///
+/// Modern Excel date serials (around 45,000 days) retain ~0.6 µs IEEE-754
+/// `f64` resolution in the fractional day, so rounding to microseconds
+/// round-trips millisecond and microsecond `DateTime` values cleanly without
+/// introducing sub-microsecond ULP jitter. A rounded value of 24:00:00.000000
+/// carries into the next serial day and is rejected if it exceeds Excel's
+/// maximum date.
+pub fn try_serial_to_datetime_subsec_for(
+    system: DateSystem,
+    serial: f64,
+) -> Result<NaiveDateTime, ExcelError> {
+    validate_excel_serial(system, serial)?;
+
+    let mut whole_days = serial.trunc() as i64;
+    let mut total_micros = (serial.fract() * MICROS_PER_DAY).round() as u64;
+    if total_micros >= MICROS_PER_DAY_U64 {
+        whole_days = whole_days.checked_add(1).ok_or_else(ExcelError::new_num)?;
+        if whole_days as f64 > max_excel_serial_for(system) {
+            return Err(ExcelError::new_num());
+        }
+        total_micros = 0;
+    }
+
+    let secs = (total_micros / 1_000_000) as u32;
+    let nanos = ((total_micros % 1_000_000) * 1_000) as u32;
+    let time = NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos)
+        .ok_or_else(ExcelError::new_num)?;
     let date = date_for_whole_serial(system, whole_days)?;
     Ok(NaiveDateTime::new(date, time))
 }
@@ -609,9 +717,64 @@ mod tests {
     }
 
     #[test]
-    fn time_fraction_is_second_precision() {
-        let time = NaiveTime::from_hms_nano_opt(12, 0, 0, 999_999_999).unwrap();
-        assert_eq!(time_to_fraction(&time), 0.5);
+    fn time_fraction_preserves_subsecond_precision() {
+        let half_sec = NaiveTime::from_hms_milli_opt(12, 0, 0, 500).unwrap();
+        let frac = time_to_fraction(&half_sec);
+        assert!(frac > 0.5);
+        assert_eq!(fraction_to_time(frac), Some(half_sec));
+
+        let exact_ns = NaiveTime::from_hms_nano_opt(12, 0, 0, 123_456_789).unwrap();
+        assert_eq!(
+            fraction_to_time(time_to_fraction(&exact_ns)),
+            Some(exact_ns)
+        );
+
+        // Whole seconds remain bit-exact.
+        let noon = NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        assert_eq!(time_to_fraction(&noon), 0.5);
+
+        // Near-end-of-day sub-second stays strictly < 1.0.
+        let late = NaiveTime::from_hms_nano_opt(23, 59, 59, 999_999_999).unwrap();
+        let late_frac = time_to_fraction(&late);
+        assert!(late_frac < 1.0);
+        assert_eq!(fraction_to_time(late_frac), Some(late));
+    }
+
+    #[test]
+    fn datetime_and_duration_subsecond_roundtrip() {
+        for system in [DateSystem::Excel1900, DateSystem::Excel1904] {
+            let dt = date(2024, 1, 1).and_hms_milli_opt(12, 0, 0, 500).unwrap();
+            let serial = datetime_to_serial_for(system, &dt);
+            assert_eq!(
+                try_serial_to_datetime_subsec_for(system, serial).unwrap(),
+                dt
+            );
+
+            let dt_us = date(2024, 1, 1)
+                .and_hms_micro_opt(12, 0, 0, 123_456)
+                .unwrap();
+            let serial_us = datetime_to_serial_for(system, &dt_us);
+            assert_eq!(
+                try_serial_to_datetime_subsec_for(system, serial_us).unwrap(),
+                dt_us
+            );
+        }
+
+        // Duration 0.123456789 days round-trips identically to nanosecond precision.
+        let expected_dur = days_fraction_to_duration(0.123456789).unwrap();
+        assert_eq!(
+            expected_dur,
+            ChronoDuration::nanoseconds(10_666_666_569_600)
+        );
+        let rt_days = duration_to_days_fraction(&expected_dur);
+        assert_eq!(days_fraction_to_duration(rt_days), Some(expected_dur));
+
+        // Negative sub-second duration round-trips cleanly.
+        let neg = ChronoDuration::milliseconds(-1_250);
+        assert_eq!(
+            days_fraction_to_duration(duration_to_days_fraction(&neg)),
+            Some(neg)
+        );
     }
 
     #[test]

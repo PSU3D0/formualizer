@@ -139,8 +139,12 @@ fn calamine_failed_preparation_preserves_source_inspection_and_history() {
     });
     for targeted in [false, true] {
         let adapter = CalamineAdapter::open_path(&path).unwrap();
-        let mut wb =
-            Workbook::from_reader(adapter, LoadStrategy::EagerAll, strict_interactive()).unwrap();
+        let mut wb = Workbook::from_reader(
+            adapter,
+            LoadStrategy::EagerAll,
+            strict_interactive().with_changelog(true),
+        )
+        .unwrap();
         let original: Vec<_> = (1..=3)
             .map(|col| wb.get_formula("Sheet1", 1, col).unwrap())
             .collect();

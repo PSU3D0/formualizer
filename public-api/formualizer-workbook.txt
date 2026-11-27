@@ -951,6 +951,7 @@ pub formualizer_workbook::error::IoError::FormulaParser::col: alloc::string::Str
 pub formualizer_workbook::error::IoError::FormulaParser::message: alloc::string::String
 pub formualizer_workbook::error::IoError::FormulaParser::row: u32
 pub formualizer_workbook::error::IoError::FormulaParser::sheet: alloc::string::String
+pub formualizer_workbook::error::IoError::HistoryDisabled
 pub formualizer_workbook::error::IoError::InvalidOptions
 pub formualizer_workbook::error::IoError::InvalidOptions::field: alloc::string::String
 pub formualizer_workbook::error::IoError::InvalidOptions::message: alloc::string::String
@@ -1085,7 +1086,7 @@ pub formualizer_workbook::session::IoConfig::enable_changelog: bool
 impl core::clone::Clone for formualizer_workbook::session::IoConfig
 pub fn formualizer_workbook::session::IoConfig::clone(&self) -> formualizer_workbook::session::IoConfig
 impl core::default::Default for formualizer_workbook::session::IoConfig
-pub fn formualizer_workbook::session::IoConfig::default() -> Self
+pub fn formualizer_workbook::session::IoConfig::default() -> formualizer_workbook::session::IoConfig
 impl core::fmt::Debug for formualizer_workbook::session::IoConfig
 pub fn formualizer_workbook::session::IoConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub mod formualizer_workbook::source_calculation
@@ -2398,6 +2399,7 @@ pub formualizer_workbook::IoError::FormulaParser::col: alloc::string::String
 pub formualizer_workbook::IoError::FormulaParser::message: alloc::string::String
 pub formualizer_workbook::IoError::FormulaParser::row: u32
 pub formualizer_workbook::IoError::FormulaParser::sheet: alloc::string::String
+pub formualizer_workbook::IoError::HistoryDisabled
 pub formualizer_workbook::IoError::InvalidOptions
 pub formualizer_workbook::IoError::InvalidOptions::field: alloc::string::String
 pub formualizer_workbook::IoError::InvalidOptions::message: alloc::string::String
@@ -2973,7 +2975,7 @@ pub formualizer_workbook::IoConfig::enable_changelog: bool
 impl core::clone::Clone for formualizer_workbook::session::IoConfig
 pub fn formualizer_workbook::session::IoConfig::clone(&self) -> formualizer_workbook::session::IoConfig
 impl core::default::Default for formualizer_workbook::session::IoConfig
-pub fn formualizer_workbook::session::IoConfig::default() -> Self
+pub fn formualizer_workbook::session::IoConfig::default() -> formualizer_workbook::session::IoConfig
 impl core::fmt::Debug for formualizer_workbook::session::IoConfig
 pub fn formualizer_workbook::session::IoConfig::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct formualizer_workbook::IoResolver<B: formualizer_workbook::traits::SpreadsheetReader>
