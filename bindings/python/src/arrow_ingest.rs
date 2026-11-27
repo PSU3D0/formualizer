@@ -19,7 +19,7 @@ use formualizer::common::error::ExcelErrorKind;
 use formualizer::eval::arrow_store::map_error_code;
 use formualizer::eval::engine::{BulkCellTag, DateSystem, WorkbookLoadLimits};
 use formualizer::eval::format::FormatId;
-use formualizer_workbook::{CellBatch, ColumnData, OwnedColumnData};
+use formualizer::workbook::{CellBatch, ColumnData, OwnedColumnData};
 use pyo3::prelude::*;
 use pyo3::types::{
     PyBool, PyByteArray, PyBytes, PyCapsule, PyDict, PyFloat, PyInt, PyList, PyString, PyTuple,
@@ -217,18 +217,37 @@ fn take_array_from_capsules(
         })?;
 
     // SAFETY: Both capsule names were checked against the Arrow C Data Interface
-    // PyCapsule specification (`"arrow_schema"` and `"arrow_array"`). Moving both
-    // structs out and replacing them with empty (`release = NULL`) sentinels
+    // PyCapsule specification (`"arrow_schema"` and `"arrow_array"`). Per the C Data
+    // Interface specification, a NULL `release` callback marks an already-released
+    // struct that must not be consumed. Verify both callbacks (and schema `format`)
+    // before moving either struct out so a reused or half-released pair never panics
+    // or leaks the sibling capsule.
+    let schema_raw = schema_ptr.as_ptr().cast::<FFI_ArrowSchema>();
+    let array_raw = array_ptr.as_ptr().cast::<FFI_ArrowArray>();
+    let (schema_released, array_released, schema_format_null) = unsafe {
+        (
+            (*schema_raw).release.is_none(),
+            (*array_raw).release.is_none(),
+            (*schema_raw).format.is_null(),
+        )
+    };
+    if schema_released || array_released {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Arrow PyCapsule is already released (cannot consume the same capsule twice)",
+        ));
+    }
+    if schema_format_null {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Invalid Arrow schema capsule: format pointer is null",
+        ));
+    }
+
+    // SAFETY: Both structs have non-null `release` callbacks and valid capsule names.
+    // Moving both structs out and replacing them with empty (`release = NULL`) sentinels
     // transfers ownership cleanly so capsule GC does not double-free.
     let (ffi_schema, ffi_array) = unsafe {
-        let s = std::ptr::replace(
-            schema_ptr.as_ptr().cast::<FFI_ArrowSchema>(),
-            FFI_ArrowSchema::empty(),
-        );
-        let a = std::ptr::replace(
-            array_ptr.as_ptr().cast::<FFI_ArrowArray>(),
-            FFI_ArrowArray::empty(),
-        );
+        let s = std::ptr::replace(schema_raw, FFI_ArrowSchema::empty());
+        let a = std::ptr::replace(array_raw, FFI_ArrowArray::empty());
         (s, a)
     };
 
@@ -381,6 +400,12 @@ fn convert_arrow_array_as_table_detached(
                     .into(),
             )
         })?;
+    if struct_arr.null_count() > 0 {
+        return Err(DetachedPrepError::Value(format!(
+            "Arrow StructArray passed to set_columns cannot contain top-level null rows ({} null row(s))",
+            struct_arr.null_count()
+        )));
+    }
     let batch = RecordBatch::from(struct_arr);
     let schema = batch.schema();
     let ncols = schema.fields().len();
@@ -710,7 +735,7 @@ fn push_literal_to_wire(
         LiteralValue::Date(d) => {
             let dt = d.and_hms_opt(0, 0, 0).unwrap();
             let serial = formualizer::common::datetime_to_serial_for(date_system, &dt);
-            tags.push(BulkCellTag::DateTime as u8);
+            tags.push(BulkCellTag::Date as u8);
             numbers.push(serial);
         }
         LiteralValue::DateTime(dt) => {
@@ -720,7 +745,7 @@ fn push_literal_to_wire(
         }
         LiteralValue::Time(t) => {
             let serial = formualizer::common::time_to_fraction(t);
-            tags.push(BulkCellTag::DateTime as u8);
+            tags.push(BulkCellTag::Time as u8);
             numbers.push(serial);
         }
         LiteralValue::Duration(d) => {
@@ -1137,6 +1162,21 @@ pub(crate) fn prepare_columns_input(
             total_rows: nrows,
             ncols,
         });
+    }
+
+    // Reject multi-dimensional NumPy arrays / memoryviews passed directly so we
+    // never silently iterate their rows and transpose them into columns.
+    if let Ok(ndim_obj) = data.getattr("ndim")
+        && !ndim_obj.is_instance_of::<PyBool>()
+        && let Ok(ndim) = ndim_obj.extract::<usize>()
+        && ndim >= 2
+        && (data.hasattr("__array_interface__").unwrap_or(false)
+            || data.get_type().name().is_ok_and(|n| n == "memoryview"))
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "set_columns does not accept a {ndim}-D array directly (iterating rows would silently transpose data); \
+             use set_values for row-major 2-D arrays or pass explicit 1-D columns in a dict or list"
+        )));
     }
 
     // 4. Sequence of columns (each a buffer-protocol array, Arrow array, or Python sequence)

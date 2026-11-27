@@ -268,7 +268,12 @@ def test_set_columns_mapping_and_sequences_and_buffers():
 
     # Sequence of columns (headers=False default).
     rep2 = wb.set_columns("S", 10, 1, [arr_f64, ["a", "b", "c"]])
-    assert (rep2.start_row, rep2.start_col, rep2.end_row, rep2.end_col) == (10, 1, 12, 2)
+    assert (rep2.start_row, rep2.start_col, rep2.end_row, rep2.end_col) == (
+        10,
+        1,
+        12,
+        2,
+    )
     assert wb.get_value("S", 10, 1) == 1.5
     assert wb.get_value("S", 12, 2) == "c"
 
@@ -330,7 +335,9 @@ def test_set_columns_pyarrow_table_and_record_batch():
             pa.array([1.5, float("nan"), -0.0], type=pa.float64()),
             pa.array(["foo", None, "bar"], type=pa.string()),
             pa.array([True, False, None], type=pa.bool_()),
-            pa.array([dt.date(2024, 1, 1), dt.date(2024, 6, 15), None], type=pa.date32()),
+            pa.array(
+                [dt.date(2024, 1, 1), dt.date(2024, 6, 15), None], type=pa.date32()
+            ),
             pa.array(
                 [
                     dt.datetime(2024, 1, 1, 12, 0, 0, 500_000, tzinfo=dt.timezone.utc),
@@ -347,7 +354,9 @@ def test_set_columns_pyarrow_table_and_record_batch():
                 ],
                 type=pa.timestamp("us", tz="+09:00"),
             ),
-            pa.array([Decimal("12.34"), Decimal("-5.50"), None], type=pa.decimal128(10, 2)),
+            pa.array(
+                [Decimal("12.34"), Decimal("-5.50"), None], type=pa.decimal128(10, 2)
+            ),
             pa.array(["cat", "dog", "cat"]).dictionary_encode(),
             pa.array([None, None, None], type=pa.null()),
         ],
@@ -439,7 +448,9 @@ def test_set_columns_polars_dataframe():
     assert wb.get_value("Data", 4, 5) == "north"
 
     s.set_formula(5, 1, "=SUMPRODUCT(A2:A4, B2:B4)")
-    assert wb.evaluate_cell("Data", 5, 1) == pytest.approx(10.5 * 2 + 20.0 * 3 + 30.25 * 4)
+    assert wb.evaluate_cell("Data", 5, 1) == pytest.approx(
+        10.5 * 2 + 20.0 * 3 + 30.25 * 4
+    )
 
 
 def test_set_columns_arrow_preflight_errors():
@@ -447,7 +458,9 @@ def test_set_columns_arrow_preflight_errors():
     s = wb.sheet("S")
 
     # Int64 > 2^53 names column and leaves sheet untouched.
-    t_i64 = pa.table({"ok": [1, 2], "big_id": pa.array([1, MAX_SAFE_INT + 1], type=pa.int64())})
+    t_i64 = pa.table(
+        {"ok": [1, 2], "big_id": pa.array([1, MAX_SAFE_INT + 1], type=pa.int64())}
+    )
     with pytest.raises(ValueError, match="big_id"):
         s.set_columns(1, 1, t_i64)
 
@@ -479,7 +492,11 @@ def test_set_columns_arrow_preflight_errors():
 
     # Bad PyCapsule name rejected cleanly without UB.
     ctypes.pythonapi.PyCapsule_New.restype = ctypes.py_object
-    ctypes.pythonapi.PyCapsule_New.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_void_p]
+    ctypes.pythonapi.PyCapsule_New.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_char_p,
+        ctypes.c_void_p,
+    ]
 
     class BadStream:
         def __arrow_c_stream__(self, requested_schema=None):
@@ -615,4 +632,154 @@ def test_set_cells_validation():
         s.set_cells("abc")
     with pytest.raises(ValueError, match="use set_values"):
         s.set_cells([(1, 1, [1, 2])])
+    assert wb.get_value("S", 1, 1) is None
+
+
+# ---------------------------------------------------------------------------
+# B3: Exact Python temporal type preservation across all write paths
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("enable_changelog", [False, True])
+def test_temporal_exact_types_across_all_write_paths(enable_changelog):
+    """All four Python temporal types (including midnight datetime and 00:00:00 /
+    sub-second time) must round-trip with exact Python types across set_value,
+    set_values, single-type set_columns, mixed-type set_columns, and set_cells."""
+    samples: list[tuple[object, type]] = [
+        (dt.date(2024, 5, 17), dt.date),
+        (dt.time(9, 45, 12, 500_000), dt.time),
+        (dt.time(0, 0, 0), dt.time),
+        (dt.datetime(2024, 5, 17, 0, 0), dt.datetime),
+        (dt.datetime(2024, 5, 17, 9, 45, 12, 500_000), dt.datetime),
+        (dt.timedelta(days=1, seconds=90, microseconds=500_000), dt.timedelta),
+    ]
+
+    def assert_exact(got: object, expected: object, expected_type: type, label: str):
+        assert isinstance(got, expected_type), (
+            f"{label}: expected isinstance(..., {expected_type.__name__}), got {type(got).__name__} ({got!r})"
+        )
+        assert type(got) is expected_type, (
+            f"{label}: expected exact type {expected_type.__name__}, got {type(got).__name__} ({got!r})"
+        )
+        assert got == expected, f"{label}: expected {expected!r}, got {got!r}"
+
+    wb = fz.Workbook(enable_changelog=enable_changelog)
+    s = wb.sheet("S")
+
+    # 1. set_value
+    for idx, (val, _typ) in enumerate(samples, start=1):
+        s.set_value(idx, 1, val)
+    for idx, (val, typ) in enumerate(samples, start=1):
+        assert_exact(wb.get_value("S", idx, 1), val, typ, f"set_value[{idx}]")
+        assert_exact(s.get_cell(idx, 1).value, val, typ, f"set_value.get_cell[{idx}]")
+
+    # 2. set_values
+    s.set_values(1, 2, [[val] for val, _ in samples])
+    for idx, (val, typ) in enumerate(samples, start=1):
+        assert_exact(wb.get_value("S", idx, 2), val, typ, f"set_values[{idx}]")
+
+    # 3. single-type set_columns (each temporal type in its own homogeneous column)
+    s.set_columns(
+        1,
+        3,
+        {
+            "d": [dt.date(2024, 5, 17)],
+            "t_sub": [dt.time(9, 45, 12, 500_000)],
+            "t_zero": [dt.time(0, 0, 0)],
+            "dt_mid": [dt.datetime(2024, 5, 17, 0, 0)],
+            "dt_sub": [dt.datetime(2024, 5, 17, 9, 45, 12, 500_000)],
+            "dur": [dt.timedelta(days=1, seconds=90, microseconds=500_000)],
+        },
+    )
+    for offset, (val, typ) in enumerate(samples):
+        assert_exact(
+            wb.get_value("S", 1, 3 + offset), val, typ, f"set_columns_single[{offset}]"
+        )
+
+    # 4. mixed-type set_columns (all temporal types + sentinel text in one column)
+    mixed_col = [val for val, _ in samples] + ["sentinel"]
+    s.set_columns(10, 1, {"mixed": mixed_col})
+    for idx, (val, typ) in enumerate(samples, start=10):
+        assert_exact(wb.get_value("S", idx, 1), val, typ, f"set_columns_mixed[{idx}]")
+    assert wb.get_value("S", 10 + len(samples), 1) == "sentinel"
+
+    # 5. set_cells
+    s.set_cells([(20 + i, 1, val) for i, (val, _) in enumerate(samples)])
+    for i, (val, typ) in enumerate(samples):
+        assert_exact(wb.get_value("S", 20 + i, 1), val, typ, f"set_cells[{i}]")
+
+    if enable_changelog:
+        wb.undo()
+        for i in range(len(samples)):
+            assert wb.get_value("S", 20 + i, 1) is None
+        wb.redo()
+        for i, (val, typ) in enumerate(samples):
+            assert_exact(wb.get_value("S", 20 + i, 1), val, typ, f"set_cells_redo[{i}]")
+
+
+# ---------------------------------------------------------------------------
+# B4: Clean ValueError (never PanicException) for nullable StructArray & reused capsule
+# ---------------------------------------------------------------------------
+
+
+def test_set_columns_nullable_struct_array_raises_value_error():
+    wb = fz.Workbook()
+    s = wb.sheet("S")
+
+    nullable_struct = pa.array([{"a": 1}, None])
+    with pytest.raises(ValueError, match="null"):
+        s.set_columns(1, 1, nullable_struct)
+
+    assert wb.get_value("S", 1, 1) is None
+
+
+def test_set_columns_reused_arrow_c_array_capsule_raises_value_error():
+    wb = fz.Workbook()
+    s = wb.sheet("S")
+
+    rb = pa.record_batch([pa.array([1, 2, 3])], names=["x"])
+    reused_pair = rb.__arrow_c_array__()
+
+    class ReusedBatchCapsule:
+        def __arrow_c_array__(self, requested_schema=None):
+            return reused_pair
+
+    # First call consumes the capsule cleanly.
+    rep = s.set_columns(1, 1, ReusedBatchCapsule())
+    assert (rep.start_row, rep.end_row) == (1, 3)
+    assert wb.get_value("S", 3, 1) == 3.0
+
+    # Second call with the same already-released capsules must raise ValueError (not PanicException).
+    with pytest.raises(ValueError, match="already released"):
+        s.set_columns(5, 1, ReusedBatchCapsule())
+    assert wb.get_value("S", 5, 1) is None
+
+    # Same check for single-column __arrow_c_array__ inside a dict.
+    col_pair = pa.array([10, 20]).__arrow_c_array__()
+
+    class ReusedColumnCapsule:
+        def __arrow_c_array__(self, requested_schema=None):
+            return col_pair
+
+    s.set_columns(10, 1, {"c": ReusedColumnCapsule()})
+    assert wb.get_value("S", 11, 1) == 20.0
+
+    with pytest.raises(ValueError, match="already released"):
+        s.set_columns(15, 1, {"c": ReusedColumnCapsule()})
+    assert wb.get_value("S", 15, 1) is None
+
+
+# ---------------------------------------------------------------------------
+# N1: Reject 2-D NumPy arrays passed directly to set_columns
+# ---------------------------------------------------------------------------
+
+
+def test_set_columns_rejects_2d_numpy_array_directly():
+    wb = fz.Workbook()
+    s = wb.sheet("S")
+
+    mat = np.arange(6.0).reshape(2, 3)
+    with pytest.raises(ValueError, match="set_values"):
+        s.set_columns(1, 1, mat)
+
     assert wb.get_value("S", 1, 1) is None

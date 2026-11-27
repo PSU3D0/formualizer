@@ -270,8 +270,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"python-native.*system-clock.*uncovered",
             (
                 "bindings/python/Cargo.toml",
-                ', "umya", "xlsx-recalc", "system-clock"] }',
-                ', "umya", "xlsx-recalc"] }',
+                ', "umya", "xlsx-recalc", "system-clock", "arrow"] }',
+                ', "umya", "xlsx-recalc", "arrow"] }',
             ),
         )
 
@@ -375,7 +375,7 @@ class ReleasePreflightTests(unittest.TestCase):
             r"alternate semantic dependency 'formualizer'|dependency 'formualizer' edges",
             (
                 "bindings/python/Cargo.toml",
-                'formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "system-clock"] }',
+                'formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "system-clock", "arrow"] }',
                 "",
             ),
             (
@@ -397,7 +397,7 @@ class ReleasePreflightTests(unittest.TestCase):
             ),
             (
                 "bindings/python/Cargo.toml",
-                '[target.\'cfg(target_os = "emscripten")\'.dependencies]\nformualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc"] }',
+                '[target.\'cfg(target_os = "emscripten")\'.dependencies]\nformualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "arrow"] }',
                 "",
             ),
         )
@@ -541,8 +541,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"python-pyodide.*stale opt-out",
             (
                 "bindings/python/Cargo.toml",
-                'features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc"] }\n\n#',
-                'features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "system-clock"] }\n\n#',
+                'features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "arrow"] }\n\n#',
+                'features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "arrow", "system-clock"] }\n\n#',
             ),
         )
 

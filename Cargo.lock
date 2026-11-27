@@ -1676,7 +1676,6 @@ dependencies = [
  "chrono",
  "formualizer",
  "formualizer-cli",
- "formualizer-workbook",
  "pyo3",
  "pyo3-stub-gen",
  "serde_json",

@@ -1745,9 +1745,9 @@ fn commit_prepared_columns(
                 if nrows == 0 {
                     continue;
                 }
-                let col_views: Vec<formualizer_workbook::ColumnData<'_>> = owned_cols
+                let col_views: Vec<formualizer::workbook::ColumnData<'_>> = owned_cols
                     .iter()
-                    .map(formualizer_workbook::OwnedColumnData::as_column_data)
+                    .map(formualizer::workbook::OwnedColumnData::as_column_data)
                     .collect();
                 let batch_report = wb.set_columns(sheet, next_row, start_col, &col_views)?;
                 next_row = next_row.checked_add(nrows as u32).ok_or_else(|| {
