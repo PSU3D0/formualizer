@@ -24,6 +24,7 @@ serde = { workspace = true, features = ["derive"] }
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = { version = "0.1", optional = true }
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["wasm-js", "sheetport"] }
+arrow-ipc = { version = "59.2.0", default-features = false, optional = true }
 serde_json = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 
@@ -45,6 +46,10 @@ console_panic = ["console_error_panic_hook"]
 # Expose local feature toggles and forward them to the workbook dependency
 json = ["formualizer/json"]
 calamine = ["xlsx-recalc"]
+# Opt-in Apache Arrow IPC stream/file ingest (`sheet.setArrowIpc`).
+# Disabled by default to avoid adding ~763 KiB raw `.wasm` / ~111 KiB `.wasm.br` overhead
+# to npm builds; JS Arrow/DuckDB-WASM users should prefer the zero-WASM `formualizer/arrow` adapter.
+arrow-ipc = ["dep:arrow-ipc", "formualizer/arrow"]
 
 # JS runtime (web-time + JS-backed getrandom) is activated transitively via
 # formualizer/wasm-js → formualizer-eval/js-runtime. No explicit getrandom

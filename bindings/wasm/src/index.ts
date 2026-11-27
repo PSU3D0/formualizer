@@ -1,8 +1,41 @@
 import * as wasm from '../pkg/formualizer_wasm.js';
 import { recalc, evaluateWithYield } from './recalc.js';
 import type { RecalcJob, RecalcJobOptions, RecalcOptions, EvaluateWithYieldOptions, RecalcOutcome } from './recalc.js';
+import {
+  executeSetValues,
+  executeSetColumns,
+  executeSetCells,
+  CellTag,
+  ExcelErrorCode,
+  type WriteRangeReport,
+  type CellErrorInput,
+  type CellScalarInput,
+  type DenseColumnInput,
+  type DenseTextValues,
+  type SetColumnsOptions,
+  type SetArrowIpcOptions,
+  type SparseCellBlockInput,
+  type SparseCellTuple,
+  type SparseCellObject,
+  type SetCellsInput,
+  type PackedBlockTarget,
+} from './bulk.js';
 export { RecalcJob } from './recalc.js';
 export type * from './recalc.js';
+export { CellTag, ExcelErrorCode };
+export type {
+  WriteRangeReport,
+  CellErrorInput,
+  CellScalarInput,
+  DenseColumnInput,
+  DenseTextValues,
+  SetColumnsOptions,
+  SetArrowIpcOptions,
+  SparseCellBlockInput,
+  SparseCellTuple,
+  SparseCellObject,
+  SetCellsInput,
+};
 
 let wasmInitialized = false;
 let wasmInitPromise: Promise<void> | null = null;
@@ -272,12 +305,7 @@ export async function parse(
   });
 }
 
-export interface CellErrorInput {
-  type: 'Error';
-  value: string;
-  message?: string;
-}
-export type CellScalar = null | undefined | boolean | number | string | Date | CellErrorInput | TraceErrorValue;
+export type CellScalar = null | undefined | boolean | number | bigint | string | Date | CellErrorInput | TraceErrorValue;
 export type CellArray = CellScalar[] | CellScalar[][];
 export type CellValue = CellScalar | CellArray;
 
@@ -655,7 +683,38 @@ export interface CycleTelemetry {
   elapsedMs: number;
 }
 
-export interface WorkbookApi extends Omit<wasm.Workbook, 'beginRecalc' | 'pendingCellsInRect' | 'hasPendingInRect' | '_beginRecalcDriver'> {
+export interface SheetApi extends Omit<wasm.Sheet, 'setValues'> {
+  setValues(startRow: number, startCol: number, rows: readonly (readonly CellScalarInput[])[]): WriteRangeReport;
+  setColumns(
+    startRow: number,
+    startCol: number,
+    columns: readonly DenseColumnInput[],
+    options?: SetColumnsOptions,
+  ): WriteRangeReport;
+  setCells(cells: SetCellsInput): WriteRangeReport;
+  /** Present only when built with Cargo feature `arrow-ipc`. */
+  setArrowIpc?(startRow: number, startCol: number, bytes: Uint8Array, options?: SetArrowIpcOptions): WriteRangeReport;
+}
+
+export interface WorkbookApi extends Omit<wasm.Workbook, 'sheet' | 'beginRecalc' | 'pendingCellsInRect' | 'hasPendingInRect' | '_beginRecalcDriver'> {
+  sheet(name: string): SheetApi;
+  setValues(sheet: string, startRow: number, startCol: number, rows: readonly (readonly CellScalarInput[])[]): WriteRangeReport;
+  setColumns(
+    sheet: string,
+    startRow: number,
+    startCol: number,
+    columns: readonly DenseColumnInput[],
+    options?: SetColumnsOptions,
+  ): WriteRangeReport;
+  setCells(sheet: string, cells: SetCellsInput): WriteRangeReport;
+  /** Present only when built with Cargo feature `arrow-ipc`. */
+  setArrowIpc?(
+    sheet: string,
+    startRow: number,
+    startCol: number,
+    bytes: Uint8Array,
+    options?: SetArrowIpcOptions,
+  ): WriteRangeReport;
   beginRecalc(options?: RecalcJobOptions): RecalcJob;
   hasPendingInRect(area: FiniteRangeAddress): boolean;
   pendingCellsInRect(area: FiniteRangeAddress): CellAddress[];
@@ -976,7 +1035,86 @@ const rawWorkbookFromJsonWithOptions = wasm.Workbook.fromJsonWithOptions.bind(wa
 const rawWorkbookFromXlsxBytes = rawWorkbookCtor.fromXlsxBytes.bind(rawWorkbookCtor);
 const rawWorkbookFromXlsxBytesWithOptions = rawWorkbookCtor.fromXlsxBytesWithOptions.bind(rawWorkbookCtor);
 
-Object.assign(rawWorkbookCtor.prototype, { recalc, evaluateWithYield });
+const rawSheetProto = wasm.Sheet.prototype as unknown as PackedBlockTarget & {
+  setValues: SheetApi['setValues'];
+  setColumns: SheetApi['setColumns'];
+  setCells: SheetApi['setCells'];
+  setArrowIpc?: SheetApi['setArrowIpc'];
+};
+
+Object.assign(rawSheetProto, {
+  setValues(
+    this: PackedBlockTarget,
+    startRow: number,
+    startCol: number,
+    rows: readonly (readonly CellScalarInput[])[],
+  ): WriteRangeReport {
+    return executeSetValues(this, startRow, startCol, rows);
+  },
+  setColumns(
+    this: PackedBlockTarget,
+    startRow: number,
+    startCol: number,
+    columns: readonly DenseColumnInput[],
+    options?: SetColumnsOptions,
+  ): WriteRangeReport {
+    return executeSetColumns(this, startRow, startCol, columns, options);
+  },
+  setCells(this: PackedBlockTarget, cells: SetCellsInput): WriteRangeReport {
+    return executeSetCells(this, cells);
+  },
+});
+
+function withSheetHandle<T>(wb: WorkbookApi, sheetName: string, fn: (sheet: SheetApi) => T): T {
+  const handle = wb.sheet(sheetName);
+  try {
+    return fn(handle);
+  } finally {
+    handle.free();
+  }
+}
+
+const workbookBulkMethods: Record<string, unknown> = {
+  recalc,
+  evaluateWithYield,
+  setValues(
+    this: WorkbookApi,
+    sheet: string,
+    startRow: number,
+    startCol: number,
+    rows: readonly (readonly CellScalarInput[])[],
+  ): WriteRangeReport {
+    return withSheetHandle(this, sheet, (s) => s.setValues(startRow, startCol, rows));
+  },
+  setColumns(
+    this: WorkbookApi,
+    sheet: string,
+    startRow: number,
+    startCol: number,
+    columns: readonly DenseColumnInput[],
+    options?: SetColumnsOptions,
+  ): WriteRangeReport {
+    return withSheetHandle(this, sheet, (s) => s.setColumns(startRow, startCol, columns, options));
+  },
+  setCells(this: WorkbookApi, sheet: string, cells: SetCellsInput): WriteRangeReport {
+    return withSheetHandle(this, sheet, (s) => s.setCells(cells));
+  },
+};
+
+if (typeof rawSheetProto.setArrowIpc === 'function') {
+  workbookBulkMethods.setArrowIpc = function setArrowIpc(
+    this: WorkbookApi,
+    sheet: string,
+    startRow: number,
+    startCol: number,
+    bytes: Uint8Array,
+    options?: SetArrowIpcOptions,
+  ): WriteRangeReport {
+    return withSheetHandle(this, sheet, (s) => s.setArrowIpc!(startRow, startCol, bytes, options));
+  };
+}
+
+Object.assign(rawWorkbookCtor.prototype, workbookBulkMethods);
 
 export const Workbook = Object.assign(rawWorkbookCtor, {
   fromJson(json: string, options?: WorkbookLoadOptions): WorkbookApi {

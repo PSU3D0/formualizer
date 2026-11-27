@@ -6,6 +6,18 @@ import type {
 } from './index.js';
 import type { RecalcJob, RecalcJobOptions, RecalcResult, RecalcProgress, StepReport } from './recalc.js';
 import type { FioManifest } from './manifest.js';
+import {
+  assertNotDetached,
+  isSparseCellBlockInput,
+  packOrderedStrings,
+  resolveSparseBlockBuffers,
+  type CellScalarInput,
+  type DenseColumnInput,
+  type SetArrowIpcOptions,
+  type SetCellsInput,
+  type SetColumnsOptions,
+  type WriteRangeReport,
+} from './bulk.js';
 
 /** Both DOM and node:worker_threads endpoints are accepted without a runtime dependency. */
 export interface WorkerEndpoint {
@@ -64,7 +76,9 @@ export type WorkbookEditOp =
   | { kind: 'setFormula'; sheet: string; row: number; column: number; formula: string }
   | { op: 'setValue'; sheet: string; row: number; col: number; value: CellValue }
   | { op: 'setFormula'; sheet: string; row: number; col: number; formula: string }
-  | { op: 'setValues'; sheet: string; startRow: number; startCol: number; values: CellValue[][] }
+  | { op: 'setValues'; sheet: string; startRow: number; startCol: number; values: readonly (readonly CellScalarInput[])[] }
+  | { op: 'setColumns'; sheet: string; startRow: number; startCol: number; columns: readonly DenseColumnInput[]; options?: SetColumnsOptions }
+  | { op: 'setCells'; sheet: string; cells: SetCellsInput }
   | { op: 'setFormulas'; sheet: string; startRow: number; startCol: number; formulas: string[][] }
   | { op: 'addSheet'; name: string };
 export type ViewportDataMode = 'values' | 'snapshots' | 'deltas' | 'columnar';
@@ -143,10 +157,326 @@ export function deserializeWorkerError(value: SerializedWorkerError): Error {
   }
   return error;
 }
-export function prepareTransferableBytes(source: XlsxBytesSource, transfer = false): { bytes: Uint8Array; transfer: ArrayBuffer[] } {
+type TypedArrayCtor<T extends ArrayBufferView> = {
+  new (buffer: ArrayBufferLike, byteOffset?: number, length?: number): T;
+  readonly BYTES_PER_ELEMENT?: number;
+};
+
+function copyTypedArrayView<T extends ArrayBufferView>(view: T): T {
+  const bytes = new Uint8Array(view.byteLength);
+  bytes.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+  if (view instanceof DataView) {
+    return new DataView(bytes.buffer) as unknown as T;
+  }
+  const Ctor = view.constructor as TypedArrayCtor<T>;
+  return new Ctor(bytes.buffer);
+}
+
+function rewrapTypedArrayView<T extends ArrayBufferView>(view: T, buffer: ArrayBuffer): T {
+  if (view instanceof DataView) {
+    return new DataView(buffer) as unknown as T;
+  }
+  const Ctor = view.constructor as TypedArrayCtor<T>;
+  return new Ctor(buffer);
+}
+
+/**
+ * Prepare multiple TypedArray / DataView views for `postMessage`, copying safely whenever a view
+ * is a sub-range (`byteOffset !== 0 || byteLength !== buffer.byteLength`), is backed by a
+ * `SharedArrayBuffer` or resizable buffer, is a view into a foreign `WebAssembly.Memory`, or
+ * aliases a buffer with a subview. Deduplicates shared `ArrayBuffer`s in the returned transfer list
+ * and throws `TypeError` loudly if any input buffer is already detached.
+ */
+export function prepareTransferableViews<T extends readonly ArrayBufferView[]>(
+  views: T,
+  transfer = false,
+): { views: T; transfer: ArrayBuffer[] } {
+  const mustCopyBuf = new Set<ArrayBufferLike>();
+  for (let i = 0; i < views.length; i++) {
+    const view = views[i];
+    assertNotDetached(view, `transferable view[${i}]`);
+    const buf = view.buffer;
+    if (
+      !(buf instanceof ArrayBuffer) ||
+      view.byteOffset !== 0 ||
+      view.byteLength !== buf.byteLength ||
+      (buf as ArrayBuffer & { resizable?: boolean }).resizable === true
+    ) {
+      mustCopyBuf.add(buf);
+    }
+  }
+  if (!transfer) {
+    // Even without ownership transfer, compact-copy any sub-range view so
+    // `postMessage` structured-clones only the view's slice rather than the
+    // entire parent `ArrayBuffer` (e.g. a DuckDB-WASM heap or shared pool).
+    let copiedAny = false;
+    const out: ArrayBufferView[] = new Array(views.length);
+    for (let i = 0; i < views.length; i++) {
+      const view = views[i];
+      if (view.byteOffset !== 0 || view.byteLength !== view.buffer.byteLength) {
+        out[i] = copyTypedArrayView(view);
+        copiedAny = true;
+      } else {
+        out[i] = view;
+      }
+    }
+    return { views: (copiedAny ? out : views) as unknown as T, transfer: [] };
+  }
+
+  const transferredMap = new Map<ArrayBuffer, ArrayBuffer>();
+  const transferSet = new Set<ArrayBuffer>();
+  const out: ArrayBufferView[] = new Array(views.length);
+
+  for (let i = 0; i < views.length; i++) {
+    const view = views[i];
+    const buf = view.buffer;
+    if (mustCopyBuf.has(buf)) {
+      const copied = copyTypedArrayView(view);
+      if (copied.byteLength > 0) {
+        transferSet.add(copied.buffer as ArrayBuffer);
+      }
+      out[i] = copied;
+      continue;
+    }
+    const ab = buf as ArrayBuffer;
+    const existing = transferredMap.get(ab);
+    if (existing) {
+      out[i] = rewrapTypedArrayView(view, existing);
+      continue;
+    }
+    // Never include zero-length views in the transfer list so empty buffers
+    // (including any shared empty views) are never detached.
+    if (view.byteLength === 0) {
+      out[i] = copyTypedArrayView(view);
+      continue;
+    }
+    const transferableAb = ab as ArrayBuffer & { transfer?: () => ArrayBuffer };
+    if (typeof transferableAb.transfer === 'function') {
+      try {
+        const moved = transferableAb.transfer();
+        transferredMap.set(ab, moved);
+        transferSet.add(moved);
+        out[i] = rewrapTypedArrayView(view, moved);
+      } catch {
+        // Non-detachable ArrayBuffer (e.g. foreign WebAssembly.Memory from DuckDB-WASM / Arrow JS):
+        // copy into a fresh transferable ArrayBuffer without mutating the source memory.
+        const copied = copyTypedArrayView(view);
+        transferSet.add(copied.buffer as ArrayBuffer);
+        out[i] = copied;
+      }
+    } else {
+      transferSet.add(ab);
+      out[i] = view;
+    }
+  }
+
+  return { views: out as unknown as T, transfer: [...transferSet] };
+}
+
+/** Generalized safe transferable preparation for any `ArrayBufferView` (`TypedArray` / `DataView`). */
+export function prepareTransferable<T extends ArrayBufferView>(
+  view: T,
+  transfer = false,
+): { view: T; transfer: ArrayBuffer[] } {
+  const res = prepareTransferableViews([view] as const, transfer);
+  return { view: res.views[0], transfer: res.transfer };
+}
+
+export function prepareTransferableBytes(
+  source: XlsxBytesSource,
+  transfer = false,
+): { bytes: Uint8Array; transfer: ArrayBuffer[] } {
   let bytes = source instanceof Uint8Array ? source : new Uint8Array(source);
-  if(transfer && (bytes.byteOffset !== 0 || bytes.byteLength !== bytes.buffer.byteLength || !(bytes.buffer instanceof ArrayBuffer) || bytes.constructor !== Uint8Array)) bytes=new Uint8Array(bytes);
-  return {bytes,transfer:transfer ? [bytes.buffer as ArrayBuffer] : []};
+  if (bytes.constructor !== Uint8Array) {
+    bytes = new Uint8Array(bytes);
+  }
+  const res = prepareTransferable(bytes, transfer);
+  return { bytes: res.view, transfer: res.transfer };
+}
+
+function prepareWorkerColumns(
+  columns: readonly DenseColumnInput[],
+  transfer: boolean,
+): { columns: DenseColumnInput[]; transfer: ArrayBuffer[] } {
+  if (!Array.isArray(columns)) {
+    throw new TypeError('setColumns: columns must be an array');
+  }
+  // Collect and pre-pack string[] text columns before posting (avoids structured-cloning 30k strings).
+  const views: ArrayBufferView[] = [];
+  const slots: ((next: ArrayBufferView) => void)[] = [];
+  const outCols: DenseColumnInput[] = new Array(columns.length);
+  let expectedRows: number | undefined;
+
+  for (let i = 0; i < columns.length; i++) {
+    const col = columns[i];
+    if (col instanceof Float64Array || col instanceof Int32Array || col instanceof Uint32Array) {
+      assertNotDetached(col, `column ${i}`);
+      const len = col.length;
+      if (expectedRows === undefined) expectedRows = len;
+      else if (len !== expectedRows) {
+        throw new RangeError(`setColumns: column ${i} length (${len}) does not match column 0 length (${expectedRows})`);
+      }
+      const idx = i;
+      outCols[idx] = col;
+      views.push(col);
+      slots.push((v) => {
+        outCols[idx] = v as Float64Array | Int32Array | Uint32Array;
+      });
+      continue;
+    }
+    if (!col || typeof col !== 'object') {
+      throw new TypeError(`setColumns: column ${i} must be a TypedArray or column descriptor object`);
+    }
+    let colLen: number;
+    if (col.kind === 'number' || col.kind === 'date' || col.kind === 'datetime' || col.kind === 'duration') {
+      assertNotDetached(col.values, `column ${i}`);
+      colLen = col.values.length;
+      const clone = { ...col };
+      outCols[i] = clone;
+      views.push(col.values);
+      slots.push((v) => {
+        (clone as { values: ArrayBufferView }).values = v;
+      });
+      if (col.validity) {
+        assertNotDetached(col.validity, `column ${i}.validity`);
+        views.push(col.validity);
+        slots.push((v) => {
+          clone.validity = v as Uint8Array;
+        });
+      }
+    } else if (col.kind === 'boolean') {
+      colLen = col.values.length;
+      const clone = { ...col };
+      outCols[i] = clone;
+      if (col.values instanceof Uint8Array) {
+        assertNotDetached(col.values, `column ${i}`);
+        views.push(col.values);
+        slots.push((v) => {
+          clone.values = v as Uint8Array;
+        });
+      }
+      if (col.validity) {
+        assertNotDetached(col.validity, `column ${i}.validity`);
+        views.push(col.validity);
+        slots.push((v) => {
+          clone.validity = v as Uint8Array;
+        });
+      }
+    } else if (col.kind === 'text') {
+      if (Array.isArray(col.values)) {
+        colLen = col.values.length;
+        // Pack JS string[] into UTF-8 bytes + offsets + combined validity bitmap before posting.
+        const rawStrings = new Array<string>(colLen);
+        let validity: Uint8Array | undefined = col.validity ? new Uint8Array(col.validity) : undefined;
+        if (col.validity) assertNotDetached(col.validity, `column ${i}.validity`);
+        for (let r = 0; r < colLen; r++) {
+          const validBit = validity ? ((validity[r >> 3] >> (r & 7)) & 1) !== 0 : true;
+          const s = col.values[r];
+          if (!validBit || s === null || s === undefined) {
+            rawStrings[r] = '';
+            if (!validity) {
+              validity = new Uint8Array(Math.ceil(colLen / 8)).fill(0xff);
+            }
+            validity[r >> 3] &= ~(1 << (r & 7));
+          } else if (typeof s === 'string') {
+            rawStrings[r] = s;
+          } else {
+            throw new TypeError(`setColumns: column ${i} row ${r} expected string or null`);
+          }
+        }
+        const packed = packOrderedStrings(rawStrings);
+        const clone: DenseColumnInput = {
+          kind: 'text',
+          values: packed,
+          ...(validity ? { validity } : {}),
+          ...(col.name !== undefined ? { name: col.name } : {}),
+        };
+        outCols[i] = clone;
+        // Freshly allocated packed buffers can always be transferred safely when transfer is enabled.
+        views.push(packed.bytes);
+        slots.push((v) => {
+          packed.bytes = v as Uint8Array;
+        });
+        views.push(packed.offsets);
+        slots.push((v) => {
+          packed.offsets = v as Uint32Array;
+        });
+        if (validity) {
+          views.push(validity);
+          slots.push((v) => {
+            (clone as { validity?: Uint8Array }).validity = v as Uint8Array;
+          });
+        }
+      } else {
+        assertNotDetached(col.values.bytes, `column ${i}.bytes`);
+        assertNotDetached(col.values.offsets, `column ${i}.offsets`);
+        colLen = Math.max(0, col.values.offsets.length - 1);
+        const packed = { bytes: col.values.bytes, offsets: col.values.offsets };
+        const clone = { ...col, values: packed };
+        outCols[i] = clone;
+        views.push(packed.bytes);
+        slots.push((v) => {
+          packed.bytes = v as Uint8Array;
+        });
+        views.push(packed.offsets);
+        slots.push((v) => {
+          packed.offsets = v as Uint32Array;
+        });
+        if (col.validity) {
+          assertNotDetached(col.validity, `column ${i}.validity`);
+          views.push(col.validity);
+          slots.push((v) => {
+            clone.validity = v as Uint8Array;
+          });
+        }
+      }
+    } else if (col.kind === 'null') {
+      colLen = col.length;
+      outCols[i] = col;
+    } else if (col.kind === 'mixed') {
+      colLen = col.values.length;
+      outCols[i] = col;
+    } else {
+      throw new TypeError(`setColumns: unsupported column kind on column ${i}`);
+    }
+
+    if (expectedRows === undefined) expectedRows = colLen;
+    else if (colLen !== expectedRows) {
+      throw new RangeError(`setColumns: column ${i} length (${colLen}) does not match column 0 length (${expectedRows})`);
+    }
+  }
+
+  const prepared = prepareTransferableViews(views, transfer);
+  for (let i = 0; i < slots.length; i++) {
+    slots[i](prepared.views[i]);
+  }
+  return { columns: outCols, transfer: prepared.transfer };
+}
+
+function prepareWorkerCells(
+  cells: SetCellsInput,
+  transfer: boolean,
+): { cells: SetCellsInput; transfer: ArrayBuffer[] } {
+  if (!isSparseCellBlockInput(cells)) {
+    return { cells, transfer: [] };
+  }
+  const resolved = resolveSparseBlockBuffers(cells);
+  const prepared = prepareTransferableViews(
+    [
+      resolved.rows,
+      resolved.cols,
+      resolved.tags,
+      resolved.numbers,
+      resolved.textBytes,
+      resolved.textOffsets,
+    ] as const,
+    transfer,
+  );
+  const [rows, cols, tags, numbers, textBytes, textOffsets] = prepared.views;
+  return {
+    cells: { rows, cols, tags, numbers, textBytes, textOffsets },
+    transfer: prepared.transfer,
+  };
 }
 function domain(code: string, message = code, extra = {}): Error {
   return Object.assign(new Error(message),{name:'RecalcJobError',kind:'RecalcJobError',code,...extra});
@@ -170,7 +500,7 @@ function listen(endpoint: WorkerEndpoint, receive: (value: any) => void, failure
 }
 const initialState = (): WorkerStateHeader => ({revision:0,evaluatedRevision:0,ackClientSeq:0,recalcStatus:'idle',hasActiveJob:false});
 const mutationMethods=new Set(['loadEmpty','loadFromJson','loadFromXlsxBytes','addSheet','addTable','setTemporalEgress',
-  'setValue','setFormula','setValues','setFormulas','editBatch','beginAction','endAction','undo','redo',
+  'setValue','setFormula','setValues','setColumns','setCells','setArrowIpc','setFormulas','editBatch','beginAction','endAction','undo','redo',
   'registerFunctionModule','registerFunctionFromSource','unregisterFunction','session:writeInputs','evaluateSheetPort']);
 const workbookMethods=['addSheet','sheetNames','addTable','getTables','getNamedRanges','setTemporalEgress','setChangelogEnabled',
   'changelogEnabled','canUndo','canRedo',
@@ -252,7 +582,33 @@ export class WorkbookWorkerClient {
   setAutoRecalc(enabled:boolean,options?:{budgetMs?:number;maxDeltaRecords?:number}):Promise<WorkerStateHeader>{return this.request('setAutoRecalc',[enabled,options]);}
   setValue(sheet:string,row:number,col:number,value:CellValue):Promise<WorkerStateHeader>{return this.request('setValue',[sheet,row,col,value]);}
   setFormula(sheet:string,row:number,col:number,formula:string):Promise<WorkerStateHeader>{return this.request('setFormula',[sheet,row,col,formula]);}
-  setValues(sheet:string,row:number,col:number,values:CellValue[][]):Promise<WorkerStateHeader>{return this.request('setValues',[sheet,row,col,values]);}
+  setValues(sheet:string,startRow:number,startCol:number,values:readonly (readonly CellScalarInput[])[],req?:RequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{return this.request('setValues',[sheet,startRow,startCol,values],req);}
+  setColumns(sheet:string,startRow:number,startCol:number,columns:readonly DenseColumnInput[],options?:SetColumnsOptions & TransferRequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{
+    try {
+      const prepared=prepareWorkerColumns(columns,options?.transfer===true);
+      const wireOpts=options?.headers!==undefined?{headers:options.headers}:undefined;
+      return this.request('setColumns',[sheet,startRow,startCol,prepared.columns,wireOpts],options,prepared.transfer);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+  setCells(sheet:string,cells:SetCellsInput,options?:TransferRequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{
+    try {
+      const prepared=prepareWorkerCells(cells,options?.transfer===true);
+      return this.request('setCells',[sheet,prepared.cells],options,prepared.transfer);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+  setArrowIpc(sheet:string,startRow:number,startCol:number,bytes:XlsxBytesSource,options?:SetArrowIpcOptions & TransferRequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{
+    try {
+      const input=prepareTransferableBytes(bytes,options?.transfer===true);
+      const wireOpts=options?.headers!==undefined?{headers:options.headers}:undefined;
+      return this.request('setArrowIpc',[sheet,startRow,startCol,input.bytes,wireOpts],options,input.transfer);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
   setFormulas(sheet:string,row:number,col:number,formulas:string[][]):Promise<WorkerStateHeader>{return this.request('setFormulas',[sheet,row,col,formulas]);}
   editBatch(ops:WorkbookEditOp[],options?:{actionDescription?:string}):Promise<WorkerStateHeader>{return this.request('editBatch',[ops,options]);}
   getValue(sheet:string,row:number,col:number,req?:RequestOptions):Promise<CellValue>{return this.request('getValue',[sheet,row,col],req);}
@@ -664,7 +1020,7 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
     if(method==='editBatch'){
       if(!Array.isArray(a[0]))throw domain('INVALID_OPTIONS','Expected edit operations');
       // Validate before opening an undo action; engine errors still close the action in finally.
-      for(const op of a[0])if(!['setValue','setFormula','setValues','setFormulas','addSheet'].includes(op.op??op.kind))throw domain('INVALID_OPTIONS','Unknown edit operation');
+      for(const op of a[0])if(!['setValue','setFormula','setValues','setColumns','setCells','setFormulas','addSheet'].includes(op.op??op.kind))throw domain('INVALID_OPTIONS','Unknown edit operation');
       if(a[1]?.actionDescription!==undefined)wb.beginAction(a[1].actionDescription);
       mayHaveFormulas ||=a[0].some((op:any)=>['setFormula','setFormulas'].includes(op.op??op.kind));
       let applied=false;
@@ -672,6 +1028,8 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
         const kind=op.op??op.kind;
         if(kind==='addSheet')wb.addSheet(op.name);
         else if(kind==='setValues'||kind==='setFormulas') (sheet(op.sheet) as any)[kind](op.startRow,op.startCol,op.values??op.formulas);
+        else if(kind==='setColumns') sheet(op.sheet).setColumns(op.startRow,op.startCol,op.columns,op.options);
+        else if(kind==='setCells') sheet(op.sheet).setCells(op.cells);
         else (sheet(op.sheet) as any)[kind](op.row,op.column??op.col,op.value??(kind==='setValue'?null:op.formula));
         applied=true;
       }}catch(error){
@@ -681,10 +1039,25 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
       }finally{if(a[1]?.actionDescription!==undefined)wb.endAction();}
       return mutate(clientSeq);
     }
-    if(['setValue','setFormula','setValues','setFormulas'].includes(method)){
+    if(method==='setValues'||method==='setColumns'||method==='setCells'||method==='setArrowIpc'){
+      const target=sheet(a[0]);
+      let report:WriteRangeReport;
+      if(method==='setValues')report=target.setValues(a[1],a[2],a[3]);
+      else if(method==='setColumns')report=target.setColumns(a[1],a[2],a[3],a[4]);
+      else if(method==='setCells')report=target.setCells(a[1]);
+      else{
+        if(typeof target.setArrowIpc!=='function')throw domain('INVALID_OPTIONS','setArrowIpc requires a formualizer-wasm build with the `arrow-ipc` Cargo feature enabled');
+        report=target.setArrowIpc(a[1],a[2],a[3],a[4]);
+      }
+      const changed:FiniteRangeAddress[]=report.endRow>0&&report.endCol>0
+        ?[{sheet:a[0],startRow:report.startRow,startColumn:report.startCol,endRow:report.endRow,endColumn:report.endCol}]
+        :[];
+      return {...mutate(clientSeq,false,changed),...report};
+    }
+    if(['setValue','setFormula','setFormulas'].includes(method)){
       if(method==='setFormula'||method==='setFormulas')mayHaveFormulas=true;
       (sheet(a[0]) as any)[method](...a.slice(1));
-      const block=method==='setValues'||method==='setFormulas';
+      const block=method==='setFormulas';
       const height=block?a[3].length:1,width=block?Math.max(0,...a[3].map((r:any[])=>r.length)):1;
       return mutate(clientSeq,false,height&&width?[{sheet:a[0],startRow:a[1],startColumn:a[2],endRow:a[1]+height-1,endColumn:a[2]+width-1}]:[]);
     }
