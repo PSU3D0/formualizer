@@ -532,6 +532,7 @@ pub unsafe extern "C" fn fz_workbook_set_values(
         opaque
             .write()?
             .set_values(&sheet_str, start_row, start_col, &values)
+            .map(|_| ())
             .map_err(|e| e.to_string())
     });
 }

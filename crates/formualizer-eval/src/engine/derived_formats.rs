@@ -45,8 +45,13 @@ impl DerivedFormats {
     }
 
     #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.len.load(Ordering::Acquire)
+    }
+
+    #[inline]
     pub(crate) fn is_empty(&self) -> bool {
-        self.len.load(Ordering::Acquire) == 0
+        self.len() == 0
     }
 
     #[inline]

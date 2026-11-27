@@ -278,6 +278,46 @@ impl StagedFormulaIndex {
         removed
     }
 
+    pub(crate) fn remove_rect(&mut self, sheet: &str, r0: u32, r1: u32, c0: u32, c1: u32) -> bool {
+        let Some(entries) = self.sheets.get_mut(sheet) else {
+            return false;
+        };
+        let to_remove: Vec<(u32, u32)> = entries
+            .range((r0, 0)..=(r1, u32::MAX))
+            .filter_map(|(&(r, c), _)| (c >= c0 && c <= c1).then_some((r, c)))
+            .collect();
+        if to_remove.is_empty() {
+            return false;
+        }
+        for key in to_remove {
+            entries.remove(&key);
+        }
+        if entries.is_empty() {
+            self.sheets.remove(sheet);
+        }
+        self.bump();
+        true
+    }
+
+    pub(crate) fn remove_points(&mut self, sheet: &str, points: &[(u32, u32)]) -> bool {
+        let Some(entries) = self.sheets.get_mut(sheet) else {
+            return false;
+        };
+        let mut removed = false;
+        for &pt in points {
+            if entries.remove(&pt).is_some() {
+                removed = true;
+            }
+        }
+        if entries.is_empty() {
+            self.sheets.remove(sheet);
+        }
+        if removed {
+            self.bump();
+        }
+        removed
+    }
+
     pub(crate) fn clear_sheet(&mut self, sheet: &str) {
         let changed = self.sheets.remove(sheet).is_some() | self.packages.remove(sheet).is_some();
         if changed {
@@ -363,7 +403,7 @@ impl StagedFormulaIndex {
                 .source_coordinates
                 .iter()
                 .map(|coord| (coord.row.saturating_add(1), coord.col.saturating_add(1)))
-                .filter(|point| !package.source_accounted || !package.suppressed.contains(point))
+                .filter(|&(row, col)| !package.source_accounted || !package.is_suppressed(row, col))
                 .collect();
             let geometry_complete = package.source_geometry_complete
                 || package.report.source_formula_records_spooled == 0;

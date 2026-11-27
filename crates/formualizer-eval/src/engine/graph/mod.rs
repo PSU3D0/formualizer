@@ -2477,6 +2477,99 @@ impl DependencyGraph {
         })
     }
 
+    /// Region-level graph admission preview for bulk value writes (E5).
+    /// Queries only existing vertices in `rects` (0-based inclusive `(r0, r1, c0, c1)`),
+    /// producing the exact same `GraphAdmission` as `preview_value_mutations` in
+    /// O(existing vertices in rects) instead of O(rect area).
+    pub(crate) fn preview_value_mutations_in_rects(
+        &self,
+        sheet_id: Option<SheetId>,
+        rects: &[(u32, u32, u32, u32)],
+    ) -> Result<crate::engine::resource_ledger::GraphAdmission, ExcelError> {
+        let mut removed_edges = 0usize;
+        if let Some(sheet_id) = sheet_id {
+            let mut seen = FxHashSet::default();
+            for &(r0, r1, c0, c1) in rects {
+                for vertex in self.vertices_in_region(sheet_id, r0, r1, c0, c1) {
+                    if seen.insert(vertex) {
+                        removed_edges = removed_edges
+                            .checked_add(self.store.edge_offset(vertex) as usize)
+                            .ok_or_else(|| ExcelError::new(ExcelErrorKind::NImpl))?;
+                    }
+                }
+            }
+        }
+        let stats = self.baseline_stats();
+        Ok(crate::engine::resource_ledger::GraphAdmission {
+            final_vertices: stats.graph_vertex_count,
+            final_edges: stats
+                .graph_edge_count
+                .checked_sub(removed_edges)
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::NImpl))?,
+            materialization_cells: 0,
+            added_vertices: 0,
+            added_edges: 0,
+        })
+    }
+
+    /// Point-level graph admission preview for deduplicated 0-based `(row0, col0)` points (E5).
+    pub(crate) fn preview_value_mutations_for_points0(
+        &self,
+        sheet_id: Option<SheetId>,
+        points0: &[(u32, u32)],
+    ) -> Result<crate::engine::resource_ledger::GraphAdmission, ExcelError> {
+        let mut removed_edges = 0usize;
+        if let Some(sheet_id) = sheet_id {
+            for &(row0, col0) in points0 {
+                let reference = CellRef::new(sheet_id, Coord::new(row0, col0, true, true));
+                if let Some(vertex) = self.cell_vertex(&reference) {
+                    removed_edges = removed_edges
+                        .checked_add(self.store.edge_offset(vertex) as usize)
+                        .ok_or_else(|| ExcelError::new(ExcelErrorKind::NImpl))?;
+                }
+            }
+        }
+        let stats = self.baseline_stats();
+        Ok(crate::engine::resource_ledger::GraphAdmission {
+            final_vertices: stats.graph_vertex_count,
+            final_edges: stats
+                .graph_edge_count
+                .checked_sub(removed_edges)
+                .ok_or_else(|| ExcelError::new(ExcelErrorKind::NImpl))?,
+            materialization_cells: 0,
+            added_vertices: 0,
+            added_edges: 0,
+        })
+    }
+
+    pub(crate) fn preflight_bulk_value_admission_rects(
+        &self,
+        sheet_id: Option<SheetId>,
+        rects: &[(u32, u32, u32, u32)],
+    ) -> Result<(), ExcelError> {
+        let budgets = self.self_admission_budgets();
+        if crate::engine::resource_ledger::graph_admission_enabled(&budgets) {
+            let usage = self.preview_value_mutations_in_rects(sheet_id, rects)?;
+            crate::engine::resource_ledger::preflight_graph_admission(&budgets, usage, None)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn preflight_bulk_value_admission_points0(
+        &self,
+        sheet_id: Option<SheetId>,
+        points0: &[(u32, u32)],
+    ) -> Result<(), ExcelError> {
+        let budgets = self.self_admission_budgets();
+        if crate::engine::resource_ledger::graph_admission_enabled(&budgets) {
+            let usage = self.preview_value_mutations_for_points0(sheet_id, points0)?;
+            crate::engine::resource_ledger::preflight_graph_admission(&budgets, usage, None)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn preview_formula_mutations(
         &self,
         plans: &[(SheetId, u32, u32, DependencyPlanRow)],
@@ -3675,7 +3768,11 @@ impl DependencyGraph {
         }
         self.store.mark_deleted(v, true);
         if was_formula {
-            self.retired_ids.insert(key, v);
+            if let Some(prev) = self.retired_ids.insert(key, v)
+                && prev != v
+            {
+                self.retired_id_set.remove(&prev);
+            }
             self.retired_id_set.insert(v);
         }
         Some((v, was_formula))
@@ -3731,6 +3828,16 @@ impl DependencyGraph {
     /// without a vertex) counts toward the used extent.
     pub(crate) fn note_extent_cell(&mut self, sheet: SheetId, row0: u32, col0: u32) {
         self.extent_record.note(sheet, row0, col0);
+    }
+
+    /// Note an inclusive 0-based rectangle `[r0..=r1, c0..=c1]` directly as column runs (E4).
+    pub(crate) fn note_extent_rect(&mut self, sheet: SheetId, r0: u32, r1: u32, c0: u32, c1: u32) {
+        self.extent_record.note_rect(sheet, r0, r1, c0, c1);
+    }
+
+    /// Note sorted inclusive 0-based column runs `(col0, r0, r1)` directly (E4).
+    pub(crate) fn note_extent_runs(&mut self, sheet: SheetId, col_runs: &[(u32, u32, u32)]) {
+        self.extent_record.note_runs(sheet, col_runs);
     }
 
     /// Cells of `rows x cols` (0-based, inclusive) leave the extent record:
@@ -5501,6 +5608,135 @@ impl DependencyGraph {
             }
         }
         Some(owner)
+    }
+
+    /// Release all registered spill-child cells inside inclusive 0-based rectangle
+    /// `[r0..=r1, c0..=c1]` on `sheet_id` (B1), returning the deduplicated list of
+    /// owner anchors to dirty. Runs in O(min(spill_cells_on_sheet, rect_area)) via
+    /// BTreeMap row-range lookup.
+    pub(crate) fn release_spill_children_in_rect(
+        &mut self,
+        sheet_id: SheetId,
+        r0: u32,
+        r1: u32,
+        c0: u32,
+        c1: u32,
+    ) -> Vec<VertexId> {
+        let Some(sheet_spills) = self.spill_cells_by_sheet.get(&sheet_id) else {
+            return Vec::new();
+        };
+        if sheet_spills.is_empty() || r0 > r1 || c0 > c1 {
+            return Vec::new();
+        }
+        let hits: Vec<((u32, u32), VertexId)> = sheet_spills
+            .range((r0, 0)..=(r1, u32::MAX))
+            .filter_map(|(&(r, c), &owner)| (c >= c0 && c <= c1).then_some(((r, c), owner)))
+            .collect();
+        if hits.is_empty() {
+            return Vec::new();
+        }
+        let mut owners = Vec::new();
+        let mut remove_coords = Vec::new();
+        for ((r, c), owner) in hits {
+            let cell = self.make_cell_ref_internal(sheet_id, r, c);
+            if self.get_cell_ref(owner) == Some(cell) {
+                continue;
+            }
+            self.spill_intruded_anchors.insert(owner);
+            if !self.is_foreign_formula_cell(&cell, owner) {
+                self.spill_cell_to_anchor.remove(&cell);
+                remove_coords.push((r, c));
+            }
+            owners.push(owner);
+        }
+        if !remove_coords.is_empty() {
+            let remove_sheet = self
+                .spill_cells_by_sheet
+                .get_mut(&sheet_id)
+                .is_some_and(|sheet| {
+                    for coord in remove_coords {
+                        sheet.remove(&coord);
+                    }
+                    sheet.is_empty()
+                });
+            if remove_sheet {
+                self.spill_cells_by_sheet.remove(&sheet_id);
+            }
+        }
+        owners.sort_unstable();
+        owners.dedup();
+        owners
+    }
+
+    /// Release all registered spill-child cells at 0-based `(row0, col0)` points
+    /// (B1) in O(min(spill_cells_on_sheet, points.len())), returning deduplicated
+    /// owner anchors to dirty. `points0` must be sorted by `(row0, col0)`.
+    pub(crate) fn release_spill_children_at_points0(
+        &mut self,
+        sheet_id: SheetId,
+        sorted_points0: &[(u32, u32)],
+    ) -> Vec<VertexId> {
+        let Some(sheet_spills) = self.spill_cells_by_sheet.get(&sheet_id) else {
+            return Vec::new();
+        };
+        if sheet_spills.is_empty() || sorted_points0.is_empty() {
+            return Vec::new();
+        }
+        let hits: Vec<((u32, u32), VertexId)> = if sheet_spills.len() <= sorted_points0.len() {
+            sheet_spills
+                .iter()
+                .filter_map(|(&coord, &owner)| {
+                    sorted_points0
+                        .binary_search(&coord)
+                        .ok()
+                        .map(|_| (coord, owner))
+                })
+                .collect()
+        } else {
+            sorted_points0
+                .iter()
+                .filter_map(|&coord| {
+                    sheet_spills
+                        .get(&coord)
+                        .copied()
+                        .map(|owner| (coord, owner))
+                })
+                .collect()
+        };
+        if hits.is_empty() {
+            return Vec::new();
+        }
+        let mut owners = Vec::new();
+        let mut remove_coords = Vec::new();
+        for ((r, c), owner) in hits {
+            let cell = self.make_cell_ref_internal(sheet_id, r, c);
+            if self.get_cell_ref(owner) == Some(cell) {
+                continue;
+            }
+            self.spill_intruded_anchors.insert(owner);
+            if !self.is_foreign_formula_cell(&cell, owner) {
+                self.spill_cell_to_anchor.remove(&cell);
+                remove_coords.push((r, c));
+            }
+            owners.push(owner);
+        }
+        if !remove_coords.is_empty() {
+            let remove_sheet = self
+                .spill_cells_by_sheet
+                .get_mut(&sheet_id)
+                .is_some_and(|sheet| {
+                    for coord in remove_coords {
+                        sheet.remove(&coord);
+                    }
+                    sheet.is_empty()
+                });
+            if remove_sheet {
+                self.spill_cells_by_sheet.remove(&sheet_id);
+            }
+        }
+        owners.sort_unstable();
+        owners.dedup();
+        owners
     }
 
     fn is_foreign_spill_cell(&self, cell: &CellRef, anchor: VertexId) -> bool {

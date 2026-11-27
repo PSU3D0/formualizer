@@ -114,14 +114,15 @@ fn exercise(route: usize) {
                         } else {
                             w.begin_action("spill children");
                             match route {
-                                0 => w
-                                    .set_values(
+                                0 => {
+                                    w.set_values(
                                         "S",
                                         3,
                                         2,
                                         &[vec![V::Number(99.)], vec![V::Number(88.)]],
                                     )
-                                    .unwrap(),
+                                    .unwrap();
+                                }
                                 1 => {
                                     w.set_value("S", 3, 2, V::Number(99.)).unwrap();
                                     w.set_value("S", 4, 2, V::Number(88.)).unwrap();

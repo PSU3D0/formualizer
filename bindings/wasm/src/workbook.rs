@@ -1876,6 +1876,7 @@ impl Sheet {
         wb.begin_action("batch: set values".to_string());
         let res = wb
             .set_values(&self.name, start_row, start_col, &rows)
+            .map(|_| ())
             .map_err(|e| {
                 js_error(format!(
                     "set_values failed for {sheet}!R{start_row}C{start_col}: {e}",

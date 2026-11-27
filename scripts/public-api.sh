@@ -94,7 +94,10 @@ excluded_features() {
     formualizer-eval)
       printf '%s\n' 'benchmark_internal,js-runtime,legacy_oracle,test-support,unified_authority'
       ;;
-    formualizer-workbook|formualizer-sheetport)
+    formualizer-workbook)
+      printf '%s\n' 'arrow,benchmark_internal,js-runtime'
+      ;;
+    formualizer-sheetport)
       printf '%s\n' 'benchmark_internal,js-runtime'
       ;;
     *)

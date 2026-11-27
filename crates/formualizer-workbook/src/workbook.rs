@@ -1199,6 +1199,411 @@ fn validate_excel_block<T>(
     Ok(())
 }
 
+const MAX_SAFE_F64_INT: i64 = 1_i64 << 53;
+
+#[inline]
+fn bitmap_is_valid(validity: Option<&[u8]>, idx: usize) -> bool {
+    match validity {
+        None => true,
+        Some(bits) => ((bits[idx >> 3] >> (idx & 7)) & 1) != 0,
+    }
+}
+
+fn check_validity_len(validity: Option<&[u8]>, len: usize, col_idx: usize) -> Result<(), IoError> {
+    if let Some(bits) = validity {
+        let needed = len.div_ceil(8);
+        if bits.len() < needed {
+            return Err(IoError::Engine(
+                ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                    "Column {col_idx}: validity bitmap has {} bytes, expected at least {needed} for {len} rows",
+                    bits.len()
+                )),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_utf8_offsets_for_logged(
+    bytes: &[u8],
+    offsets: &[u32],
+    validity: Option<&[u8]>,
+    context: &str,
+) -> Result<(), IoError> {
+    if offsets.is_empty() {
+        return Ok(());
+    }
+    let mut prev = offsets[0] as usize;
+    if prev > bytes.len() {
+        return Err(IoError::Engine(
+            ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "{context}: initial UTF-8 offset {prev} exceeds byte buffer length {}",
+                bytes.len()
+            )),
+        ));
+    }
+    for (i, &raw_end) in offsets[1..].iter().enumerate() {
+        let end = raw_end as usize;
+        if end < prev {
+            return Err(IoError::Engine(
+                ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                    "{context}: non-monotonic UTF-8 offsets at index {i} ({prev} -> {end})"
+                )),
+            ));
+        }
+        if end > bytes.len() {
+            return Err(IoError::Engine(
+                ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                    "{context}: UTF-8 offset {end} at index {i} exceeds byte buffer length {}",
+                    bytes.len()
+                )),
+            ));
+        }
+        if bitmap_is_valid(validity, i) && std::str::from_utf8(&bytes[prev..end]).is_err() {
+            return Err(IoError::Engine(
+                ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                    "{context}: invalid UTF-8 string bytes at index {i}"
+                )),
+            ));
+        }
+        prev = end;
+    }
+    Ok(())
+}
+
+fn decode_wire_cell_to_literal(
+    raw_tag: u8,
+    num: f64,
+    text_bytes: &[u8],
+    text_offsets: &[u32],
+    date_system: formualizer_eval::engine::DateSystem,
+    context: &str,
+    idx: usize,
+) -> Result<(LiteralValue, Option<crate::FormatId>), IoError> {
+    let tag = crate::BulkCellTag::try_from(raw_tag).map_err(|e| {
+        IoError::Engine(ExcelError::new(e.kind).with_message(format!(
+            "{context} at index {idx}: {}",
+            e.message().unwrap_or_default()
+        )))
+    })?;
+    let string_count = text_offsets.len().saturating_sub(1);
+    match tag {
+        crate::BulkCellTag::Empty => Ok((LiteralValue::Empty, None)),
+        crate::BulkCellTag::Number => {
+            if num.is_finite() {
+                Ok((LiteralValue::Number(num), None))
+            } else {
+                Ok((
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)),
+                    None,
+                ))
+            }
+        }
+        crate::BulkCellTag::Boolean => {
+            if !(num == 0.0 || num == 1.0) {
+                return Err(IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                        "{context}: invalid boolean payload {num} at index {idx} (expected 0.0 or 1.0)"
+                    )),
+                ));
+            }
+            Ok((LiteralValue::Boolean(num != 0.0), None))
+        }
+        crate::BulkCellTag::Text => {
+            if !num.is_finite()
+                || num < 0.0
+                || num.fract() != 0.0
+                || num > (MAX_SAFE_F64_INT as f64)
+                || (num as usize) >= string_count
+            {
+                return Err(IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                        "{context}: string table index {num} at index {idx} out of bounds (table len {string_count})"
+                    )),
+                ));
+            }
+            let si = num as usize;
+            let s0 = text_offsets[si] as usize;
+            let s1 = text_offsets[si + 1] as usize;
+            let s = std::str::from_utf8(&text_bytes[s0..s1]).map_err(|_| {
+                IoError::Engine(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                    "{context}: invalid UTF-8 string bytes at index {idx}"
+                )))
+            })?;
+            Ok((LiteralValue::Text(s.to_string()), None))
+        }
+        crate::BulkCellTag::Error => {
+            if !num.is_finite() || num.fract() != 0.0 || !(1.0..=13.0).contains(&num) {
+                return Err(IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                        "{context}: invalid Excel error code {num} at index {idx} (expected 1..=13)"
+                    )),
+                ));
+            }
+            let kind = formualizer_eval::arrow_store::unmap_error_code(num as u8);
+            Ok((LiteralValue::Error(ExcelError::new(kind)), None))
+        }
+        crate::BulkCellTag::DateTime => {
+            if !num.is_finite() {
+                return Ok((
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)),
+                    None,
+                ));
+            }
+            let fmt = if num.fract() == 0.0 {
+                crate::FormatId::DATE
+            } else {
+                crate::FormatId::DATETIME
+            };
+            let val = if fmt == crate::FormatId::DATE {
+                formualizer_common::try_serial_to_date_for(date_system, num)
+                    .map(LiteralValue::Date)
+                    .unwrap_or(LiteralValue::Number(num))
+            } else {
+                formualizer_common::try_serial_to_datetime_for(date_system, num)
+                    .map(LiteralValue::DateTime)
+                    .unwrap_or(LiteralValue::Number(num))
+            };
+            Ok((val, Some(fmt)))
+        }
+        crate::BulkCellTag::Duration => {
+            if !num.is_finite() {
+                return Ok((
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)),
+                    None,
+                ));
+            }
+            let secs = (num * 86_400.0).round() as i64;
+            Ok((
+                LiteralValue::Duration(chrono::Duration::seconds(secs)),
+                Some(crate::FormatId::DURATION),
+            ))
+        }
+    }
+}
+
+type LoggedBulkItem = (u32, u32, LiteralValue, Option<crate::FormatId>);
+
+fn decode_serial_for_logged_path(
+    serial: f64,
+    format: crate::FormatId,
+    class: Option<formualizer_common::numfmt::FormatClass>,
+    date_system: formualizer_eval::engine::DateSystem,
+) -> (LiteralValue, Option<crate::FormatId>) {
+    use formualizer_common::numfmt::FormatClass;
+    match class {
+        Some(FormatClass::Date) => {
+            let val = if serial.fract() == 0.0 {
+                formualizer_common::try_serial_to_date_for(date_system, serial)
+                    .map(LiteralValue::Date)
+                    .unwrap_or(LiteralValue::Number(serial))
+            } else {
+                formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                    .map(LiteralValue::DateTime)
+                    .unwrap_or(LiteralValue::Number(serial))
+            };
+            (val, None)
+        }
+        Some(FormatClass::DateTime) => {
+            let val = formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                .map(LiteralValue::DateTime)
+                .unwrap_or(LiteralValue::Number(serial));
+            (val, None)
+        }
+        Some(FormatClass::Time) if (0.0..1.0).contains(&serial) => {
+            let nanos = (serial * 86_400_000_000_000.0).round() as u64;
+            let nanos = nanos.min(86_400_000_000_000 - 1);
+            let val = chrono::NaiveTime::from_num_seconds_from_midnight_opt(
+                (nanos / 1_000_000_000) as u32,
+                (nanos % 1_000_000_000) as u32,
+            )
+            .map(LiteralValue::Time)
+            .unwrap_or(LiteralValue::Number(serial));
+            (val, None)
+        }
+        Some(FormatClass::Time | FormatClass::Duration) => {
+            let secs = (serial * 86_400.0).round();
+            let val = if secs.is_finite() && secs >= i64::MIN as f64 && secs <= i64::MAX as f64 {
+                LiteralValue::Duration(chrono::Duration::seconds(secs as i64))
+            } else {
+                LiteralValue::Number(serial)
+            };
+            (val, None)
+        }
+        _ => {
+            // Custom non-temporal formats are applied via the side-channel overlay
+            // format and are not journaled across undo/redo.
+            let fmt = (format != crate::FormatId::GENERAL).then_some(format);
+            (LiteralValue::Number(serial), fmt)
+        }
+    }
+}
+
+fn decode_columns_for_logged_path(
+    start_row: u32,
+    start_col: u32,
+    columns: &[crate::ColumnData<'_>],
+    date_system: formualizer_eval::engine::DateSystem,
+    format_class: impl Fn(crate::FormatId) -> Option<formualizer_common::numfmt::FormatClass>,
+) -> Result<Vec<LoggedBulkItem>, IoError> {
+    let nrows = columns.first().map_or(0, crate::ColumnData::len);
+    let mut out = Vec::with_capacity(nrows.saturating_mul(columns.len()));
+    for (ci, col) in columns.iter().enumerate() {
+        let abs_col = start_col + ci as u32;
+        match col {
+            crate::ColumnData::Float64 { values, validity } => {
+                check_validity_len(*validity, values.len(), ci)?;
+                for (ri, &v) in values.iter().enumerate() {
+                    let lit = if bitmap_is_valid(*validity, ri) {
+                        LiteralValue::Number(v).finite_or_num_error()
+                    } else {
+                        LiteralValue::Empty
+                    };
+                    out.push((start_row + ri as u32, abs_col, lit, None));
+                }
+            }
+            crate::ColumnData::Int64 { values, validity } => {
+                check_validity_len(*validity, values.len(), ci)?;
+                for (ri, &v) in values.iter().enumerate() {
+                    if bitmap_is_valid(*validity, ri) {
+                        if !(-MAX_SAFE_F64_INT..=MAX_SAFE_F64_INT).contains(&v) {
+                            return Err(IoError::Engine(
+                                ExcelError::new(ExcelErrorKind::Num).with_message(format!(
+                                    "Column {ci} row {ri}: 64-bit integer {v} exceeds exact f64 range (±2^53); cast explicitly to text or float"
+                                )),
+                            ));
+                        }
+                        out.push((
+                            start_row + ri as u32,
+                            abs_col,
+                            LiteralValue::Number(v as f64),
+                            None,
+                        ));
+                    } else {
+                        out.push((start_row + ri as u32, abs_col, LiteralValue::Empty, None));
+                    }
+                }
+            }
+            crate::ColumnData::Boolean { values, validity } => {
+                check_validity_len(*validity, values.len(), ci)?;
+                for (ri, &b) in values.iter().enumerate() {
+                    let lit = if bitmap_is_valid(*validity, ri) {
+                        LiteralValue::Boolean(b)
+                    } else {
+                        LiteralValue::Empty
+                    };
+                    out.push((start_row + ri as u32, abs_col, lit, None));
+                }
+            }
+            crate::ColumnData::Utf8 {
+                bytes,
+                offsets,
+                validity,
+            } => {
+                check_validity_len(*validity, offsets.len().saturating_sub(1), ci)?;
+                check_utf8_offsets_for_logged(bytes, offsets, *validity, &format!("Column {ci}"))?;
+                for ri in 0..nrows {
+                    let lit = if bitmap_is_valid(*validity, ri) {
+                        let s0 = offsets[ri] as usize;
+                        let s1 = offsets[ri + 1] as usize;
+                        let s = std::str::from_utf8(&bytes[s0..s1]).unwrap();
+                        LiteralValue::Text(s.to_string())
+                    } else {
+                        LiteralValue::Empty
+                    };
+                    out.push((start_row + ri as u32, abs_col, lit, None));
+                }
+            }
+            crate::ColumnData::Serial {
+                values,
+                format,
+                validity,
+            } => {
+                check_validity_len(*validity, values.len(), ci)?;
+                let class = format_class(*format);
+                for (ri, &v) in values.iter().enumerate() {
+                    if !bitmap_is_valid(*validity, ri) {
+                        out.push((start_row + ri as u32, abs_col, LiteralValue::Empty, None));
+                    } else if !v.is_finite() {
+                        out.push((
+                            start_row + ri as u32,
+                            abs_col,
+                            LiteralValue::Error(ExcelError::new(ExcelErrorKind::Num)),
+                            None,
+                        ));
+                    } else {
+                        let (lit, fmt) =
+                            decode_serial_for_logged_path(v, *format, class.clone(), date_system);
+                        out.push((start_row + ri as u32, abs_col, lit, fmt));
+                    }
+                }
+            }
+            crate::ColumnData::Null { len } => {
+                for ri in 0..*len {
+                    out.push((start_row + ri as u32, abs_col, LiteralValue::Empty, None));
+                }
+            }
+            crate::ColumnData::Mixed(block) => {
+                let ctx = format!("Column {ci}");
+                if block.tags.len() != block.numbers.len() {
+                    return Err(IoError::Engine(
+                        ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                            "{ctx}: tags length ({}) does not match numbers length ({})",
+                            block.tags.len(),
+                            block.numbers.len()
+                        )),
+                    ));
+                }
+                check_utf8_offsets_for_logged(block.text_bytes, block.text_offsets, None, &ctx)?;
+                for ri in 0..nrows {
+                    let (lit, fmt) = decode_wire_cell_to_literal(
+                        block.tags[ri],
+                        block.numbers[ri],
+                        block.text_bytes,
+                        block.text_offsets,
+                        date_system,
+                        &ctx,
+                        ri,
+                    )?;
+                    out.push((start_row + ri as u32, abs_col, lit, fmt));
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn decode_batch_for_logged_path(
+    batch: &crate::CellBatch<'_>,
+    date_system: formualizer_eval::engine::DateSystem,
+) -> Result<Vec<LoggedBulkItem>, IoError> {
+    if batch.tags.len() != batch.numbers.len() || batch.tags.len() != batch.rows.len() {
+        return Err(IoError::Engine(
+            ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "CellBatch: mismatched slice lengths (rows={}, tags={}, numbers={})",
+                batch.rows.len(),
+                batch.tags.len(),
+                batch.numbers.len()
+            )),
+        ));
+    }
+    check_utf8_offsets_for_logged(batch.text_bytes, batch.text_offsets, None, "CellBatch")?;
+    let mut out = Vec::with_capacity(batch.len());
+    for i in 0..batch.len() {
+        let (lit, fmt) = decode_wire_cell_to_literal(
+            batch.tags[i],
+            batch.numbers[i],
+            batch.text_bytes,
+            batch.text_offsets,
+            date_system,
+            "CellBatch",
+            i,
+        )?;
+        out.push((batch.rows[i], batch.cols[i], lit, fmt));
+    }
+    Ok(out)
+}
+
 /// Transactional edit surface for `Workbook::action`.
 ///
 /// This wrapper exists to avoid aliasing `&mut Workbook` while an Engine transaction is active.
@@ -1968,6 +2373,16 @@ impl Workbook {
         self.log.clear();
         self.undo.clear_logged_redo();
         self.spill_action_history.cells.clear();
+    }
+
+    #[inline]
+    fn has_any_history(&self) -> bool {
+        !self.log.is_empty()
+            || self.undo.undone_len() > 0
+            || self.log.compound_depth() > 0
+            || !self.spill_action_history.cells.is_empty()
+            || self.undo.actions_done_len() > 0
+            || self.undo.actions_undone_len() > 0
     }
 
     /// Enforce the contiguous-history invariant: any unjournaled mutation clears
@@ -3218,6 +3633,29 @@ impl Workbook {
         }
     }
 
+    /// Whether a logged bulk write of `written_cells` fits inside the configured
+    /// `history_limit` without evicting its own (or an enclosing caller's)
+    /// `CompoundStart` marker.
+    fn bulk_write_fits_history(&self, written_cells: usize) -> bool {
+        if !self.enable_changelog {
+            return false;
+        }
+        let Some(limit) = self.history_limit() else {
+            return true;
+        };
+        let depth = self.log.compound_depth();
+        let needed = if depth == 0 {
+            written_cells.saturating_add(2)
+        } else {
+            let existing = self.log.last_group_indices().len();
+            if existing == 0 {
+                return false;
+            }
+            existing.saturating_add(written_cells).saturating_add(depth)
+        };
+        needed <= limit
+    }
+
     // Batch set values in a rectangle starting at (start_row,start_col)
     pub fn set_values(
         &mut self,
@@ -3225,46 +3663,73 @@ impl Workbook {
         start_row: u32,
         start_col: u32,
         rows: &[Vec<LiteralValue>],
-    ) -> Result<(), IoError> {
+    ) -> Result<crate::WriteRangeReport, IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
         reject_cached_external_sheet(sheet)?;
         let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-        if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
-            && width > 0
-        {
-            let end_row = start_row.saturating_add(last_row_idx as u32);
-            let end_col = start_col.saturating_add((width - 1) as u32);
-            let written_cells: usize = rows.iter().map(Vec::len).sum();
-            self.enforce_write_limits(sheet, end_row, end_col, written_cells)?;
-        }
-        // Deferred-dirty scope: one multi-source propagation for the whole
-        // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
-        // The unconditional end_deferred_dirty below flushes on every exit
-        // path, including the `?` error returns inside the inner body.
-        self.engine.begin_deferred_dirty();
-        let wb_ptr: *mut Workbook = self;
-        let _dirty_guard = WorkbookDeferredDirtyGuard {
-            wb: wb_ptr,
-            _marker: std::marker::PhantomData,
+        let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty()) else {
+            return Ok(crate::WriteRangeReport::default());
         };
-        unsafe { &mut *wb_ptr }.set_values_inner(sheet, start_row, start_col, rows)
+        if width == 0 {
+            return Ok(crate::WriteRangeReport::default());
+        }
+        let first_row_idx = rows.iter().position(|r| !r.is_empty()).unwrap_or(0);
+        let end_row = start_row.saturating_add(last_row_idx as u32);
+        let end_col = start_col.saturating_add((width - 1) as u32);
+        let written_cells: usize = rows[..=last_row_idx].iter().map(Vec::len).sum();
+        self.enforce_write_limits(sheet, end_row, end_col, written_cells)?;
+
+        // Q2 changelog policy: when changelog is enabled and batch fits within
+        // history_limit (or history_limit is unbounded), execute the logged
+        // single-compound path; when oversized or changelog is disabled, run the
+        // fast unified engine region-write primitive and clear history.
+        let use_logged_path = self.bulk_write_fits_history(written_cells);
+
+        if use_logged_path {
+            self.engine.begin_deferred_dirty();
+            let wb_ptr: *mut Workbook = self;
+            let _dirty_guard = WorkbookDeferredDirtyGuard {
+                wb: wb_ptr,
+                _marker: std::marker::PhantomData,
+            };
+            unsafe { &mut *wb_ptr }.set_values_logged_inner(sheet, start_row, start_col, rows)?;
+            Ok(crate::WriteRangeReport {
+                start_row: start_row + first_row_idx as u32,
+                start_col,
+                end_row,
+                end_col,
+                history_cleared: false,
+            })
+        } else {
+            let mut report = self
+                .engine
+                .set_region_values(sheet, start_row, start_col, rows)
+                .map_err(IoError::Engine)?;
+            #[cfg(feature = "xlsx-recalc")]
+            if !self.refused_external_formulas.is_empty() {
+                for (ri, rvals) in rows[..=last_row_idx].iter().enumerate() {
+                    let r = start_row + ri as u32;
+                    for ci in 0..rvals.len() {
+                        let c = start_col + ci as u32;
+                        self.refused_external_formulas
+                            .remove(&(sheet.to_string(), r, c));
+                    }
+                }
+            }
+            let had_history = self.has_any_history();
+            self.invalidate_history_for_unjournaled_mutation();
+            report.history_cleared = self.enable_changelog || had_history;
+            Ok(report)
+        }
     }
 
-    fn set_values_inner(
+    fn set_values_logged_inner(
         &mut self,
         sheet: &str,
         start_row: u32,
         start_col: u32,
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
-        // Pre-allocate the Arrow sheet to the full batch extent ONCE, so the
-        // per-cell `mirror_value_to_overlay` → `ensure_row_capacity` → `grow_len_to`
-        // (which rebuilds the whole column's type-tag/lanes on every call) is
-        // amortized to O(N) instead of O(N²). Mirrors set_formulas_inner.
-        // The extent comes from the cells the batch actually writes. Trailing
-        // empty rows write nothing, so counting them reserves rows past the real
-        // extent -- and for a batch anchored at the last grid row it reserves a
-        // row that cannot exist, inflating the reported sheet dimensions.
         let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
         if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
             && width > 0
@@ -3286,95 +3751,531 @@ impl Workbook {
             }
         }
 
-        if self.enable_changelog {
-            let sheet_id = self
-                .engine
-                .sheet_id(sheet)
-                .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
+        let sheet_id = self
+            .engine
+            .sheet_id(sheet)
+            .unwrap_or_else(|| self.engine.add_sheet(sheet).expect("add sheet"));
 
-            // Capture old state from Arrow truth BEFORE applying the batch.
-            // `staged_before` is the cell's staged formula text prior to the edit,
-            // used to record a per-cell staged-formula delta for undo/redo (see #126).
-            #[allow(clippy::type_complexity)]
-            let mut items: Vec<(
-                u32,
-                u32,
-                LiteralValue,
-                formualizer_eval::reference::CellRef,
-                Option<LiteralValue>,
-                Option<formualizer_parse::ASTNode>,
-                Option<String>,
-            )> = Vec::new();
-            for (ri, rvals) in rows.iter().enumerate() {
-                let r = start_row + ri as u32;
-                for (ci, v) in rvals.iter().enumerate() {
-                    let c = start_col + ci as u32;
-                    let cell = formualizer_eval::reference::CellRef::new(
-                        sheet_id,
-                        formualizer_eval::reference::Coord::from_excel(r, c, true, true),
-                    );
-                    let old_value = self.engine.get_cell_value(sheet, r, c);
-                    let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
-                    let staged_before = self.staged_formula_cell(sheet, r, c);
-                    items.push((
-                        r,
-                        c,
-                        v.clone().finite_or_num_error(),
-                        cell,
-                        old_value,
-                        old_formula,
-                        staged_before,
+        #[allow(clippy::type_complexity)]
+        let mut items: Vec<(
+            u32,
+            u32,
+            LiteralValue,
+            formualizer_eval::reference::CellRef,
+            Option<LiteralValue>,
+            Option<formualizer_parse::ASTNode>,
+            Option<String>,
+        )> = Vec::new();
+        for (ri, rvals) in rows.iter().enumerate() {
+            let r = start_row + ri as u32;
+            for (ci, v) in rvals.iter().enumerate() {
+                let c = start_col + ci as u32;
+                let cell = formualizer_eval::reference::CellRef::new(
+                    sheet_id,
+                    formualizer_eval::reference::Coord::from_excel(r, c, true, true),
+                );
+                let old_value = self.engine.get_cell_value(sheet, r, c);
+                let old_formula = self.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
+                let staged_before = self.staged_formula_cell(sheet, r, c);
+                items.push((
+                    r,
+                    c,
+                    v.clone().finite_or_num_error(),
+                    cell,
+                    old_value,
+                    old_formula,
+                    staged_before,
+                ));
+            }
+        }
+
+        if !items.is_empty() {
+            self.on_forward_logged_mutation();
+        }
+        let own_compound = !items.is_empty() && self.log.compound_depth() == 0;
+        if own_compound {
+            self.begin_action("batch: set values".to_string());
+        }
+        let edit_res = self.engine.edit_with_logger(&mut self.log, |editor| {
+            for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
+                editor.set_cell_value_with_old_state(
+                    *cell,
+                    v.clone(),
+                    old_value.clone(),
+                    old_formula.clone(),
+                );
+            }
+        });
+        if let Err(e) = edit_res {
+            if own_compound {
+                self.end_action();
+            }
+            return Err(IoError::from_backend("editor", e));
+        }
+        self.sync_spill_action_history();
+
+        for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
+            self.mirror_value_to_overlay(sheet, r, c, &v);
+            self.engine.clear_staged_formula_text(sheet, r, c);
+            if staged_before.is_some() {
+                self.record_staged_formula_cell_change(sheet, r, c, staged_before, None);
+            }
+        }
+        if own_compound {
+            self.end_action();
+        }
+        self.engine.mark_data_edited();
+        Ok(())
+    }
+
+    /// Apply a small, pre-validated list of `(row, col, value, explicit_format)` edits
+    /// through the logged compound-action path (used when `enable_changelog` is enabled
+    /// and the batch fits within `history_limit`).
+    fn apply_logged_bulk_items(
+        &mut self,
+        sheet: &str,
+        action_name: &str,
+        max_row: u32,
+        max_col: u32,
+        entries: Vec<(u32, u32, LiteralValue, Option<crate::FormatId>)>,
+    ) -> Result<(), IoError> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+        self.engine.begin_deferred_dirty();
+        let wb_ptr: *mut Workbook = self;
+        let _dirty_guard = WorkbookDeferredDirtyGuard {
+            wb: wb_ptr,
+            _marker: std::marker::PhantomData,
+        };
+        let this = unsafe { &mut *wb_ptr };
+        this.ensure_arrow_sheet_capacity(sheet, max_row as usize, max_col as usize);
+
+        #[cfg(feature = "xlsx-recalc")]
+        if !this.refused_external_formulas.is_empty() {
+            for &(r, c, _, _) in &entries {
+                this.refused_external_formulas
+                    .remove(&(sheet.to_string(), r, c));
+            }
+        }
+
+        let sheet_id = this
+            .engine
+            .sheet_id(sheet)
+            .unwrap_or_else(|| this.engine.add_sheet(sheet).expect("add sheet"));
+
+        #[allow(clippy::type_complexity)]
+        let mut items: Vec<(
+            u32,
+            u32,
+            LiteralValue,
+            Option<crate::FormatId>,
+            formualizer_eval::reference::CellRef,
+            Option<LiteralValue>,
+            Option<formualizer_parse::ASTNode>,
+            Option<String>,
+        )> = Vec::with_capacity(entries.len());
+        for (r, c, v, fmt) in entries {
+            let cell = formualizer_eval::reference::CellRef::new(
+                sheet_id,
+                formualizer_eval::reference::Coord::from_excel(r, c, true, true),
+            );
+            let old_value = this.engine.get_cell_value(sheet, r, c);
+            let old_formula = this.engine.get_cell(sheet, r, c).and_then(|(ast, _)| ast);
+            let staged_before = this.staged_formula_cell(sheet, r, c);
+            items.push((r, c, v, fmt, cell, old_value, old_formula, staged_before));
+        }
+
+        this.on_forward_logged_mutation();
+        let own_compound = this.log.compound_depth() == 0;
+        if own_compound {
+            this.begin_action(action_name.to_string());
+        }
+        let edit_res = this.engine.edit_with_logger(&mut this.log, |editor| {
+            for (_r, _c, v, _fmt, cell, old_value, old_formula, _staged_before) in items.iter() {
+                editor.set_cell_value_with_old_state(
+                    *cell,
+                    v.clone(),
+                    old_value.clone(),
+                    old_formula.clone(),
+                );
+            }
+        });
+        if let Err(e) = edit_res {
+            if own_compound {
+                this.end_action();
+            }
+            return Err(IoError::from_backend("editor", e));
+        }
+        this.sync_spill_action_history();
+
+        let date_system = this.engine.config.date_system;
+        for (r, c, v, fmt, _cell, _old_value, _old_formula, staged_before) in items {
+            this.mirror_value_to_overlay(sheet, r, c, &v);
+            if let Some(explicit_fmt) = fmt.filter(|f| *f != crate::FormatId::GENERAL)
+                && this.engine.config.arrow_storage_enabled
+                && this.engine.config.delta_overlay_enabled
+            {
+                let row0 = r.saturating_sub(1) as usize;
+                let col0 = c.saturating_sub(1) as usize;
+                if let Some(asheet) = this.engine.sheet_store_mut().sheet_mut(sheet)
+                    && let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0)
+                    && let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx)
+                {
+                    ch.overlay.set_format(in_off, Some(explicit_fmt));
+                }
+            } else if this.engine.config.arrow_storage_enabled
+                && this.engine.config.delta_overlay_enabled
+            {
+                let inferred = match &v {
+                    LiteralValue::Date(_) => Some(crate::FormatId::DATE),
+                    LiteralValue::DateTime(_) => Some(crate::FormatId::DATETIME),
+                    LiteralValue::Time(_) => Some(crate::FormatId::TIME),
+                    LiteralValue::Duration(_) => Some(crate::FormatId::DURATION),
+                    _ => None,
+                };
+                if inferred.is_some() {
+                    let row0 = r.saturating_sub(1) as usize;
+                    let col0 = c.saturating_sub(1) as usize;
+                    if let Some(asheet) = this.engine.sheet_store_mut().sheet_mut(sheet)
+                        && let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0)
+                        && let Some(ch) = asheet.ensure_column_chunk_mut(col0, ch_idx)
+                    {
+                        ch.overlay.set_format(in_off, inferred);
+                    }
+                }
+            }
+            let _ = date_system;
+            this.engine.clear_staged_formula_text(sheet, r, c);
+            if staged_before.is_some() {
+                this.record_staged_formula_cell_change(sheet, r, c, staged_before, None);
+            }
+        }
+        if own_compound {
+            this.end_action();
+        }
+        this.engine.mark_data_edited();
+        Ok(())
+    }
+
+    /// Write dense, column-major typed columns starting at 1-based `(start_row, start_col)`.
+    ///
+    /// Row count is derived from the column buffers and all columns must have equal length.
+    /// When `enable_changelog` is enabled and the batch fits within `history_limit`, executes
+    /// as a single undoable compound action (`history_cleared = false`). Temporal
+    /// [`ColumnData::Serial`] formats (`Date`, `DateTime`, `Time`, `Duration`) are journaled
+    /// via their typed [`LiteralValue`] variants and survive undo/redo; custom non-temporal
+    /// number formats on `Serial` columns are not journaled across undo/redo. When oversized
+    /// or when changelog is disabled, executes through the unified bulk engine primitive,
+    /// clears any retained history stacks, and reports `history_cleared` accurately.
+    pub fn set_columns(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        columns: &[crate::ColumnData<'_>],
+    ) -> Result<crate::WriteRangeReport, IoError> {
+        validate_excel_coord(sheet, start_row, start_col)?;
+        reject_cached_external_sheet(sheet)?;
+        if columns.is_empty() {
+            return Ok(crate::WriteRangeReport::default());
+        }
+
+        let nrows = columns[0].len();
+        for (ci, col) in columns.iter().enumerate() {
+            if col.len() != nrows {
+                return Err(IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                        "Column {ci} length ({}) does not match column 0 length ({nrows})",
+                        col.len()
+                    )),
+                ));
+            }
+        }
+        let ncols = columns.len();
+        let written_cells = nrows.checked_mul(ncols).ok_or_else(|| {
+            IoError::Engine(
+                ExcelError::new(ExcelErrorKind::Value)
+                    .with_message("Bulk column write cell count overflows"),
+            )
+        })?;
+
+        if nrows > 0 {
+            let row_span = u32::try_from(nrows - 1).map_err(|_| {
+                IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Column row count overflows grid"),
+                )
+            })?;
+            let col_span = u32::try_from(ncols - 1).map_err(|_| {
+                IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Column count overflows grid"),
+                )
+            })?;
+            let end_row = start_row.checked_add(row_span).ok_or_else(|| {
+                IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Column row extent overflows grid"),
+                )
+            })?;
+            let end_col = start_col.checked_add(col_span).ok_or_else(|| {
+                IoError::Engine(
+                    ExcelError::new(ExcelErrorKind::Ref)
+                        .with_message("Column extent overflows grid"),
+                )
+            })?;
+            validate_excel_coord(sheet, end_row, end_col)?;
+            self.enforce_write_limits(sheet, end_row, end_col, written_cells)?;
+
+            let fits_history = self.bulk_write_fits_history(written_cells);
+
+            if fits_history {
+                let date_system = self.engine.config.date_system;
+                let entries = decode_columns_for_logged_path(
+                    start_row,
+                    start_col,
+                    columns,
+                    date_system,
+                    |fmt| {
+                        formualizer_eval::traits::EvaluationContext::format_class(&self.engine, fmt)
+                    },
+                )?;
+                self.apply_logged_bulk_items(
+                    sheet,
+                    "batch: set columns",
+                    end_row,
+                    end_col,
+                    entries,
+                )?;
+                return Ok(crate::WriteRangeReport {
+                    start_row,
+                    start_col,
+                    end_row,
+                    end_col,
+                    history_cleared: false,
+                });
+            }
+        }
+
+        let bulk_cols: Vec<formualizer_eval::engine::BulkColumn<'_>> = columns
+            .iter()
+            .map(crate::ColumnData::as_bulk_column)
+            .collect();
+        let mut report = self
+            .engine
+            .set_region_columns(sheet, start_row, start_col, &bulk_cols)
+            .map_err(IoError::Engine)?;
+
+        if nrows > 0 {
+            #[cfg(feature = "xlsx-recalc")]
+            if !self.refused_external_formulas.is_empty() {
+                for r in report.start_row..=report.end_row {
+                    for c in report.start_col..=report.end_col {
+                        self.refused_external_formulas
+                            .remove(&(sheet.to_string(), r, c));
+                    }
+                }
+            }
+            let had_history = self.has_any_history();
+            self.invalidate_history_for_unjournaled_mutation();
+            report.history_cleared = self.enable_changelog || had_history;
+        }
+        Ok(report)
+    }
+
+    /// Write sparse point patches backed by the unified packed block format.
+    ///
+    /// Duplicate coordinates resolve deterministically in last-write-wins order.
+    /// Follows the same Q2 changelog policy as [`Workbook::set_columns`].
+    pub fn set_cells(
+        &mut self,
+        sheet: &str,
+        batch: &crate::CellBatch<'_>,
+    ) -> Result<crate::WriteRangeReport, IoError> {
+        reject_cached_external_sheet(sheet)?;
+        let n = batch.len();
+        if batch.cols.len() != n {
+            return Err(IoError::Engine(
+                ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                    "CellBatch: rows length ({n}) does not match cols length ({})",
+                    batch.cols.len()
+                )),
+            ));
+        }
+
+        let mut min_row = u32::MAX;
+        let mut max_row = 0u32;
+        let mut min_col = u32::MAX;
+        let mut max_col = 0u32;
+        for i in 0..n {
+            let r = batch.rows[i];
+            let c = batch.cols[i];
+            validate_excel_coord(sheet, r, c)?;
+            min_row = min_row.min(r);
+            max_row = max_row.max(r);
+            min_col = min_col.min(c);
+            max_col = max_col.max(c);
+        }
+        if n > 0 {
+            self.enforce_write_limits(sheet, max_row, max_col, n)?;
+            let fits_history = self.bulk_write_fits_history(n);
+            if fits_history {
+                let date_system = self.engine.config.date_system;
+                let entries = decode_batch_for_logged_path(batch, date_system)?;
+                self.apply_logged_bulk_items(sheet, "batch: set cells", max_row, max_col, entries)?;
+                return Ok(crate::WriteRangeReport {
+                    start_row: min_row,
+                    start_col: min_col,
+                    end_row: max_row,
+                    end_col: max_col,
+                    history_cleared: false,
+                });
+            }
+        }
+
+        let mut report = self
+            .engine
+            .set_region_cells(sheet, batch)
+            .map_err(IoError::Engine)?;
+
+        if n > 0 {
+            #[cfg(feature = "xlsx-recalc")]
+            if !self.refused_external_formulas.is_empty() {
+                for i in 0..n {
+                    self.refused_external_formulas.remove(&(
+                        sheet.to_string(),
+                        batch.rows[i],
+                        batch.cols[i],
                     ));
                 }
             }
-
-            if !items.is_empty() {
-                self.on_forward_logged_mutation();
-            }
-            self.engine
-                .edit_with_logger(&mut self.log, |editor| {
-                    for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
-                        // Old state captured from Arrow truth rides directly on the
-                        // event (graph-captured state wins; this only fills `None`).
-                        editor.set_cell_value_with_old_state(
-                            *cell,
-                            v.clone(),
-                            old_value.clone(),
-                            old_formula.clone(),
-                        );
-                    }
-                })
-                .map_err(|e| IoError::from_backend("editor", e))?;
-            self.sync_spill_action_history();
-
-            for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
-                self.mirror_value_to_overlay(sheet, r, c, &v);
-                self.engine.clear_staged_formula_text(sheet, r, c);
-                // Setting a literal value clears any staged formula for this cell.
-                if staged_before.is_some() {
-                    self.record_staged_formula_cell_change(sheet, r, c, staged_before, None);
-                }
-            }
-            self.engine.mark_data_edited();
-            Ok(())
-        } else {
-            // Invalidate before the first write so a mid-batch `?` error after a
-            // committed prefix cannot leave stale undo/redo stacks intact (B4).
-            if rows.iter().any(|r| !r.is_empty()) {
-                self.invalidate_history_for_unjournaled_mutation();
-            }
-            for (ri, rvals) in rows.iter().enumerate() {
-                let r = start_row + ri as u32;
-                for (ci, v) in rvals.iter().enumerate() {
-                    let c = start_col + ci as u32;
-                    self.engine
-                        .set_cell_value(sheet, r, c, v.clone().finite_or_num_error())
-                        .map_err(IoError::Engine)?;
-                    self.engine.clear_staged_formula_text(sheet, r, c);
-                }
-            }
-            Ok(())
+            let had_history = self.has_any_history();
+            self.invalidate_history_for_unjournaled_mutation();
+            report.history_cleared = self.enable_changelog || had_history;
         }
+        Ok(report)
+    }
+
+    /// Stream Apache Arrow [`arrow_array::RecordBatch`] values into a worksheet one
+    /// batch at a time starting at 1-based `(start_row, start_col)`.
+    ///
+    /// When `headers` is `true`, the schema field names are written into `start_row`
+    /// and data rows begin at `start_row + 1`. Always copies into engine-owned
+    /// chunk-aligned buffers.
+    ///
+    /// # Atomicity and history
+    ///
+    /// Atomicity is **per-batch, not across the entire stream**: each `RecordBatch` is
+    /// validated and applied atomically via [`Workbook::set_columns`], but if a later
+    /// batch fails (for example due to an iterator error, column-count mismatch, invalid
+    /// UTF-8, or an `Int64`/`UInt64` outside `±2^53`), the optional header row and all
+    /// previously committed batches remain written to the worksheet.
+    ///
+    /// When the changelog is enabled, the header row and each batch are recorded as
+    /// separate undo steps unless wrapped in an enclosing [`Workbook::begin_action`] /
+    /// [`Workbook::end_action`] (and subject to `history_limit`, reporting
+    /// `history_cleared = true` if any step clears retained history).
+    ///
+    /// Available only when the opt-in `arrow` Cargo feature is enabled.
+    #[cfg(feature = "arrow")]
+    pub fn set_record_batches<I, E>(
+        &mut self,
+        sheet: &str,
+        start_row: u32,
+        start_col: u32,
+        batches: I,
+        headers: bool,
+    ) -> Result<crate::WriteRangeReport, IoError>
+    where
+        I: IntoIterator<Item = Result<arrow_array::RecordBatch, E>>,
+        E: std::fmt::Display,
+    {
+        validate_excel_coord(sheet, start_row, start_col)?;
+        reject_cached_external_sheet(sheet)?;
+
+        let date_system = self.engine.config.date_system;
+        let mut next_row = start_row;
+        let mut expected_ncols: Option<usize> = None;
+        let mut wrote_headers = false;
+        let mut combined: Option<crate::WriteRangeReport> = None;
+
+        for batch_res in batches {
+            let batch = batch_res.map_err(|err| IoError::Backend {
+                backend: "arrow".to_string(),
+                message: err.to_string(),
+            })?;
+            let schema = batch.schema();
+            let ncols = schema.fields().len();
+            if let Some(prev) = expected_ncols {
+                if ncols != prev {
+                    return Err(IoError::Backend {
+                        backend: "arrow".to_string(),
+                        message: format!(
+                            "RecordBatch column count mismatch: expected {prev}, got {ncols}"
+                        ),
+                    });
+                }
+            } else {
+                expected_ncols = Some(ncols);
+            }
+
+            if headers && !wrote_headers && ncols > 0 {
+                let header_row: Vec<LiteralValue> = schema
+                    .fields()
+                    .iter()
+                    .map(|f| LiteralValue::Text(f.name().clone()))
+                    .collect();
+                let hdr_report = self.set_values(sheet, start_row, start_col, &[header_row])?;
+                combined = Some(hdr_report);
+                next_row = start_row.checked_add(1).ok_or_else(|| {
+                    IoError::Engine(
+                        ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("RecordBatch row extent overflows grid"),
+                    )
+                })?;
+                wrote_headers = true;
+            }
+
+            if batch.num_rows() == 0 || ncols == 0 {
+                continue;
+            }
+
+            let mut owned_cols = Vec::with_capacity(ncols);
+            for (ci, field) in schema.fields().iter().enumerate() {
+                let col_arr = batch.column(ci);
+                owned_cols.push(crate::ColumnData::try_from_arrow_with_options(
+                    col_arr.as_ref(),
+                    date_system,
+                    Some(field.name()),
+                )?);
+            }
+            let col_views: Vec<crate::ColumnData<'_>> = owned_cols
+                .iter()
+                .map(crate::OwnedColumnData::as_column_data)
+                .collect();
+            let batch_report = self.set_columns(sheet, next_row, start_col, &col_views)?;
+            next_row = next_row
+                .checked_add(batch.num_rows() as u32)
+                .ok_or_else(|| {
+                    IoError::Engine(
+                        ExcelError::new(ExcelErrorKind::Ref)
+                            .with_message("RecordBatch row extent overflows grid"),
+                    )
+                })?;
+            combined = Some(match combined {
+                None => batch_report,
+                Some(prev) => crate::WriteRangeReport {
+                    start_row: prev.start_row.min(batch_report.start_row),
+                    start_col: prev.start_col.min(batch_report.start_col),
+                    end_row: prev.end_row.max(batch_report.end_row),
+                    end_col: prev.end_col.max(batch_report.end_col),
+                    history_cleared: prev.history_cleared || batch_report.history_cleared,
+                },
+            });
+        }
+
+        Ok(combined.unwrap_or_default())
     }
 
     /// Set formulas in a rectangle starting at `(start_row, start_col)`.

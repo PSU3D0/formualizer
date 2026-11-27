@@ -53,11 +53,31 @@ impl WorksheetHandle {
         start_row: u32,
         start_col: u32,
         rows: &[Vec<LiteralValue>],
-    ) -> Result<(), crate::IoError> {
+    ) -> Result<crate::WriteRangeReport, crate::IoError> {
         self.wb
             .write()
             .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
             .set_values(&self.name, start_row, start_col, rows)
+    }
+    pub fn set_columns(
+        &self,
+        start_row: u32,
+        start_col: u32,
+        columns: &[crate::ColumnData<'_>],
+    ) -> Result<crate::WriteRangeReport, crate::IoError> {
+        self.wb
+            .write()
+            .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
+            .set_columns(&self.name, start_row, start_col, columns)
+    }
+    pub fn set_cells(
+        &self,
+        batch: &crate::CellBatch<'_>,
+    ) -> Result<crate::WriteRangeReport, crate::IoError> {
+        self.wb
+            .write()
+            .map_err(|_| crate::IoError::Io(std::io::Error::other("lock")))?
+            .set_cells(&self.name, batch)
     }
     pub fn set_formulas(
         &self,
