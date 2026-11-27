@@ -70,6 +70,7 @@ __all__ = [
     "Workbook",
     "WorkbookConfig",
     "WorkbookMode",
+    "WriteRangeReport",
     "XlsxPathSource",
     "load_workbook",
     "load_workbook_bytes",
@@ -1172,9 +1173,39 @@ class Sheet:
         r"""
         Get a single cell's stored data (no evaluation)
         """
-    def set_values_batch(self, start_row: builtins.int, start_col: builtins.int, rows: builtins.int, _cols: builtins.int, data: list) -> None:
+    def set_values(self, start_row: builtins.int, start_col: builtins.int, rows: typing.Any) -> WriteRangeReport:
         r"""
-        Batch set values into a rectangle
+        Write a dense, row-major 2D sequence of values starting at 1-based `(start_row, start_col)`.
+        
+        Ragged rows are supported without overwriting trailing cells past each row's length.
+        Returns a [`WriteRangeReport`] describing the written bounds and whether undo history
+        was cleared.
+        """
+    def set_columns(self, start_row: builtins.int, start_col: builtins.int, data: typing.Any, *, headers: builtins.bool = False) -> WriteRangeReport:
+        r"""
+        Write dense, column-major data starting at 1-based `(start_row, start_col)`.
+        
+        Accepts:
+        - Any Arrow PyCapsule producer implementing `__arrow_c_stream__` or `__arrow_c_array__`
+          (Polars, PyArrow, DuckDB, Nanoarrow, pandas when `pyarrow` is installed).
+        - A mapping of column names to columns (`dict[str, column]`).
+        - A sequence of columns, where each column is a 1D buffer-protocol array (`array.array`,
+          `memoryview`, NumPy `ndarray`), an Arrow array, or a Python sequence.
+        
+        When `headers=True`, schema or mapping column names are written into `start_row`
+        and data starts on `start_row + 1`.
+        """
+    def set_cells(self, cells: typing.Any) -> WriteRangeReport:
+        r"""
+        Write sparse cell patches on this sheet.
+        
+        Accepts either an iterable of 1-based `(row, col, value)` triples or a mapping
+        `{(row, col): value}`. Duplicate coordinates resolve deterministically in
+        last-write-wins order.
+        """
+    def set_values_batch(self, start_row: builtins.int, start_col: builtins.int, rows: builtins.int, _cols: builtins.int, data: list) -> WriteRangeReport:
+        r"""
+        Deprecated alias for [`Sheet.set_values`].
         """
     def set_formulas_batch(self, start_row: builtins.int, start_col: builtins.int, rows: builtins.int, _cols: builtins.int, formulas: list) -> None:
         r"""
@@ -1848,11 +1879,8 @@ class Workbook:
         flag and never take the lock.
         
         Every other method (`get_value`, `set_value`, `sheet_names`,
-        `evaluate_cell`, `to_xlsx_bytes`, `Sheet.get_cell`, ...) now raises
+        `evaluate_cell`, `to_xlsx_bytes`, `Sheet.get_cell`, ...) raises
         `RuntimeError` when called from a callback rather than hanging forever.
-        `get_value` may still return from the compatibility cache without
-        raising, but that is a cache hit, not a supported operation — do not
-        rely on it.
         
         A callback *may* use a different `Workbook` instance, and may of course
         use any non-formualizer Python state.
@@ -2077,7 +2105,40 @@ class Workbook:
         Raises `RuntimeError` if changelog recording is disabled and no explicit
         action journal is present.
         """
-    def set_values_batch(self, sheet: builtins.str, start_row: builtins.int, start_col: builtins.int, data: list) -> None: ...
+    def set_values(self, sheet: builtins.str, start_row: builtins.int, start_col: builtins.int, rows: typing.Any) -> WriteRangeReport:
+        r"""
+        Write a dense, row-major 2D sequence of values starting at 1-based `(start_row, start_col)`.
+        
+        Ragged rows are supported without overwriting trailing cells past each row's length.
+        Returns a [`WriteRangeReport`] with the written bounds and whether undo history was cleared.
+        """
+    def set_columns(self, sheet: builtins.str, start_row: builtins.int, start_col: builtins.int, data: typing.Any, *, headers: builtins.bool = False) -> WriteRangeReport:
+        r"""
+        Write dense, column-major data starting at 1-based `(start_row, start_col)`.
+        
+        Accepts:
+        - Any Arrow PyCapsule producer implementing `__arrow_c_stream__` or `__arrow_c_array__`
+          (Polars, PyArrow, DuckDB, Nanoarrow, pandas when `pyarrow` is installed).
+        - A mapping of column names to columns (`dict[str, column]`).
+        - A sequence of columns, where each column is a 1D buffer-protocol array (`array.array`,
+          `memoryview`, NumPy `ndarray`), an Arrow array, or a Python sequence.
+        
+        Arrow streams are drained and converted into engine-owned column buffers before the
+        workbook write lock is acquired. When `headers=True`, schema or mapping column names
+        are written into `start_row` and data starts on `start_row + 1`.
+        """
+    def set_cells(self, sheet: builtins.str, cells: typing.Any) -> WriteRangeReport:
+        r"""
+        Write sparse cell patches onto `sheet`.
+        
+        Accepts either an iterable of 1-based `(row, col, value)` triples or a mapping
+        `{(row, col): value}`. Duplicate coordinates resolve deterministically in
+        last-write-wins order.
+        """
+    def set_values_batch(self, sheet: builtins.str, start_row: builtins.int, start_col: builtins.int, data: list) -> WriteRangeReport:
+        r"""
+        Deprecated alias for [`Workbook.set_values`].
+        """
     def set_formulas_batch(self, sheet: builtins.str, start_row: builtins.int, start_col: builtins.int, formulas: list) -> None: ...
     def __getitem__(self, name: builtins.str, /) -> Sheet:
         r"""
@@ -2105,6 +2166,27 @@ class WorkbookConfig:
     """
     def __new__(cls, *, mode: WorkbookMode = ..., eval_config: typing.Optional[EvaluationConfig] = None, enable_changelog: typing.Optional[builtins.bool] = None, span_evaluation: typing.Optional[builtins.bool] = None) -> WorkbookConfig: ...
     def __repr__(self) -> builtins.str: ...
+
+@typing.final
+class WriteRangeReport:
+    r"""
+    Summary returned by bulk cell-write operations (`set_values`, `set_columns`, `set_cells`).
+    
+    Coordinates are 1-based inclusive bounds of the written cells. When an
+    operation writes zero cells, all four coordinate fields are `0`.
+    """
+    @property
+    def start_row(self) -> builtins.int: ...
+    @property
+    def start_col(self) -> builtins.int: ...
+    @property
+    def end_row(self) -> builtins.int: ...
+    @property
+    def end_col(self) -> builtins.int: ...
+    @property
+    def history_cleared(self) -> builtins.bool: ...
+    def __repr__(self) -> builtins.str: ...
+    def __eq__(self, other: typing.Any, /) -> builtins.bool: ...
 
 @typing.final
 class FormulaDialect(enum.Enum):

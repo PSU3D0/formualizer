@@ -223,6 +223,7 @@ dependencies = [
  "chrono",
  "half",
  "hashbrown 0.17.0",
+ "libc",
  "num-complex",
  "num-integer",
  "num-traits",
@@ -292,6 +293,9 @@ name = "arrow-schema"
 version = "59.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6fed2ca0d1eade57e811cbe73b98ad50cc08a1183e13b2d2aa43a7df593f40e"
+dependencies = [
+ "bitflags 2.10.0",
+]
 
 [[package]]
 name = "arrow-select"
@@ -1667,6 +1671,8 @@ dependencies = [
 name = "formualizer-python"
 version = "0.15.0"
 dependencies = [
+ "arrow-array",
+ "arrow-schema",
  "chrono",
  "formualizer",
  "formualizer-cli",

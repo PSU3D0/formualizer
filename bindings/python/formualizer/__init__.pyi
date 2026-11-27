@@ -71,6 +71,7 @@ __all__ = [
     "Workbook",
     "WorkbookConfig",
     "WorkbookMode",
+    "WriteRangeReport",
     "XlsxPathSource",
     "load_workbook",
     "load_workbook_bytes",

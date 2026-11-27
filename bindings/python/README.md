@@ -346,7 +346,7 @@ print(collect_function_names(ast))  # ['SUMIFS']
 | **400+ built-in functions** | Math, text, lookup (XLOOKUP, VLOOKUP), date/time, financial, statistics, database, engineering |
 | **Workbook evaluation** | Set values and formulas, evaluate cells/ranges, load XLSX/CSV/JSON |
 | **XLSX cache writeback** | `recalculate_file(path, output=None)` recalculates formulas and writes cached values back |
-| **Batch operations** | `set_values_batch` / `set_formulas_batch` for efficient bulk updates |
+| **Bulk ingest** | `set_values`, `set_columns` (Arrow PyCapsule for Polars/PyArrow/DuckDB/pandas+pyarrow, dicts, NumPy/buffer arrays), and sparse `set_cells` |
 | **Undo / redo** | Optional changelog with automatic action grouping — single edits are individually undoable |
 | **Evaluation planning** | Inspect the dependency graph and evaluation schedule before computing |
 | **SheetPort** | Treat spreadsheets as typed functions: manifests built in code or YAML, schema validation, and batch scenarios |
@@ -409,22 +409,33 @@ Key semantics:
 
 Runnable [custom-function example](https://github.com/psu3d0/formualizer/blob/main/bindings/python/examples/custom_function_registration.py) (from a source checkout: `python bindings/python/examples/custom_function_registration.py`).
 
-## Batch operations
+## Bulk ingest
+
+Write dense grids, typed/Arrow columns, or sparse point patches atomically and inspect the returned `WriteRangeReport`:
 
 ```python
-# Bulk-set values (auto-grouped as one undo step when changelog is enabled)
-s.set_values_batch(
+import array
+
+# 1. Dense row-major values (supports ragged rows; set_values_batch is a deprecated alias)
+rep = s.set_values(1, 1, [[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]])
+
+# 2. Dense column-major values (Arrow PyCapsule, dict[str, col], or sequence of columns)
+# Polars, PyArrow, DuckDB, and Nanoarrow expose Arrow PyCapsules natively;
+# pandas exposes the PyCapsule interface when `pyarrow` is installed.
+rep = s.set_columns(
     1,
     1,
-    3,
-    2,
-    [
-        [fz.LiteralValue.number(10.0), fz.LiteralValue.number(20.0)],
-        [fz.LiteralValue.number(30.0), fz.LiteralValue.number(40.0)],
-        [fz.LiteralValue.number(50.0), fz.LiteralValue.number(60.0)],
-    ],
+    {"price": array.array("d", [10.0, 20.0]), "qty": [2, 3]},
+    headers=True,
 )
+# Also accepts PyArrow Table/RecordBatch/RecordBatchReader or Polars DataFrame directly:
+# s.set_columns(1, 1, df, headers=True)
+
+# 3. Sparse cell patches (iterable of (row, col, value) triples or {(row, col): value} mapping)
+rep = s.set_cells([(1, 1, 100.0), (50, 3, "note")])
 ```
+
+> **Note:** Numeric cells are stored as IEEE-754 `f64` and read back as Python `float`. Integers beyond `±2^53` fail preflight with `ValueError` rather than silently rounding; cast 64-bit IDs explicitly to `str` or `float`.
 
 ## Undo / redo
 

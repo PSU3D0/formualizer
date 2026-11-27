@@ -28,6 +28,7 @@ use pyo3_stub_gen::derive::gen_stub_pyfunction;
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+mod arrow_ingest;
 mod ast;
 #[cfg(not(target_arch = "wasm32"))]
 mod cli;

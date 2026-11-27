@@ -6,7 +6,7 @@ use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
 type PyObject = pyo3::Py<pyo3::PyAny>;
 
 use crate::value::literal_to_py;
-use crate::workbook::{PyCell, PyWorkbook};
+use crate::workbook::{PyCell, PyWorkbook, PyWriteRangeReport};
 use formualizer::workbook::WorksheetHandle;
 
 /// A per-sheet facade for interacting with a [`Workbook`].
@@ -82,40 +82,80 @@ impl PySheet {
             ));
         }
 
-        // `handle` shares the workbook's `RwLock`, so a callback reaching a
-        // Sheet obtained before evaluation deadlocks the same way the workbook
-        // methods do. Fail fast instead.
-        self.workbook.check_reentrancy()?;
-
-        let cached = {
-            let sheets = self.workbook.sheets_read();
-            sheets
-                .get(&self.name)
-                .and_then(|m| m.get(&(row, col)).cloned())
-        };
-
-        if let Some(data) = cached {
-            let value = data
-                .value
-                .clone()
-                .or_else(|| self.handle.get_value(row, col))
-                .unwrap_or(formualizer::common::LiteralValue::Empty);
-            let formula = data
-                .formula
-                .clone()
-                .or_else(|| self.handle.get_formula(row, col));
-            return Ok(PyCell::new(value, formula));
-        }
-
-        let value = self
-            .handle
-            .get_value(row, col)
+        // Read atomically from the engine via `read_inner`, which enforces the
+        // reentrancy check and poison reporting.
+        let wb = self.workbook.read_inner()?;
+        let value = wb
+            .get_value(&self.name, row, col)
             .unwrap_or(formualizer::common::LiteralValue::Empty);
-        let formula = self.handle.get_formula(row, col);
+        let formula = wb.get_formula(&self.name, row, col);
         Ok(PyCell::new(value, formula))
     }
 
-    /// Batch set values into a rectangle
+    /// Write a dense, row-major 2D sequence of values starting at 1-based `(start_row, start_col)`.
+    ///
+    /// Ragged rows are supported without overwriting trailing cells past each row's length.
+    /// Returns a [`WriteRangeReport`] describing the written bounds and whether undo history
+    /// was cleared.
+    pub fn set_values(
+        &self,
+        py: Python<'_>,
+        start_row: u32,
+        start_col: u32,
+        rows: &Bound<'_, PyAny>,
+    ) -> PyResult<PyWriteRangeReport> {
+        if start_row == 0 || start_col == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Row/col are 1-based",
+            ));
+        }
+        self.workbook
+            .set_values(py, &self.name, start_row, start_col, rows)
+    }
+
+    /// Write dense, column-major data starting at 1-based `(start_row, start_col)`.
+    ///
+    /// Accepts:
+    /// - Any Arrow PyCapsule producer implementing `__arrow_c_stream__` or `__arrow_c_array__`
+    ///   (Polars, PyArrow, DuckDB, Nanoarrow, pandas when `pyarrow` is installed).
+    /// - A mapping of column names to columns (`dict[str, column]`).
+    /// - A sequence of columns, where each column is a 1D buffer-protocol array (`array.array`,
+    ///   `memoryview`, NumPy `ndarray`), an Arrow array, or a Python sequence.
+    ///
+    /// When `headers=True`, schema or mapping column names are written into `start_row`
+    /// and data starts on `start_row + 1`.
+    #[pyo3(signature = (start_row, start_col, data, *, headers = false))]
+    pub fn set_columns(
+        &self,
+        py: Python<'_>,
+        start_row: u32,
+        start_col: u32,
+        data: &Bound<'_, PyAny>,
+        headers: bool,
+    ) -> PyResult<PyWriteRangeReport> {
+        if start_row == 0 || start_col == 0 {
+            return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "Row/col are 1-based",
+            ));
+        }
+        self.workbook
+            .set_columns(py, &self.name, start_row, start_col, data, headers)
+    }
+
+    /// Write sparse cell patches on this sheet.
+    ///
+    /// Accepts either an iterable of 1-based `(row, col, value)` triples or a mapping
+    /// `{(row, col): value}`. Duplicate coordinates resolve deterministically in
+    /// last-write-wins order.
+    pub fn set_cells(
+        &self,
+        py: Python<'_>,
+        cells: &Bound<'_, PyAny>,
+    ) -> PyResult<PyWriteRangeReport> {
+        self.workbook.set_cells(py, &self.name, cells)
+    }
+
+    /// Deprecated alias for [`Sheet.set_values`].
     pub fn set_values_batch(
         &self,
         py: Python<'_>,
@@ -124,7 +164,7 @@ impl PySheet {
         rows: u32,
         _cols: u32,
         data: &Bound<'_, PyList>,
-    ) -> PyResult<()> {
+    ) -> PyResult<PyWriteRangeReport> {
         if start_row == 0 || start_col == 0 {
             return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
                 "Row/col are 1-based",
@@ -139,8 +179,14 @@ impl PySheet {
             )));
         }
 
+        PyErr::warn(
+            py,
+            &py.get_type::<pyo3::exceptions::PyDeprecationWarning>(),
+            c"Sheet.set_values_batch is deprecated; use Sheet.set_values instead",
+            1,
+        )?;
         self.workbook
-            .set_values_batch(py, &self.name, start_row, start_col, data)
+            .set_values(py, &self.name, start_row, start_col, data.as_any())
     }
 
     /// Batch set formulas into a rectangle
@@ -167,7 +213,7 @@ impl PySheet {
             )));
         }
 
-        // Delegate to workbook batch API (handles cache)
+        // Delegate to workbook batch API
         self.workbook
             .set_formulas_batch(&self.name, start_row, start_col, formulas)
     }

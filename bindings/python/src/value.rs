@@ -5,6 +5,7 @@ use pyo3::conversion::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{
     PyAny, PyBool, PyDate, PyDateTime, PyDelta, PyDict, PyFloat, PyInt, PyList, PyString, PyTime,
+    PyTuple,
 };
 #[cfg(not(target_os = "emscripten"))]
 use pyo3_stub_gen::derive::{gen_stub_pyclass, gen_stub_pymethods};
@@ -912,8 +913,194 @@ pub(crate) fn py_to_literal(value: &Bound<'_, PyAny>) -> PyResult<LiteralValue> 
     ))
 }
 
+/// Maximum magnitude of an exact IEEE-754 `f64` integer (`2^53`).
+pub(crate) const MAX_SAFE_F64_INT: i64 = 1_i64 << 53;
+
+/// Extract a Python `int` and reject values outside `±2^53` so 64-bit IDs are
+/// never silently rounded when stored in Arrow `f64` lanes.
+pub(crate) fn check_safe_py_int(
+    value: &Bound<'_, PyInt>,
+    col_context: Option<&str>,
+) -> PyResult<i64> {
+    let format_err = |raw: String| -> PyErr {
+        let prefix = col_context
+            .map(|c| format!("Column '{c}': "))
+            .unwrap_or_default();
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "{prefix}integer {raw} exceeds exact f64 range (±2^53); cast explicitly to text or float"
+        ))
+    };
+    let v = match value.extract::<i64>() {
+        Ok(v) => v,
+        Err(_) => {
+            let repr = value
+                .str()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "<int>".to_string());
+            return Err(format_err(repr));
+        }
+    };
+    if !(-MAX_SAFE_F64_INT..=MAX_SAFE_F64_INT).contains(&v) {
+        return Err(format_err(v.to_string()));
+    }
+    Ok(v)
+}
+
+/// Convert a Python object to a scalar cell [`LiteralValue`] suitable for cell
+/// storage (`set_value`, `set_values`, `set_columns`, `set_cells`).
+///
+/// Enforces the `v0.16.0` cell value contract:
+/// - Rejects arrays (`list`, `tuple`, `LiteralValue.array(...)`, `{"type": "array", ...}`)
+///   with `ValueError("Cannot store an array in a single cell; use set_values")`.
+/// - Rejects integers outside `±2^53` with `ValueError` (naming the column when present).
+/// - Coerces `NaN` / `±Inf` to `#NUM!`.
+pub(crate) fn py_to_cell_literal(
+    value: &Bound<'_, PyAny>,
+    col_context: Option<&str>,
+) -> PyResult<LiteralValue> {
+    let array_err = || -> PyErr {
+        let prefix = col_context
+            .map(|c| format!("Column '{c}': "))
+            .unwrap_or_default();
+        PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+            "{prefix}Cannot store an array in a single cell; use set_values"
+        ))
+    };
+
+    if let Ok(py_literal) = value.extract::<PyRef<'_, PyLiteralValue>>() {
+        return match &py_literal.inner {
+            LiteralValue::Array(_) => Err(array_err()),
+            LiteralValue::Int(v) if !(-MAX_SAFE_F64_INT..=MAX_SAFE_F64_INT).contains(v) => {
+                let prefix = col_context
+                    .map(|c| format!("Column '{c}': "))
+                    .unwrap_or_default();
+                Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "{prefix}integer {v} exceeds exact f64 range (±2^53); cast explicitly to text or float"
+                )))
+            }
+            other => Ok(other.clone().finite_or_num_error()),
+        };
+    }
+    if value.is_none() {
+        return Ok(LiteralValue::Empty);
+    }
+    if value.is_instance_of::<PyBool>() {
+        return Ok(LiteralValue::Boolean(value.extract::<bool>()?));
+    }
+    if let Ok(py_int) = value.cast::<PyInt>() {
+        return Ok(LiteralValue::Int(check_safe_py_int(py_int, col_context)?));
+    }
+    if value.is_instance_of::<PyFloat>() {
+        return Ok(LiteralValue::Number(value.extract::<f64>()?).finite_or_num_error());
+    }
+    if value.is_instance_of::<PyString>() {
+        return Ok(LiteralValue::Text(value.extract::<String>()?));
+    }
+    if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
+        return Err(array_err());
+    }
+    let lit = py_to_literal(value)?;
+    if matches!(lit, LiteralValue::Array(_)) {
+        return Err(array_err());
+    }
+    Ok(lit.finite_or_num_error())
+}
+
 /// Register the value module with Python
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLiteralValue>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_context_roundtrips_at_literal_conversion_layer() {
+        Python::initialize();
+        Python::attach(|py| {
+            let dict = PyDict::new(py);
+            dict.set_item("type", "Error").unwrap();
+            dict.set_item("kind", "Div").unwrap();
+            dict.set_item("message", "boom").unwrap();
+            dict.set_item("row", 5u32).unwrap();
+            dict.set_item("col", 7u32).unwrap();
+            dict.set_item("sheet", "Sheet1").unwrap();
+
+            let lit = py_to_literal(dict.as_any()).unwrap();
+            let out_obj = literal_to_py(py, &lit).unwrap();
+            let out = out_obj.bind(py).cast::<PyDict>().unwrap();
+            assert_eq!(
+                out.get_item("type")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "Error"
+            );
+            assert_eq!(
+                out.get_item("kind")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "Div"
+            );
+            assert_eq!(
+                out.get_item("message")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "boom"
+            );
+            assert_eq!(
+                out.get_item("row")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<u32>()
+                    .unwrap(),
+                5
+            );
+            assert_eq!(
+                out.get_item("col")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<u32>()
+                    .unwrap(),
+                7
+            );
+            assert_eq!(
+                out.get_item("sheet")
+                    .unwrap()
+                    .unwrap()
+                    .extract::<String>()
+                    .unwrap(),
+                "Sheet1"
+            );
+        });
+    }
+
+    #[test]
+    fn py_to_cell_literal_rejects_arrays_and_unsafe_ints() {
+        Python::initialize();
+        Python::attach(|py| {
+            let arr = PyList::new(py, [vec![1, 2], vec![3, 4]]).unwrap();
+            let err = py_to_cell_literal(arr.as_any(), None).unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(err.to_string().contains("use set_values"));
+
+            let unsafe_int = (MAX_SAFE_F64_INT + 1).into_pyobject(py).unwrap();
+            let err = py_to_cell_literal(unsafe_int.as_any(), Some("id")).unwrap_err();
+            assert!(err.is_instance_of::<pyo3::exceptions::PyValueError>(py));
+            assert!(err.to_string().contains("Column 'id'"));
+
+            let safe_int = MAX_SAFE_F64_INT.into_pyobject(py).unwrap();
+            assert_eq!(
+                py_to_cell_literal(safe_int.as_any(), Some("id")).unwrap(),
+                LiteralValue::Int(MAX_SAFE_F64_INT)
+            );
+        });
+    }
 }
