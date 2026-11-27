@@ -444,7 +444,7 @@ mod tests {
     fn rust_function_panic_is_visible_on_all_python_error_surfaces() {
         Python::initialize();
         Python::attach(|py| {
-            let wb = PyWorkbook::new(None, None, None).unwrap();
+            let wb = PyWorkbook::new(None, None, None, None).unwrap();
             {
                 let mut inner = wb.write_inner().unwrap();
                 inner.add_sheet("S").unwrap();
@@ -519,7 +519,7 @@ mod tests {
     #[test]
     fn poisoned_lock_remains_unusable_for_jobs_and_existing_calls() {
         Python::initialize();
-        let wb = PyWorkbook::new(None, None, None).unwrap();
+        let wb = PyWorkbook::new(None, None, None, None).unwrap();
         let cloned = wb.clone();
         assert!(
             std::thread::spawn(move || {

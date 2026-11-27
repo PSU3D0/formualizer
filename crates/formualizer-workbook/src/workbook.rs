@@ -1116,6 +1116,22 @@ fn finite_cell_values(cells: &mut BTreeMap<(u32, u32), crate::traits::CellData>)
     }
 }
 
+/// Cached external workbook sheets (`[N]Sheet`) are read-only snapshots of
+/// linked workbooks and must not be mutated through any cell write path.
+fn reject_cached_external_sheet(sheet: &str) -> Result<(), IoError> {
+    if sheet
+        .strip_prefix('[')
+        .and_then(|s| s.split_once(']'))
+        .is_some_and(|(index, _)| !index.is_empty() && index.bytes().all(|c| c.is_ascii_digit()))
+    {
+        return Err(IoError::Engine(
+            ExcelError::new(ExcelErrorKind::Ref)
+                .with_message("Cached external workbook values are read-only"),
+        ));
+    }
+    Ok(())
+}
+
 /// Validate a 1-based Excel cell coordinate (`1..=1_048_576`, `1..=16_384`),
 /// routing through `RelativeCoord::try_new` so row/col `0` and out-of-grid
 /// coordinates return `Err(IoError)` instead of panicking or mapping `0` to `A1`.
@@ -1220,6 +1236,7 @@ impl WorkbookAction<'_> {
         value: LiteralValue,
     ) -> Result<(), IoError> {
         validate_excel_coord(sheet, row, col)?;
+        reject_cached_external_sheet(sheet)?;
         self.ops
             .set_value(sheet, row, col, value.finite_or_num_error())
     }
@@ -1233,6 +1250,7 @@ impl WorkbookAction<'_> {
         formula: &str,
     ) -> Result<(), IoError> {
         validate_excel_coord(sheet, row, col)?;
+        reject_cached_external_sheet(sheet)?;
         self.ops.set_formula(sheet, row, col, formula)
     }
 
@@ -1245,6 +1263,7 @@ impl WorkbookAction<'_> {
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
+        reject_cached_external_sheet(sheet)?;
         let rows = finite_rows(rows);
         self.ops.set_values(sheet, start_row, start_col, &rows)
     }
@@ -1259,6 +1278,7 @@ impl WorkbookAction<'_> {
         for &(r, c) in cells.keys() {
             validate_excel_coord(sheet, r, c)?;
         }
+        reject_cached_external_sheet(sheet)?;
         finite_cell_values(&mut cells);
         self.ops.write_range(sheet, start, cells)
     }
@@ -1319,6 +1339,11 @@ impl WorkbookConfig {
             enable_changelog: true,
             ingest_limits: formualizer_eval::engine::WorkbookLoadLimits::default(),
         }
+    }
+
+    pub fn with_changelog(mut self, enabled: bool) -> Self {
+        self.enable_changelog = enabled;
+        self
     }
 
     pub fn with_history_limit(mut self, limit: Option<usize>) -> Self {
@@ -1880,9 +1905,78 @@ impl Workbook {
     }
 
     // Changelog controls
+    pub fn changelog_enabled(&self) -> bool {
+        self.enable_changelog
+    }
+
+    /// Whether [`Workbook::undo`] currently has an intact action/change to revert.
+    pub fn can_undo(&self) -> bool {
+        if self.enable_changelog {
+            !self.log.is_empty() && !self.log.last_group_indices().is_empty()
+        } else {
+            self.undo.actions_done_len() > 0
+        }
+    }
+
+    /// Whether [`Workbook::redo`] currently has an undone action/change to replay.
+    pub fn can_redo(&self) -> bool {
+        if self.enable_changelog {
+            self.undo.undone_len() > 0
+        } else {
+            self.undo.actions_undone_len() > 0
+        }
+    }
+
     pub fn set_changelog_enabled(&mut self, enabled: bool) {
+        while self.log.compound_depth() > 0 {
+            self.log.end_compound();
+        }
+        self.spill_action_history.cells.clear();
+        if !enabled {
+            self.clear_logged_history_if_non_empty();
+        }
         self.enable_changelog = enabled;
         self.log.set_enabled(enabled);
+    }
+
+    #[inline]
+    fn clear_action_history_if_non_empty(&mut self) {
+        if self.undo.actions_done_len() == 0 && self.undo.actions_undone_len() == 0 {
+            return;
+        }
+        while self.undo.pop_undo_action().is_some() {}
+        while self.undo.pop_redo_action().is_some() {}
+    }
+
+    #[inline]
+    fn on_forward_logged_mutation(&mut self) {
+        if self.undo.undone_len() > 0 {
+            self.undo.clear_logged_redo();
+        }
+        self.clear_action_history_if_non_empty();
+    }
+
+    #[inline]
+    fn clear_logged_history_if_non_empty(&mut self) {
+        if self.log.is_empty()
+            && self.undo.undone_len() == 0
+            && self.log.compound_depth() == 0
+            && self.spill_action_history.cells.is_empty()
+        {
+            return;
+        }
+        self.log.clear();
+        self.undo.clear_logged_redo();
+        self.spill_action_history.cells.clear();
+    }
+
+    /// Enforce the contiguous-history invariant: any unjournaled mutation clears
+    /// both logged undo/redo and action-journal stacks. Fast-path emptiness
+    /// checks keep the hot path free when no history is present.
+    #[inline]
+    fn invalidate_history_for_unjournaled_mutation(&mut self) {
+        self.clear_logged_history_if_non_empty();
+        self.clear_action_history_if_non_empty();
     }
 
     /// Maximum number of retained changelog events and undo/redo actions (`None` = unbounded).
@@ -2155,10 +2249,12 @@ impl Workbook {
             if let Some(e) = user_err {
                 return Err(e);
             }
-            return res.map_err(|e| match e {
+            let out = res.map_err(|e| match e {
                 formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
                 other => IoError::from_backend("editor", other),
-            });
+            })?;
+            self.on_forward_logged_mutation();
+            return Ok(out);
         }
 
         let res = self.engine.action_atomic_journal(name.to_string(), |tx| {
@@ -2317,6 +2413,7 @@ impl Workbook {
             formualizer_eval::engine::EditorError::Excel(excel) => IoError::Engine(excel),
             other => IoError::from_backend("editor", other),
         })?;
+        self.clear_logged_history_if_non_empty();
         self.undo.push_action(journal);
         Ok(v)
     }
@@ -2393,16 +2490,66 @@ impl Workbook {
             .sheet_mut(sheet)
             .expect("ArrowSheet must exist");
 
-        // Ensure rows first so nrows is set before inserting columns
+        // Ensure rows first so nrows/chunk_starts are updated before extending columns.
         if min_rows > asheet.nrows as usize {
             asheet.ensure_row_capacity(min_rows);
         }
 
-        // Then ensure columns - they will get properly sized chunks since nrows is set
+        // Extend columns lazily (no dense empty chunks allocated for untouched columns, B5).
         let cur_cols = asheet.columns.len();
         if min_cols > cur_cols {
-            asheet.insert_columns(cur_cols, min_cols - cur_cols);
+            asheet.columns.extend((cur_cols..min_cols).map(|idx| {
+                formualizer_eval::arrow_store::ArrowColumn {
+                    chunks: Vec::new(),
+                    sparse_chunks: rustc_hash::FxHashMap::default(),
+                    index: idx as u32,
+                }
+            }));
         }
+    }
+
+    fn enforce_write_limits(
+        &self,
+        sheet: &str,
+        max_row: u32,
+        max_col: u32,
+        written_cells: usize,
+    ) -> Result<(), IoError> {
+        if max_row == 0 || max_col == 0 {
+            return Ok(());
+        }
+        let (cur_rows, cur_cols) = self.sheet_dimensions(sheet).unwrap_or((0, 0));
+        let target_rows = cur_rows.max(max_row);
+        let target_cols = cur_cols.max(max_col);
+        let limits = self.engine.workbook_load_limits();
+        if target_rows > limits.max_sheet_rows {
+            return Err(IoError::Backend {
+                backend: "workbook".to_string(),
+                message: format!(
+                    "write extends sheet {sheet} to {target_rows} rows, which exceeds the configured write row budget of {}",
+                    limits.max_sheet_rows
+                ),
+            });
+        }
+        if target_cols > limits.max_sheet_cols {
+            return Err(IoError::Backend {
+                backend: "workbook".to_string(),
+                message: format!(
+                    "write extends sheet {sheet} to {target_cols} columns, which exceeds the configured write column budget of {}",
+                    limits.max_sheet_cols
+                ),
+            });
+        }
+        if written_cells as u64 > limits.max_sheet_logical_cells {
+            return Err(IoError::Backend {
+                backend: "workbook".to_string(),
+                message: format!(
+                    "write batch of {written_cells} cells on sheet {sheet} exceeds the configured write cell budget of {}",
+                    limits.max_sheet_logical_cells
+                ),
+            });
+        }
+        Ok(())
     }
 
     fn mirror_value_to_overlay(&mut self, sheet: &str, row: u32, col: u32, value: &LiteralValue) {
@@ -2504,6 +2651,7 @@ impl Workbook {
     }
     pub fn duplicate_sheet(&mut self, source: &str, new_name: &str) -> Result<(), ExcelError> {
         self.engine.duplicate_sheet(source, new_name)?;
+        self.invalidate_history_for_unjournaled_mutation();
         Ok(())
     }
     pub fn delete_sheet(&mut self, name: &str) -> Result<(), ExcelError> {
@@ -2516,6 +2664,7 @@ impl Workbook {
             .sheet_store_mut()
             .sheets
             .retain(|s| s.name.as_ref() != name);
+        self.invalidate_history_for_unjournaled_mutation();
         Ok(())
     }
     /// Give the workbook the path `CELL("filename")` reports, as
@@ -2533,6 +2682,7 @@ impl Workbook {
         if let Some(asheet) = self.engine.sheet_store_mut().sheet_mut(old) {
             asheet.name = std::sync::Arc::<str>::from(new);
         }
+        self.invalidate_history_for_unjournaled_mutation();
         Ok(())
     }
 
@@ -2548,21 +2698,13 @@ impl Workbook {
         // No cell holds NaN or an infinity: store them as #NUM!, as the
         // loaders do.
         let value = value.finite_or_num_error();
-        if sheet
-            .strip_prefix('[')
-            .and_then(|s| s.split_once(']'))
-            .is_some_and(|(index, _)| {
-                !index.is_empty() && index.bytes().all(|c| c.is_ascii_digit())
-            })
-        {
-            return Err(IoError::Engine(
-                ExcelError::new(ExcelErrorKind::Ref)
-                    .with_message("Cached external workbook values are read-only"),
-            ));
-        }
+        reject_cached_external_sheet(sheet)?;
+        self.enforce_write_limits(sheet, row, col, 1)?;
         #[cfg(feature = "xlsx-recalc")]
-        self.refused_external_formulas
-            .remove(&(sheet.to_string(), row, col));
+        if !self.refused_external_formulas.is_empty() {
+            self.refused_external_formulas
+                .remove(&(sheet.to_string(), row, col));
+        }
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
@@ -2600,6 +2742,7 @@ impl Workbook {
             if let Some(before) = staged_before {
                 self.record_staged_formula_cell_change(sheet, row, col, before, None);
             }
+            self.on_forward_logged_mutation();
             self.engine.mark_data_edited();
             Ok(())
         } else {
@@ -2607,6 +2750,7 @@ impl Workbook {
                 .set_cell_value(sheet, row, col, value)
                 .map_err(IoError::Engine)?;
             self.engine.clear_staged_formula_text(sheet, row, col);
+            self.invalidate_history_for_unjournaled_mutation();
             Ok(())
         }
     }
@@ -2670,9 +2814,13 @@ impl Workbook {
         formula: &str,
     ) -> Result<(), IoError> {
         let coord = validate_excel_coord(sheet, row, col)?;
+        reject_cached_external_sheet(sheet)?;
+        self.enforce_write_limits(sheet, row, col, 1)?;
         #[cfg(feature = "xlsx-recalc")]
-        self.refused_external_formulas
-            .remove(&(sheet.to_string(), row, col));
+        if !self.refused_external_formulas.is_empty() {
+            self.refused_external_formulas
+                .remove(&(sheet.to_string(), row, col));
+        }
         self.ensure_arrow_sheet_capacity(sheet, row as usize, col as usize);
         let staged_before = self
             .enable_changelog
@@ -2715,6 +2863,7 @@ impl Workbook {
                     if let Some(before) = staged_before {
                         self.record_staged_formula_cell_change(sheet, row, col, before, None);
                     }
+                    self.on_forward_logged_mutation();
                     self.engine.mark_data_edited();
                     Ok(())
                 } else {
@@ -2722,6 +2871,7 @@ impl Workbook {
                         .set_cell_formula(sheet, row, col, ast)
                         .map_err(IoError::Engine)?;
                     self.engine.clear_staged_formula_text(sheet, row, col);
+                    self.invalidate_history_for_unjournaled_mutation();
                     Ok(())
                 }
             } else {
@@ -2730,6 +2880,9 @@ impl Workbook {
                 if let Some(before) = staged_before {
                     let after = self.staged_formula_cell(sheet, row, col);
                     self.record_staged_formula_cell_change(sheet, row, col, before, after);
+                    self.on_forward_logged_mutation();
+                } else {
+                    self.invalidate_history_for_unjournaled_mutation();
                 }
                 Ok(())
             }
@@ -2758,6 +2911,7 @@ impl Workbook {
                 if let Some(before) = staged_before {
                     self.record_staged_formula_cell_change(sheet, row, col, before, None);
                 }
+                self.on_forward_logged_mutation();
                 self.engine.mark_data_edited();
                 Ok(())
             } else {
@@ -2765,15 +2919,22 @@ impl Workbook {
                     .set_cell_formula(sheet, row, col, ast)
                     .map_err(IoError::Engine)?;
                 self.engine.clear_staged_formula_text(sheet, row, col);
+                self.invalidate_history_for_unjournaled_mutation();
                 Ok(())
             }
         }
     }
 
     pub fn set_row_hidden(&mut self, sheet: &str, row: u32, hidden: bool) -> Result<(), IoError> {
-        self.engine
-            .set_row_hidden(sheet, row, hidden, RowVisibilitySource::Manual)
-            .map_err(|e| IoError::from_backend("editor", e))
+        if self.enable_changelog {
+            self.action("set_row_hidden", |tx| tx.set_row_hidden(sheet, row, hidden))
+        } else {
+            self.engine
+                .set_row_hidden(sheet, row, hidden, RowVisibilitySource::Manual)
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
+        }
     }
 
     pub fn set_rows_hidden(
@@ -2783,15 +2944,23 @@ impl Workbook {
         end_row: u32,
         hidden: bool,
     ) -> Result<(), IoError> {
-        self.engine
-            .set_rows_hidden(
-                sheet,
-                start_row,
-                end_row,
-                hidden,
-                RowVisibilitySource::Manual,
-            )
-            .map_err(|e| IoError::from_backend("editor", e))
+        if self.enable_changelog {
+            self.action("set_rows_hidden", |tx| {
+                tx.set_rows_hidden(sheet, start_row, end_row, hidden)
+            })
+        } else {
+            self.engine
+                .set_rows_hidden(
+                    sheet,
+                    start_row,
+                    end_row,
+                    hidden,
+                    RowVisibilitySource::Manual,
+                )
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
+        }
     }
 
     pub fn is_row_hidden(&self, sheet: &str, row: u32) -> Result<bool, IoError> {
@@ -2847,6 +3016,12 @@ impl Workbook {
         for &(r, c) in cells.keys() {
             validate_excel_coord(sheet, r, c)?;
         }
+        reject_cached_external_sheet(sheet)?;
+        if !cells.is_empty() {
+            let max_row = cells.keys().map(|&(r, _)| r).max().unwrap_or(0);
+            let max_col = cells.keys().map(|&(_, c)| c).max().unwrap_or(0);
+            self.enforce_write_limits(sheet, max_row, max_col, cells.len())?;
+        }
         finite_cell_values(&mut cells);
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
@@ -2867,6 +3042,15 @@ impl Workbook {
         _start: (u32, u32),
         cells: BTreeMap<(u32, u32), crate::traits::CellData>,
     ) -> Result<(), IoError> {
+        #[cfg(feature = "xlsx-recalc")]
+        if !self.refused_external_formulas.is_empty() {
+            for (&(r, c), d) in &cells {
+                if d.value.is_some() || d.formula.is_some() {
+                    self.refused_external_formulas
+                        .remove(&(sheet.to_string(), r, c));
+                }
+            }
+        }
         if self.enable_changelog {
             let sheet_id = self
                 .engine
@@ -2906,6 +3090,12 @@ impl Workbook {
 
             let mut overlay_ops: Vec<(u32, u32, LiteralValue)> = Vec::new();
             let mut staged_forms: Vec<(u32, u32, String)> = Vec::new();
+
+            // Clear logged redo and any prior action-journal stacks before the first
+            // logged write so a partial failure cannot leave stale history behind (B4).
+            if !items.is_empty() {
+                self.on_forward_logged_mutation();
+            }
 
             self.engine
                 .edit_with_logger(&mut self.log, |editor| -> Result<(), IoError> {
@@ -2991,6 +3181,11 @@ impl Workbook {
             self.engine.mark_data_edited();
             Ok(())
         } else {
+            // Invalidate before the first write so a mid-batch `?` error after a
+            // committed prefix cannot leave stale undo/redo stacks intact (B4).
+            if !cells.is_empty() {
+                self.invalidate_history_for_unjournaled_mutation();
+            }
             for ((r, c), d) in cells.into_iter() {
                 if let Some(v) = d.value.clone() {
                     self.engine
@@ -3032,6 +3227,16 @@ impl Workbook {
         rows: &[Vec<LiteralValue>],
     ) -> Result<(), IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
+        reject_cached_external_sheet(sheet)?;
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
+            && width > 0
+        {
+            let end_row = start_row.saturating_add(last_row_idx as u32);
+            let end_col = start_col.saturating_add((width - 1) as u32);
+            let written_cells: usize = rows.iter().map(Vec::len).sum();
+            self.enforce_write_limits(sheet, end_row, end_col, written_cells)?;
+        }
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
@@ -3067,6 +3272,18 @@ impl Workbook {
             let end_row = start_row.saturating_add(last_row_idx as u32);
             let end_col = start_col.saturating_add((width - 1) as u32);
             self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
+        }
+
+        #[cfg(feature = "xlsx-recalc")]
+        if !self.refused_external_formulas.is_empty() {
+            for (ri, rvals) in rows.iter().enumerate() {
+                let r = start_row + ri as u32;
+                for ci in 0..rvals.len() {
+                    let c = start_col + ci as u32;
+                    self.refused_external_formulas
+                        .remove(&(sheet.to_string(), r, c));
+                }
+            }
         }
 
         if self.enable_changelog {
@@ -3111,6 +3328,9 @@ impl Workbook {
                 }
             }
 
+            if !items.is_empty() {
+                self.on_forward_logged_mutation();
+            }
             self.engine
                 .edit_with_logger(&mut self.log, |editor| {
                     for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
@@ -3138,6 +3358,11 @@ impl Workbook {
             self.engine.mark_data_edited();
             Ok(())
         } else {
+            // Invalidate before the first write so a mid-batch `?` error after a
+            // committed prefix cannot leave stale undo/redo stacks intact (B4).
+            if rows.iter().any(|r| !r.is_empty()) {
+                self.invalidate_history_for_unjournaled_mutation();
+            }
             for (ri, rvals) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, v) in rvals.iter().enumerate() {
@@ -3163,6 +3388,16 @@ impl Workbook {
         rows: &[Vec<String>],
     ) -> Result<(), IoError> {
         validate_excel_block(sheet, start_row, start_col, rows)?;
+        reject_cached_external_sheet(sheet)?;
+        let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+        if let Some(last_row_idx) = rows.iter().rposition(|r| !r.is_empty())
+            && width > 0
+        {
+            let end_row = start_row.saturating_add(last_row_idx as u32);
+            let end_col = start_col.saturating_add((width - 1) as u32);
+            let written_cells: usize = rows.iter().map(Vec::len).sum();
+            self.enforce_write_limits(sheet, end_row, end_col, written_cells)?;
+        }
         // Deferred-dirty scope: one multi-source propagation for the whole
         // batch instead of a full BFS per cell (see Engine::begin_deferred_dirty).
         // The unconditional end_deferred_dirty below flushes on every exit
@@ -3196,6 +3431,18 @@ impl Workbook {
             self.ensure_arrow_sheet_capacity(sheet, end_row as usize, end_col as usize);
         }
 
+        #[cfg(feature = "xlsx-recalc")]
+        if !self.refused_external_formulas.is_empty() {
+            for (ri, rforms) in rows.iter().enumerate() {
+                let r = start_row + ri as u32;
+                for ci in 0..rforms.len() {
+                    let c = start_col + ci as u32;
+                    self.refused_external_formulas
+                        .remove(&(sheet.to_string(), r, c));
+                }
+            }
+        }
+
         let needs_graph_edit = rows.iter().enumerate().any(|(ri, forms)| {
             forms.iter().enumerate().any(|(ci, _)| {
                 self.formula_needs_graph_edit(sheet, start_row + ri as u32, start_col + ci as u32)
@@ -3204,6 +3451,7 @@ impl Workbook {
         if self.engine.config.defer_graph_building && !needs_graph_edit {
             // Per-cell staged-formula deltas (see #126). Capture each cell's prior
             // staged text before overwriting so undo/redo can replay precisely.
+            let mut wrote_any = false;
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, f) in rforms.iter().enumerate() {
@@ -3217,6 +3465,14 @@ impl Workbook {
                         let after = self.staged_formula_cell(sheet, r, c);
                         self.record_staged_formula_cell_change(sheet, r, c, staged_before, after);
                     }
+                    wrote_any = true;
+                }
+            }
+            if wrote_any {
+                if self.enable_changelog {
+                    self.on_forward_logged_mutation();
+                } else {
+                    self.invalidate_history_for_unjournaled_mutation();
                 }
             }
             Ok(())
@@ -3234,6 +3490,12 @@ impl Workbook {
                     let c = start_col + ci as u32;
                     staged_before.push((r, c, self.staged_formula_cell(sheet, r, c)));
                 }
+            }
+
+            // Clear logged redo and any prior action-journal stacks before the first
+            // logged write so a partial failure cannot leave stale history behind (B4).
+            if !staged_before.is_empty() {
+                self.on_forward_logged_mutation();
             }
 
             self.engine
@@ -3279,6 +3541,11 @@ impl Workbook {
             self.engine.mark_data_edited();
             Ok(())
         } else {
+            // Invalidate before the first write so a mid-batch `?` error after a
+            // committed prefix cannot leave stale undo/redo stacks intact (B4).
+            if rows.iter().any(|r| !r.is_empty()) {
+                self.invalidate_history_for_unjournaled_mutation();
+            }
             for (ri, rforms) in rows.iter().enumerate() {
                 let r = start_row + ri as u32;
                 for (ci, f) in rforms.iter().enumerate() {
@@ -3745,11 +4012,15 @@ impl Workbook {
         if self.enable_changelog {
             self.engine
                 .define_name_with_logger(&mut self.log, name, definition, scope)
-                .map_err(|e| IoError::from_backend("editor", e))
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.on_forward_logged_mutation();
+            Ok(())
         } else {
             self.engine
                 .define_name(name, definition, scope)
-                .map_err(IoError::Engine)
+                .map_err(IoError::Engine)?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
         }
     }
 
@@ -3763,11 +4034,15 @@ impl Workbook {
         if self.enable_changelog {
             self.engine
                 .update_name_with_logger(&mut self.log, name, definition, scope)
-                .map_err(|e| IoError::from_backend("editor", e))
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.on_forward_logged_mutation();
+            Ok(())
         } else {
             self.engine
                 .update_name(name, definition, scope)
-                .map_err(IoError::Engine)
+                .map_err(IoError::Engine)?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
         }
     }
 
@@ -3781,11 +4056,15 @@ impl Workbook {
         if self.enable_changelog {
             self.engine
                 .delete_name_with_logger(&mut self.log, name, scope)
-                .map_err(|e| IoError::from_backend("editor", e))
+                .map_err(|e| IoError::from_backend("editor", e))?;
+            self.on_forward_logged_mutation();
+            Ok(())
         } else {
             self.engine
                 .delete_name(name, scope)
-                .map_err(IoError::Engine)
+                .map_err(IoError::Engine)?;
+            self.invalidate_history_for_unjournaled_mutation();
+            Ok(())
         }
     }
 
@@ -3876,7 +4155,9 @@ impl Workbook {
             header_row,
             headers,
             totals_row,
-        )
+        )?;
+        self.invalidate_history_for_unjournaled_mutation();
+        Ok(())
     }
 
     /// Resize a native table, retaining at least one body row. Undo/redo restores

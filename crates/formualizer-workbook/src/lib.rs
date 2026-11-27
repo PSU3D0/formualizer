@@ -33,12 +33,6 @@ pub use cached_external_links::CachedExternalLinkValues;
 pub mod error;
 #[cfg(any(feature = "xlsx-recalc", feature = "umya", feature = "umya3"))]
 mod legacy_formula;
-#[cfg(any(
-    feature = "xlsx-recalc",
-    feature = "json",
-    feature = "umya",
-    feature = "umya3"
-))]
 pub(crate) mod load_limits;
 mod panic_guard;
 #[cfg(any(feature = "umya", feature = "xlsx-recalc"))]

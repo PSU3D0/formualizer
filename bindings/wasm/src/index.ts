@@ -272,7 +272,12 @@ export async function parse(
   });
 }
 
-export type CellScalar = null | undefined | boolean | number | string;
+export interface CellErrorInput {
+  type: 'Error';
+  value: string;
+  message?: string;
+}
+export type CellScalar = null | undefined | boolean | number | string | Date | CellErrorInput | TraceErrorValue;
 export type CellArray = CellScalar[] | CellScalar[][];
 export type CellValue = CellScalar | CellArray;
 
@@ -597,6 +602,8 @@ export interface WorkbookLoadOptions {
   backend?: 'calamine' | 'native';
   /** Opt into experimental FormulaPlane span evaluation. */
   spanEvaluation?: boolean;
+  /** Enable or disable changelog recording for undo/redo. */
+  enableChangelog?: boolean;
   /** Cycle detection mode (spec §2). */
   cycleDetection?: 'static' | 'runtime';
   /** Cycle policy for live cycles (spec §2). `'iterate'` implies runtime detection. */

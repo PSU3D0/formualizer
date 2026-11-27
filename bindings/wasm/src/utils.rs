@@ -10,6 +10,10 @@ pub fn js_error(message: impl AsRef<str>) -> wasm_bindgen::JsValue {
     wasm_bindgen::JsValue::from(js_sys::Error::new(message.as_ref()))
 }
 
+pub fn js_type_error(message: impl AsRef<str>) -> wasm_bindgen::JsValue {
+    wasm_bindgen::JsValue::from(js_sys::TypeError::new(message.as_ref()))
+}
+
 pub fn js_error_with_cause(
     message: impl AsRef<str>,
     cause: wasm_bindgen::JsValue,

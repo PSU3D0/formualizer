@@ -16,6 +16,20 @@ fn linked_workbook_sheet_writes_are_rejected_without_creating_a_sheet() {
                 .set_value(sheet, 1, 1, LiteralValue::Number(7.0))
                 .is_err()
         );
+        assert!(workbook.set_formula(sheet, 1, 1, "=1").is_err());
+        assert!(
+            workbook
+                .set_values(sheet, 1, 1, &[vec![LiteralValue::Number(7.0)]])
+                .is_err()
+        );
+        assert!(
+            workbook
+                .set_formulas(sheet, 1, 1, &[vec!["=1".to_string()]])
+                .is_err()
+        );
+        let mut cells = std::collections::BTreeMap::new();
+        cells.insert((1, 1), formualizer_workbook::CellData::from_value(7.0));
+        assert!(workbook.write_range(sheet, (1, 1), cells).is_err());
         assert!(workbook.engine().sheet_id(sheet).is_none());
     }
     for sheet in ["Data", "[x]Data", "[]Data", "prefix[1]Data"] {
@@ -23,6 +37,64 @@ fn linked_workbook_sheet_writes_are_rejected_without_creating_a_sheet() {
             .set_value(sheet, 1, 1, LiteralValue::Number(7.0))
             .unwrap();
         assert!(workbook.engine().sheet_id(sheet).is_some());
+    }
+}
+
+#[cfg(feature = "xlsx-recalc")]
+#[test]
+fn set_values_and_set_formulas_clear_refused_external_formulas() {
+    for config in [WorkbookConfig::interactive(), WorkbookConfig::ephemeral()] {
+        let mut wb = load(
+            linked_book(
+                &["ROW([1]Data!A1)", "ROW([1]Data!A1)", "ROW([1]Data!A1)"],
+                false,
+                "",
+            ),
+            config,
+        );
+        assert_eq!(
+            wb.get_formula("Sheet1", 1, 1).as_deref(),
+            Some("=ROW([1]Data!A1)")
+        );
+        assert_eq!(
+            wb.get_formula("Sheet1", 2, 1).as_deref(),
+            Some("=ROW([1]Data!A1)")
+        );
+        assert_eq!(
+            wb.get_formula("Sheet1", 3, 1).as_deref(),
+            Some("=ROW([1]Data!A1)")
+        );
+
+        // Overwriting with set_values clears refused_external_formulas.
+        wb.set_values("Sheet1", 1, 1, &[vec![LiteralValue::Number(42.0)]])
+            .unwrap();
+        assert_eq!(wb.get_formula("Sheet1", 1, 1), None);
+        assert_eq!(
+            wb.get_value("Sheet1", 1, 1),
+            Some(LiteralValue::Number(42.0))
+        );
+
+        // Overwriting with set_formulas clears refused_external_formulas and installs new formula.
+        wb.set_formulas("Sheet1", 2, 1, &[vec!["=10+5".to_string()]])
+            .unwrap();
+        assert_eq!(
+            wb.get_formula("Sheet1", 2, 1).map(|s| s.replace(' ', "")),
+            Some("=10+5".to_string())
+        );
+        assert_eq!(
+            wb.evaluate_cell("Sheet1", 2, 1).unwrap(),
+            LiteralValue::Number(15.0)
+        );
+
+        // Overwriting with write_range also clears refused_external_formulas.
+        let mut cells = std::collections::BTreeMap::new();
+        cells.insert((3, 1), formualizer_workbook::CellData::from_value(99.0));
+        wb.write_range("Sheet1", (3, 1), cells).unwrap();
+        assert_eq!(wb.get_formula("Sheet1", 3, 1), None);
+        assert_eq!(
+            wb.get_value("Sheet1", 3, 1),
+            Some(LiteralValue::Number(99.0))
+        );
     }
 }
 

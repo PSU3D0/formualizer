@@ -21,6 +21,7 @@ pub(crate) fn use_sparse_initial_ingest(
             || logical_cells > limits.max_sheet_logical_cells)
 }
 
+#[allow(dead_code)] // Used by backend loaders when an IO feature is enabled.
 pub(crate) fn enforce_sheet_dimension_limits(
     backend: &str,
     sheet: &str,

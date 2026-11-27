@@ -2334,3 +2334,175 @@ fn test_recalculate_xlsx_bytes_external_links_option() {
         assert!(error.contains("'cached' or 'refuse'"), "{error}");
     }
 }
+
+#[wasm_bindgen_test]
+fn test_issue_626_error_objects_date_neg_zero_and_invalid_values() {
+    let wb = Workbook::new(None).unwrap();
+    wb.add_sheet("S".to_string()).unwrap();
+    let sheet = wb.sheet("S".to_string()).unwrap();
+
+    // 1. JSON-style error object { type: "Error", value: "#CIRC!" } via setValues + ERROR.TYPE
+    let err_obj = Object::new();
+    set_prop(&err_obj, "type", JsValue::from_str("Error"));
+    set_prop(&err_obj, "value", JsValue::from_str("#CIRC!"));
+    let row = js_sys::Array::new();
+    row.push(&err_obj);
+    let data = js_sys::Array::new();
+    data.push(&row);
+    sheet.set_values(1, 1, data).unwrap();
+    sheet
+        .set_formula(1, 2, "=ERROR.TYPE(A1)".to_string())
+        .unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(
+        sheet.get_value(1, 1).unwrap().as_string().unwrap(),
+        "#CIRC!"
+    );
+    assert_eq!(sheet.get_value(1, 2).unwrap().as_f64().unwrap(), 12.0);
+
+    // 2. inspectCell-style error object { kind: "error", code: "#N/A" } via setValue
+    let trace_err = Object::new();
+    set_prop(&trace_err, "kind", JsValue::from_str("error"));
+    set_prop(&trace_err, "code", JsValue::from_str("#N/A"));
+    sheet.set_value(2, 1, trace_err.into()).unwrap();
+    sheet
+        .set_formula(2, 2, "=ERROR.TYPE(A2)".to_string())
+        .unwrap();
+    wb.evaluate_all().unwrap();
+    assert_eq!(sheet.get_value(2, 1).unwrap().as_string().unwrap(), "#N/A");
+    assert_eq!(sheet.get_value(2, 2).unwrap().as_f64().unwrap(), 7.0);
+
+    // 3. Unknown error string MUST throw TypeError (never silently store as text)
+    let bad_err = Object::new();
+    set_prop(&bad_err, "type", JsValue::from_str("Error"));
+    set_prop(&bad_err, "value", JsValue::from_str("#NOPE!"));
+    let thrown = sheet.set_value(3, 1, bad_err.into()).unwrap_err();
+    assert!(thrown.is_instance_of::<js_sys::TypeError>());
+
+    // 4. Plain unrecognized object and nested arrays are rejected with TypeError
+    let plain = Object::new();
+    set_prop(&plain, "foo", JsValue::from_str("bar"));
+    let thrown = sheet.set_value(3, 1, plain.into()).unwrap_err();
+    assert!(thrown.is_instance_of::<js_sys::TypeError>());
+
+    let nested = js_sys::Array::new();
+    nested.push(&JsValue::from_f64(1.0));
+    let thrown = sheet.set_value(3, 1, nested.into()).unwrap_err();
+    assert!(thrown.is_instance_of::<js_sys::TypeError>());
+
+    // 5. JS Date: UTC midnight -> Date, non-midnight -> DateTime, invalid Date -> #NUM!
+    let midnight = js_sys::Date::new(&JsValue::from_str("2024-01-15T00:00:00.000Z"));
+    sheet.set_value(4, 1, midnight.into()).unwrap();
+    let got_midnight = sheet.get_value(4, 1).unwrap();
+    let got_midnight_date: js_sys::Date = got_midnight.dyn_into().unwrap();
+    assert_eq!(
+        got_midnight_date.to_iso_string().as_string().unwrap(),
+        "2024-01-15T00:00:00.000Z"
+    );
+
+    let dt = js_sys::Date::new(&JsValue::from_str("2024-01-15T12:30:00.000Z"));
+    sheet.set_value(5, 1, dt.into()).unwrap();
+    let got_dt = sheet.get_value(5, 1).unwrap();
+    let got_dt_date: js_sys::Date = got_dt.dyn_into().unwrap();
+    assert_eq!(
+        got_dt_date.to_iso_string().as_string().unwrap(),
+        "2024-01-15T12:30:00.000Z"
+    );
+
+    let invalid_date = js_sys::Date::new(&JsValue::from_f64(f64::NAN));
+    sheet.set_value(6, 1, invalid_date.into()).unwrap();
+    assert_eq!(sheet.get_value(6, 1).unwrap().as_string().unwrap(), "#NUM!");
+
+    // 6. -0.0 preserves its negative sign bit instead of coercing to Int(0)
+    sheet.set_value(7, 1, JsValue::from_f64(-0.0)).unwrap();
+    let neg_zero = sheet.get_value(7, 1).unwrap().as_f64().unwrap();
+    assert_eq!(neg_zero, 0.0);
+    assert!(neg_zero.is_sign_negative(), "expected -0.0 sign preserved");
+}
+
+#[wasm_bindgen_test]
+fn test_issue_626_from_json_preserves_sheet_insertion_order() {
+    let raw = r#"{
+        "version": 1,
+        "sheets": {
+            "Zeta":   { "cells": [{ "row": 1, "col": 1, "formula": "=SHEET()" }] },
+            "Alpha":  { "cells": [{ "row": 1, "col": 1, "formula": "=SHEET()" }] },
+            "Middle": { "cells": [{ "row": 1, "col": 1, "formula": "=SHEET()" }] }
+        }
+    }"#;
+    let wb = Workbook::from_json(raw.to_string()).unwrap();
+    let names: Vec<String> = wb
+        .sheet_names()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_string().unwrap())
+        .collect();
+    assert_eq!(names, vec!["Zeta", "Alpha", "Middle"]);
+    wb.evaluate_all().unwrap();
+    assert_eq!(
+        wb.sheet("Zeta".into())
+            .unwrap()
+            .get_value(1, 1)
+            .unwrap()
+            .as_f64()
+            .unwrap(),
+        1.0
+    );
+    assert_eq!(
+        wb.sheet("Alpha".into())
+            .unwrap()
+            .get_value(1, 1)
+            .unwrap()
+            .as_f64()
+            .unwrap(),
+        2.0
+    );
+    assert_eq!(
+        wb.sheet("Middle".into())
+            .unwrap()
+            .get_value(1, 1)
+            .unwrap()
+            .as_f64()
+            .unwrap(),
+        3.0
+    );
+}
+
+#[wasm_bindgen_test]
+fn test_changelog_options_and_inspection_methods() {
+    let default_wb = Workbook::new(None).unwrap();
+    assert!(default_wb.changelog_enabled().unwrap());
+    assert!(!default_wb.can_undo().unwrap());
+    assert!(!default_wb.can_redo().unwrap());
+
+    default_wb.add_sheet("S".into()).unwrap();
+    default_wb
+        .set_value("S".into(), 1, 1, JsValue::from_f64(10.0))
+        .unwrap();
+    assert!(default_wb.can_undo().unwrap());
+    assert!(!default_wb.can_redo().unwrap());
+
+    default_wb.undo().unwrap();
+    assert!(!default_wb.can_undo().unwrap());
+    assert!(default_wb.can_redo().unwrap());
+
+    default_wb.redo().unwrap();
+    assert!(default_wb.can_undo().unwrap());
+    assert!(!default_wb.can_redo().unwrap());
+
+    let opts = Object::new();
+    set_prop(&opts, "enableChangelog", JsValue::FALSE);
+    let disabled_wb = Workbook::new(Some(opts.into())).unwrap();
+    assert!(!disabled_wb.changelog_enabled().unwrap());
+    assert!(!disabled_wb.can_undo().unwrap());
+    assert!(!disabled_wb.can_redo().unwrap());
+
+    let json_opts = Object::new();
+    set_prop(&json_opts, "enableChangelog", JsValue::FALSE);
+    let json_wb = Workbook::from_json_with_options(
+        r#"{"version":1,"sheets":{"S":{"cells":[]}}}"#.to_string(),
+        Some(json_opts.into()),
+    )
+    .unwrap();
+    assert!(!json_wb.changelog_enabled().unwrap());
+}

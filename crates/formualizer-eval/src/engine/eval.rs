@@ -12851,15 +12851,9 @@ where
             .sheet_mut(sheet)
             .expect("ArrowSheet must exist");
 
-        let cur_cols = asheet.columns.len();
-        if col0 >= cur_cols {
-            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
-        }
+        asheet.ensure_column_capacity_lazy(col0 + 1);
 
         if row0 >= asheet.nrows as usize {
-            if asheet.columns.is_empty() {
-                asheet.insert_columns(0, 1);
-            }
             asheet.ensure_row_capacity(row0 + 1);
         }
         if let Some((ch_idx, in_off)) = asheet.chunk_of_row(row0) {
@@ -13277,14 +13271,8 @@ where
             .sheet_mut(sheet)
             .expect("ArrowSheet must exist");
 
-        let cur_cols = asheet.columns.len();
-        if col0 >= cur_cols {
-            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
-        }
+        asheet.ensure_column_capacity_lazy(col0 + 1);
         if row0 >= asheet.nrows as usize {
-            if asheet.columns.is_empty() {
-                asheet.insert_columns(0, 1);
-            }
             asheet.ensure_row_capacity(row0 + 1);
         }
 
@@ -13328,14 +13316,8 @@ where
             .sheet_mut(sheet)
             .expect("ArrowSheet must exist");
 
-        let cur_cols = asheet.columns.len();
-        if col0 >= cur_cols {
-            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
-        }
+        asheet.ensure_column_capacity_lazy(col0 + 1);
         if row0 >= asheet.nrows as usize {
-            if asheet.columns.is_empty() {
-                asheet.insert_columns(0, 1);
-            }
             asheet.ensure_row_capacity(row0 + 1);
         }
 
@@ -13745,9 +13727,7 @@ where
         let Some(asheet) = self.arrow_sheets.sheet_mut(sheet) else {
             return;
         };
-        if col0 >= asheet.columns.len() {
-            asheet.insert_columns(asheet.columns.len(), col0 + 1 - asheet.columns.len());
-        }
+        asheet.ensure_column_capacity_lazy(col0 + 1);
         if row0 >= asheet.nrows as usize {
             asheet.ensure_row_capacity(row0 + 1);
         }
@@ -13785,10 +13765,7 @@ where
             return;
         };
         let ov = Self::literal_to_overlay_value(value, asheet.date_system);
-        let cur_cols = asheet.columns.len();
-        if col0 >= cur_cols {
-            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
-        }
+        asheet.ensure_column_capacity_lazy(col0 + 1);
         if row0 >= asheet.nrows as usize {
             asheet.ensure_row_capacity(row0 + 1);
         }
@@ -13834,15 +13811,9 @@ where
             .sheet_mut(sheet)
             .expect("ArrowSheet must exist");
 
-        let cur_cols = asheet.columns.len();
-        if col0 >= cur_cols {
-            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
-        }
+        asheet.ensure_column_capacity_lazy(col0 + 1);
 
         if row0 >= asheet.nrows as usize {
-            if asheet.columns.is_empty() {
-                asheet.insert_columns(0, 1);
-            }
             asheet.ensure_row_capacity(row0 + 1);
         }
 
@@ -14439,10 +14410,7 @@ where
             .sheet_mut(&sheet_name)
             .expect("ArrowSheet must exist");
 
-        let cur_cols = asheet.columns.len();
-        if col0 >= cur_cols {
-            asheet.insert_columns(cur_cols, (col0 + 1) - cur_cols);
-        }
+        asheet.ensure_column_capacity_lazy(col0 + 1);
 
         let start_row0 = asheet
             .chunk_starts
@@ -14452,9 +14420,6 @@ where
         let required_rows =
             start_row0.saturating_add(fragment.max_covered_offset().saturating_add(1));
         if required_rows > asheet.nrows as usize {
-            if asheet.columns.is_empty() {
-                asheet.insert_columns(0, 1);
-            }
             asheet.ensure_row_capacity(required_rows);
         }
 

@@ -146,13 +146,15 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (path, strategy=None, *, backend=None, path_source=None, span_evaluation=None, load_limits=None))]
+#[allow(clippy::too_many_arguments)]
+#[pyo3(signature = (path, strategy=None, *, backend=None, path_source=None, enable_changelog=None, span_evaluation=None, load_limits=None))]
 fn load_workbook(
     py: Python,
     path: &str,
     strategy: Option<&str>,
     backend: Option<&str>,
     path_source: Option<PyXlsxPathSource>,
+    enable_changelog: Option<bool>,
     span_evaluation: Option<bool>,
     load_limits: Option<&Bound<'_, pyo3::types::PyDict>>,
 ) -> PyResult<workbook::PyWorkbook> {
@@ -165,6 +167,7 @@ fn load_workbook(
         path_source,
         None,
         None,
+        enable_changelog,
         span_evaluation,
         load_limits,
     )
@@ -181,12 +184,13 @@ fn load_workbook(
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (data, strategy=None, backend=None, *, span_evaluation=None, load_limits=None))]
+#[pyo3(signature = (data, strategy=None, backend=None, *, enable_changelog=None, span_evaluation=None, load_limits=None))]
 fn load_workbook_bytes<'py>(
     py: Python<'py>,
     data: &Bound<'py, PyBytes>,
     strategy: Option<&str>,
     backend: Option<&str>,
+    enable_changelog: Option<bool>,
     span_evaluation: Option<bool>,
     load_limits: Option<&Bound<'py, pyo3::types::PyDict>>,
 ) -> PyResult<workbook::PyWorkbook> {
@@ -197,6 +201,7 @@ fn load_workbook_bytes<'py>(
         Some(backend.unwrap_or(workbook::DEFAULT_XLSX_BYTE_BACKEND)),
         None,
         None,
+        enable_changelog,
         span_evaluation,
         load_limits,
     )

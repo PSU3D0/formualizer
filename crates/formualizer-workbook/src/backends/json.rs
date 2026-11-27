@@ -5,13 +5,137 @@ use crate::traits::{
     SpreadsheetReader, SpreadsheetWriter, TableDefinition,
 };
 use crate::traits::{DefinedName, DefinedNameDefinition, DefinedNameScope};
-use serde::{Deserialize, Serialize};
+use serde::de::{MapAccess, Visitor};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 use formualizer_eval::engine::{FormulaIngestBatch, FormulaIngestRecord};
+
+/// Insertion-ordered map of `sheet_name -> JsonSheet` so JSON loading and
+/// saving preserve the document's sheet order (affecting `SHEET()` indices).
+#[derive(Debug, Default, Clone)]
+struct OrderedSheets {
+    entries: Vec<(String, JsonSheet)>,
+}
+
+impl OrderedSheets {
+    fn get(&self, name: &str) -> Option<&JsonSheet> {
+        self.entries.iter().find(|(k, _)| k == name).map(|(_, v)| v)
+    }
+
+    fn get_mut(&mut self, name: &str) -> Option<&mut JsonSheet> {
+        self.entries
+            .iter_mut()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v)
+    }
+
+    fn entry_or_default(&mut self, name: &str) -> &mut JsonSheet {
+        if let Some(pos) = self.entries.iter().position(|(k, _)| k == name) {
+            return &mut self.entries[pos].1;
+        }
+        self.entries.push((name.to_string(), JsonSheet::default()));
+        &mut self.entries.last_mut().expect("just pushed").1
+    }
+
+    fn insert(&mut self, name: String, sheet: JsonSheet) {
+        if let Some(existing) = self.entries.iter_mut().find(|(k, _)| k == &name) {
+            existing.1 = sheet;
+        } else {
+            self.entries.push((name, sheet));
+        }
+    }
+
+    fn remove(&mut self, name: &str) -> Option<JsonSheet> {
+        let pos = self.entries.iter().position(|(k, _)| k == name)?;
+        Some(self.entries.remove(pos).1)
+    }
+
+    fn rename(&mut self, old: &str, new: &str) {
+        if old == new {
+            return;
+        }
+        let Some(old_pos) = self.entries.iter().position(|(k, _)| k == old) else {
+            return;
+        };
+        if let Some(new_pos) = self.entries.iter().position(|(k, _)| k == new) {
+            let sheet = self.entries.remove(old_pos).1;
+            let target = if old_pos < new_pos {
+                new_pos - 1
+            } else {
+                new_pos
+            };
+            self.entries[target].1 = sheet;
+        } else {
+            self.entries[old_pos].0 = new.to_string();
+        }
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &String> {
+        self.entries.iter().map(|(k, _)| k)
+    }
+
+    fn values(&self) -> impl Iterator<Item = &JsonSheet> {
+        self.entries.iter().map(|(_, v)| v)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&String, &JsonSheet)> {
+        self.entries.iter().map(|(k, v)| (k, v))
+    }
+}
+
+impl<'a> IntoIterator for &'a OrderedSheets {
+    type Item = (&'a String, &'a JsonSheet);
+    type IntoIter = std::iter::Map<
+        std::slice::Iter<'a, (String, JsonSheet)>,
+        fn(&'a (String, JsonSheet)) -> (&'a String, &'a JsonSheet),
+    >;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter().map(|(k, v)| (k, v))
+    }
+}
+
+impl Serialize for OrderedSheets {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(Some(self.entries.len()))?;
+        for (name, sheet) in &self.entries {
+            map.serialize_entry(name, sheet)?;
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for OrderedSheets {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct OrderedSheetsVisitor;
+
+        impl<'de> Visitor<'de> for OrderedSheetsVisitor {
+            type Value = OrderedSheets;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a map of sheet names to sheet objects")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+                let mut sheets = OrderedSheets {
+                    entries: Vec::with_capacity(map.size_hint().unwrap_or(0)),
+                };
+                while let Some((name, sheet)) = map.next_entry::<String, JsonSheet>()? {
+                    sheets.insert(name, sheet);
+                }
+                Ok(sheets)
+            }
+        }
+
+        deserializer.deserialize_map(OrderedSheetsVisitor)
+    }
+}
 
 #[derive(Serialize, Deserialize, Debug, Default, Clone)]
 struct JsonWorkbook {
@@ -26,7 +150,7 @@ struct JsonWorkbook {
     defined_names: Vec<JsonDefinedName>,
 
     #[serde(default)]
-    sheets: BTreeMap<String, JsonSheet>,
+    sheets: OrderedSheets,
 }
 
 type FormulaBatch = FormulaIngestBatch;
@@ -270,7 +394,7 @@ impl JsonAdapter {
 
     // Backend-specific helpers (not part of SpreadsheetWriter)
     fn ensure_sheet_mut(&mut self, name: &str) -> &mut JsonSheet {
-        self.data.sheets.entry(name.to_string()).or_default()
+        self.data.sheets.entry_or_default(name)
     }
 
     pub fn set_dimensions(&mut self, sheet: &str, dims: Option<(u32, u32)>) {
@@ -475,7 +599,7 @@ impl SpreadsheetWriter for JsonAdapter {
         col: u32,
         data: CellData,
     ) -> Result<(), Self::Error> {
-        let sheet_entry = self.data.sheets.entry(sheet.to_string()).or_default();
+        let sheet_entry = self.data.sheets.entry_or_default(sheet);
         if let Some(cell) = sheet_entry
             .cells
             .iter_mut()
@@ -522,7 +646,7 @@ impl SpreadsheetWriter for JsonAdapter {
     }
 
     fn create_sheet(&mut self, name: &str) -> Result<(), Self::Error> {
-        self.data.sheets.entry(name.to_string()).or_default();
+        self.data.sheets.entry_or_default(name);
         Ok(())
     }
 
@@ -532,9 +656,7 @@ impl SpreadsheetWriter for JsonAdapter {
     }
 
     fn rename_sheet(&mut self, old: &str, new: &str) -> Result<(), Self::Error> {
-        if let Some(sheet) = self.data.sheets.remove(old) {
-            self.data.sheets.insert(new.to_string(), sheet);
-        }
+        self.data.sheets.rename(old, new);
         Ok(())
     }
 
