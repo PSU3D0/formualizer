@@ -254,6 +254,37 @@ impl DependencyGraph {
             .collect()
     }
 
+    /// Logically empty tables on `sheet_id` whose reserved body intersects at
+    /// least one cell accepted by `has_non_empty_in_body(body_r0, body_r1, body_c0, body_c1)`.
+    pub(crate) fn empty_tables_with_non_empty_in_body(
+        &self,
+        sheet_id: crate::SheetId,
+        mut has_non_empty_in_body: impl FnMut(u32, u32, u32, u32) -> bool,
+    ) -> Vec<TableEntry> {
+        if self.tables.is_empty() {
+            return Vec::new();
+        }
+        self.tables
+            .values()
+            .filter(|t| {
+                if !t.empty_body || t.sheet_id() != sheet_id {
+                    return false;
+                }
+                let body_r0 = t.range.start.coord.row() + u32::from(t.header_row);
+                let body_r1 = t
+                    .range
+                    .end
+                    .coord
+                    .row()
+                    .saturating_sub(u32::from(t.totals_row));
+                let body_c0 = t.range.start.coord.col();
+                let body_c1 = t.range.end.coord.col();
+                body_r0 <= body_r1 && has_non_empty_in_body(body_r0, body_r1, body_c0, body_c1)
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn delete_table(&mut self, name: &str) -> Result<(), ExcelError> {
         let Some(canon) = self.canonical_table_name(name) else {
             return Err(ExcelError::new(ExcelErrorKind::Name)

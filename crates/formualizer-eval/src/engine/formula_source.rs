@@ -408,6 +408,8 @@ pub struct FormulaReplayDisposition {
     shared_overrides: BTreeMap<(SourceFamilyId, SourceCoord), FormulaReplayCoordinateDisposition>,
     ordinary_owners: BTreeMap<SourceCoord, SourceFamilyId>,
     suppressed: BTreeSet<(u32, u32)>,
+    /// Inclusive 1-based Excel rectangles suppressed in bulk `(r0, r1, c0, c1)`.
+    suppressed_rects: Vec<(u32, u32, u32, u32)>,
     /// Engine-created proof of source ownership already consumed by a validated
     /// target commit. Suppression alone never establishes partition ownership.
     consumed: BTreeSet<(SourceFamilyId, SourceCoord)>,
@@ -467,15 +469,28 @@ impl FormulaReplayDisposition {
         self.suppressed.extend(coordinates);
     }
 
+    pub(crate) fn extend_suppressed_excel_rects(
+        &mut self,
+        rects: impl IntoIterator<Item = (u32, u32, u32, u32)>,
+    ) {
+        self.suppressed_rects.extend(rects);
+    }
+
+    #[inline]
+    fn is_suppressed_excel(&self, row: u32, col: u32) -> bool {
+        self.suppressed.contains(&(row, col))
+            || self
+                .suppressed_rects
+                .iter()
+                .any(|&(r0, r1, c0, c1)| row >= r0 && row <= r1 && col >= c0 && col <= c1)
+    }
+
     pub fn shared_disposition(
         &self,
         family: SourceFamilyId,
         coord: SourceCoord,
     ) -> FormulaReplayCoordinateDisposition {
-        if self
-            .suppressed
-            .contains(&(coord.row.saturating_add(1), coord.col.saturating_add(1)))
-        {
+        if self.is_suppressed_excel(coord.row.saturating_add(1), coord.col.saturating_add(1)) {
             return FormulaReplayCoordinateDisposition::Suppressed;
         }
         self.shared_overrides
@@ -489,10 +504,7 @@ impl FormulaReplayDisposition {
         &self,
         coord: SourceCoord,
     ) -> (FormulaReplayCoordinateDisposition, Option<SourceFamilyId>) {
-        if self
-            .suppressed
-            .contains(&(coord.row.saturating_add(1), coord.col.saturating_add(1)))
-        {
+        if self.is_suppressed_excel(coord.row.saturating_add(1), coord.col.saturating_add(1)) {
             return (FormulaReplayCoordinateDisposition::Suppressed, None);
         }
         (
@@ -524,7 +536,7 @@ impl FormulaReplayDisposition {
 
     pub(crate) fn is_consumed_member(&self, family: SourceFamilyId, coord: SourceCoord) -> bool {
         self.consumed.contains(&(family, coord))
-            && self.suppressed.contains(&(coord.row + 1, coord.col + 1))
+            && self.is_suppressed_excel(coord.row + 1, coord.col + 1)
     }
 
     pub(crate) fn owns_partition_exactly(&self, family: &PartitionedSourceFormulaFamily) -> bool {
@@ -569,7 +581,7 @@ impl FormulaReplayDisposition {
         if actual_ordinary != expected_ordinary {
             return false;
         }
-        !self.suppressed.iter().any(|&(row, col)| {
+        let point_hits = self.suppressed.iter().any(|&(row, col)| {
             let Some(coord) = row
                 .checked_sub(1)
                 .zip(col.checked_sub(1))
@@ -584,6 +596,31 @@ impl FormulaReplayDisposition {
                 || family.legacy_members.as_slice().iter().any(|member| {
                     member.coord == coord && !self.is_consumed_member(family.source_id, coord)
                 })
+        });
+        if point_hits {
+            return false;
+        }
+        !self.suppressed_rects.iter().any(|&(r0, r1, c0, c1)| {
+            let Some((sr0, sc0)) = r0.checked_sub(1).zip(c0.checked_sub(1)) else {
+                return true;
+            };
+            let Some((sr1, sc1)) = r1.checked_sub(1).zip(c1.checked_sub(1)) else {
+                return true;
+            };
+            let q = SourceRect {
+                start: SourceCoord { row: sr0, col: sc0 },
+                end: SourceCoord { row: sr1, col: sc1 },
+            };
+            family.fragments.iter().any(|fragment| {
+                let r = fragment.rect();
+                r.start.row <= q.end.row
+                    && q.start.row <= r.end.row
+                    && r.start.col <= q.end.col
+                    && q.start.col <= r.end.col
+            }) || family.legacy_members.as_slice().iter().any(|member| {
+                source_rect_contains(q, member.coord)
+                    && !self.is_consumed_member(family.source_id, member.coord)
+            })
         })
     }
 
@@ -1053,6 +1090,9 @@ pub struct DeferredFormulaPackage {
     /// Membership only; replay retains source ordering. Reservable storage lets
     /// partial target publication suppress coordinates without commit-time allocation.
     pub(crate) suppressed: rustc_hash::FxHashSet<(u32, u32)>,
+    /// Inclusive 1-based Excel rectangles `(r0, r1, c0, c1)` suppressed in bulk
+    /// by region writes so large overwrites avoid per-cell hash inserts.
+    pub(crate) suppressed_rects: Vec<(u32, u32, u32, u32)>,
     /// Exact source-record coordinates used only by staged target discovery.
     /// Legacy producers supply fallback points; indexed exact producers opt into
     /// complete coordinate coverage (including shared members) below.
@@ -1075,6 +1115,76 @@ pub struct DeferredFormulaPackage {
 }
 
 impl DeferredFormulaPackage {
+    #[inline]
+    pub(crate) fn is_suppressed(&self, row: u32, col: u32) -> bool {
+        self.suppressed.contains(&(row, col))
+            || self
+                .suppressed_rects
+                .iter()
+                .any(|&(r0, r1, c0, c1)| row >= r0 && row <= r1 && col >= c0 && col <= c1)
+    }
+
+    /// Suppress all deferred formulas inside the inclusive 1-based rectangle
+    /// `[r0..=r1, c0..=c1]` and invalidate any intersecting source families in
+    /// O(num_families) instead of per-cell hash inserts.
+    pub(crate) fn suppress_rect(&mut self, r0: u32, r1: u32, c0: u32, c1: u32) -> bool {
+        if r0 > r1 || c0 > c1 {
+            return false;
+        }
+        let Some((sr0, sc0)) = r0.checked_sub(1).zip(c0.checked_sub(1)) else {
+            return false;
+        };
+        let Some((sr1, sc1)) = r1.checked_sub(1).zip(c1.checked_sub(1)) else {
+            return false;
+        };
+        let q = SourceRect {
+            start: SourceCoord { row: sr0, col: sc0 },
+            end: SourceCoord { row: sr1, col: sc1 },
+        };
+        let rect_intersects = |a: SourceRect, b: SourceRect| -> bool {
+            a.start.row <= b.end.row
+                && b.start.row <= a.end.row
+                && a.start.col <= b.end.col
+                && b.start.col <= a.end.col
+        };
+        for family in &self.families {
+            let hit = match &family.members {
+                SourceFamilyMembers::CompleteDomain(domain) => rect_intersects(domain.rect(), q),
+                SourceFamilyMembers::ExplicitMembers(members) => members
+                    .as_slice()
+                    .iter()
+                    .any(|&coord| source_rect_contains(q, coord)),
+            };
+            if hit {
+                self.invalidated.insert(family.source_id);
+            }
+        }
+        for family in &self.partitioned_families {
+            if rect_intersects(family.declared, q) {
+                self.invalidated.insert(family.source_id);
+            }
+        }
+        self.suppressed_rects.push((r0, r1, c0, c1));
+        true
+    }
+
+    pub(crate) fn suppressed_count_for_len(&self) -> usize {
+        if self.suppressed_rects.is_empty() {
+            return self.suppressed.len();
+        }
+        if self.source_geometry_complete
+            && (self.coordinates_cover_families
+                || (self.families.is_empty() && self.partitioned_families.is_empty()))
+        {
+            return self
+                .source_coordinates
+                .iter()
+                .filter(|c| self.is_suppressed(c.row.saturating_add(1), c.col.saturating_add(1)))
+                .count();
+        }
+        self.suppressed.len()
+    }
+
     pub(crate) fn accounting_report(&self) -> FormulaCompressedSourceReport {
         if self.source_accounted {
             FormulaCompressedSourceReport::default()
@@ -1320,6 +1430,7 @@ impl DeferredFormulaPackage {
             )),
             invalidated: Default::default(),
             suppressed: Default::default(),
+            suppressed_rects: Vec::new(),
             source_coordinates,
             coordinates_cover_families: false,
             consumed_members: Default::default(),

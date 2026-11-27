@@ -145,6 +145,314 @@ impl FormatRuns {
             .collect();
         Self::from_ids(&ids)
     }
+
+    #[inline]
+    fn push_run(run_ends: &mut Vec<u32>, format_ids: &mut Vec<u16>, end: u32, fmt: u16) {
+        if let Some(&last_end) = run_ends.last()
+            && end <= last_end
+        {
+            return;
+        }
+        if format_ids.last().copied() == Some(fmt) {
+            *run_ends.last_mut().unwrap() = end;
+        } else {
+            run_ends.push(end);
+            format_ids.push(fmt);
+        }
+    }
+
+    /// Replace `[start, end)` with a uniform format id `fmt` in O(num_runs).
+    /// Returns `None` if the resulting lane is entirely GENERAL.
+    pub(crate) fn replace_uniform_range(
+        existing: Option<&Self>,
+        chunk_len: usize,
+        start: usize,
+        end: usize,
+        fmt: u16,
+    ) -> Option<Self> {
+        let end = end.min(chunk_len);
+        if chunk_len == 0 || start >= end {
+            return existing.cloned();
+        }
+        let Some(runs) = existing else {
+            if fmt == FormatId::GENERAL.0 {
+                return None;
+            }
+            let mut run_ends = Vec::with_capacity(3);
+            let mut format_ids = Vec::with_capacity(3);
+            if start > 0 {
+                Self::push_run(
+                    &mut run_ends,
+                    &mut format_ids,
+                    start as u32,
+                    FormatId::GENERAL.0,
+                );
+            }
+            Self::push_run(&mut run_ends, &mut format_ids, end as u32, fmt);
+            if end < chunk_len {
+                Self::push_run(
+                    &mut run_ends,
+                    &mut format_ids,
+                    chunk_len as u32,
+                    FormatId::GENERAL.0,
+                );
+            }
+            return Some(Self {
+                run_ends,
+                format_ids,
+            });
+        };
+
+        let mut run_ends = Vec::with_capacity(runs.run_ends.len() + 2);
+        let mut format_ids = Vec::with_capacity(runs.format_ids.len() + 2);
+        let mut prev = 0usize;
+        let mut inserted_mid = false;
+        let mut any_non_general = false;
+
+        for (&r_end_u32, &r_fmt) in runs.run_ends.iter().zip(runs.format_ids.iter()) {
+            let r_end = (r_end_u32 as usize).min(chunk_len);
+            if r_end <= prev {
+                continue;
+            }
+            // Prefix strictly before `start`.
+            if prev < start {
+                let seg_end = r_end.min(start);
+                if r_fmt != FormatId::GENERAL.0 {
+                    any_non_general = true;
+                }
+                Self::push_run(&mut run_ends, &mut format_ids, seg_end as u32, r_fmt);
+            }
+            // Emit replacement once we reach/cross `start`.
+            if !inserted_mid && r_end >= start {
+                if fmt != FormatId::GENERAL.0 {
+                    any_non_general = true;
+                }
+                Self::push_run(&mut run_ends, &mut format_ids, end as u32, fmt);
+                inserted_mid = true;
+            }
+            // Suffix strictly after `end`.
+            if r_end > end {
+                if r_fmt != FormatId::GENERAL.0 {
+                    any_non_general = true;
+                }
+                Self::push_run(&mut run_ends, &mut format_ids, r_end as u32, r_fmt);
+            }
+            prev = r_end;
+        }
+        if prev < chunk_len {
+            if prev < start {
+                Self::push_run(
+                    &mut run_ends,
+                    &mut format_ids,
+                    start as u32,
+                    FormatId::GENERAL.0,
+                );
+            }
+            if !inserted_mid {
+                if fmt != FormatId::GENERAL.0 {
+                    any_non_general = true;
+                }
+                Self::push_run(&mut run_ends, &mut format_ids, end as u32, fmt);
+            }
+            if end < chunk_len {
+                Self::push_run(
+                    &mut run_ends,
+                    &mut format_ids,
+                    chunk_len as u32,
+                    FormatId::GENERAL.0,
+                );
+            }
+        }
+        if !any_non_general {
+            return None;
+        }
+        Some(Self {
+            run_ends,
+            format_ids,
+        })
+    }
+
+    /// Clear base formats in `[start, end)` to GENERAL in O(num_runs).
+    pub(crate) fn clear_range(&self, start: usize, end: usize) -> Option<Self> {
+        let len = self.run_ends.last().copied().unwrap_or(0) as usize;
+        if len == 0 || start >= end || start >= len {
+            return Some(self.clone());
+        }
+        Self::replace_uniform_range(Some(self), len, start, end.min(len), FormatId::GENERAL.0)
+    }
+
+    /// Clear base formats at sorted (possibly duplicated) offsets in a single
+    /// O(num_runs + offsets.len()) pass by coalescing contiguous offset intervals.
+    pub(crate) fn clear_offsets(&self, sorted_offsets: &[usize]) -> Option<Self> {
+        let len = self.run_ends.last().copied().unwrap_or(0) as usize;
+        if len == 0 || sorted_offsets.is_empty() {
+            return Some(self.clone());
+        }
+        // Build maximal contiguous [start, end) clear intervals within 0..len.
+        let mut intervals: Vec<(usize, usize)> = Vec::new();
+        for &off in sorted_offsets {
+            if off >= len {
+                break;
+            }
+            if let Some(last) = intervals.last_mut()
+                && off <= last.1
+            {
+                last.1 = last.1.max(off + 1);
+                continue;
+            }
+            intervals.push((off, off + 1));
+        }
+        if intervals.is_empty() {
+            return Some(self.clone());
+        }
+
+        let mut run_ends = Vec::with_capacity(self.run_ends.len() + intervals.len());
+        let mut format_ids = Vec::with_capacity(self.format_ids.len() + intervals.len());
+        let mut any_non_general = false;
+        let mut iv_idx = 0usize;
+        let mut prev = 0usize;
+
+        for (&r_end_u32, &r_fmt) in self.run_ends.iter().zip(self.format_ids.iter()) {
+            let r_end = (r_end_u32 as usize).min(len);
+            let mut cur = prev;
+            while cur < r_end {
+                while iv_idx < intervals.len() && intervals[iv_idx].1 <= cur {
+                    iv_idx += 1;
+                }
+                if iv_idx >= intervals.len() || intervals[iv_idx].0 >= r_end {
+                    if r_fmt != FormatId::GENERAL.0 {
+                        any_non_general = true;
+                    }
+                    Self::push_run(&mut run_ends, &mut format_ids, r_end as u32, r_fmt);
+                    cur = r_end;
+                } else {
+                    let (iv_s, iv_e) = intervals[iv_idx];
+                    if cur < iv_s {
+                        if r_fmt != FormatId::GENERAL.0 {
+                            any_non_general = true;
+                        }
+                        Self::push_run(&mut run_ends, &mut format_ids, iv_s as u32, r_fmt);
+                    }
+                    let clr_end = iv_e.min(r_end);
+                    Self::push_run(
+                        &mut run_ends,
+                        &mut format_ids,
+                        clr_end as u32,
+                        FormatId::GENERAL.0,
+                    );
+                    cur = clr_end;
+                }
+            }
+            prev = r_end;
+        }
+        if !any_non_general {
+            return None;
+        }
+        Some(Self {
+            run_ends,
+            format_ids,
+        })
+    }
+
+    /// Replace `[start, start + new_formats.len())` with explicit per-row format ids
+    /// while preserving untouched runs verbatim.
+    pub(crate) fn replace_range(
+        existing: Option<&Self>,
+        chunk_len: usize,
+        start: usize,
+        new_formats: &[u16],
+    ) -> Option<Self> {
+        let end = start.saturating_add(new_formats.len()).min(chunk_len);
+        if chunk_len == 0 || start >= end {
+            return existing.cloned();
+        }
+        let mut run_ends = Vec::new();
+        let mut format_ids = Vec::new();
+        let mut any_non_general = false;
+
+        // 1. Prefix [0..start) from existing (or GENERAL).
+        if start > 0 {
+            if let Some(runs) = existing {
+                let mut prev = 0usize;
+                for (&r_end_u32, &r_fmt) in runs.run_ends.iter().zip(runs.format_ids.iter()) {
+                    let r_end = (r_end_u32 as usize).min(start);
+                    if r_end > prev {
+                        if r_fmt != FormatId::GENERAL.0 {
+                            any_non_general = true;
+                        }
+                        Self::push_run(&mut run_ends, &mut format_ids, r_end as u32, r_fmt);
+                        prev = r_end;
+                    }
+                    if r_end >= start {
+                        break;
+                    }
+                }
+                if prev < start {
+                    Self::push_run(
+                        &mut run_ends,
+                        &mut format_ids,
+                        start as u32,
+                        FormatId::GENERAL.0,
+                    );
+                }
+            } else {
+                Self::push_run(
+                    &mut run_ends,
+                    &mut format_ids,
+                    start as u32,
+                    FormatId::GENERAL.0,
+                );
+            }
+        }
+
+        // 2. Replaced slice [start..end).
+        for (i, &fmt) in new_formats[..end - start].iter().enumerate() {
+            if fmt != FormatId::GENERAL.0 {
+                any_non_general = true;
+            }
+            Self::push_run(&mut run_ends, &mut format_ids, (start + i + 1) as u32, fmt);
+        }
+
+        // 3. Suffix [end..chunk_len) from existing (or GENERAL).
+        if end < chunk_len {
+            if let Some(runs) = existing {
+                let mut prev = end;
+                for (&r_end_u32, &r_fmt) in runs.run_ends.iter().zip(runs.format_ids.iter()) {
+                    let r_end = (r_end_u32 as usize).min(chunk_len);
+                    if r_end > prev {
+                        if r_fmt != FormatId::GENERAL.0 {
+                            any_non_general = true;
+                        }
+                        Self::push_run(&mut run_ends, &mut format_ids, r_end as u32, r_fmt);
+                        prev = r_end;
+                    }
+                }
+                if prev < chunk_len {
+                    Self::push_run(
+                        &mut run_ends,
+                        &mut format_ids,
+                        chunk_len as u32,
+                        FormatId::GENERAL.0,
+                    );
+                }
+            } else {
+                Self::push_run(
+                    &mut run_ends,
+                    &mut format_ids,
+                    chunk_len as u32,
+                    FormatId::GENERAL.0,
+                );
+            }
+        }
+
+        if !any_non_general {
+            return None;
+        }
+        Some(Self {
+            run_ends,
+            format_ids,
+        })
+    }
 }
 
 /// One cached merged lane: valid while the base lane (held, so its
@@ -4441,15 +4749,13 @@ impl ArrowSheet {
         let Some((ch_idx, in_off)) = self.chunk_of_row(abs_row) else {
             return;
         };
-        let Some(ch) = self.ensure_column_chunk_mut(abs_col, ch_idx) else {
+        let Some(ch) = self.columns[abs_col].chunk_mut(ch_idx) else {
             return;
         };
         ch.overlay.set_format(in_off, None);
         ch.computed_overlay.set_format(in_off, None);
         if let Some(runs) = &ch.format {
-            let mut ids = runs.to_ids(ch.len());
-            ids[in_off] = FormatId::GENERAL.0;
-            ch.format = FormatRuns::from_ids(&ids);
+            ch.format = runs.clear_range(in_off, in_off + 1);
         }
     }
 
@@ -4752,6 +5058,49 @@ impl ArrowSheet {
         )
     }
 
+    /// Derive `(chunk_start_row0, chunk_len)` strictly from `chunk_starts` and `nrows`
+    /// (never from `ColumnChunk::len()`).
+    #[inline]
+    pub(crate) fn chunk_extent(&self, ch_idx: usize) -> Option<(usize, usize)> {
+        let start = *self.chunk_starts.get(ch_idx)?;
+        let end = self
+            .chunk_starts
+            .get(ch_idx + 1)
+            .copied()
+            .unwrap_or(self.nrows as usize);
+        Some((start, end.saturating_sub(start)))
+    }
+
+    /// Install a freshly built chunk at `(col_idx, ch_idx)`, promoting onto the
+    /// contiguous dense prefix `col.chunks` (and pulling forward contiguous
+    /// `sparse_chunks`) whenever `ch_idx == col.chunks.len()`, so `CriteriaMaskCache`
+    /// stays active on write-built columns.
+    pub(crate) fn install_column_chunk(
+        &mut self,
+        col_idx: usize,
+        ch_idx: usize,
+        chunk: ColumnChunk,
+    ) {
+        let Some(col) = self.columns.get_mut(col_idx) else {
+            return;
+        };
+        if ch_idx < col.chunks.len() {
+            col.chunks[ch_idx] = chunk;
+            return;
+        }
+        if ch_idx == col.chunks.len() {
+            col.sparse_chunks.remove(&ch_idx);
+            col.chunks.push(chunk);
+            let mut next_idx = ch_idx + 1;
+            while let Some(next_chunk) = col.sparse_chunks.remove(&next_idx) {
+                col.chunks.push(next_chunk);
+                next_idx += 1;
+            }
+            return;
+        }
+        col.sparse_chunks.insert(ch_idx, chunk);
+    }
+
     /// Return (chunk_idx, in_chunk_offset) for absolute 0-based row.
     pub fn chunk_of_row(&self, abs_row: usize) -> Option<(usize, usize)> {
         if abs_row >= self.nrows as usize {
@@ -4777,7 +5126,7 @@ impl ArrowSheet {
         }
     }
 
-    fn make_empty_chunk(len: usize) -> ColumnChunk {
+    pub(crate) fn make_empty_chunk(len: usize) -> ColumnChunk {
         ColumnChunk {
             numbers: None,
             booleans: None,
@@ -4801,6 +5150,38 @@ impl ArrowSheet {
             merged: MergedLaneCache::default(),
             overlay: Overlay::new(),
             computed_overlay: Overlay::new(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn build_chunk(
+        type_tag: Arc<UInt8Array>,
+        numbers: Option<Arc<Float64Array>>,
+        booleans: Option<Arc<BooleanArray>>,
+        text: Option<ArrayRef>,
+        errors: Option<Arc<UInt8Array>>,
+        format: Option<FormatRuns>,
+        meta: ColumnChunkMeta,
+        overlay: Overlay,
+        computed_overlay: Overlay,
+    ) -> ColumnChunk {
+        ColumnChunk {
+            numbers,
+            booleans,
+            text,
+            errors,
+            type_tag,
+            formula_id: None,
+            format,
+            meta,
+            lazy_null_numbers: OnceCell::new(),
+            lazy_null_booleans: OnceCell::new(),
+            lazy_null_text: OnceCell::new(),
+            lazy_null_errors: OnceCell::new(),
+            lowered_text: OnceCell::new(),
+            merged: MergedLaneCache::default(),
+            overlay,
+            computed_overlay,
         }
     }
 

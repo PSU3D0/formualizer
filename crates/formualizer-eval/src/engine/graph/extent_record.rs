@@ -136,6 +136,86 @@ impl ExtentRecord {
         }
     }
 
+    /// Note every cell in the inclusive 0-based rectangle `[r0..=r1, c0..=c1]`
+    /// by emitting one column run per column directly into `runs` (avoiding
+    /// per-cell `pending` pushes on bulk writes).
+    pub(crate) fn note_rect(&mut self, sheet: SheetId, r0: u32, r1: u32, c0: u32, c1: u32) {
+        if r0 > r1 || c0 > c1 {
+            return;
+        }
+        let inner = self.inner();
+        if !inner.pending.is_empty() {
+            inner.fold();
+        }
+        let ncols = (c1 - c0) as usize + 1;
+        let old = std::mem::take(&mut inner.runs);
+        let mut merged = Vec::with_capacity(old.len() + ncols);
+        let mut a = old.into_iter().peekable();
+        let mut b = (c0..=c1)
+            .map(|col| ExtentRun {
+                sc: sc(sheet, col),
+                r0,
+                r1,
+            })
+            .peekable();
+        loop {
+            let next = match (a.peek(), b.peek()) {
+                (Some(x), Some(y)) => {
+                    if x <= y {
+                        a.next()
+                    } else {
+                        b.next()
+                    }
+                }
+                (Some(_), None) => a.next(),
+                (None, Some(_)) => b.next(),
+                (None, None) => break,
+            };
+            push_coalesced(&mut merged, next.unwrap());
+        }
+        inner.runs = merged;
+    }
+
+    /// Note a sorted list of inclusive 0-based column runs `(col, r0, r1)`
+    /// directly into `runs`. Runs must be sorted by `(col, r0)`.
+    pub(crate) fn note_runs(&mut self, sheet: SheetId, col_runs: &[(u32, u32, u32)]) {
+        if col_runs.is_empty() {
+            return;
+        }
+        let inner = self.inner();
+        if !inner.pending.is_empty() {
+            inner.fold();
+        }
+        let old = std::mem::take(&mut inner.runs);
+        let mut merged = Vec::with_capacity(old.len() + col_runs.len());
+        let mut a = old.into_iter().peekable();
+        let mut b = col_runs
+            .iter()
+            .filter(|&&(_, r0, r1)| r0 <= r1)
+            .map(|&(col, r0, r1)| ExtentRun {
+                sc: sc(sheet, col),
+                r0,
+                r1,
+            })
+            .peekable();
+        loop {
+            let next = match (a.peek(), b.peek()) {
+                (Some(x), Some(y)) => {
+                    if x <= y {
+                        a.next()
+                    } else {
+                        b.next()
+                    }
+                }
+                (Some(_), None) => a.next(),
+                (None, Some(_)) => b.next(),
+                (None, None) => break,
+            };
+            push_coalesced(&mut merged, next.unwrap());
+        }
+        inner.runs = merged;
+    }
+
     /// Fold the pending cells into the runs now (end of a load: the notes a
     /// load leaves pending would otherwise be sorted in by a later edit).
     pub(crate) fn fold_pending(&mut self) {
@@ -496,5 +576,41 @@ mod tests {
         assert_eq!(rec.row_bounds_for_cols(1, 1, 1), None);
         rec.drop_sheet(2);
         assert_eq!(rec.run_count(), 0);
+    }
+
+    #[test]
+    fn note_rect_and_note_runs_match_per_cell_note() {
+        let mut by_cell = ExtentRecord::default();
+        let mut by_rect = ExtentRecord::default();
+
+        by_cell.note(1, 0, 0);
+        by_rect.note(1, 0, 0);
+
+        for r in 2..=6 {
+            for c in 1..=3 {
+                by_cell.note(1, r, c);
+            }
+        }
+        by_rect.note_rect(1, 2, 6, 1, 3);
+
+        // Adjacent / overlapping rect coalesces cleanly
+        for r in 5..=9 {
+            for c in 2..=4 {
+                by_cell.note(1, r, c);
+            }
+        }
+        by_rect.note_rect(1, 5, 9, 2, 4);
+
+        // Sparse column runs
+        let runs = [(0, 10, 12), (2, 15, 15), (5, 1, 3)];
+        for &(c, r0, r1) in &runs {
+            for r in r0..=r1 {
+                by_cell.note(1, r, c);
+            }
+        }
+        by_rect.note_runs(1, &runs);
+
+        assert_eq!(cells(&by_cell, 1), cells(&by_rect, 1));
+        assert_eq!(by_cell.run_count(), by_rect.run_count());
     }
 }

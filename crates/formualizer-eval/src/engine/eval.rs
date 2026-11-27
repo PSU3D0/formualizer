@@ -1,5 +1,6 @@
 use crate::SheetId;
 
+mod bulk_write;
 mod criteria;
 mod criteria_mask_cache;
 #[cfg(test)]
@@ -36,6 +37,7 @@ use crate::engine::used_extent::{
     ExtentPolicy, OpenRangeBounds, resolve_used_extent_with_fallback,
 };
 use crate::engine::virtual_deps::VirtualDepBuilder;
+pub use bulk_write::{BulkCellTag, BulkColumn, CellBatch, PackedColumnBlock, WriteRangeReport};
 use family::{LayerUnit, layer_units, unit_members};
 
 #[path = "freshness.rs"]
@@ -107,7 +109,7 @@ impl StagedSheet {
         let Some(package) = self.deferred_package.as_mut() else {
             return;
         };
-        if package.suppressed.contains(&(row, col)) {
+        if package.is_suppressed(row, col) {
             // Previously consumed coordinates are already excluded from residual
             // authority. Edits/deletion must not invalidate untouched fragments.
             return;
@@ -242,7 +244,7 @@ impl StagedSheet {
             return Some(text.to_string());
         }
         let package = self.deferred_package.as_ref()?;
-        if package.suppressed.contains(&(row, col)) {
+        if package.is_suppressed(row, col) {
             return None;
         }
         package
@@ -252,6 +254,70 @@ impl StagedSheet {
             .formula_at(row, col)
             .ok()?
             .map(|record| record.text)
+    }
+
+    fn clear_rect(&mut self, r0: u32, r1: u32, c0: u32, c1: u32) -> (bool, bool) {
+        let mut ordinary_removed = false;
+        if !self.entries.is_empty() {
+            let before = self.entries.len();
+            self.entries
+                .retain(|&(r, c, _)| !(r >= r0 && r <= r1 && c >= c0 && c <= c1));
+            if self.entries.len() != before {
+                ordinary_removed = true;
+                self.index.clear();
+                for (idx, &(r, c, _)) in self.entries.iter().enumerate() {
+                    self.index.insert((r, c), idx);
+                }
+            }
+        }
+        let package_touched = self
+            .deferred_package
+            .as_mut()
+            .is_some_and(|package| package.suppress_rect(r0, r1, c0, c1));
+        (ordinary_removed, package_touched)
+    }
+
+    fn clear_points(
+        &mut self,
+        points: &[(u32, u32)],
+        col_runs_1based: &[(u32, u32, u32)],
+    ) -> (bool, bool) {
+        let mut ordinary_removed = false;
+        if !self.entries.is_empty() {
+            let mut drop_set: FxHashSet<(u32, u32)> = FxHashSet::default();
+            for &pt in points {
+                if self.index.contains_key(&pt) {
+                    drop_set.insert(pt);
+                }
+            }
+            if !drop_set.is_empty() {
+                ordinary_removed = true;
+                self.entries
+                    .retain(|&(r, c, _)| !drop_set.contains(&(r, c)));
+                self.index.clear();
+                for (idx, &(r, c, _)) in self.entries.iter().enumerate() {
+                    self.index.insert((r, c), idx);
+                }
+            }
+        }
+        let mut package_touched = false;
+        if self.deferred_package.is_some() {
+            if col_runs_1based.len() <= 256 {
+                if let Some(package) = self.deferred_package.as_mut() {
+                    for &(col, r0, r1) in col_runs_1based {
+                        if package.suppress_rect(r0, r1, col, col) {
+                            package_touched = true;
+                        }
+                    }
+                }
+            } else {
+                for &(r, c) in points {
+                    self.invalidate_deferred_at(r, c);
+                }
+                package_touched = true;
+            }
+        }
+        (ordinary_removed, package_touched)
     }
 
     fn len(&self) -> usize {
@@ -267,7 +333,7 @@ impl StagedSheet {
                     usize::try_from(package.report.source_formula_records_spooled)
                         .unwrap_or(usize::MAX)
                 })
-                .saturating_sub(package.suppressed.len())
+                .saturating_sub(package.suppressed_count_for_len())
                 .saturating_add(self.entries.len())
             })
     }
@@ -7017,7 +7083,10 @@ where
         self.before_target_preparation_commit_hook = Some(Box::new(hook));
     }
 
-    fn stage_deferred_formula_package(&mut self, package: crate::engine::DeferredFormulaPackage) {
+    pub(crate) fn stage_deferred_formula_package(
+        &mut self,
+        package: crate::engine::DeferredFormulaPackage,
+    ) {
         if let Ok(replay) = package.replay.lock()
             && let Some(footprint) = replay.selection_cache_footprint()
             && !self
@@ -7050,7 +7119,9 @@ where
                             region.rows.query_bounds().1 + 1,
                             region.cols.query_bounds().1 + 1,
                         ),
-                        |point| package.is_some_and(|package| package.suppressed.contains(&point)),
+                        |point| {
+                            package.is_some_and(|package| package.is_suppressed(point.0, point.1))
+                        },
                     )
                 {
                     self.graph.mark_vertex_dirty(vertex);
@@ -7090,6 +7161,97 @@ where
             });
         }
         removed
+    }
+
+    /// Bulk-clear staged ordinary formulas and range-suppress any deferred
+    /// shared-formula package intersecting the inclusive 1-based rectangle
+    /// `[r0..=r1, c0..=c1]` (E6).
+    pub(crate) fn clear_staged_formulas_in_rect(
+        &mut self,
+        sheet: &str,
+        r0: u32,
+        r1: u32,
+        c0: u32,
+        c1: u32,
+    ) {
+        self.assert_not_poisoned();
+        if !self.staged_formulas.contains_key(sheet) {
+            return;
+        }
+        let mut ordinary_removed = false;
+        let mut package_touched = false;
+        let mut remove_sheet = false;
+        if let Some(entries) = self.staged_formulas.get_mut(sheet) {
+            let (ord, pkg) = entries.clear_rect(r0, r1, c0, c1);
+            ordinary_removed = ord;
+            package_touched = pkg;
+            remove_sheet = entries.is_empty();
+        }
+        let idx_removed = self.staged_formula_index.remove_rect(sheet, r0, r1, c0, c1);
+        if package_touched {
+            self.staged_formula_index.touch_package(sheet);
+        }
+        if remove_sheet {
+            self.staged_formulas.remove(sheet);
+            self.staged_formula_index.set_package(sheet, None);
+        }
+        if (ordinary_removed || idx_removed || package_touched)
+            && let Some(sheet_id) = self.graph.sheet_id(sheet)
+        {
+            self.invalidate_pending_spills(StructuralScope::Region(Region::rect(
+                sheet_id,
+                r0.saturating_sub(1),
+                r1.saturating_sub(1),
+                c0.saturating_sub(1),
+                c1.saturating_sub(1),
+            )));
+        }
+    }
+
+    /// Bulk-clear staged ordinary formulas and suppress deferred formula package
+    /// entries at 1-based `points` (with pre-coalesced 1-based column runs `(col, r0, r1)`).
+    pub(crate) fn clear_staged_formulas_at_points(
+        &mut self,
+        sheet: &str,
+        points_1based: &[(u32, u32)],
+        col_runs_1based: &[(u32, u32, u32)],
+    ) {
+        self.assert_not_poisoned();
+        if points_1based.is_empty() || !self.staged_formulas.contains_key(sheet) {
+            return;
+        }
+        let mut ordinary_removed = false;
+        let mut package_touched = false;
+        let mut remove_sheet = false;
+        if let Some(entries) = self.staged_formulas.get_mut(sheet) {
+            let (ord, pkg) = entries.clear_points(points_1based, col_runs_1based);
+            ordinary_removed = ord;
+            package_touched = pkg;
+            remove_sheet = entries.is_empty();
+        }
+        let idx_removed = self
+            .staged_formula_index
+            .remove_points(sheet, points_1based);
+        if package_touched {
+            self.staged_formula_index.touch_package(sheet);
+        }
+        if remove_sheet {
+            self.staged_formulas.remove(sheet);
+            self.staged_formula_index.set_package(sheet, None);
+        }
+        if (ordinary_removed || idx_removed || package_touched)
+            && let Some(sheet_id) = self.graph.sheet_id(sheet)
+        {
+            for &(col, r0, r1) in col_runs_1based {
+                self.invalidate_pending_spills(StructuralScope::Region(Region::rect(
+                    sheet_id,
+                    r0.saturating_sub(1),
+                    r1.saturating_sub(1),
+                    col.saturating_sub(1),
+                    col.saturating_sub(1),
+                )));
+            }
+        }
     }
 
     ///
@@ -7504,7 +7666,7 @@ where
         }
         let selected_points: BTreeSet<_> = coordinates
             .into_iter()
-            .filter(|point| !package.suppressed.contains(point))
+            .filter(|&(row, col)| !package.is_suppressed(row, col))
             .collect();
         let mut prepared = PreparedTargetSourcePackage::empty_selection(
             sheet,
@@ -7521,6 +7683,7 @@ where
                 .map_err(|message| ExcelError::new(ExcelErrorKind::Value).with_message(message))?;
         }
         routing.extend_suppressed_excel_coords(package.suppressed.iter().copied());
+        routing.extend_suppressed_excel_rects(package.suppressed_rects.iter().copied());
         routing.register_consumed_members(
             package.consumed_engine.as_ref(),
             package.consumed_members.iter().copied(),
@@ -7658,6 +7821,7 @@ where
             replay,
             invalidated,
             suppressed,
+            suppressed_rects,
             consumed_members,
             consumed_engine,
             reconciliation_replay,
@@ -7681,6 +7845,7 @@ where
                 Arc::clone(&package.replay),
                 package.invalidated.clone(),
                 package.suppressed.clone(),
+                package.suppressed_rects.clone(),
                 package.consumed_members.clone(),
                 package.consumed_engine.clone(),
                 package.reconciliation_replay.clone(),
@@ -7694,6 +7859,7 @@ where
                 .map_err(|reason| ExcelError::new(ExcelErrorKind::Value).with_message(reason))?;
         }
         replay_disposition.extend_suppressed_excel_coords(suppressed.iter().copied());
+        replay_disposition.extend_suppressed_excel_rects(suppressed_rects.iter().copied());
         replay_disposition
             .register_consumed_members(consumed_engine.as_ref(), consumed_members.iter().copied());
         if !replay_disposition.consumed_engine_matches(&self.source_formula_token) {
@@ -11346,6 +11512,8 @@ where
                 }
                 replay_disposition
                     .extend_suppressed_excel_coords(package.suppressed.iter().copied());
+                replay_disposition
+                    .extend_suppressed_excel_rects(package.suppressed_rects.iter().copied());
                 let replayed = package
                     .replay
                     .lock()
@@ -14434,6 +14602,11 @@ where
         {
             self.disable_computed_overlay_mirroring_due_to_budget(cap);
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn debug_computed_overlay_bytes_estimate(&self) -> usize {
+        self.computed_overlay_bytes_estimate
     }
 
     #[inline]
@@ -22020,7 +22193,7 @@ where
             sheet,
             (anchor.coord.row() + 1, anchor.coord.col() + 1),
             (end_row + 1, end_col + 1),
-            |point| package.is_some_and(|package| package.suppressed.contains(&point)),
+            |point| package.is_some_and(|package| package.is_suppressed(point.0, point.1)),
         )
     }
 
