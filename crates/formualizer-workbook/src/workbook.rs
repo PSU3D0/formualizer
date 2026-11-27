@@ -1384,11 +1384,67 @@ fn decode_wire_cell_to_literal(
 
 type LoggedBulkItem = (u32, u32, LiteralValue, Option<crate::FormatId>);
 
+fn decode_serial_for_logged_path(
+    serial: f64,
+    format: crate::FormatId,
+    class: Option<formualizer_common::numfmt::FormatClass>,
+    date_system: formualizer_eval::engine::DateSystem,
+) -> (LiteralValue, Option<crate::FormatId>) {
+    use formualizer_common::numfmt::FormatClass;
+    match class {
+        Some(FormatClass::Date) => {
+            let val = if serial.fract() == 0.0 {
+                formualizer_common::try_serial_to_date_for(date_system, serial)
+                    .map(LiteralValue::Date)
+                    .unwrap_or(LiteralValue::Number(serial))
+            } else {
+                formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                    .map(LiteralValue::DateTime)
+                    .unwrap_or(LiteralValue::Number(serial))
+            };
+            (val, None)
+        }
+        Some(FormatClass::DateTime) => {
+            let val = formualizer_common::try_serial_to_datetime_for(date_system, serial)
+                .map(LiteralValue::DateTime)
+                .unwrap_or(LiteralValue::Number(serial));
+            (val, None)
+        }
+        Some(FormatClass::Time) if (0.0..1.0).contains(&serial) => {
+            let nanos = (serial * 86_400_000_000_000.0).round() as u64;
+            let nanos = nanos.min(86_400_000_000_000 - 1);
+            let val = chrono::NaiveTime::from_num_seconds_from_midnight_opt(
+                (nanos / 1_000_000_000) as u32,
+                (nanos % 1_000_000_000) as u32,
+            )
+            .map(LiteralValue::Time)
+            .unwrap_or(LiteralValue::Number(serial));
+            (val, None)
+        }
+        Some(FormatClass::Time | FormatClass::Duration) => {
+            let secs = (serial * 86_400.0).round();
+            let val = if secs.is_finite() && secs >= i64::MIN as f64 && secs <= i64::MAX as f64 {
+                LiteralValue::Duration(chrono::Duration::seconds(secs as i64))
+            } else {
+                LiteralValue::Number(serial)
+            };
+            (val, None)
+        }
+        _ => {
+            // Custom non-temporal formats are applied via the side-channel overlay
+            // format and are not journaled across undo/redo.
+            let fmt = (format != crate::FormatId::GENERAL).then_some(format);
+            (LiteralValue::Number(serial), fmt)
+        }
+    }
+}
+
 fn decode_columns_for_logged_path(
     start_row: u32,
     start_col: u32,
     columns: &[crate::ColumnData<'_>],
     date_system: formualizer_eval::engine::DateSystem,
+    format_class: impl Fn(crate::FormatId) -> Option<formualizer_common::numfmt::FormatClass>,
 ) -> Result<Vec<LoggedBulkItem>, IoError> {
     let nrows = columns.first().map_or(0, crate::ColumnData::len);
     let mut out = Vec::with_capacity(nrows.saturating_mul(columns.len()));
@@ -1464,6 +1520,7 @@ fn decode_columns_for_logged_path(
                 validity,
             } => {
                 check_validity_len(*validity, values.len(), ci)?;
+                let class = format_class(*format);
                 for (ri, &v) in values.iter().enumerate() {
                     if !bitmap_is_valid(*validity, ri) {
                         out.push((start_row + ri as u32, abs_col, LiteralValue::Empty, None));
@@ -1475,8 +1532,9 @@ fn decode_columns_for_logged_path(
                             None,
                         ));
                     } else {
-                        let fmt = (*format != crate::FormatId::GENERAL).then_some(*format);
-                        out.push((start_row + ri as u32, abs_col, LiteralValue::Number(v), fmt));
+                        let (lit, fmt) =
+                            decode_serial_for_logged_path(v, *format, class.clone(), date_system);
+                        out.push((start_row + ri as u32, abs_col, lit, fmt));
                     }
                 }
             }
@@ -3575,6 +3633,29 @@ impl Workbook {
         }
     }
 
+    /// Whether a logged bulk write of `written_cells` fits inside the configured
+    /// `history_limit` without evicting its own (or an enclosing caller's)
+    /// `CompoundStart` marker.
+    fn bulk_write_fits_history(&self, written_cells: usize) -> bool {
+        if !self.enable_changelog {
+            return false;
+        }
+        let Some(limit) = self.history_limit() else {
+            return true;
+        };
+        let depth = self.log.compound_depth();
+        let needed = if depth == 0 {
+            written_cells.saturating_add(2)
+        } else {
+            let existing = self.log.last_group_indices().len();
+            if existing == 0 {
+                return false;
+            }
+            existing.saturating_add(written_cells).saturating_add(depth)
+        };
+        needed <= limit
+    }
+
     // Batch set values in a rectangle starting at (start_row,start_col)
     pub fn set_values(
         &mut self,
@@ -3600,12 +3681,9 @@ impl Workbook {
 
         // Q2 changelog policy: when changelog is enabled and batch fits within
         // history_limit (or history_limit is unbounded), execute the logged
-        // per-cell path; when oversized or changelog is disabled, run the fast
-        // unified engine region-write primitive and clear history.
-        let use_logged_path = self.enable_changelog
-            && self
-                .history_limit()
-                .is_none_or(|limit| written_cells <= limit);
+        // single-compound path; when oversized or changelog is disabled, run the
+        // fast unified engine region-write primitive and clear history.
+        let use_logged_path = self.bulk_write_fits_history(written_cells);
 
         if use_logged_path {
             self.engine.begin_deferred_dirty();
@@ -3714,18 +3792,26 @@ impl Workbook {
         if !items.is_empty() {
             self.on_forward_logged_mutation();
         }
-        self.engine
-            .edit_with_logger(&mut self.log, |editor| {
-                for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
-                    editor.set_cell_value_with_old_state(
-                        *cell,
-                        v.clone(),
-                        old_value.clone(),
-                        old_formula.clone(),
-                    );
-                }
-            })
-            .map_err(|e| IoError::from_backend("editor", e))?;
+        let own_compound = !items.is_empty() && self.log.compound_depth() == 0;
+        if own_compound {
+            self.begin_action("batch: set values".to_string());
+        }
+        let edit_res = self.engine.edit_with_logger(&mut self.log, |editor| {
+            for (_r, _c, v, cell, old_value, old_formula, _staged_before) in items.iter() {
+                editor.set_cell_value_with_old_state(
+                    *cell,
+                    v.clone(),
+                    old_value.clone(),
+                    old_formula.clone(),
+                );
+            }
+        });
+        if let Err(e) = edit_res {
+            if own_compound {
+                self.end_action();
+            }
+            return Err(IoError::from_backend("editor", e));
+        }
         self.sync_spill_action_history();
 
         for (r, c, v, _cell, _old_value, _old_formula, staged_before) in items {
@@ -3734,6 +3820,9 @@ impl Workbook {
             if staged_before.is_some() {
                 self.record_staged_formula_cell_change(sheet, r, c, staged_before, None);
             }
+        }
+        if own_compound {
+            self.end_action();
         }
         self.engine.mark_data_edited();
         Ok(())
@@ -3798,7 +3887,10 @@ impl Workbook {
         }
 
         this.on_forward_logged_mutation();
-        this.begin_action(action_name.to_string());
+        let own_compound = this.log.compound_depth() == 0;
+        if own_compound {
+            this.begin_action(action_name.to_string());
+        }
         let edit_res = this.engine.edit_with_logger(&mut this.log, |editor| {
             for (_r, _c, v, _fmt, cell, old_value, old_formula, _staged_before) in items.iter() {
                 editor.set_cell_value_with_old_state(
@@ -3810,7 +3902,9 @@ impl Workbook {
             }
         });
         if let Err(e) = edit_res {
-            this.end_action();
+            if own_compound {
+                this.end_action();
+            }
             return Err(IoError::from_backend("editor", e));
         }
         this.sync_spill_action_history();
@@ -3857,7 +3951,9 @@ impl Workbook {
                 this.record_staged_formula_cell_change(sheet, r, c, staged_before, None);
             }
         }
-        this.end_action();
+        if own_compound {
+            this.end_action();
+        }
         this.engine.mark_data_edited();
         Ok(())
     }
@@ -3866,9 +3962,12 @@ impl Workbook {
     ///
     /// Row count is derived from the column buffers and all columns must have equal length.
     /// When `enable_changelog` is enabled and the batch fits within `history_limit`, executes
-    /// as a single undoable compound action (`history_cleared = false`). When oversized or
-    /// when changelog is disabled, executes through the unified bulk engine primitive, clears
-    /// any retained history stacks, and reports `history_cleared` accurately.
+    /// as a single undoable compound action (`history_cleared = false`). Temporal
+    /// [`ColumnData::Serial`] formats (`Date`, `DateTime`, `Time`, `Duration`) are journaled
+    /// via their typed [`LiteralValue`] variants and survive undo/redo; custom non-temporal
+    /// number formats on `Serial` columns are not journaled across undo/redo. When oversized
+    /// or when changelog is disabled, executes through the unified bulk engine primitive,
+    /// clears any retained history stacks, and reports `history_cleared` accurately.
     pub fn set_columns(
         &mut self,
         sheet: &str,
@@ -3929,15 +4028,19 @@ impl Workbook {
             validate_excel_coord(sheet, end_row, end_col)?;
             self.enforce_write_limits(sheet, end_row, end_col, written_cells)?;
 
-            let fits_history = self.enable_changelog
-                && self
-                    .history_limit()
-                    .is_none_or(|limit| written_cells.saturating_add(2) <= limit);
+            let fits_history = self.bulk_write_fits_history(written_cells);
 
             if fits_history {
                 let date_system = self.engine.config.date_system;
-                let entries =
-                    decode_columns_for_logged_path(start_row, start_col, columns, date_system)?;
+                let entries = decode_columns_for_logged_path(
+                    start_row,
+                    start_col,
+                    columns,
+                    date_system,
+                    |fmt| {
+                        formualizer_eval::traits::EvaluationContext::format_class(&self.engine, fmt)
+                    },
+                )?;
                 self.apply_logged_bulk_items(
                     sheet,
                     "batch: set columns",
@@ -4016,10 +4119,7 @@ impl Workbook {
         }
         if n > 0 {
             self.enforce_write_limits(sheet, max_row, max_col, n)?;
-            let fits_history = self.enable_changelog
-                && self
-                    .history_limit()
-                    .is_none_or(|limit| n.saturating_add(2) <= limit);
+            let fits_history = self.bulk_write_fits_history(n);
             if fits_history {
                 let date_system = self.engine.config.date_system;
                 let entries = decode_batch_for_logged_path(batch, date_system)?;
@@ -4063,6 +4163,19 @@ impl Workbook {
     /// When `headers` is `true`, the schema field names are written into `start_row`
     /// and data rows begin at `start_row + 1`. Always copies into engine-owned
     /// chunk-aligned buffers.
+    ///
+    /// # Atomicity and history
+    ///
+    /// Atomicity is **per-batch, not across the entire stream**: each `RecordBatch` is
+    /// validated and applied atomically via [`Workbook::set_columns`], but if a later
+    /// batch fails (for example due to an iterator error, column-count mismatch, invalid
+    /// UTF-8, or an `Int64`/`UInt64` outside `±2^53`), the optional header row and all
+    /// previously committed batches remain written to the worksheet.
+    ///
+    /// When the changelog is enabled, the header row and each batch are recorded as
+    /// separate undo steps unless wrapped in an enclosing [`Workbook::begin_action`] /
+    /// [`Workbook::end_action`] (and subject to `history_limit`, reporting
+    /// `history_cleared = true` if any step clears retained history).
     ///
     /// Available only when the opt-in `arrow` Cargo feature is enabled.
     #[cfg(feature = "arrow")]

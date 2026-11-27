@@ -25,10 +25,41 @@ use crate::traits::EvaluationContext;
 /// Maximum magnitude of an exact IEEE-754 `f64` integer (`2^53`).
 pub(crate) const MAX_SAFE_F64_INT: i64 = 1_i64 << 53;
 
-/// Private wire sentinel for ragged-row skipped cells (never exposed publicly
-/// and always rejected by public wire APIs).
-#[allow(dead_code)]
-pub(crate) const WIRE_TAG_SKIP: u8 = 255;
+/// RAII guard balancing `Engine::begin_deferred_dirty` with `graph.end_deferred_dirty`
+/// on every exit path (normal return, `?` error, or panic unwind).
+struct EngineDeferredDirtyGuard<'a, R>(&'a mut Engine<R>);
+
+impl<'a, R: EvaluationContext> EngineDeferredDirtyGuard<'a, R> {
+    #[inline]
+    fn enter(engine: &'a mut Engine<R>) -> Self {
+        engine.begin_deferred_dirty();
+        Self(engine)
+    }
+}
+
+impl<R> std::ops::Deref for EngineDeferredDirtyGuard<'_, R> {
+    type Target = Engine<R>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<R> std::ops::DerefMut for EngineDeferredDirtyGuard<'_, R> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+    }
+}
+
+impl<R> Drop for EngineDeferredDirtyGuard<'_, R> {
+    fn drop(&mut self) {
+        // Call `graph.end_deferred_dirty()` directly rather than `Engine::end_deferred_dirty()`
+        // so unwinding on a poisoned engine cannot double-panic.
+        let _ = self.0.graph.end_deferred_dirty();
+    }
+}
 
 /// Declared wire tag enum for packed bulk-write blocks.
 ///
@@ -1499,17 +1530,36 @@ where
         }
 
         // 5. B3: Clear derived formats intersecting rects.
-        if !self.derived_formats.is_empty() {
-            self.derived_formats.retain(|cell| {
-                if cell.sheet_id != sheet_id {
-                    return true;
-                }
-                let r = cell.coord.row();
-                let c = cell.coord.col();
-                !rects
-                    .iter()
-                    .any(|&(r0, r1, c0, c1)| r >= r0 && r <= r1 && c >= c0 && c <= c1)
+        // Use O(rect) point removal when the written region has fewer cells than
+        // total workbook derived formats, avoiding O(workbook) scans on small calls.
+        let derived_len = self.derived_formats.len();
+        if derived_len > 0 {
+            let rect_cells: usize = rects.iter().fold(0usize, |acc, &(r0, r1, c0, c1)| {
+                let rows = (r1 - r0) as usize + 1;
+                let cols = (c1 - c0) as usize + 1;
+                acc.saturating_add(rows.saturating_mul(cols))
             });
+            if rect_cells <= derived_len {
+                for &(r0, r1, c0, c1) in rects {
+                    for r in r0..=r1 {
+                        for c in c0..=c1 {
+                            let cell = CellRef::new(sheet_id, Coord::new(r, c, true, true));
+                            self.derived_formats.set(cell, None);
+                        }
+                    }
+                }
+            } else {
+                self.derived_formats.retain(|cell| {
+                    if cell.sheet_id != sheet_id {
+                        return true;
+                    }
+                    let r = cell.coord.row();
+                    let c = cell.coord.col();
+                    !rects
+                        .iter()
+                        .any(|&(r0, r1, c0, c1)| r >= r0 && r <= r1 && c >= c0 && c <= c1)
+                });
+            }
         }
 
         Ok((replaced_formula, resized_table))
@@ -1659,140 +1709,140 @@ where
         // ── Phase 2: Engine accessors, lazy storage, deferred dirty ──
         let sheet_existed = existing_sheet_id.is_some();
         let sheet_id = self.graph.sheet_id_mut(sheet);
-        self.begin_deferred_dirty();
+        let (replaced_formula, resized_table) = {
+            let mut dirty_guard = EngineDeferredDirtyGuard::enter(self);
+            let this: &mut Engine<R> = &mut dirty_guard;
 
-        // ── Phase 3: Region-level reconciliation ──
-        let res = self.reconcile_rects(sheet, sheet_id, &rects, &empty_tables);
-        let (replaced_formula, resized_table) = match res {
-            Ok(flags) => flags,
-            Err(e) => {
-                self.end_deferred_dirty();
-                return Err(e);
-            }
-        };
+            // ── Phase 3: Region-level reconciliation ──
+            let flags = this.reconcile_rects(sheet, sheet_id, &rects, &empty_tables)?;
 
-        // ── Phase 4: Chunk-aligned engine-owned storage write + overlay byte accounting ──
-        if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
-            self.ensure_arrow_sheet_exists(sheet, (r1 as usize) + 1, (c1 as usize) + 1);
-            let mut computed_overlay_delta = 0isize;
-            let mut compactions = 0u64;
+            // ── Phase 4: Chunk-aligned engine-owned storage write + overlay byte accounting ──
+            if this.config.arrow_storage_enabled && this.config.delta_overlay_enabled {
+                this.ensure_arrow_sheet_exists(sheet, (r1 as usize) + 1, (c1 as usize) + 1);
+                let mut computed_overlay_delta = 0isize;
+                let mut compactions = 0u64;
 
-            let asheet = self
-                .sheet_store_mut()
-                .sheet_mut(sheet)
-                .expect("ArrowSheet must exist");
+                let asheet = this
+                    .sheet_store_mut()
+                    .sheet_mut(sheet)
+                    .expect("ArrowSheet must exist");
 
-            let r0_usize = r0 as usize;
-            let r1_excl = (r1 as usize) + 1;
-            let first_ch = asheet
-                .chunk_of_row(r0_usize)
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-            let last_ch = asheet
-                .chunk_of_row(r1 as usize)
-                .map(|(idx, _)| idx)
-                .unwrap_or(first_ch);
+                let r0_usize = r0 as usize;
+                let r1_excl = (r1 as usize) + 1;
+                let first_ch = asheet
+                    .chunk_of_row(r0_usize)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0);
+                let last_ch = asheet
+                    .chunk_of_row(r1 as usize)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(first_ch);
 
-            for (ci, col) in columns.iter().enumerate() {
-                let abs_col = (c0 as usize) + ci;
-                let serial_tag = serial_tags[ci];
+                for (ci, col) in columns.iter().enumerate() {
+                    let abs_col = (c0 as usize) + ci;
+                    let serial_tag = serial_tags[ci];
 
-                for ch_idx in first_ch..=last_ch {
-                    let Some((ch_start, ch_len)) = asheet.chunk_extent(ch_idx) else {
-                        continue;
-                    };
-                    if ch_len == 0 {
-                        continue;
-                    }
-                    let ch_end = ch_start + ch_len;
-                    let write_start = r0_usize.max(ch_start);
-                    let write_end = r1_excl.min(ch_end);
-                    if write_start >= write_end {
-                        continue;
-                    }
-                    let lo = write_start - ch_start;
-                    let hi = write_end - ch_start;
-                    let touched = hi - lo;
-                    let is_full_chunk = lo == 0 && hi == ch_len;
-                    let chunk_exists = asheet.columns[abs_col].chunk(ch_idx).is_some();
-
-                    if is_full_chunk {
-                        if let Some(old_ch) = asheet.columns[abs_col].chunk(ch_idx) {
-                            computed_overlay_delta = computed_overlay_delta
-                                .saturating_sub(old_ch.computed_overlay.estimated_bytes() as isize);
+                    for ch_idx in first_ch..=last_ch {
+                        let Some((ch_start, ch_len)) = asheet.chunk_extent(ch_idx) else {
+                            continue;
+                        };
+                        if ch_len == 0 {
+                            continue;
                         }
-                        let col_off = write_start - r0_usize;
-                        match build_full_chunk_from_column(col, col_off, ch_len, serial_tag) {
-                            Some(new_chunk) => {
-                                asheet.install_column_chunk(abs_col, ch_idx, new_chunk);
+                        let ch_end = ch_start + ch_len;
+                        let write_start = r0_usize.max(ch_start);
+                        let write_end = r1_excl.min(ch_end);
+                        if write_start >= write_end {
+                            continue;
+                        }
+                        let lo = write_start - ch_start;
+                        let hi = write_end - ch_start;
+                        let touched = hi - lo;
+                        let is_full_chunk = lo == 0 && hi == ch_len;
+                        let chunk_exists = asheet.columns[abs_col].chunk(ch_idx).is_some();
+
+                        if is_full_chunk {
+                            if let Some(old_ch) = asheet.columns[abs_col].chunk(ch_idx) {
+                                computed_overlay_delta = computed_overlay_delta.saturating_sub(
+                                    old_ch.computed_overlay.estimated_bytes() as isize,
+                                );
                             }
-                            None => {
-                                if chunk_exists {
-                                    asheet.install_column_chunk(
-                                        abs_col,
-                                        ch_idx,
-                                        ArrowSheet::make_empty_chunk(ch_len),
-                                    );
+                            let col_off = write_start - r0_usize;
+                            match build_full_chunk_from_column(col, col_off, ch_len, serial_tag) {
+                                Some(new_chunk) => {
+                                    asheet.install_column_chunk(abs_col, ch_idx, new_chunk);
+                                }
+                                None => {
+                                    if chunk_exists {
+                                        asheet.install_column_chunk(
+                                            abs_col,
+                                            ch_idx,
+                                            ArrowSheet::make_empty_chunk(ch_len),
+                                        );
+                                    }
                                 }
                             }
-                        }
-                    } else if !chunk_exists || should_rebuild_chunk(ch_len, touched) {
-                        let existing = if chunk_exists {
-                            let col_mut = &mut asheet.columns[abs_col];
-                            if ch_idx < col_mut.chunks.len() {
-                                Some(std::mem::replace(
-                                    &mut col_mut.chunks[ch_idx],
-                                    ArrowSheet::make_empty_chunk(0),
-                                ))
+                        } else if !chunk_exists || should_rebuild_chunk(ch_len, touched) {
+                            let existing = if chunk_exists {
+                                let col_mut = &mut asheet.columns[abs_col];
+                                if ch_idx < col_mut.chunks.len() {
+                                    Some(std::mem::replace(
+                                        &mut col_mut.chunks[ch_idx],
+                                        ArrowSheet::make_empty_chunk(0),
+                                    ))
+                                } else {
+                                    col_mut.sparse_chunks.remove(&ch_idx)
+                                }
                             } else {
-                                col_mut.sparse_chunks.remove(&ch_idx)
+                                None
+                            };
+                            let (rebuilt, delta) =
+                                rebuild_partial_dense_chunk(existing, ch_len, lo, hi, |in_off| {
+                                    let abs_row = ch_start + in_off;
+                                    decode_bulk_column_cell(col, abs_row - r0_usize, serial_tag)
+                                });
+                            computed_overlay_delta = computed_overlay_delta.saturating_add(delta);
+                            if let Some(new_ch) = rebuilt {
+                                asheet.install_column_chunk(abs_col, ch_idx, new_ch);
                             }
                         } else {
-                            None
-                        };
-                        let (rebuilt, delta) =
-                            rebuild_partial_dense_chunk(existing, ch_len, lo, hi, |in_off| {
-                                let abs_row = ch_start + in_off;
-                                decode_bulk_column_cell(col, abs_row - r0_usize, serial_tag)
-                            });
-                        computed_overlay_delta = computed_overlay_delta.saturating_add(delta);
-                        if let Some(new_ch) = rebuilt {
-                            asheet.install_column_chunk(abs_col, ch_idx, new_ch);
-                        }
-                    } else {
-                        // Light overlay update on an existing chunk.
-                        if let Some(ch) = asheet.columns[abs_col].chunk_mut(ch_idx) {
-                            for in_off in lo..hi {
-                                let abs_row = ch_start + in_off;
-                                let cell =
-                                    decode_bulk_column_cell(col, abs_row - r0_usize, serial_tag);
-                                let _ = ch.overlay.set(in_off, cell.to_overlay_value());
-                                ch.overlay.set_format(in_off, cell.format_opt());
-                                computed_overlay_delta = computed_overlay_delta
-                                    .saturating_add(ch.computed_overlay.remove(in_off));
-                                ch.computed_overlay.set_format(in_off, None);
+                            // Light overlay update on an existing chunk.
+                            if let Some(ch) = asheet.columns[abs_col].chunk_mut(ch_idx) {
+                                for in_off in lo..hi {
+                                    let abs_row = ch_start + in_off;
+                                    let cell = decode_bulk_column_cell(
+                                        col,
+                                        abs_row - r0_usize,
+                                        serial_tag,
+                                    );
+                                    let _ = ch.overlay.set(in_off, cell.to_overlay_value());
+                                    ch.overlay.set_format(in_off, cell.format_opt());
+                                    computed_overlay_delta = computed_overlay_delta
+                                        .saturating_add(ch.computed_overlay.remove(in_off));
+                                    ch.computed_overlay.set_format(in_off, None);
+                                }
+                                if let Some(runs) = ch.format.as_ref() {
+                                    ch.format = runs.clear_range(lo, hi);
+                                }
                             }
-                            if let Some(runs) = ch.format.as_ref() {
-                                ch.format = runs.clear_range(lo, hi);
+                            if asheet.maybe_compact_chunk(abs_col, ch_idx, 1024, 50) > 0 {
+                                compactions = compactions.saturating_add(1);
                             }
-                        }
-                        if asheet.maybe_compact_chunk(abs_col, ch_idx, 1024, 50) > 0 {
-                            compactions = compactions.saturating_add(1);
                         }
                     }
                 }
+
+                if compactions > 0 {
+                    this.overlay_compactions = this.overlay_compactions.saturating_add(compactions);
+                }
+                this.adjust_computed_overlay_bytes(computed_overlay_delta);
             }
 
-            if compactions > 0 {
-                self.overlay_compactions = self.overlay_compactions.saturating_add(compactions);
-            }
-            self.adjust_computed_overlay_bytes(computed_overlay_delta);
-        }
-
-        // ── Phase 5: Extent, dirty propagation, flush & epochs (ONCE per batch) ──
-        self.graph.note_extent_rect(sheet_id, r0, r1, c0, c1);
-        let _ = self.graph.mark_dirty_rects(&[(sheet_id, r0, r1, c0, c1)]);
-        self.end_deferred_dirty();
+            // ── Phase 5: Extent & dirty propagation before deferred-dirty flush ──
+            this.graph.note_extent_rect(sheet_id, r0, r1, c0, c1);
+            let _ = this.graph.mark_dirty_rects(&[(sheet_id, r0, r1, c0, c1)]);
+            flags
+        };
         if !sheet_existed || replaced_formula || resized_table {
             self.mark_topology_edited();
         }
@@ -1893,282 +1943,287 @@ where
         // ── Phase 2: Engine accessors, lazy storage, deferred dirty ──
         let sheet_existed = existing_sheet_id.is_some();
         let sheet_id = self.graph.sheet_id_mut(sheet);
-        self.begin_deferred_dirty();
+        let (replaced_formula, resized_table) = {
+            let mut dirty_guard = EngineDeferredDirtyGuard::enter(self);
+            let this: &mut Engine<R> = &mut dirty_guard;
 
-        // ── Phase 3: Region-level reconciliation ──
-        let res = self.reconcile_rects(sheet, sheet_id, &rects, &empty_tables);
-        let (replaced_formula, resized_table) = match res {
-            Ok(flags) => flags,
-            Err(e) => {
-                self.end_deferred_dirty();
-                return Err(e);
-            }
-        };
+            // ── Phase 3: Region-level reconciliation ──
+            let flags = this.reconcile_rects(sheet, sheet_id, &rects, &empty_tables)?;
 
-        // ── Phase 4: Chunk-aligned engine-owned storage write + overlay byte accounting ──
-        if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
-            let max_row0 = (start_row0 as usize) + last_non_empty;
-            let max_col0 = (start_col0 as usize) + (width - 1);
-            self.ensure_arrow_sheet_exists(sheet, max_row0 + 1, max_col0 + 1);
-            let mut computed_overlay_delta = 0isize;
-            let mut compactions = 0u64;
+            // ── Phase 4: Chunk-aligned engine-owned storage write + overlay byte accounting ──
+            if this.config.arrow_storage_enabled && this.config.delta_overlay_enabled {
+                let max_row0 = (start_row0 as usize) + last_non_empty;
+                let max_col0 = (start_col0 as usize) + (width - 1);
+                this.ensure_arrow_sheet_exists(sheet, max_row0 + 1, max_col0 + 1);
+                let mut computed_overlay_delta = 0isize;
+                let mut compactions = 0u64;
 
-            let asheet = self
-                .sheet_store_mut()
-                .sheet_mut(sheet)
-                .expect("ArrowSheet must exist");
-            let date_system = asheet.date_system;
+                let asheet = this
+                    .sheet_store_mut()
+                    .sheet_mut(sheet)
+                    .expect("ArrowSheet must exist");
+                let date_system = asheet.date_system;
 
-            let r0_usize = start_row0 as usize;
-            let r1_excl = max_row0 + 1;
-            let first_ch = asheet
-                .chunk_of_row(r0_usize)
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-            let last_ch = asheet
-                .chunk_of_row(max_row0)
-                .map(|(idx, _)| idx)
-                .unwrap_or(first_ch);
+                let r0_usize = start_row0 as usize;
+                let r1_excl = max_row0 + 1;
+                let first_ch = asheet
+                    .chunk_of_row(r0_usize)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(0);
+                let last_ch = asheet
+                    .chunk_of_row(max_row0)
+                    .map(|(idx, _)| idx)
+                    .unwrap_or(first_ch);
 
-            if is_rectangular {
-                for ci in 0..width {
-                    let abs_col = (start_col0 as usize) + ci;
-                    for ch_idx in first_ch..=last_ch {
-                        let Some((ch_start, ch_len)) = asheet.chunk_extent(ch_idx) else {
-                            continue;
-                        };
-                        if ch_len == 0 {
-                            continue;
-                        }
-                        let ch_end = ch_start + ch_len;
-                        let write_start = r0_usize.max(ch_start);
-                        let write_end = r1_excl.min(ch_end);
-                        if write_start >= write_end {
-                            continue;
-                        }
-                        let lo = write_start - ch_start;
-                        let hi = write_end - ch_start;
-                        let touched = hi - lo;
-                        let is_full_chunk = lo == 0 && hi == ch_len;
-                        let chunk_exists = asheet.columns[abs_col].chunk(ch_idx).is_some();
-                        let row_off = write_start - r0_usize;
-
-                        let has_panicked = active_rows[row_off..row_off + touched].iter().any(|r| {
-                            matches!(
-                                &r[ci],
-                                LiteralValue::Error(e)
-                                    if matches!(
-                                        e.extra(),
-                                        formualizer_common::ExcelErrorExtra::FunctionPanicked { .. }
-                                    )
-                            )
-                        });
-
-                        if !has_panicked && is_full_chunk {
-                            if let Some(old_ch) = asheet.columns[abs_col].chunk(ch_idx) {
-                                computed_overlay_delta = computed_overlay_delta.saturating_sub(
-                                    old_ch.computed_overlay.estimated_bytes() as isize,
-                                );
-                            }
-                            match build_full_chunk_from_literal_col(
-                                active_rows,
-                                row_off,
-                                ch_len,
-                                ci,
-                                date_system,
-                            ) {
-                                Ok(Some(new_chunk)) => {
-                                    asheet.install_column_chunk(abs_col, ch_idx, new_chunk);
-                                }
-                                Ok(None) => {
-                                    if chunk_exists {
-                                        asheet.install_column_chunk(
-                                            abs_col,
-                                            ch_idx,
-                                            ArrowSheet::make_empty_chunk(ch_len),
-                                        );
-                                    }
-                                }
-                                Err(()) => unreachable!("has_panicked already checked"),
-                            }
-                        } else if !has_panicked
-                            && (!chunk_exists || should_rebuild_chunk(ch_len, touched))
-                        {
-                            let existing = if chunk_exists {
-                                let col_mut = &mut asheet.columns[abs_col];
-                                if ch_idx < col_mut.chunks.len() {
-                                    Some(std::mem::replace(
-                                        &mut col_mut.chunks[ch_idx],
-                                        ArrowSheet::make_empty_chunk(0),
-                                    ))
-                                } else {
-                                    col_mut.sparse_chunks.remove(&ch_idx)
-                                }
-                            } else {
-                                None
+                if is_rectangular {
+                    for ci in 0..width {
+                        let abs_col = (start_col0 as usize) + ci;
+                        for ch_idx in first_ch..=last_ch {
+                            let Some((ch_start, ch_len)) = asheet.chunk_extent(ch_idx) else {
+                                continue;
                             };
-                            let (rebuilt, delta) =
-                                rebuild_partial_dense_chunk(existing, ch_len, lo, hi, |in_off| {
-                                    let abs_row = ch_start + in_off;
-                                    DecodedCell::from_literal(
-                                        &active_rows[abs_row - r0_usize][ci],
-                                        date_system,
-                                    )
-                                });
-                            computed_overlay_delta = computed_overlay_delta.saturating_add(delta);
-                            if let Some(new_ch) = rebuilt {
-                                asheet.install_column_chunk(abs_col, ch_idx, new_ch);
-                            }
-                        } else {
-                            // Light overlay update (or FunctionPanicked fallback).
-                            let ch = if has_panicked && !chunk_exists {
-                                asheet.ensure_column_chunk_mut(abs_col, ch_idx)
-                            } else {
-                                asheet.columns[abs_col].chunk_mut(ch_idx)
-                            };
-                            if let Some(ch) = ch {
-                                for in_off in lo..hi {
-                                    let abs_row = ch_start + in_off;
-                                    let val = &active_rows[abs_row - r0_usize][ci];
-                                    let ov = OverlayValue::from_literal_value(
-                                        &val.clone().finite_or_num_error(),
-                                        date_system,
-                                    );
-                                    let fmt =
-                                        DecodedCell::from_literal(val, date_system).format_opt();
-                                    let _ = ch.overlay.set(in_off, ov);
-                                    ch.overlay.set_format(in_off, fmt);
-                                    computed_overlay_delta = computed_overlay_delta
-                                        .saturating_add(ch.computed_overlay.remove(in_off));
-                                    ch.computed_overlay.set_format(in_off, None);
-                                }
-                                if let Some(runs) = ch.format.as_ref() {
-                                    ch.format = runs.clear_range(lo, hi);
-                                }
-                            }
-                            if !has_panicked
-                                && asheet.maybe_compact_chunk(abs_col, ch_idx, 1024, 50) > 0
-                            {
-                                compactions = compactions.saturating_add(1);
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Ragged rows: write only touched cells (leaving short-row trailing cells untouched).
-                for ci in 0..width {
-                    let abs_col = (start_col0 as usize) + ci;
-                    for ch_idx in first_ch..=last_ch {
-                        let Some((ch_start, ch_len)) = asheet.chunk_extent(ch_idx) else {
-                            continue;
-                        };
-                        if ch_len == 0 {
-                            continue;
-                        }
-                        let ch_end = ch_start + ch_len;
-                        let write_start = r0_usize.max(ch_start);
-                        let write_end = r1_excl.min(ch_end);
-                        if write_start >= write_end {
-                            continue;
-                        }
-                        let mut writes: Vec<(usize, DecodedCell<'_>)> = Vec::new();
-                        let mut has_panicked = false;
-                        for abs_row in write_start..write_end {
-                            let r_slice = &active_rows[abs_row - r0_usize];
-                            if ci < r_slice.len() {
-                                let val = &r_slice[ci];
-                                if let LiteralValue::Error(e) = val
-                                    && matches!(
-                                        e.extra(),
-                                        formualizer_common::ExcelErrorExtra::FunctionPanicked { .. }
-                                    )
-                                {
-                                    has_panicked = true;
-                                }
-                                writes.push((
-                                    abs_row - ch_start,
-                                    DecodedCell::from_literal(val, date_system),
-                                ));
-                            }
-                        }
-                        if writes.is_empty() {
-                            continue;
-                        }
-                        let chunk_exists = asheet.columns[abs_col].chunk(ch_idx).is_some();
-                        if !has_panicked
-                            && (!chunk_exists || should_rebuild_chunk(ch_len, writes.len()))
-                        {
-                            let existing = if chunk_exists {
-                                let col_mut = &mut asheet.columns[abs_col];
-                                if ch_idx < col_mut.chunks.len() {
-                                    Some(std::mem::replace(
-                                        &mut col_mut.chunks[ch_idx],
-                                        ArrowSheet::make_empty_chunk(0),
-                                    ))
-                                } else {
-                                    col_mut.sparse_chunks.remove(&ch_idx)
-                                }
-                            } else {
-                                None
-                            };
-                            let (rebuilt, delta) = rebuild_sparse_chunk(existing, ch_len, &writes);
-                            computed_overlay_delta = computed_overlay_delta.saturating_add(delta);
-                            if let Some(new_ch) = rebuilt {
-                                asheet.install_column_chunk(abs_col, ch_idx, new_ch);
-                            }
-                        } else {
-                            let all_empty = writes.iter().all(|(_, c)| c.is_empty());
-                            if !chunk_exists && all_empty {
+                            if ch_len == 0 {
                                 continue;
                             }
-                            if let Some(ch) = asheet.ensure_column_chunk_mut(abs_col, ch_idx) {
-                                let mut offsets = Vec::with_capacity(writes.len());
-                                for &(in_off, cell) in &writes {
-                                    let abs_row = ch_start + in_off;
-                                    let val = &active_rows[abs_row - r0_usize][ci];
-                                    let ov = if has_panicked {
-                                        OverlayValue::from_literal_value(
-                                            &val.clone().finite_or_num_error(),
+                            let ch_end = ch_start + ch_len;
+                            let write_start = r0_usize.max(ch_start);
+                            let write_end = r1_excl.min(ch_end);
+                            if write_start >= write_end {
+                                continue;
+                            }
+                            let lo = write_start - ch_start;
+                            let hi = write_end - ch_start;
+                            let touched = hi - lo;
+                            let is_full_chunk = lo == 0 && hi == ch_len;
+                            let chunk_exists = asheet.columns[abs_col].chunk(ch_idx).is_some();
+                            let row_off = write_start - r0_usize;
+
+                            let has_panicked =
+                                active_rows[row_off..row_off + touched].iter().any(|r| {
+                                    matches!(
+                                        &r[ci],
+                                        LiteralValue::Error(e)
+                                            if matches!(
+                                                e.extra(),
+                                                formualizer_common::ExcelErrorExtra::FunctionPanicked { .. }
+                                            )
+                                    )
+                                });
+
+                            if !has_panicked && is_full_chunk {
+                                if let Some(old_ch) = asheet.columns[abs_col].chunk(ch_idx) {
+                                    computed_overlay_delta = computed_overlay_delta.saturating_sub(
+                                        old_ch.computed_overlay.estimated_bytes() as isize,
+                                    );
+                                }
+                                match build_full_chunk_from_literal_col(
+                                    active_rows,
+                                    row_off,
+                                    ch_len,
+                                    ci,
+                                    date_system,
+                                ) {
+                                    Ok(Some(new_chunk)) => {
+                                        asheet.install_column_chunk(abs_col, ch_idx, new_chunk);
+                                    }
+                                    Ok(None) => {
+                                        if chunk_exists {
+                                            asheet.install_column_chunk(
+                                                abs_col,
+                                                ch_idx,
+                                                ArrowSheet::make_empty_chunk(ch_len),
+                                            );
+                                        }
+                                    }
+                                    Err(()) => unreachable!("has_panicked already checked"),
+                                }
+                            } else if !has_panicked
+                                && (!chunk_exists || should_rebuild_chunk(ch_len, touched))
+                            {
+                                let existing = if chunk_exists {
+                                    let col_mut = &mut asheet.columns[abs_col];
+                                    if ch_idx < col_mut.chunks.len() {
+                                        Some(std::mem::replace(
+                                            &mut col_mut.chunks[ch_idx],
+                                            ArrowSheet::make_empty_chunk(0),
+                                        ))
+                                    } else {
+                                        col_mut.sparse_chunks.remove(&ch_idx)
+                                    }
+                                } else {
+                                    None
+                                };
+                                let (rebuilt, delta) = rebuild_partial_dense_chunk(
+                                    existing,
+                                    ch_len,
+                                    lo,
+                                    hi,
+                                    |in_off| {
+                                        let abs_row = ch_start + in_off;
+                                        DecodedCell::from_literal(
+                                            &active_rows[abs_row - r0_usize][ci],
                                             date_system,
                                         )
-                                    } else {
-                                        cell.to_overlay_value()
-                                    };
-                                    let _ = ch.overlay.set(in_off, ov);
-                                    ch.overlay.set_format(in_off, cell.format_opt());
-                                    computed_overlay_delta = computed_overlay_delta
-                                        .saturating_add(ch.computed_overlay.remove(in_off));
-                                    ch.computed_overlay.set_format(in_off, None);
-                                    offsets.push(in_off);
+                                    },
+                                );
+                                computed_overlay_delta =
+                                    computed_overlay_delta.saturating_add(delta);
+                                if let Some(new_ch) = rebuilt {
+                                    asheet.install_column_chunk(abs_col, ch_idx, new_ch);
                                 }
-                                if let Some(runs) = ch.format.as_ref() {
-                                    ch.format = runs.clear_offsets(&offsets);
+                            } else {
+                                // Light overlay update (or FunctionPanicked fallback).
+                                let ch = if has_panicked && !chunk_exists {
+                                    asheet.ensure_column_chunk_mut(abs_col, ch_idx)
+                                } else {
+                                    asheet.columns[abs_col].chunk_mut(ch_idx)
+                                };
+                                if let Some(ch) = ch {
+                                    for in_off in lo..hi {
+                                        let abs_row = ch_start + in_off;
+                                        let val = &active_rows[abs_row - r0_usize][ci];
+                                        let ov = OverlayValue::from_literal_value(
+                                            &val.clone().finite_or_num_error(),
+                                            date_system,
+                                        );
+                                        let fmt = DecodedCell::from_literal(val, date_system)
+                                            .format_opt();
+                                        let _ = ch.overlay.set(in_off, ov);
+                                        ch.overlay.set_format(in_off, fmt);
+                                        computed_overlay_delta = computed_overlay_delta
+                                            .saturating_add(ch.computed_overlay.remove(in_off));
+                                        ch.computed_overlay.set_format(in_off, None);
+                                    }
+                                    if let Some(runs) = ch.format.as_ref() {
+                                        ch.format = runs.clear_range(lo, hi);
+                                    }
+                                }
+                                if !has_panicked
+                                    && asheet.maybe_compact_chunk(abs_col, ch_idx, 1024, 50) > 0
+                                {
+                                    compactions = compactions.saturating_add(1);
                                 }
                             }
+                        }
+                    }
+                } else {
+                    // Ragged rows: write only touched cells (leaving short-row trailing cells untouched).
+                    for ci in 0..width {
+                        let abs_col = (start_col0 as usize) + ci;
+                        for ch_idx in first_ch..=last_ch {
+                            let Some((ch_start, ch_len)) = asheet.chunk_extent(ch_idx) else {
+                                continue;
+                            };
+                            if ch_len == 0 {
+                                continue;
+                            }
+                            let ch_end = ch_start + ch_len;
+                            let write_start = r0_usize.max(ch_start);
+                            let write_end = r1_excl.min(ch_end);
+                            if write_start >= write_end {
+                                continue;
+                            }
+                            let mut writes: Vec<(usize, DecodedCell<'_>)> = Vec::new();
+                            let mut has_panicked = false;
+                            for abs_row in write_start..write_end {
+                                let r_slice = &active_rows[abs_row - r0_usize];
+                                if ci < r_slice.len() {
+                                    let val = &r_slice[ci];
+                                    if let LiteralValue::Error(e) = val
+                                        && matches!(
+                                            e.extra(),
+                                            formualizer_common::ExcelErrorExtra::FunctionPanicked { .. }
+                                        )
+                                    {
+                                        has_panicked = true;
+                                    }
+                                    writes.push((
+                                        abs_row - ch_start,
+                                        DecodedCell::from_literal(val, date_system),
+                                    ));
+                                }
+                            }
+                            if writes.is_empty() {
+                                continue;
+                            }
+                            let chunk_exists = asheet.columns[abs_col].chunk(ch_idx).is_some();
                             if !has_panicked
-                                && asheet.maybe_compact_chunk(abs_col, ch_idx, 1024, 50) > 0
+                                && (!chunk_exists || should_rebuild_chunk(ch_len, writes.len()))
                             {
-                                compactions = compactions.saturating_add(1);
+                                let existing = if chunk_exists {
+                                    let col_mut = &mut asheet.columns[abs_col];
+                                    if ch_idx < col_mut.chunks.len() {
+                                        Some(std::mem::replace(
+                                            &mut col_mut.chunks[ch_idx],
+                                            ArrowSheet::make_empty_chunk(0),
+                                        ))
+                                    } else {
+                                        col_mut.sparse_chunks.remove(&ch_idx)
+                                    }
+                                } else {
+                                    None
+                                };
+                                let (rebuilt, delta) =
+                                    rebuild_sparse_chunk(existing, ch_len, &writes);
+                                computed_overlay_delta =
+                                    computed_overlay_delta.saturating_add(delta);
+                                if let Some(new_ch) = rebuilt {
+                                    asheet.install_column_chunk(abs_col, ch_idx, new_ch);
+                                }
+                            } else {
+                                let all_empty = writes.iter().all(|(_, c)| c.is_empty());
+                                if !chunk_exists && all_empty {
+                                    continue;
+                                }
+                                if let Some(ch) = asheet.ensure_column_chunk_mut(abs_col, ch_idx) {
+                                    let mut offsets = Vec::with_capacity(writes.len());
+                                    for &(in_off, cell) in &writes {
+                                        let abs_row = ch_start + in_off;
+                                        let val = &active_rows[abs_row - r0_usize][ci];
+                                        let ov = if has_panicked {
+                                            OverlayValue::from_literal_value(
+                                                &val.clone().finite_or_num_error(),
+                                                date_system,
+                                            )
+                                        } else {
+                                            cell.to_overlay_value()
+                                        };
+                                        let _ = ch.overlay.set(in_off, ov);
+                                        ch.overlay.set_format(in_off, cell.format_opt());
+                                        computed_overlay_delta = computed_overlay_delta
+                                            .saturating_add(ch.computed_overlay.remove(in_off));
+                                        ch.computed_overlay.set_format(in_off, None);
+                                        offsets.push(in_off);
+                                    }
+                                    if let Some(runs) = ch.format.as_ref() {
+                                        ch.format = runs.clear_offsets(&offsets);
+                                    }
+                                }
+                                if !has_panicked
+                                    && asheet.maybe_compact_chunk(abs_col, ch_idx, 1024, 50) > 0
+                                {
+                                    compactions = compactions.saturating_add(1);
+                                }
                             }
                         }
                     }
                 }
+
+                if compactions > 0 {
+                    this.overlay_compactions = this.overlay_compactions.saturating_add(compactions);
+                }
+                this.adjust_computed_overlay_bytes(computed_overlay_delta);
             }
 
-            if compactions > 0 {
-                self.overlay_compactions = self.overlay_compactions.saturating_add(compactions);
+            // ── Phase 5: Extent & dirty propagation before deferred-dirty flush ──
+            let mut dirty_rects = Vec::with_capacity(rects.len());
+            for &(r0, r1, c0, c1) in &rects {
+                this.graph.note_extent_rect(sheet_id, r0, r1, c0, c1);
+                dirty_rects.push((sheet_id, r0, r1, c0, c1));
             }
-            self.adjust_computed_overlay_bytes(computed_overlay_delta);
-        }
-
-        // ── Phase 5: Extent, dirty propagation, flush & epochs (ONCE per batch) ──
-        let mut dirty_rects = Vec::with_capacity(rects.len());
-        for &(r0, r1, c0, c1) in &rects {
-            self.graph.note_extent_rect(sheet_id, r0, r1, c0, c1);
-            dirty_rects.push((sheet_id, r0, r1, c0, c1));
-        }
-        let _ = self.graph.mark_dirty_rects(&dirty_rects);
-        self.end_deferred_dirty();
+            let _ = this.graph.mark_dirty_rects(&dirty_rects);
+            flags
+        };
         if !sheet_existed || replaced_formula || resized_table {
             self.mark_topology_edited();
         }
@@ -2200,6 +2255,12 @@ where
             return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
                 "CellBatch: rows length ({n}) does not match cols length ({})",
                 batch.cols.len()
+            )));
+        }
+        if batch.tags.len() != n {
+            return Err(ExcelError::new(ExcelErrorKind::Value).with_message(format!(
+                "CellBatch: rows length ({n}) does not match tags length ({})",
+                batch.tags.len()
             )));
         }
         validate_wire_cells(
@@ -2236,7 +2297,7 @@ where
         // Sort by (col0, row0, orig_idx) and keep the LAST entry for each (col0, row0).
         entries.sort_unstable();
         let mut deduped: Vec<(u32, u32, u32)> = Vec::with_capacity(entries.len());
-        for item in entries {
+        for &item in &entries {
             if let Some(last) = deduped.last_mut()
                 && last.0 == item.0
                 && last.1 == item.1
@@ -2261,9 +2322,11 @@ where
             .map(|sid| {
                 self.graph
                     .empty_tables_with_non_empty_in_body(sid, |br0, br1, bc0, bc1| {
-                        // Binary-search column range [bc0..=bc1] inside col-sorted `deduped`.
-                        let start = deduped.partition_point(|&(c0, _, _)| c0 < bc0);
-                        for &(c0, r0, orig_idx) in &deduped[start..] {
+                        // Binary-search column range [bc0..=bc1] inside col-sorted `entries`
+                        // (pre-dedup) so any non-empty write in the batch materializes the
+                        // empty table body, matching sequential per-cell `set_cell_value`.
+                        let start = entries.partition_point(|&(c0, _, _)| c0 < bc0);
+                        for &(c0, r0, orig_idx) in &entries[start..] {
                             if c0 > bc1 {
                                 break;
                             }
@@ -2287,189 +2350,201 @@ where
         // ── Phase 2: Engine accessors, lazy storage, deferred dirty ──
         let sheet_existed = existing_sheet_id.is_some();
         let sheet_id = self.graph.sheet_id_mut(sheet);
-        self.begin_deferred_dirty();
+        let (replaced_formula, resized_table) = {
+            let mut dirty_guard = EngineDeferredDirtyGuard::enter(self);
+            let this: &mut Engine<R> = &mut dirty_guard;
 
-        // ── Phase 3: Point-level reconciliation ──
-        let mut replaced_formula = false;
-        // 1. E3: Vacate all vertices at touched points (clearing spill anchors first).
-        for &(r0, c0) in &points_row_col {
-            let addr = CellRef::new(sheet_id, Coord::new(r0, c0, true, true));
-            if let Some(v) = self.graph.get_vertex_id_for_address(&addr)
-                && self.graph.vertex_exists(v)
-            {
-                let is_formula = matches!(
-                    self.graph.get_vertex_kind(v),
-                    VertexKind::FormulaScalar | VertexKind::FormulaArray
-                );
-                if is_formula {
-                    replaced_formula = true;
-                    if self.graph.spill_registry_has_anchor(v) {
-                        self.clear_spill_projection_and_mirror(v, None);
-                    }
-                }
-                self.graph.vacate_cell(&addr);
-            }
-        }
-
-        // 2. B1: Per-child spill release O(min(spills_on_sheet, num_points)) + waiter wakeups.
-        let dirtied_owners = self
-            .graph
-            .release_spill_children_at_points0(sheet_id, &points_row_col);
-        if !dirtied_owners.is_empty() {
-            self.graph.mark_dirty_many(&dirtied_owners);
-        }
-        if !self.spill_blocker_waiters.is_empty() || !self.blocked_pending_spills.is_empty() {
-            for &(c0, r0, r1) in &col_runs {
-                self.record_structural_change(StructuralScope::Region(Region::rect(
-                    sheet_id, r0, r1, c0, c0,
-                )));
-            }
-        }
-
-        // 3. E6: Staged formulas & deferred shared-formula packages.
-        if self.staged_formulas.contains_key(sheet) {
-            let points_1based: Vec<(u32, u32)> = points_row_col
-                .iter()
-                .map(|&(r0, c0)| (r0 + 1, c0 + 1))
-                .collect();
-            let col_runs_1based: Vec<(u32, u32, u32)> = col_runs
-                .iter()
-                .map(|&(c0, r0, r1)| (c0 + 1, r0 + 1, r1 + 1))
-                .collect();
-            self.clear_staged_formulas_at_points(sheet, &points_1based, &col_runs_1based);
-        }
-
-        // 4. E5: Empty-table resizes.
-        let mut resized_table = false;
-        for table in &empty_tables {
-            if let Err(e) = self.graph.resize_table(&table.name, table.range) {
-                self.end_deferred_dirty();
-                return Err(e);
-            }
-            resized_table = true;
-        }
-
-        // 5. B3: Clear derived formats at touched points.
-        if !self.derived_formats.is_empty() {
+            // ── Phase 3: Point-level reconciliation ──
+            let mut replaced_formula = false;
+            // 1. E3: Vacate all vertices at touched points (clearing spill anchors first).
             for &(r0, c0) in &points_row_col {
-                let cell = CellRef::new(sheet_id, Coord::new(r0, c0, true, true));
-                self.derived_formats.set(cell, None);
-            }
-        }
-
-        // ── Phase 4: Chunk-aligned storage write + overlay byte accounting ──
-        if self.config.arrow_storage_enabled && self.config.delta_overlay_enabled {
-            self.ensure_arrow_sheet_exists(sheet, max_row as usize, max_col as usize);
-            let mut computed_overlay_delta = 0isize;
-            let mut compactions = 0u64;
-
-            let asheet = self
-                .sheet_store_mut()
-                .sheet_mut(sheet)
-                .expect("ArrowSheet must exist");
-
-            // Group `deduped` by `(col0, ch_idx)`.
-            let mut idx = 0usize;
-            while idx < deduped.len() {
-                let abs_col = deduped[idx].0 as usize;
-                let col_start = idx;
-                while idx < deduped.len() && deduped[idx].0 as usize == abs_col {
-                    idx += 1;
+                let addr = CellRef::new(sheet_id, Coord::new(r0, c0, true, true));
+                if let Some(v) = this.graph.get_vertex_id_for_address(&addr)
+                    && this.graph.vertex_exists(v)
+                {
+                    let is_formula = matches!(
+                        this.graph.get_vertex_kind(v),
+                        VertexKind::FormulaScalar | VertexKind::FormulaArray
+                    );
+                    if is_formula {
+                        replaced_formula = true;
+                        if this.graph.spill_registry_has_anchor(v) {
+                            this.clear_spill_projection_and_mirror(v, None);
+                        }
+                    }
+                    this.graph.vacate_cell(&addr);
                 }
-                let col_entries = &deduped[col_start..idx];
+            }
 
-                let mut sub = 0usize;
-                while sub < col_entries.len() {
-                    let first_row = col_entries[sub].1 as usize;
-                    let Some((ch_idx, _)) = asheet.chunk_of_row(first_row) else {
-                        sub += 1;
-                        continue;
-                    };
-                    let Some((ch_start, ch_len)) = asheet.chunk_extent(ch_idx) else {
-                        sub += 1;
-                        continue;
-                    };
-                    let ch_end = ch_start + ch_len;
-                    let mut writes: Vec<(usize, DecodedCell<'_>)> = Vec::new();
+            // 2. B1: Per-child spill release O(min(spills_on_sheet, num_points)) + waiter wakeups.
+            let dirtied_owners = this
+                .graph
+                .release_spill_children_at_points0(sheet_id, &points_row_col);
+            if !dirtied_owners.is_empty() {
+                this.graph.mark_dirty_many(&dirtied_owners);
+            }
+            if !this.spill_blocker_waiters.is_empty() || !this.blocked_pending_spills.is_empty() {
+                for &(c0, r0, r1) in &col_runs {
+                    this.record_structural_change(StructuralScope::Region(Region::rect(
+                        sheet_id, r0, r1, c0, c0,
+                    )));
+                }
+            }
+
+            // 3. E6: Staged formulas & deferred shared-formula packages.
+            if this.staged_formulas.contains_key(sheet) {
+                let points_1based: Vec<(u32, u32)> = points_row_col
+                    .iter()
+                    .map(|&(r0, c0)| (r0 + 1, c0 + 1))
+                    .collect();
+                let col_runs_1based: Vec<(u32, u32, u32)> = col_runs
+                    .iter()
+                    .map(|&(c0, r0, r1)| (c0 + 1, r0 + 1, r1 + 1))
+                    .collect();
+                this.clear_staged_formulas_at_points(sheet, &points_1based, &col_runs_1based);
+            }
+
+            // 4. E5: Empty-table resizes.
+            let mut resized_table = false;
+            for table in &empty_tables {
+                this.graph.resize_table(&table.name, table.range)?;
+                resized_table = true;
+            }
+
+            // 5. B3: Clear derived formats at touched points.
+            let derived_len = this.derived_formats.len();
+            if derived_len > 0 {
+                if points_row_col.len() <= derived_len {
+                    for &(r0, c0) in &points_row_col {
+                        let cell = CellRef::new(sheet_id, Coord::new(r0, c0, true, true));
+                        this.derived_formats.set(cell, None);
+                    }
+                } else {
+                    this.derived_formats.retain(|cell| {
+                        if cell.sheet_id != sheet_id {
+                            return true;
+                        }
+                        points_row_col
+                            .binary_search(&(cell.coord.row(), cell.coord.col()))
+                            .is_err()
+                    });
+                }
+            }
+
+            // ── Phase 4: Chunk-aligned storage write + overlay byte accounting ──
+            if this.config.arrow_storage_enabled && this.config.delta_overlay_enabled {
+                this.ensure_arrow_sheet_exists(sheet, max_row as usize, max_col as usize);
+                let mut computed_overlay_delta = 0isize;
+                let mut compactions = 0u64;
+
+                let asheet = this
+                    .sheet_store_mut()
+                    .sheet_mut(sheet)
+                    .expect("ArrowSheet must exist");
+
+                // Group `deduped` by `(col0, ch_idx)`.
+                let mut idx = 0usize;
+                while idx < deduped.len() {
+                    let abs_col = deduped[idx].0 as usize;
+                    let col_start = idx;
+                    while idx < deduped.len() && deduped[idx].0 as usize == abs_col {
+                        idx += 1;
+                    }
+                    let col_entries = &deduped[col_start..idx];
+
+                    let mut sub = 0usize;
                     while sub < col_entries.len() {
-                        let r0 = col_entries[sub].1 as usize;
-                        if r0 >= ch_end {
-                            break;
-                        }
-                        let orig = col_entries[sub].2 as usize;
-                        let cell = decode_wire_cell(
-                            batch.tags[orig],
-                            batch.numbers[orig],
-                            batch.text_bytes,
-                            batch.text_offsets,
-                        );
-                        writes.push((r0 - ch_start, cell));
-                        sub += 1;
-                    }
-                    if writes.is_empty() {
-                        continue;
-                    }
-
-                    let chunk_exists = asheet.columns[abs_col].chunk(ch_idx).is_some();
-                    if should_rebuild_chunk(ch_len, writes.len()) {
-                        let existing = if chunk_exists {
-                            let col_mut = &mut asheet.columns[abs_col];
-                            if ch_idx < col_mut.chunks.len() {
-                                Some(std::mem::replace(
-                                    &mut col_mut.chunks[ch_idx],
-                                    ArrowSheet::make_empty_chunk(0),
-                                ))
-                            } else {
-                                col_mut.sparse_chunks.remove(&ch_idx)
-                            }
-                        } else {
-                            None
+                        let first_row = col_entries[sub].1 as usize;
+                        let Some((ch_idx, _)) = asheet.chunk_of_row(first_row) else {
+                            sub += 1;
+                            continue;
                         };
-                        let (rebuilt, delta) = rebuild_sparse_chunk(existing, ch_len, &writes);
-                        computed_overlay_delta = computed_overlay_delta.saturating_add(delta);
-                        if let Some(new_ch) = rebuilt {
-                            asheet.install_column_chunk(abs_col, ch_idx, new_ch);
+                        let Some((ch_start, ch_len)) = asheet.chunk_extent(ch_idx) else {
+                            sub += 1;
+                            continue;
+                        };
+                        let ch_end = ch_start + ch_len;
+                        let mut writes: Vec<(usize, DecodedCell<'_>)> = Vec::new();
+                        while sub < col_entries.len() {
+                            let r0 = col_entries[sub].1 as usize;
+                            if r0 >= ch_end {
+                                break;
+                            }
+                            let orig = col_entries[sub].2 as usize;
+                            let cell = decode_wire_cell(
+                                batch.tags[orig],
+                                batch.numbers[orig],
+                                batch.text_bytes,
+                                batch.text_offsets,
+                            );
+                            writes.push((r0 - ch_start, cell));
+                            sub += 1;
                         }
-                    } else {
-                        let all_empty = writes.iter().all(|(_, c)| c.is_empty());
-                        if !chunk_exists && all_empty {
+                        if writes.is_empty() {
                             continue;
                         }
-                        if let Some(ch) = asheet.ensure_column_chunk_mut(abs_col, ch_idx) {
-                            let mut offsets = Vec::with_capacity(writes.len());
-                            for &(in_off, cell) in &writes {
-                                let _ = ch.overlay.set(in_off, cell.to_overlay_value());
-                                ch.overlay.set_format(in_off, cell.format_opt());
-                                computed_overlay_delta = computed_overlay_delta
-                                    .saturating_add(ch.computed_overlay.remove(in_off));
-                                ch.computed_overlay.set_format(in_off, None);
-                                offsets.push(in_off);
+
+                        let chunk_exists = asheet.columns[abs_col].chunk(ch_idx).is_some();
+                        if should_rebuild_chunk(ch_len, writes.len()) {
+                            let existing = if chunk_exists {
+                                let col_mut = &mut asheet.columns[abs_col];
+                                if ch_idx < col_mut.chunks.len() {
+                                    Some(std::mem::replace(
+                                        &mut col_mut.chunks[ch_idx],
+                                        ArrowSheet::make_empty_chunk(0),
+                                    ))
+                                } else {
+                                    col_mut.sparse_chunks.remove(&ch_idx)
+                                }
+                            } else {
+                                None
+                            };
+                            let (rebuilt, delta) = rebuild_sparse_chunk(existing, ch_len, &writes);
+                            computed_overlay_delta = computed_overlay_delta.saturating_add(delta);
+                            if let Some(new_ch) = rebuilt {
+                                asheet.install_column_chunk(abs_col, ch_idx, new_ch);
                             }
-                            if let Some(runs) = ch.format.as_ref() {
-                                ch.format = runs.clear_offsets(&offsets);
+                        } else {
+                            let all_empty = writes.iter().all(|(_, c)| c.is_empty());
+                            if !chunk_exists && all_empty {
+                                continue;
                             }
-                        }
-                        if asheet.maybe_compact_chunk(abs_col, ch_idx, 1024, 50) > 0 {
-                            compactions = compactions.saturating_add(1);
+                            if let Some(ch) = asheet.ensure_column_chunk_mut(abs_col, ch_idx) {
+                                let mut offsets = Vec::with_capacity(writes.len());
+                                for &(in_off, cell) in &writes {
+                                    let _ = ch.overlay.set(in_off, cell.to_overlay_value());
+                                    ch.overlay.set_format(in_off, cell.format_opt());
+                                    computed_overlay_delta = computed_overlay_delta
+                                        .saturating_add(ch.computed_overlay.remove(in_off));
+                                    ch.computed_overlay.set_format(in_off, None);
+                                    offsets.push(in_off);
+                                }
+                                if let Some(runs) = ch.format.as_ref() {
+                                    ch.format = runs.clear_offsets(&offsets);
+                                }
+                            }
+                            if asheet.maybe_compact_chunk(abs_col, ch_idx, 1024, 50) > 0 {
+                                compactions = compactions.saturating_add(1);
+                            }
                         }
                     }
                 }
+
+                if compactions > 0 {
+                    this.overlay_compactions = this.overlay_compactions.saturating_add(compactions);
+                }
+                this.adjust_computed_overlay_bytes(computed_overlay_delta);
             }
 
-            if compactions > 0 {
-                self.overlay_compactions = self.overlay_compactions.saturating_add(compactions);
-            }
-            self.adjust_computed_overlay_bytes(computed_overlay_delta);
-        }
-
-        // ── Phase 5: Extent, dirty propagation, flush & epochs (ONCE per batch) ──
-        self.graph.note_extent_runs(sheet_id, &col_runs);
-        let dirty_rects: Vec<(crate::SheetId, u32, u32, u32, u32)> = col_runs
-            .iter()
-            .map(|&(c0, r0, r1)| (sheet_id, r0, r1, c0, c0))
-            .collect();
-        let _ = self.graph.mark_dirty_rects(&dirty_rects);
-        self.end_deferred_dirty();
+            // ── Phase 5: Extent & dirty propagation before deferred-dirty flush ──
+            this.graph.note_extent_runs(sheet_id, &col_runs);
+            let dirty_rects: Vec<(crate::SheetId, u32, u32, u32, u32)> = col_runs
+                .iter()
+                .map(|&(c0, r0, r1)| (sheet_id, r0, r1, c0, c0))
+                .collect();
+            let _ = this.graph.mark_dirty_rects(&dirty_rects);
+            (replaced_formula, resized_table)
+        };
         if !sheet_existed || replaced_formula || resized_table {
             self.mark_topology_edited();
         }

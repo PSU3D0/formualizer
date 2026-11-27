@@ -26,6 +26,13 @@ pub enum ColumnData<'a> {
         offsets: &'a [u32],
         validity: Option<&'a [u8]>,
     },
+    /// Numeric serial column with an explicit [`FormatId`] (for example dates,
+    /// times, datetimes, durations, or custom number formats).
+    ///
+    /// On the logged (changelog-enabled) path, temporal formats (`Date`, `DateTime`,
+    /// `Time`, `Duration`) are converted to their typed `LiteralValue` variants so
+    /// undo/redo preserves them; custom non-temporal number formats are applied to
+    /// the overlay on write and are not journaled across undo/redo.
     Serial {
         values: &'a [f64],
         format: FormatId,
@@ -316,10 +323,20 @@ mod arrow_interop {
         match values.data_type() {
             DataType::Utf8 => {
                 let arr = values.as_any().downcast_ref::<StringArray>().unwrap();
+                let data = arr.value_data();
+                let val_offs = arr.value_offsets();
                 for i in 0..arr.len() {
                     if arr.is_valid(i) {
-                        let s = arr.value(i);
-                        text_bytes.extend_from_slice(s.as_bytes());
+                        let s0 = val_offs[i] as usize;
+                        let s1 = val_offs[i + 1] as usize;
+                        let slice = &data[s0..s1];
+                        if std::str::from_utf8(slice).is_err() {
+                            return Err(arrow_err(
+                                col_label,
+                                format!("dictionary value {i}: invalid UTF-8 string bytes"),
+                            ));
+                        }
+                        text_bytes.extend_from_slice(slice);
                         value_valid.push(true);
                     } else {
                         value_valid.push(false);
@@ -335,10 +352,20 @@ mod arrow_interop {
             }
             DataType::LargeUtf8 => {
                 let arr = values.as_any().downcast_ref::<LargeStringArray>().unwrap();
+                let data = arr.value_data();
+                let val_offs = arr.value_offsets();
                 for i in 0..arr.len() {
                     if arr.is_valid(i) {
-                        let s = arr.value(i);
-                        text_bytes.extend_from_slice(s.as_bytes());
+                        let s0 = val_offs[i] as usize;
+                        let s1 = val_offs[i + 1] as usize;
+                        let slice = &data[s0..s1];
+                        if std::str::from_utf8(slice).is_err() {
+                            return Err(arrow_err(
+                                col_label,
+                                format!("dictionary value {i}: invalid UTF-8 string bytes"),
+                            ));
+                        }
+                        text_bytes.extend_from_slice(slice);
                         value_valid.push(true);
                     } else {
                         value_valid.push(false);
@@ -353,11 +380,22 @@ mod arrow_interop {
                 }
             }
             DataType::Utf8View => {
-                let arr = values.as_any().downcast_ref::<StringViewArray>().unwrap();
+                let arr = values
+                    .as_any()
+                    .downcast_ref::<StringViewArray>()
+                    .unwrap()
+                    .clone()
+                    .to_binary_view();
                 for i in 0..arr.len() {
                     if arr.is_valid(i) {
-                        let s = arr.value(i);
-                        text_bytes.extend_from_slice(s.as_bytes());
+                        let slice = arr.value(i);
+                        if std::str::from_utf8(slice).is_err() {
+                            return Err(arrow_err(
+                                col_label,
+                                format!("dictionary value {i}: invalid UTF-8 string bytes"),
+                            ));
+                        }
+                        text_bytes.extend_from_slice(slice);
                         value_valid.push(true);
                     } else {
                         value_valid.push(false);
@@ -815,12 +853,23 @@ mod arrow_interop {
                 }
                 DataType::Utf8 => {
                     let a = array.as_any().downcast_ref::<StringArray>().unwrap();
+                    let data = a.value_data();
+                    let val_offs = a.value_offsets();
                     let mut bytes = Vec::new();
                     let mut offsets = Vec::with_capacity(len + 1);
                     offsets.push(0u32);
                     for i in 0..len {
                         if a.is_valid(i) {
-                            bytes.extend_from_slice(a.value(i).as_bytes());
+                            let s0 = val_offs[i] as usize;
+                            let s1 = val_offs[i + 1] as usize;
+                            let slice = &data[s0..s1];
+                            if std::str::from_utf8(slice).is_err() {
+                                return Err(arrow_err(
+                                    col_label,
+                                    format!("row {i}: invalid UTF-8 string bytes"),
+                                ));
+                            }
+                            bytes.extend_from_slice(slice);
                         }
                         let off = u32::try_from(bytes.len()).map_err(|_| {
                             arrow_err(col_label, "UTF-8 buffer exceeds 4 GiB u32 offset limit")
@@ -835,12 +884,23 @@ mod arrow_interop {
                 }
                 DataType::LargeUtf8 => {
                     let a = array.as_any().downcast_ref::<LargeStringArray>().unwrap();
+                    let data = a.value_data();
+                    let val_offs = a.value_offsets();
                     let mut bytes = Vec::new();
                     let mut offsets = Vec::with_capacity(len + 1);
                     offsets.push(0u32);
                     for i in 0..len {
                         if a.is_valid(i) {
-                            bytes.extend_from_slice(a.value(i).as_bytes());
+                            let s0 = val_offs[i] as usize;
+                            let s1 = val_offs[i + 1] as usize;
+                            let slice = &data[s0..s1];
+                            if std::str::from_utf8(slice).is_err() {
+                                return Err(arrow_err(
+                                    col_label,
+                                    format!("row {i}: invalid UTF-8 string bytes"),
+                                ));
+                            }
+                            bytes.extend_from_slice(slice);
                         }
                         let off = u32::try_from(bytes.len()).map_err(|_| {
                             arrow_err(col_label, "LargeUtf8 buffer exceeds 4 GiB u32 offset limit")
@@ -854,13 +914,25 @@ mod arrow_interop {
                     })
                 }
                 DataType::Utf8View => {
-                    let a = array.as_any().downcast_ref::<StringViewArray>().unwrap();
+                    let a = array
+                        .as_any()
+                        .downcast_ref::<StringViewArray>()
+                        .unwrap()
+                        .clone()
+                        .to_binary_view();
                     let mut bytes = Vec::new();
                     let mut offsets = Vec::with_capacity(len + 1);
                     offsets.push(0u32);
                     for i in 0..len {
                         if a.is_valid(i) {
-                            bytes.extend_from_slice(a.value(i).as_bytes());
+                            let slice = a.value(i);
+                            if std::str::from_utf8(slice).is_err() {
+                                return Err(arrow_err(
+                                    col_label,
+                                    format!("row {i}: invalid UTF-8 string bytes"),
+                                ));
+                            }
+                            bytes.extend_from_slice(slice);
                         }
                         let off = u32::try_from(bytes.len()).map_err(|_| {
                             arrow_err(col_label, "Utf8View buffer exceeds 4 GiB u32 offset limit")

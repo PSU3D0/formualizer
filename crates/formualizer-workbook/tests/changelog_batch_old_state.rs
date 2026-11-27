@@ -197,6 +197,7 @@ fn set_values_batch_event_log_golden() {
 
     let got = render_log_from(&wb, mark);
     let expected = vec![
+        "CompoundStart batch: set values",
         "SetValue addr=(1,0,0) old_value=Some(Number(10.0)) old_formula=None new=Int(21)",
         "SetValue addr=(1,0,1) old_value=Some(Number(20.0)) old_formula=Some(=A1 * 2) new=Int(22)",
         "SetValue addr=(1,0,2) old_value=Some(Number(5.0)) old_formula=None new=Int(23)",
@@ -206,6 +207,7 @@ fn set_values_batch_event_log_golden() {
         "SetValue addr=(1,0,4) old_value=Some(Number(1.0)) old_formula=Some(=SEQUENCE(2, 1)) new=Int(25)",
         "CompoundEnd",
         "SetValue addr=(1,0,5) old_value=None old_formula=None new=Int(26)",
+        "CompoundEnd",
     ];
     assert_eq!(
         got, expected,

@@ -230,6 +230,88 @@ fn q2_changelog_policy_small_undoable_and_oversized_clears_history() {
         None | Some(LiteralValue::Empty)
     ));
 
+    // B2: Serial column with temporal formats (DATE, DATETIME, TIME, DURATION) must
+    // survive undo + redo on the logged path without losing its temporal type.
+    let rep_serial = wb
+        .set_columns(
+            "S",
+            1,
+            3,
+            &[
+                ColumnData::Serial {
+                    values: &[45_292.0], // 2024-01-01
+                    format: FormatId::DATE,
+                    validity: None,
+                },
+                ColumnData::Serial {
+                    values: &[45_292.5], // 2024-01-01 12:00:00
+                    format: FormatId::DATETIME,
+                    validity: None,
+                },
+                ColumnData::Serial {
+                    values: &[0.5], // 12:00:00
+                    format: FormatId::TIME,
+                    validity: None,
+                },
+                ColumnData::Serial {
+                    values: &[1.5], // 36h
+                    format: FormatId::DURATION,
+                    validity: None,
+                },
+            ],
+        )
+        .unwrap();
+    assert!(!rep_serial.history_cleared);
+    let expected_date = Some(LiteralValue::Date(
+        chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+    ));
+    let expected_dt = Some(LiteralValue::DateTime(
+        chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap(),
+    ));
+    let expected_time = Some(LiteralValue::Time(
+        chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+    ));
+    let expected_dur = Some(LiteralValue::Duration(chrono::Duration::hours(36)));
+    assert_eq!(wb.get_value("S", 1, 3), expected_date);
+    assert_eq!(wb.get_value("S", 1, 4), expected_dt);
+    assert_eq!(wb.get_value("S", 1, 5), expected_time);
+    assert_eq!(wb.get_value("S", 1, 6), expected_dur);
+
+    wb.undo().unwrap();
+    assert!(matches!(
+        wb.get_value("S", 1, 3),
+        None | Some(LiteralValue::Empty)
+    ));
+    assert!(matches!(
+        wb.get_value("S", 1, 4),
+        None | Some(LiteralValue::Empty)
+    ));
+
+    wb.redo().unwrap();
+    assert_eq!(
+        wb.get_value("S", 1, 3),
+        expected_date,
+        "Serial DATE must survive redo as Date"
+    );
+    assert_eq!(
+        wb.get_value("S", 1, 4),
+        expected_dt,
+        "Serial DATETIME must survive redo as DateTime"
+    );
+    assert_eq!(
+        wb.get_value("S", 1, 5),
+        expected_time,
+        "Serial TIME must survive redo as Time"
+    );
+    assert_eq!(
+        wb.get_value("S", 1, 6),
+        expected_dur,
+        "Serial DURATION must survive redo as Duration"
+    );
+
     // Oversized set_columns (20 cells > cap 10): takes fast path, clears history!
     let big_vals: Vec<f64> = (1..=20).map(|i| i as f64).collect();
     let rep_big = wb
@@ -256,6 +338,142 @@ fn q2_changelog_policy_small_undoable_and_oversized_clears_history() {
     assert!(rep_big_vals.history_cleared);
     assert!(!wb.can_undo());
     assert_eq!(wb.get_value("S", 15, 4), Some(LiteralValue::Number(99.0)));
+}
+
+#[test]
+fn s1_set_values_logged_single_compound_and_history_limit_boundary() {
+    // (a) set_values of 8 cells with changelog on undoes ALL 8 in ONE undo().
+    let mut wb = Workbook::new_with_config(
+        WorkbookConfig::interactive()
+            .with_changelog(true)
+            .with_history_limit(Some(10)),
+    );
+    wb.add_sheet("S").unwrap();
+    let rows8: Vec<Vec<LiteralValue>> = (1..=8)
+        .map(|i| vec![LiteralValue::Number(i as f64)])
+        .collect();
+    let rep8 = wb.set_values("S", 1, 1, &rows8).unwrap();
+    assert!(!rep8.history_cleared);
+    assert!(wb.can_undo());
+    for r in 1..=8u32 {
+        assert_eq!(
+            wb.get_value("S", r, 1),
+            Some(LiteralValue::Number(r as f64))
+        );
+    }
+    wb.undo().unwrap();
+    for r in 1..=8u32 {
+        assert!(
+            matches!(wb.get_value("S", r, 1), None | Some(LiteralValue::Empty)),
+            "row {r} must be reverted by single undo()"
+        );
+    }
+    wb.redo().unwrap();
+    for r in 1..=8u32 {
+        assert_eq!(
+            wb.get_value("S", r, 1),
+            Some(LiteralValue::Number(r as f64))
+        );
+    }
+
+    // (b) begin_action(); set_values(n); end_action() with history_limit = 10:
+    //     history_cleared == false MUST imply can_undo() == true; n = 9 and n = 10
+    //     cannot fit with compound markers and must cleanly clear history.
+    for n in [8usize, 9, 10] {
+        let mut wb = Workbook::new_with_config(
+            WorkbookConfig::interactive()
+                .with_changelog(true)
+                .with_history_limit(Some(10)),
+        );
+        wb.add_sheet("S").unwrap();
+        let rows: Vec<Vec<LiteralValue>> = (1..=n)
+            .map(|i| vec![LiteralValue::Number(i as f64)])
+            .collect();
+
+        wb.begin_action("outer");
+        let rep = wb.set_values("S", 1, 1, &rows).unwrap();
+        wb.end_action();
+
+        if n == 8 {
+            assert!(!rep.history_cleared, "n=8 should fit in limit=10");
+            assert!(wb.can_undo(), "n=8 must remain undoable");
+            wb.undo().unwrap();
+            for r in 1..=8u32 {
+                assert!(matches!(
+                    wb.get_value("S", r, 1),
+                    None | Some(LiteralValue::Empty)
+                ));
+            }
+        } else {
+            assert!(
+                rep.history_cleared || wb.can_undo(),
+                "n={n}: history_cleared=false must never lie when compound start would be evicted"
+            );
+            assert!(
+                rep.history_cleared,
+                "n={n} with compound markers exceeds limit=10 and must clear history"
+            );
+            assert!(!wb.can_undo());
+        }
+    }
+
+    // Also verify prior events inside an enclosing begin_action() are counted across
+    // set_values, set_columns, and set_cells.
+    {
+        let mut wb = Workbook::new_with_config(
+            WorkbookConfig::interactive()
+                .with_changelog(true)
+                .with_history_limit(Some(10)),
+        );
+        wb.add_sheet("S").unwrap();
+        wb.begin_action("outer-with-prior");
+        wb.set_value("S", 1, 1, LiteralValue::Number(1.0)).unwrap(); // 2 events in open group
+        // 2 existing + 7 new + 1 End = 10 <= 10 -> fits!
+        let vals7 = [2.0; 7];
+        let rep7 = wb
+            .set_columns(
+                "S",
+                2,
+                1,
+                &[ColumnData::Float64 {
+                    values: &vals7,
+                    validity: None,
+                }],
+            )
+            .unwrap();
+        wb.end_action();
+        assert!(!rep7.history_cleared);
+        assert!(wb.can_undo());
+        wb.undo().unwrap();
+        assert!(matches!(
+            wb.get_value("S", 1, 1),
+            None | Some(LiteralValue::Empty)
+        ));
+        assert!(matches!(
+            wb.get_value("S", 8, 1),
+            None | Some(LiteralValue::Empty)
+        ));
+
+        // 2 existing + 8 new + 1 End = 11 > 10 -> clears history cleanly!
+        wb.begin_action("outer-with-prior-overflow");
+        wb.set_value("S", 1, 1, LiteralValue::Number(1.0)).unwrap();
+        let rows_c = [2u32, 3, 4, 5, 6, 7, 8, 9];
+        let cols_c = [1u32; 8];
+        let tags_c = [BulkCellTag::Number as u8; 8];
+        let nums_c = [9.0; 8];
+        let batch8 = CellBatch {
+            rows: &rows_c,
+            cols: &cols_c,
+            tags: &tags_c,
+            numbers: &nums_c,
+            text_bytes: &[],
+            text_offsets: &[],
+        };
+        let rep8 = wb.set_cells("S", &batch8).unwrap();
+        wb.end_action();
+        assert!(rep8.history_cleared);
+        assert!(!wb.can_undo());
+    }
 }
 
 #[test]
@@ -719,5 +937,52 @@ mod arrow_feature_tests {
 
         let asheet = wb.engine().sheet_store().sheet("S").unwrap();
         assert_eq!(asheet.columns[1].total_chunk_count(), 0);
+    }
+
+    #[test]
+    fn arrow_invalid_utf8_reports_field_name() {
+        use arrow_array::Array;
+
+        let bin = BinaryArray::from(vec![&[0xffu8, 0xfe][..], &b"ok"[..]]);
+        let data = unsafe {
+            bin.into_data()
+                .into_builder()
+                .data_type(DataType::Utf8)
+                .build_unchecked()
+        };
+        let bad_arr = StringArray::from(data);
+
+        let err = ColumnData::try_from_arrow_with_options(
+            &bad_arr,
+            formualizer_eval::engine::DateSystem::Excel1900,
+            Some("bad_text"),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bad_text") && msg.contains("UTF-8"),
+            "expected Arrow field name and UTF-8 diagnostic, got: {msg}"
+        );
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "bad_text",
+            DataType::Utf8,
+            false,
+        )]));
+        let batch = RecordBatch::try_new(schema, vec![Arc::new(bad_arr)]).unwrap();
+        for changelog in [false, true] {
+            let mut wb =
+                Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(changelog));
+            wb.add_sheet("S").unwrap();
+            let batches: Vec<Result<RecordBatch, &'static str>> = vec![Ok(batch.clone())];
+            let err = wb
+                .set_record_batches("S", 1, 1, batches, false)
+                .unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("bad_text") && !msg.contains("Column 0"),
+                "changelog={changelog}: expected field name 'bad_text' instead of 'Column 0', got: {msg}"
+            );
+        }
     }
 }

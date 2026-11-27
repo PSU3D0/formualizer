@@ -811,6 +811,90 @@ fn e5_atomic_preflight_rejects_invalid_inputs_without_mutation() {
         eng.get_cell_value("S", 1, 1),
         Some(LiteralValue::Number(77.0))
     );
+
+    // 7. B1: CellBatch tags/rows length mismatch (both shorter and longer) must fail
+    //    preflight cleanly before any vertex vacation or deferred-dirty leak.
+    eng.set_cell_formula("S", 1, 1, parse("=40+2").unwrap())
+        .unwrap();
+    eng.set_cell_value("S", 2, 1, LiteralValue::Number(7.0))
+        .unwrap();
+    eng.set_cell_formula("S", 1, 3, parse("=A1+A2").unwrap())
+        .unwrap();
+    eng.evaluate_all().unwrap();
+    assert_eq!(
+        eng.get_cell_value("S", 1, 1),
+        Some(LiteralValue::Number(42.0))
+    );
+    assert_eq!(
+        eng.get_cell_value("S", 1, 3),
+        Some(LiteralValue::Number(49.0))
+    );
+
+    // tags.len() < rows.len()
+    let short_tags = CellBatch {
+        rows: &[1, 2],
+        cols: &[1, 1],
+        tags: &[BulkCellTag::Number as u8],
+        numbers: &[5.0],
+        text_bytes: &[],
+        text_offsets: &[],
+    };
+    let err = eng.set_region_cells("S", &short_tags).unwrap_err();
+    assert!(
+        err.message().unwrap_or_default().contains("tags length"),
+        "expected tags length mismatch error, got {err:?}"
+    );
+    assert!(
+        eng.get_cell("S", 1, 1).and_then(|(ast, _)| ast).is_some(),
+        "formula at A1 must not be vacated on failed preflight"
+    );
+    assert_eq!(
+        eng.get_cell_value("S", 1, 1),
+        Some(LiteralValue::Number(42.0))
+    );
+    assert_eq!(
+        eng.get_cell_value("S", 2, 1),
+        Some(LiteralValue::Number(7.0))
+    );
+
+    // tags.len() > rows.len() (non-empty and empty rows)
+    let long_tags = CellBatch {
+        rows: &[1],
+        cols: &[1],
+        tags: &[BulkCellTag::Number as u8; 3],
+        numbers: &[5.0, 6.0, 7.0],
+        text_bytes: &[],
+        text_offsets: &[],
+    };
+    assert!(eng.set_region_cells("S", &long_tags).is_err());
+
+    let empty_rows_non_empty_tags = CellBatch {
+        rows: &[],
+        cols: &[],
+        tags: &[BulkCellTag::Number as u8],
+        numbers: &[5.0],
+        text_bytes: &[],
+        text_offsets: &[],
+    };
+    assert!(
+        eng.set_region_cells("S", &empty_rows_non_empty_tags)
+            .is_err()
+    );
+
+    assert!(
+        eng.get_cell("S", 1, 1).and_then(|(ast, _)| ast).is_some(),
+        "formula at A1 must remain intact after longer-tags rejection"
+    );
+
+    // Subsequent edit + evaluate_all must propagate dirty state cleanly.
+    eng.set_cell_value("S", 2, 1, LiteralValue::Number(100.0))
+        .unwrap();
+    eng.evaluate_all().unwrap();
+    assert_eq!(
+        eng.get_cell_value("S", 1, 3),
+        Some(LiteralValue::Number(142.0)),
+        "recalc after rejected set_region_cells must stay healthy"
+    );
 }
 
 #[test]
@@ -965,6 +1049,341 @@ fn e10_repeated_formula_bulk_overwrite_cycles_keep_retired_ids_bounded() {
             eng.graph.retired_id_count(),
             50,
             "cycle {cycle}: retired_ids must revive same VertexIds and stay bounded at 50"
+        );
+    }
+}
+
+#[test]
+fn n5_multi_chunk_full_partial_and_light_overlay_parity() {
+    // Exercise all three chunk storage strategies (light overlay, partial rebuild,
+    // full chunk replace) plus multi-chunk writes and sparse_chunks against per-cell
+    // `set_cell_value` + `clear_staged_formula_text`.
+    for &(total_rows, chunk_rows, light_rows_start, light_rows_len) in &[
+        // 200 rows with chunk_rows=64 -> 4 chunks (64, 64, 64, 8), threshold=1:
+        // 2-row write at rows 64..=65 touches 1 row in chunk 0 and 1 row in chunk 1 (both light overlay).
+        (200usize, 64usize, 64u32, 2usize),
+        // 250 rows with chunk_rows=100 -> 3 chunks (100, 100, 50), threshold=2:
+        // 2-row write at rows 10..=11 touches 2 rows strictly inside chunk 0 (light overlay).
+        (250usize, 100usize, 10u32, 2usize),
+    ] {
+        let mut ref_eng = make_engine();
+        let mut bulk_eng = make_engine();
+        let max_row = total_rows as u32;
+        let max_col = 7u32;
+
+        for eng in [&mut ref_eng, &mut bulk_eng] {
+            eng.add_sheet("Data").unwrap();
+            eng.add_sheet("Summary").unwrap();
+
+            // Ingest base ArrowSheet with multiple chunks and a base DATE lane on col 2 (B)
+            // plus DATETIME lane on col 3 (C) across every chunk.
+            let mut b = IngestBuilder::new("Data", 6, chunk_rows, DateSystem::Excel1900);
+            for r in 0..total_rows {
+                b.append_row(&[
+                    LiteralValue::Number((r + 1) as f64),
+                    LiteralValue::Number(45_292.0 + (r % 30) as f64),
+                    LiteralValue::Number(45_292.5 + (r % 10) as f64),
+                    LiteralValue::Empty,
+                    LiteralValue::Text(format!("row_{}", r % 7)),
+                    LiteralValue::Boolean(r % 2 == 0),
+                ])
+                .unwrap();
+            }
+            let mut asheet = b.finish();
+            for ch_idx in 0..asheet.chunk_starts.len() {
+                let (_, ch_len) = asheet.chunk_extent(ch_idx).unwrap();
+                if let Some(ch) = asheet.columns[1].chunk_mut(ch_idx) {
+                    ch.format = FormatRuns::replace_uniform_range(
+                        None,
+                        ch_len,
+                        0,
+                        ch_len,
+                        FormatId::DATE.0,
+                    );
+                }
+                if let Some(ch) = asheet.columns[2].chunk_mut(ch_idx) {
+                    ch.format = FormatRuns::replace_uniform_range(
+                        None,
+                        ch_len,
+                        0,
+                        ch_len,
+                        FormatId::DATETIME.0,
+                    );
+                }
+            }
+            let store = eng.sheet_store_mut();
+            store.sheets.retain(|s| s.name.as_ref() != "Data");
+            store.sheets.push(asheet);
+
+            // Seed user delta overlays, derived-format formulas, staged formulas, and a
+            // cross-chunk SEQUENCE(70,1) spill starting at D50.
+            eng.set_cell_value("Data", light_rows_start, 1, LiteralValue::Number(-99.5))
+                .unwrap();
+            eng.set_cell_formula(
+                "Data",
+                light_rows_start,
+                2,
+                parse("=DATE(2024,6,15)").unwrap(),
+            )
+            .unwrap();
+            eng.set_cell_formula("Data", 50, 4, parse("=SEQUENCE(70,1)").unwrap())
+                .unwrap();
+            eng.stage_formula_text("Data", light_rows_start, 5, "=1+2".to_string());
+            eng.stage_formula_text("Data", (chunk_rows as u32) + 5, 5, "=3+4".to_string());
+
+            eng.set_cell_formula("Summary", 1, 1, parse("=SUM(Data!A:A)").unwrap())
+                .unwrap();
+            eng.set_cell_formula(
+                "Summary",
+                2,
+                1,
+                parse(format!("=SUM(Data!B1:B{total_rows})")).unwrap(),
+            )
+            .unwrap();
+            eng.set_cell_formula(
+                "Summary",
+                3,
+                1,
+                parse(format!(r#"=COUNTIFS(Data!E1:E{total_rows},"row_0")"#)).unwrap(),
+            )
+            .unwrap();
+            eng.set_cell_formula(
+                "Summary",
+                4,
+                1,
+                parse(format!("=COUNTA(Data!A1:G{total_rows})")).unwrap(),
+            )
+            .unwrap();
+            eng.set_cell_formula("Summary", 5, 1, parse("=SUM(Data!D:D)").unwrap())
+                .unwrap();
+            eng.set_cell_formula("Summary", 6, 1, parse("=SUM(Data!G:G)").unwrap())
+                .unwrap();
+
+            eng.evaluate_all().unwrap();
+        }
+
+        // Step 1 (Light overlay via set_region_columns): small 2-row write hitting base DATE
+        // lane, existing user delta overlay, derived-format formula, and staged formula.
+        let light_a = vec![111.0; light_rows_len];
+        let light_b = vec![222.0; light_rows_len];
+        let light_e_bytes = b"patch0patch1";
+        let light_e_offs = [0u32, 6, 12];
+        bulk_eng
+            .set_region_columns(
+                "Data",
+                light_rows_start,
+                1,
+                &[
+                    BulkColumn::Float64 {
+                        values: &light_a,
+                        validity: None,
+                    },
+                    BulkColumn::Float64 {
+                        values: &light_b,
+                        validity: None,
+                    },
+                    BulkColumn::Null {
+                        len: light_rows_len,
+                    },
+                    BulkColumn::Null {
+                        len: light_rows_len,
+                    },
+                    BulkColumn::Utf8 {
+                        bytes: light_e_bytes,
+                        offsets: &light_e_offs[..=light_rows_len],
+                        validity: None,
+                    },
+                ],
+            )
+            .unwrap();
+        for i in 0..light_rows_len {
+            let r = light_rows_start + i as u32;
+            ref_eng
+                .set_cell_value("Data", r, 1, LiteralValue::Number(light_a[i]))
+                .unwrap();
+            ref_eng
+                .set_cell_value("Data", r, 2, LiteralValue::Number(light_b[i]))
+                .unwrap();
+            ref_eng
+                .set_cell_value("Data", r, 3, LiteralValue::Empty)
+                .unwrap();
+            ref_eng
+                .set_cell_value("Data", r, 4, LiteralValue::Empty)
+                .unwrap();
+            ref_eng
+                .set_cell_value("Data", r, 5, LiteralValue::Text(format!("patch{i}")))
+                .unwrap();
+            for c in 1..=5 {
+                ref_eng.clear_staged_formula_text("Data", r, c);
+            }
+        }
+        // Confirm light-overlay actually populated the delta overlay on chunk 0 col 1 (B).
+        {
+            let asheet = bulk_eng.sheet_store().sheet("Data").unwrap();
+            let (ch_idx, in_off) = asheet
+                .chunk_of_row((light_rows_start - 1) as usize)
+                .unwrap();
+            let ch = asheet.columns[1].chunk(ch_idx).unwrap();
+            assert!(
+                ch.overlay.get(in_off).is_some(),
+                "expected light-overlay path on chunk_rows={chunk_rows}"
+            );
+        }
+        ref_eng.evaluate_all().unwrap();
+        bulk_eng.evaluate_all().unwrap();
+        assert_engines_equivalent(
+            &ref_eng,
+            &bulk_eng,
+            max_row,
+            max_col,
+            &format!("chunk_rows={chunk_rows}/step1-light-overlay-cols"),
+        );
+
+        // Step 2 (Light overlay via set_region_cells + sparse chunk into unmaterialized col 7):
+        let sparse_rows = [2u32, (chunk_rows as u32) + 2, max_row - 1];
+        let sparse_cols = [2u32, 4u32, 7u32]; // col 2 base DATE, col 4 spill child, col 7 new sparse_chunk!
+        let sparse_tags = [
+            BulkCellTag::Number as u8,
+            BulkCellTag::Number as u8,
+            BulkCellTag::DateTime as u8,
+        ];
+        let sparse_nums = [777.0, 888.0, 45_300.0];
+        let batch = CellBatch {
+            rows: &sparse_rows,
+            cols: &sparse_cols,
+            tags: &sparse_tags,
+            numbers: &sparse_nums,
+            text_bytes: &[],
+            text_offsets: &[],
+        };
+        bulk_eng.set_region_cells("Data", &batch).unwrap();
+        ref_eng
+            .set_cell_value(
+                "Data",
+                sparse_rows[0],
+                sparse_cols[0],
+                LiteralValue::Number(777.0),
+            )
+            .unwrap();
+        ref_eng
+            .set_cell_value(
+                "Data",
+                sparse_rows[1],
+                sparse_cols[1],
+                LiteralValue::Number(888.0),
+            )
+            .unwrap();
+        ref_eng
+            .set_cell_value(
+                "Data",
+                sparse_rows[2],
+                sparse_cols[2],
+                LiteralValue::Date(
+                    formualizer_common::try_serial_to_date_for(DateSystem::Excel1900, 45_300.0)
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        ref_eng.evaluate_all().unwrap();
+        bulk_eng.evaluate_all().unwrap();
+        assert_engines_equivalent(
+            &ref_eng,
+            &bulk_eng,
+            max_row,
+            max_col,
+            &format!("chunk_rows={chunk_rows}/step2-light-overlay-cells"),
+        );
+
+        // Step 3 (Partial rebuild across multiple chunks via set_region_values, ragged):
+        let multi_start = (chunk_rows as u32) - 10;
+        let multi_len = chunk_rows + 20; // spans chunks 0 -> 1 (and into chunk 2 for chunk_rows=64)
+        let ragged_rows: Vec<Vec<LiteralValue>> = (0..multi_len)
+            .map(|i| {
+                if i % 3 == 0 {
+                    vec![LiteralValue::Number((i * 2) as f64)]
+                } else {
+                    vec![
+                        LiteralValue::Number((i * 2) as f64),
+                        LiteralValue::Date(
+                            NaiveDate::from_ymd_opt(2025, 1, 1).unwrap()
+                                + chrono::Duration::days((i % 20) as i64),
+                        ),
+                        LiteralValue::Empty,
+                        LiteralValue::Number(5.0),
+                        LiteralValue::Text("row_0".to_string()),
+                    ]
+                }
+            })
+            .collect();
+        bulk_eng
+            .set_region_values("Data", multi_start, 1, &ragged_rows)
+            .unwrap();
+        for (ri, rvals) in ragged_rows.iter().enumerate() {
+            let r = multi_start + ri as u32;
+            for (ci, v) in rvals.iter().enumerate() {
+                let c = (ci as u32) + 1;
+                ref_eng.set_cell_value("Data", r, c, v.clone()).unwrap();
+                ref_eng.clear_staged_formula_text("Data", r, c);
+            }
+        }
+        ref_eng.evaluate_all().unwrap();
+        bulk_eng.evaluate_all().unwrap();
+        assert_engines_equivalent(
+            &ref_eng,
+            &bulk_eng,
+            max_row,
+            max_col,
+            &format!("chunk_rows={chunk_rows}/step3-multi-chunk-partial-rebuild"),
+        );
+
+        // Step 4 (Exact chunk-aligned full-chunk replace via set_region_columns on chunk 1):
+        let ch1_start_1based = (chunk_rows as u32) + 1;
+        let full_nums: Vec<f64> = (0..chunk_rows).map(|i| 1000.0 + i as f64).collect();
+        let full_dates: Vec<f64> = (0..chunk_rows)
+            .map(|i| 45_500.0 + (i % 15) as f64)
+            .collect();
+        bulk_eng
+            .set_region_columns(
+                "Data",
+                ch1_start_1based,
+                1,
+                &[
+                    BulkColumn::Float64 {
+                        values: &full_nums,
+                        validity: None,
+                    },
+                    BulkColumn::Serial {
+                        values: &full_dates,
+                        format: FormatId::DATE,
+                        validity: None,
+                    },
+                    BulkColumn::Null { len: chunk_rows },
+                ],
+            )
+            .unwrap();
+        for i in 0..chunk_rows {
+            let r = ch1_start_1based + i as u32;
+            ref_eng
+                .set_cell_value("Data", r, 1, LiteralValue::Number(full_nums[i]))
+                .unwrap();
+            let d =
+                formualizer_common::try_serial_to_date_for(DateSystem::Excel1900, full_dates[i])
+                    .unwrap();
+            ref_eng
+                .set_cell_value("Data", r, 2, LiteralValue::Date(d))
+                .unwrap();
+            ref_eng
+                .set_cell_value("Data", r, 3, LiteralValue::Empty)
+                .unwrap();
+        }
+        ref_eng.evaluate_all().unwrap();
+        bulk_eng.evaluate_all().unwrap();
+        assert_engines_equivalent(
+            &ref_eng,
+            &bulk_eng,
+            max_row,
+            max_col,
+            &format!("chunk_rows={chunk_rows}/step4-full-chunk-replace"),
         );
     }
 }
