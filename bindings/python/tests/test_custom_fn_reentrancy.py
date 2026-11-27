@@ -54,8 +54,12 @@ def run_probe(operation):
 
 
 REENTRANT_OPERATIONS = {
+    "get_value_literal_cell": lambda wb: wb.get_value("S", 1, 1),
     "get_value_formula_cell": lambda wb: wb.get_value("S", 1, 2),
     "set_value": lambda wb: wb.set_value("S", 50, 50, 1.0),
+    "set_values": lambda wb: wb.set_values("S", 50, 50, [[1.0]]),
+    "set_columns": lambda wb: wb.set_columns("S", 50, 50, {"a": [1.0]}),
+    "set_cells": lambda wb: wb.set_cells("S", [(50, 50, 1.0)]),
     "set_formula": lambda wb: wb.set_formula("S", 51, 51, "=1+1"),
     "sheet_names": lambda wb: wb.sheet_names,
     "evaluate_cell": lambda wb: wb.evaluate_cell("S", 1, 2),

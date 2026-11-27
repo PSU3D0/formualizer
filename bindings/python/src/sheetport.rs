@@ -402,9 +402,6 @@ impl PySheetPortSession {
                 let mut guard = workbook
                     .write_inner_detached()
                     .map_err(|err| SheetPortCallError::Runtime(err.into()))?;
-                // Internal mutations bypass the legacy `sheets` compatibility
-                // cache, so it is invalidated alongside the write (mirrors
-                // `PyWorkbook::with_workbook_mut`).
                 let mut sheetport = SheetPort::from_bindings(&mut guard, bindings_clone)
                     .map_err(SheetPortCallError::Runtime)?;
                 let output = f(&mut sheetport).map_err(SheetPortCallError::Runtime)?;
@@ -412,10 +409,6 @@ impl PySheetPortSession {
                 Ok((output, bindings))
             },
         );
-
-        // The cache is cleared regardless of outcome: a failed write may still
-        // have mutated cells before erroring.
-        self.workbook.clear_sheet_cache();
 
         match outcome {
             Ok((output, bindings)) => {

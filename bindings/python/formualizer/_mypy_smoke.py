@@ -21,6 +21,7 @@ from . import (
     TokenizerError,
     TraceGraph,
     Workbook,
+    WriteRangeReport,
     load_workbook,
     load_workbook_bytes,
 )
@@ -98,6 +99,24 @@ def _mypy_api_smoke(wb: Workbook, session: SheetPortSession) -> Mapping[str, Any
     trace: TraceGraph = wb.trace(["Sheet1!A1"])
     page: RangePage = wb.range_page("Sheet1!A1:B2", expected_stamp=snapshot.stamp)
     node_address: str = trace.nodes["Sheet1!A1"].address
+
+    # Bulk write surface and changelog introspection
+    sheet = wb.sheet("Sheet1")
+    r1: WriteRangeReport = wb.set_values("Sheet1", 1, 1, [[1.0, 2.0]])
+    r2: WriteRangeReport = sheet.set_values(1, 1, [[1.0, 2.0]])
+    r3: WriteRangeReport = wb.set_columns("Sheet1", 1, 1, {"a": [1.0]}, headers=True)
+    r4: WriteRangeReport = sheet.set_columns(1, 1, [[1.0]], headers=False)
+    r5: WriteRangeReport = wb.set_cells("Sheet1", [(1, 1, 1.0)])
+    r6: WriteRangeReport = sheet.set_cells({(1, 1): 1.0})
+    _cleared: bool = r1.history_cleared or r2.history_cleared or r3.history_cleared
+    _coords: tuple[int, int, int, int] = (
+        r4.start_row,
+        r5.start_col,
+        r6.end_row,
+        r6.end_col,
+    )
+    _cl: bool = wb.changelog_enabled or wb.can_undo or wb.can_redo
+    _ = (_cleared, _coords, _cl)
 
     # Return a value so mypy checks mapping types.
     return {

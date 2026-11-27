@@ -19,7 +19,9 @@ def test_scalar_roundtrip():
     sheet.set_value(1, 4, None)
     sheet.set_value(1, 5, "hello")
 
-    assert sheet.get_cell(1, 1).value == 42
+    v1 = sheet.get_cell(1, 1).value
+    assert isinstance(v1, float)
+    assert v1 == 42.0
     assert sheet.get_cell(1, 2).value == pytest.approx(3.5)
     assert sheet.get_cell(1, 3).value is True
     assert sheet.get_cell(1, 4).value is None
@@ -30,9 +32,9 @@ def test_temporal_roundtrip():
     sheet = make_sheet()
 
     date_val = dt.date(2024, 5, 17)
-    time_val = dt.time(9, 45, 12)
-    dt_val = dt.datetime(2024, 5, 17, 9, 45, 12)
-    duration = dt.timedelta(days=1, seconds=90)
+    time_val = dt.time(9, 45, 12, 500_000)
+    dt_val = dt.datetime(2024, 5, 17, 9, 45, 12, 250_000)
+    duration = dt.timedelta(days=1, seconds=90, microseconds=500_000)
 
     sheet.set_value(1, 1, date_val)
     sheet.set_value(1, 2, time_val)
@@ -48,12 +50,31 @@ def test_temporal_roundtrip():
 def test_array_roundtrip_and_validation():
     sheet = make_sheet()
 
-    array_value = [[1, 2], [3, 4]]
-    sheet.set_value(1, 1, array_value)
-    assert sheet.get_cell(1, 1).value == array_value
-
-    with pytest.raises(ValueError):
+    # Scalar set_value rejects arrays cleanly (ADR Audit 2 / Contract Gap 3).
+    with pytest.raises(ValueError, match="use set_values"):
+        sheet.set_value(1, 1, [[1, 2], [3, 4]])
+    with pytest.raises(ValueError, match="use set_values"):
         sheet.set_value(1, 2, [[1, 2], [3]])
+    with pytest.raises(ValueError, match="use set_values"):
+        sheet.set_value(1, 3, [1, 2, 3])
+
+    # Rectangular-array validation lives on LiteralValue.array and custom functions.
+    lit = fz.LiteralValue.array(
+        [
+            [fz.LiteralValue.int(1), fz.LiteralValue.int(2)],
+            [fz.LiteralValue.int(3), fz.LiteralValue.int(4)],
+        ]
+    )
+    assert lit.to_python() == [[1, 2], [3, 4]]
+    with pytest.raises(ValueError, match="rectangular"):
+        fz.LiteralValue.array(
+            [
+                [fz.LiteralValue.int(1), fz.LiteralValue.int(2)],
+                [fz.LiteralValue.int(3)],
+            ]
+        )
+    with pytest.raises(ValueError, match="use set_values"):
+        sheet.set_value(1, 4, lit)
 
 
 def test_error_dict_roundtrip_and_context():
@@ -67,16 +88,18 @@ def test_error_dict_roundtrip_and_context():
         "col": 7,
         "sheet": "Sheet1",
     }
+    # Option A: cell storage preserves ExcelErrorKind (Excel-canonical; ErrorContext
+    # is an evaluation/conversion-layer artifact, tested in Rust unit tests and via
+    # LiteralValue below).
     sheet.set_value(2, 1, error_value)
-    result = sheet.get_cell(2, 1).value
+    stored = sheet.get_cell(2, 1).value
+    assert isinstance(stored, dict)
+    assert stored["type"] == "Error"
+    assert stored["kind"] == "Div"
 
-    assert isinstance(result, dict)
-    assert result["type"] == "Error"
-    assert result["kind"] == "Div"
-    assert result["message"] == "boom"
-    assert result["row"] == 5
-    assert result["col"] == 7
-    assert result.get("sheet") == "Sheet1"
+    # Message and kind round-trip directly at the LiteralValue conversion layer.
+    lit_err = fz.LiteralValue.error("Div", "boom").to_python()
+    assert lit_err == {"type": "Error", "kind": "Div", "message": "boom"}
 
 
 @pytest.mark.parametrize(
