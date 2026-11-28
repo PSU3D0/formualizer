@@ -78,6 +78,22 @@ pub struct FormatRuns {
 }
 
 impl FormatRuns {
+    /// Extends the lane to `new_len` offsets, the new ones General. O(1).
+    fn grow_to(&mut self, new_len: usize) {
+        let Some(last_end) = self.run_ends.last_mut() else {
+            return;
+        };
+        if new_len as u32 <= *last_end {
+            return;
+        }
+        if self.format_ids.last().copied() == Some(FormatId::GENERAL.0) {
+            *last_end = new_len as u32;
+        } else {
+            self.format_ids.push(FormatId::GENERAL.0);
+            self.run_ends.push(new_len as u32);
+        }
+    }
+
     pub fn from_ids(ids: &[u16]) -> Option<Self> {
         if ids.iter().all(|id| *id == FormatId::GENERAL.0) {
             return None;
@@ -547,13 +563,152 @@ pub struct ColumnChunk {
     // Whole-chunk merged (base + overlays) lanes, reused across range reads
     // until either overlay or the base changes (decision 20.3).
     merged: MergedLaneCache,
+    // Pre-grown backing of the base lanes while the chunk is still growing
+    // row by row (see `ChunkReserve`).
+    reserve: Option<Box<ChunkReserve>>,
     // Phase C: per-chunk overlay (delta edits since last compaction)
     pub overlay: Overlay,
     // Phase 0/1: separate computed overlay (formula/spill outputs)
     pub computed_overlay: Overlay,
 }
 
+/// Physical capacity behind a chunk's base lanes, kept while the sheet's last
+/// chunk grows a row at a time.
+///
+/// A chunk's lanes are immutable Arrow arrays whose length is the chunk's
+/// logical length, an invariant the whole store reads (`ColumnChunk::len`,
+/// range slicing, chunk alignment). Growing such a chunk by one row used to
+/// rebuild every lane, so appending `n` rows one at a time copied `O(n^2)`
+/// cells per column. The reserve holds the same lanes at a geometrically grown
+/// length whose tail is already padded (`Empty` tags, null values); the lanes
+/// the chunk exposes are zero-copy prefixes of them. Growing inside the
+/// reserve re-slices in O(1) and the logical-length invariant never changes.
+///
+/// The reserve is self-validating: it is used only while the exposed lanes
+/// still point into it (`ColumnChunk::reserve_backs_lanes`), so any code that
+/// replaces a lane simply orphans it and the next growth rebuilds.
+#[derive(Debug, Clone)]
+struct ChunkReserve {
+    type_tag: UInt8Array,
+    numbers: Option<Float64Array>,
+    booleans: Option<BooleanArray>,
+    errors: Option<UInt8Array>,
+    text: Option<StringArray>,
+}
+
+/// Smallest physical capacity of a growing chunk, in rows.
+const CHUNK_RESERVE_MIN_ROWS: usize = 16;
+
 impl ColumnChunk {
+    /// Whether the exposed base lanes are prefixes of the reserve's arrays,
+    /// i.e. nothing replaced a lane since the reserve was built.
+    fn reserve_backs_lanes(&self) -> bool {
+        let Some(reserve) = self.reserve.as_deref() else {
+            return false;
+        };
+        fn same<T>(a: &[T], b: &[T]) -> bool {
+            std::ptr::eq(a.as_ptr(), b.as_ptr())
+        }
+        let tags = same(self.type_tag.values(), reserve.type_tag.values());
+        let numbers = match (&self.numbers, &reserve.numbers) {
+            (None, None) => true,
+            (Some(lane), Some(full)) => same(lane.values(), full.values()),
+            _ => false,
+        };
+        let booleans = match (&self.booleans, &reserve.booleans) {
+            (None, None) => true,
+            (Some(lane), Some(full)) => {
+                lane.values().offset() == full.values().offset()
+                    && same(lane.values().values(), full.values().values())
+            }
+            _ => false,
+        };
+        let errors = match (&self.errors, &reserve.errors) {
+            (None, None) => true,
+            (Some(lane), Some(full)) => same(lane.values(), full.values()),
+            _ => false,
+        };
+        let text = match (&self.text, &reserve.text) {
+            (None, None) => true,
+            (Some(lane), Some(full)) => lane
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .is_some_and(|lane| same(lane.value_offsets(), full.value_offsets())),
+            _ => false,
+        };
+        tags && numbers && booleans && errors && text
+    }
+
+    /// Exposes the first `len` rows of the reserve as the chunk's base lanes.
+    fn expose_reserve_prefix(&mut self, len: usize) {
+        let Some(reserve) = self.reserve.as_deref() else {
+            return;
+        };
+        self.type_tag = Arc::new(reserve.type_tag.slice(0, len));
+        self.numbers = reserve.numbers.as_ref().map(|a| Arc::new(a.slice(0, len)));
+        self.booleans = reserve.booleans.as_ref().map(|a| Arc::new(a.slice(0, len)));
+        self.errors = reserve.errors.as_ref().map(|a| Arc::new(a.slice(0, len)));
+        self.text = reserve
+            .text
+            .as_ref()
+            .map(|a| Arc::new(a.slice(0, len)) as ArrayRef);
+    }
+
+    /// Grow the chunk to `new_len` rows like [`Self::grow_len_to`], reserving
+    /// physical capacity geometrically (never beyond `max_len`, the length of
+    /// a full chunk) so that growing a row at a time is amortised O(1) per
+    /// row instead of a rebuild of every lane.
+    pub(crate) fn grow_len_reserving(&mut self, new_len: usize, max_len: usize) {
+        let old_len = self.len();
+        if new_len <= old_len {
+            return;
+        }
+        let within_reserve = self.reserve_backs_lanes()
+            && self
+                .reserve
+                .as_deref()
+                .is_some_and(|reserve| new_len <= reserve.type_tag.len());
+        // The format lane is run-end encoded: grow it in O(1) and keep it at
+        // the logical length rather than padding it to the capacity.
+        let mut format = self.format.take();
+        if !within_reserve {
+            let capacity = new_len
+                .max(CHUNK_RESERVE_MIN_ROWS)
+                .next_power_of_two()
+                .min(max_len)
+                .max(new_len);
+            self.reserve = None;
+            // Rebuild the lanes once at the padded capacity, keep them as the
+            // reserve, and expose the logical prefix.
+            self.grow_len_to(capacity);
+            self.reserve = Some(Box::new(ChunkReserve {
+                type_tag: self.type_tag.as_ref().clone(),
+                numbers: self.numbers.as_deref().cloned(),
+                booleans: self.booleans.as_deref().cloned(),
+                errors: self.errors.as_deref().cloned(),
+                text: self
+                    .text
+                    .as_ref()
+                    .and_then(|a| a.as_any().downcast_ref::<StringArray>().cloned()),
+            }));
+        }
+        self.expose_reserve_prefix(new_len);
+        if let Some(format) = format.as_mut() {
+            format.grow_to(new_len);
+        }
+        self.format = format;
+        self.reset_length_caches();
+        self.meta.len = new_len;
+    }
+
+    fn reset_length_caches(&mut self) {
+        self.lazy_null_numbers = OnceCell::new();
+        self.lazy_null_booleans = OnceCell::new();
+        self.lazy_null_text = OnceCell::new();
+        self.lazy_null_errors = OnceCell::new();
+        self.lowered_text = OnceCell::new();
+    }
+
     /// Value generations for exact derived products; includes same-layer writes.
     pub(crate) fn criteria_overlay_epochs(&self) -> (u64, u64) {
         (self.overlay.epoch, self.computed_overlay.epoch)
@@ -1353,6 +1508,7 @@ impl IngestBuilder {
                 lazy_null_errors: OnceCell::new(),
                 lowered_text: OnceCell::new(),
                 merged: MergedLaneCache::default(),
+                reserve: None,
                 overlay: Overlay::new(),
                 computed_overlay: Overlay::new(),
             };
@@ -4943,21 +5099,35 @@ impl ArrowSheet {
         if self.chunk_starts.is_empty() {
             self.chunk_starts.push(0);
         }
+        let chunks_before = self.chunk_starts.len();
 
         // Extend chunk starts only when `target_rows` crosses a chunk boundary.
         // Example: chunk_size=3, target_rows=6 => chunk_starts=[0,3]
+        //
+        // A structural row insert can leave the last chunk longer than
+        // `chunk_rows`. Its rows stay in it: the next chunk starts after the
+        // rows the sheet already has, never inside them (which would orphan
+        // the chunk's tail and misalign every later row).
         let mut next_start = self
             .chunk_starts
             .last()
             .copied()
             .unwrap_or(0)
-            .saturating_add(chunk_size);
+            .saturating_add(chunk_size)
+            .max(self.nrows as usize);
         while next_start < target_rows {
             self.chunk_starts.push(next_start);
             next_start = next_start.saturating_add(chunk_size);
         }
 
         self.nrows = target_rows as u32;
+        // Growing inside the last chunk can only change that chunk. Crossing
+        // a chunk boundary is rare, so it re-checks every materialized chunk.
+        let first_affected = if self.chunk_starts.len() == chunks_before {
+            chunks_before - 1
+        } else {
+            0
+        };
 
         // Any previously-materialized chunk may have been created when the sheet had fewer rows.
         // When `chunk_starts` extends, chunks that used to be "last" can become interior chunks
@@ -4971,19 +5141,20 @@ impl ArrowSheet {
             Some(end.saturating_sub(start))
         };
 
+        // Chunks grow with reserved capacity so a row-at-a-time caller is not
+        // quadratic.
         for col in &mut self.columns {
-            for (idx, ch) in col.chunks.iter_mut().enumerate() {
+            for (idx, ch) in col.chunks.iter_mut().enumerate().skip(first_affected) {
                 if let Some(req) = required_len_for(idx) {
-                    ch.grow_len_to(req);
+                    ch.grow_len_reserving(req, chunk_size.max(req));
                 }
             }
             if !col.sparse_chunks.is_empty() {
-                let keys: Vec<usize> = col.sparse_chunks.keys().copied().collect();
-                for idx in keys {
-                    if let (Some(req), Some(ch)) =
-                        (required_len_for(idx), col.sparse_chunks.get_mut(&idx))
+                for (&idx, ch) in col.sparse_chunks.iter_mut() {
+                    if idx >= first_affected
+                        && let Some(req) = required_len_for(idx)
                     {
-                        ch.grow_len_to(req);
+                        ch.grow_len_reserving(req, chunk_size);
                     }
                 }
             }
@@ -5150,6 +5321,7 @@ impl ArrowSheet {
             lazy_null_errors: OnceCell::new(),
             lowered_text: OnceCell::new(),
             merged: MergedLaneCache::default(),
+            reserve: None,
             overlay: Overlay::new(),
             computed_overlay: Overlay::new(),
         }
@@ -5182,6 +5354,7 @@ impl ArrowSheet {
             lazy_null_errors: OnceCell::new(),
             lowered_text: OnceCell::new(),
             merged: MergedLaneCache::default(),
+            reserve: None,
             overlay,
             computed_overlay,
         }
@@ -5254,6 +5427,7 @@ impl ArrowSheet {
             lazy_null_errors: OnceCell::new(),
             lowered_text: OnceCell::new(),
             merged: MergedLaneCache::default(),
+            reserve: None,
             overlay,
             computed_overlay,
         }
@@ -6163,6 +6337,9 @@ pub struct ColumnShape {
     pub has_text: bool,
     pub has_err: bool,
 }
+
+#[cfg(test)]
+mod growth_tests;
 
 #[cfg(test)]
 mod tests {
