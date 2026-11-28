@@ -283,6 +283,7 @@ mod blocked_spill_structural_edit;
 mod snapshot_evaluation;
 mod stats_excel_compat;
 
+mod in_function_limits;
 mod review_fn_table;
 mod structural_dirty_scaling;
 mod tailed_array_ranges;

@@ -7366,28 +7366,23 @@ impl Function for FrequencyFn {
         // Result has bins.len() + 1 elements
         let mut frequencies = vec![0usize; bins.len() + 1];
 
+        // A value belongs to the first bin it is `<=`; the bins are sorted
+        // (NaN last, and never matched), so that bin is found by binary
+        // search rather than a scan per value, which made a large
+        // `data x bins` call quadratic.
+        let comparable = bins.partition_point(|bin| !bin.is_nan());
         for &value in &data {
-            // Find which bin the value belongs to
-            let mut found = false;
-            for (i, &bin) in bins.iter().enumerate() {
-                if i == 0 {
-                    // First bin: count values <= bins[0]
-                    if value <= bin {
-                        frequencies[0] += 1;
-                        found = true;
-                        break;
-                    }
-                } else {
-                    // Intermediate bins: count values > bins[i-1] AND <= bins[i]
-                    if value <= bin {
-                        frequencies[i] += 1;
-                        found = true;
-                        break;
-                    }
-                }
-            }
-            // Last bin: values > bins[last]
-            if !found {
+            let bin = bins[..comparable].partition_point(|bin| {
+                // `value > bin`, or `value` is NaN and belongs to no bin.
+                !matches!(
+                    value.partial_cmp(bin),
+                    Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+                )
+            });
+            if bin < comparable {
+                frequencies[bin] += 1;
+            } else {
+                // Last bin: values > bins[last]
                 frequencies[bins.len()] += 1;
             }
         }

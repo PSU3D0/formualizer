@@ -662,6 +662,7 @@ const EXPENSIVE_VERTEX_NS: u128 = 10_000;
 const UNIT_CANCELLED: &str = "Evaluation cancelled; the evaluated unit was not committed";
 const GROUP_CANCELLED: &str =
     "Parallel evaluation cancelled; the evaluated group was not committed";
+const NAME_CANCELLED: &str = "Evaluation cancelled; the named formula was not cached";
 const SCC_CANCELLED: &str = "Evaluation cancelled; the evaluated cycle was not completed";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1225,6 +1226,9 @@ pub struct Engine<R> {
     active_cancel_flag: Option<crate::engine::CancelToken>,
     /// Transient absolute deadline used by composed target and plan requests.
     active_evaluation_deadline: Option<Instant>,
+    /// Lock-free mirror of the active request's deadline and work budget, polled
+    /// by functions through the request-scoped [`CancelToken`](crate::engine::CancelToken).
+    pub(in crate::engine) request_limits: Arc<crate::engine::cancel::RequestLimits>,
 
     /// Engine-level action depth.
     ///
@@ -3410,6 +3414,7 @@ where
             formula_ingest_report_total: FormulaIngestReport::default(),
             active_cancel_flag: None,
             active_evaluation_deadline: None,
+            request_limits: Arc::default(),
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
@@ -3601,6 +3606,7 @@ where
             formula_ingest_report_total: FormulaIngestReport::default(),
             active_cancel_flag: None,
             active_evaluation_deadline: None,
+            request_limits: Arc::default(),
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
@@ -3873,6 +3879,9 @@ where
                 ledger.resume_job(state.work_units, state.active_elapsed);
             }
             self.active_resource_ledger = Some(ledger);
+            // Each request gets its own limits, so a token a function kept
+            // from an earlier request can neither trip nor observe this one.
+            self.request_limits = Arc::default();
         }
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_add(1);
@@ -3892,6 +3901,21 @@ where
         } else {
             result
         };
+        // Backstop: no request reports success after one of its functions was
+        // stopped by the deadline or the work budget, whichever path ran it.
+        let result = match (outermost, result) {
+            (true, Ok(value)) => match self.function_limit_error() {
+                Some(error) => Err(error),
+                None => Ok(value),
+            },
+            (_, result) => result,
+        };
+        if outermost {
+            // Account the in-function work of the final units; the request is
+            // over, so a budget crossed here no longer changes its outcome.
+            let _ = self.sync_request_limits();
+            self.request_limits.disarm();
+        }
         if outermost && result.is_err() {
             self.freshness_abort_pass();
         }
@@ -4055,6 +4079,60 @@ where
         {
             return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(message));
         }
+        // A function stopped by the deadline or the work budget: its
+        // `#CANCELLED` (or whatever was computed around it) is not a result.
+        if let Some(error) = self.function_limit_error() {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// The limit a function ran into during the active request, as the
+    /// request's error. A function stopped by the request-scoped token returns
+    /// `#CANCELLED`, which is not a finished result: the caller must not
+    /// commit it and reports this instead.
+    fn function_limit_error(&self) -> Option<ExcelError> {
+        // Only a request has limits; unmetered work (planning, inspection)
+        // between requests must not inherit the last request's stop.
+        self.active_resource_ledger.as_ref()?;
+        let (reason, limit, observed) = self.request_limits.tripped()?;
+        Some(
+            crate::engine::ResourceLedgerError::Exhausted(
+                formualizer_common::ResourceExhaustionDetail {
+                    reason,
+                    limit,
+                    observed,
+                    request_id: self
+                        .active_evaluation_resource_request
+                        .as_ref()
+                        .map(|request| request.request_id),
+                },
+            )
+            .into_excel_error(),
+        )
+    }
+
+    /// Re-arms the function-visible mirror of the request's limits from the
+    /// ledger (and the composed-request deadline), and moves the work
+    /// functions charged since the last sync into the ledger.
+    fn sync_request_limits(&mut self) -> Result<(), ExcelError> {
+        let Some(ledger) = self.active_resource_ledger.as_mut() else {
+            return Ok(());
+        };
+        let mut deadline = ledger.deadline_remaining();
+        if let Some(at) = self.active_evaluation_deadline {
+            let remaining = at.saturating_duration_since(Instant::now());
+            if deadline.is_none_or(|(current, _)| remaining < current) {
+                deadline = Some((remaining, std::time::Duration::ZERO));
+            }
+        }
+        let (work_charged, work_limit) = ledger.work_state();
+        let pending = self.request_limits.sync(deadline, work_charged, work_limit);
+        if pending > 0 {
+            ledger
+                .charge_work(pending)
+                .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        }
         Ok(())
     }
 
@@ -4065,6 +4143,9 @@ where
             .is_some_and(|cancel| cancel.is_cancelled())
         {
             return Err(ExcelError::new(ExcelErrorKind::Cancelled).with_message(message));
+        }
+        if let Some(error) = self.function_limit_error() {
+            return Err(error);
         }
         if self
             .active_evaluation_deadline
@@ -4094,7 +4175,14 @@ where
         ledger
             .charge_work(work_units)
             .and_then(|()| ledger.checkpoint_deadline())
-            .map_err(crate::engine::ResourceLedgerError::into_excel_error)
+            .map_err(crate::engine::ResourceLedgerError::into_excel_error)?;
+        // Functions poll a mirror of these limits; keep it current, and
+        // account the work they charged through it.
+        self.sync_request_limits()?;
+        match self.function_limit_error() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     fn charge_bounded_work(&mut self, mut work_units: u64) -> Result<(), ExcelError> {
@@ -16255,23 +16343,26 @@ where
                 let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
                     .with_resolved_functions(&self.resolved_functions)
                     .with_arena_cells(self);
-                match interpreter.evaluate_ast(ast) {
-                    Ok(cv) => {
-                        let value = cv.into_literal();
-                        match value {
-                            LiteralValue::Array(_) => {
-                                let err = ExcelError::new(ExcelErrorKind::NImpl)
-                                    .with_message("Array result in scalar named range".to_string());
-                                let err_val = LiteralValue::Error(err.clone());
-                                self.graph.update_vertex_value_ref(vertex_id, &err_val);
-                                Ok(err_val)
-                            }
-                            other => {
-                                self.graph.update_vertex_value_ref(vertex_id, &other);
-                                Ok(other)
-                            }
+                let evaluated = interpreter
+                    .evaluate_ast(ast)
+                    .map(crate::traits::CalcValue::into_literal);
+                // A name's value is cached outside the guarded cell commit
+                // path: refuse one computed across a stop before caching it.
+                self.live_cancellation_after_work(NAME_CANCELLED)?;
+                match evaluated {
+                    Ok(value) => match value {
+                        LiteralValue::Array(_) => {
+                            let err = ExcelError::new(ExcelErrorKind::NImpl)
+                                .with_message("Array result in scalar named range".to_string());
+                            let err_val = LiteralValue::Error(err.clone());
+                            self.graph.update_vertex_value_ref(vertex_id, &err_val);
+                            Ok(err_val)
                         }
-                    }
+                        other => {
+                            self.graph.update_vertex_value_ref(vertex_id, &other);
+                            Ok(other)
+                        }
+                    },
                     Err(err) => {
                         let err_val = LiteralValue::Error(err.clone());
                         self.graph.update_vertex_value_ref(vertex_id, &err_val);
@@ -16360,14 +16451,15 @@ where
                 let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
                     .with_resolved_functions(&self.resolved_functions)
                     .with_arena_cells(self);
-                match interpreter.evaluate_ast(ast) {
-                    Ok(cv) => {
-                        let v = cv.into_literal();
-                        match v {
-                            LiteralValue::Array(_) => v,
-                            other => LiteralValue::Array(vec![vec![other]]),
-                        }
-                    }
+                let evaluated = interpreter
+                    .evaluate_ast(ast)
+                    .map(crate::traits::CalcValue::into_literal);
+                self.live_cancellation_after_work(NAME_CANCELLED)?;
+                match evaluated {
+                    Ok(v) => match v {
+                        LiteralValue::Array(_) => v,
+                        other => LiteralValue::Array(vec![vec![other]]),
+                    },
                     Err(err) => LiteralValue::Error(err),
                 }
             }
@@ -17515,6 +17607,10 @@ where
         cancel_flag: &AtomicBool,
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
         self.validate_deterministic_mode()?;
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                .with_message("Evaluation cancelled before target preparation"));
+        }
         if targets.is_empty() {
             return Ok(Vec::new());
         }
@@ -20240,6 +20336,14 @@ where
     }
 
     fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
+        // With a deadline or work budget in force, functions get a token that
+        // also reports those, so every poll site honours all three stops.
+        if self.request_limits.armed() {
+            return Some(crate::engine::CancelToken::request_scoped(
+                self.active_cancel_flag.as_ref(),
+                Arc::clone(&self.request_limits),
+            ));
+        }
         self.active_cancel_flag.clone()
     }
 
@@ -21648,6 +21752,14 @@ where
                 } else {
                     if i < recordable && collector.finish_member_targets(&mut out_edges[i]) {
                         member_edges_changed = true;
+                    }
+                    // Members commit write-through, so a value computed by a
+                    // function the deadline or the work budget stopped must be
+                    // refused here, before it becomes visible. (An explicit
+                    // cancellation keeps its pinned contract: it is honoured
+                    // at the pass boundaries and completed passes stand.)
+                    if let Some(error) = self.function_limit_error() {
+                        return Err(error);
                     }
                     self.graph.update_vertex_value_ref(m.vertex, &value);
                     self.mirror_vertex_value_to_overlay(m.vertex, &value);

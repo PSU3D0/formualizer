@@ -1270,7 +1270,7 @@ pub fn formualizer_eval::engine::arrow_ingest::ArrowBulkUpdateBuilder<'e, R>::fi
 pub fn formualizer_eval::engine::arrow_ingest::ArrowBulkUpdateBuilder<'e, R>::new(&'e mut formualizer_eval::engine::eval::Engine<R>) -> Self
 pub fn formualizer_eval::engine::arrow_ingest::ArrowBulkUpdateBuilder<'e, R>::update_cell(&mut self, &str, u32, u32, formualizer_common::value::LiteralValue)
 pub mod formualizer_eval::engine::cancel
-pub struct formualizer_eval::engine::cancel::CancelToken(_)
+pub struct formualizer_eval::engine::cancel::CancelToken
 impl formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::as_flag(&self) -> &alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub fn formualizer_eval::engine::cancel::CancelToken::cancel(&self)
@@ -6250,7 +6250,7 @@ impl core::hash::Hash for formualizer_eval::engine::arena::ast::AstNodeId
 pub fn formualizer_eval::engine::arena::ast::AstNodeId::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for formualizer_eval::engine::arena::ast::AstNodeId
 impl core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeId
-pub struct formualizer_eval::engine::CancelToken(_)
+pub struct formualizer_eval::engine::CancelToken
 impl formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::as_flag(&self) -> &alloc::sync::Arc<core::sync::atomic::AtomicBool>
 pub fn formualizer_eval::engine::cancel::CancelToken::cancel(&self)

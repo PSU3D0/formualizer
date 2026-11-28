@@ -194,7 +194,8 @@ impl Function for LookupFn {
         let mut vectors = LookupVectors::default();
         match args[0].value()?.into_literal() {
             LiteralValue::Array(needles) => {
-                super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
+                let cost = super::lookup_utils::lookup_cost(&args[1]);
+                super::lookup_utils::lift_lookup_values(ctx, needles, cost, |needle| {
                     LookupFn::lookup_one(args, ctx, needle, &mut vectors)
                 })
             }

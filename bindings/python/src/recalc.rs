@@ -302,6 +302,12 @@ impl PyRecalcJob {
             }
             let result = wb.step_recalc(stop);
             admission.keep = result.is_ok() && wb.has_active_recalc_job();
+            if !wb.has_active_recalc_job() {
+                // A `Workbook.cancel()` aimed at this job ended with it: a
+                // cancel request is consumed by the evaluation it stops and
+                // must not also stop the next one.
+                self.workbook.cancel_flag.store(false, Ordering::SeqCst);
+            }
             let report = result.map_err(recalc_error_to_pyerr)?;
             Ok(PyStepReport::from_engine(&wb, report))
         })
@@ -328,9 +334,11 @@ impl PyRecalcJob {
                 .map_err(crate::errors::workbook_error_to_pyerr)?;
             self.ensure_current(&wb)?;
             let _admission = JobAdmission::existing(&self.workbook.recalc_admission);
-            Ok(wb
-                .cancel_recalc()
-                .map(|r| PyStepReport::from_engine(&wb, r)))
+            let report = wb.cancel_recalc();
+            // The job is over: a `Workbook.cancel()` aimed at it must not
+            // stay pending for the next blocking evaluation.
+            self.workbook.cancel_flag.store(false, Ordering::SeqCst);
+            Ok(report.map(|r| PyStepReport::from_engine(&wb, r)))
         })
     }
     #[getter]

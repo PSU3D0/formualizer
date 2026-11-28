@@ -881,12 +881,19 @@ impl<'a> RangeView<'a> {
         }
     }
 
+    /// An owned view over `rows`.
+    ///
+    /// An array too wide to store by column (see
+    /// [`Self::try_from_owned_rows`]) becomes a 1x1 view holding `#NUM!`.
     pub fn from_owned_rows(
         rows: Vec<Vec<LiteralValue>>,
         date_system: DateSystem,
     ) -> RangeView<'static> {
-        Self::try_from_owned_rows(rows, date_system, None)
-            .expect("uncancelled RangeView conversion")
+        Self::try_from_owned_rows(rows, date_system, None).unwrap_or_else(|error| {
+            // No token is attached, so the only failure is the width guard.
+            Self::try_from_owned_rows(vec![vec![LiteralValue::Error(error)]], date_system, None)
+                .expect("a 1x1 RangeView conversion cannot fail")
+        })
     }
 
     pub(crate) fn try_from_owned_rows(
@@ -897,7 +904,25 @@ impl<'a> RangeView<'a> {
         let nrows = rows.len();
         let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
 
-        let chunk_rows = 32 * 1024;
+        // The view is stored by column, and a column has a fixed cost however
+        // short it is. Every producer checks its result against the
+        // materialisation budget; this is the backstop for one that builds a
+        // very wide array without doing so (`=TRANSPOSE(P:P)` is 1,048,576
+        // columns), applied here against the default budget.
+        if let Some(error) = materialized_cells_exceed(
+            nrows,
+            ncols,
+            DEFAULT_MATERIALIZED_ARRAY_CELLS.max((nrows as u64).saturating_mul(
+                crate::engine::resource_ledger::MATERIALIZED_UNCHARGED_COLS as u64,
+            )),
+        ) {
+            return Err(error);
+        }
+
+        // Size the lanes by the real row count: the builder reserves its first
+        // chunk per column, so a fixed chunk made a 1 x N array cost ~16 KB
+        // per column whatever its height (#621).
+        let chunk_rows = nrows.clamp(1, 32 * 1024);
         let mut ib = IngestBuilder::new("__tmp", ncols, chunk_rows, date_system);
 
         for mut r in rows {
@@ -2302,13 +2327,46 @@ impl<'a> RangeView<'a> {
         Ok(())
     }
 
+    /// Cells a cell-by-cell walk visits between polls of the view's
+    /// cancellation token.
+    pub(crate) const WALK_POLL_CELLS: usize = 4096;
+
+    /// The polling contract of the cell-by-cell walks ([`Self::for_each_row`],
+    /// [`Self::for_each_col`], and the copy in `CalcValue::into_literal`): the
+    /// attached token is polled before the first cell and then once at least
+    /// [`Self::WALK_POLL_CELLS`] cells have been visited since the last poll
+    /// (row walks and the literal copy poll between rows). A cancelled walk returns
+    /// `Err(Cancelled)` without visiting further cells; the visitor has seen
+    /// only whole rows (columns) up to that point.
+    #[inline]
+    pub(crate) fn poll_walk(&self, since_poll: &mut usize) -> Result<(), ExcelError> {
+        if *since_poll >= Self::WALK_POLL_CELLS {
+            *since_poll = 0;
+            if self.criteria_cache_cancelled() {
+                return Err(ExcelError::new(
+                    formualizer_common::ExcelErrorKind::Cancelled,
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Visit each row as a borrowed slice (buffered).
+    ///
+    /// Polls the attached cancellation token before the first row and then
+    /// between rows, once at least 4,096 cells have been visited since the
+    /// last poll (so at most one row plus 4,096 cells apart); a cancelled walk
+    /// returns `Err(Cancelled)`. An error returned by `f` stops the walk and is
+    /// returned unchanged.
     pub fn for_each_row(
         &self,
         f: &mut dyn FnMut(&[LiteralValue]) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         let mut buf: Vec<LiteralValue> = Vec::with_capacity(self.cols);
+        let mut since_poll = Self::WALK_POLL_CELLS;
         for r in 0..self.rows {
+            self.poll_walk(&mut since_poll)?;
+            since_poll += self.cols.max(1);
             buf.clear();
             for c in 0..self.cols {
                 buf.push(self.get_cell(r, c));
@@ -2319,14 +2377,23 @@ impl<'a> RangeView<'a> {
     }
 
     /// Visit each column as a contiguous slice (buffered).
+    ///
+    /// Polls the attached cancellation token before the first column and then
+    /// at least once every 4,096 cells, including inside a tall column while
+    /// it is being buffered; a cancelled walk returns `Err(Cancelled)` and
+    /// `f` is not called for the unfinished column. An error returned by `f`
+    /// stops the walk and is returned unchanged.
     pub fn for_each_col(
         &self,
         f: &mut dyn FnMut(&[LiteralValue]) -> Result<(), ExcelError>,
     ) -> Result<(), ExcelError> {
         let mut col_buf: Vec<LiteralValue> = Vec::with_capacity(self.rows);
+        let mut since_poll = Self::WALK_POLL_CELLS;
         for c in 0..self.cols {
             col_buf.clear();
             for r in 0..self.rows {
+                self.poll_walk(&mut since_poll)?;
+                since_poll += 1;
                 col_buf.push(self.get_cell(r, c));
             }
             f(&col_buf[..])?;
