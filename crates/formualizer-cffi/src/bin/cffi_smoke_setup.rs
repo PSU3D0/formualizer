@@ -1,12 +1,15 @@
+use formualizer_common::LiteralValue;
+use formualizer_workbook::Workbook;
 use std::path::PathBuf;
 
 fn main() {
     let path = PathBuf::from("/tmp/formualizer_cffi_smoke.xlsx");
-    let mut book = umya_spreadsheet::new_file();
-    let ws = book.get_sheet_by_name_mut("Sheet1").expect("default sheet");
+    let mut wb = Workbook::new();
+    wb.add_sheet("Sheet1").expect("add Sheet1");
+    wb.set_value("Sheet1", 1, 1, LiteralValue::Int(10))
+        .expect("set A1");
+    wb.set_formula("Sheet1", 1, 2, "=A1*2").expect("set B1");
 
-    ws.get_cell_mut((1, 1)).set_value_number(10);
-    ws.get_cell_mut((2, 1)).set_formula("A1*2");
-
-    umya_spreadsheet::writer::xlsx::write(&book, &path).expect("write smoke workbook");
+    let bytes = wb.to_xlsx_bytes().expect("serialize smoke workbook");
+    std::fs::write(&path, bytes).expect("write smoke workbook");
 }

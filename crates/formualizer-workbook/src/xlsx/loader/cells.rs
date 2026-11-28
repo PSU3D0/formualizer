@@ -558,7 +558,13 @@ fn scalar(v: &[u8], kind: Option<&[u8]>) -> Result<Value<'static>> {
             }
         } // Resolve the typed index once in the sink.
         Some(b"b") => Value::Boolean(v != b"0"),
-        Some(b"e") => Value::Error(s.parse().map_err(xlsx)?),
+        Some(b"e") => match s.parse() {
+            Ok(err) => Value::Error(err),
+            Err(parse_err) => match formualizer_common::error::ExcelErrorKind::try_parse(s) {
+                Some(kind) => Value::ExtendedError(kind),
+                None => return Err(xlsx(parse_err)),
+            },
+        },
         Some(b"n") | None => {
             if v.is_empty() {
                 Value::Empty

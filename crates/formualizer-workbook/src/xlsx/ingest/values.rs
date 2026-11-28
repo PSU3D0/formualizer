@@ -258,6 +258,7 @@ impl<'a> ValueSink<'a> {
                 }
                 Value::Boolean(b) => Scalar::Boolean(b),
                 Value::Error(e) => Scalar::Error(error_code(e)),
+                Value::ExtendedError(kind) => Scalar::Error(map_error_code(kind)),
                 Value::Text(Cow::Owned(s)) => Scalar::Text(Cow::Owned(s)),
                 Value::Text(Cow::Borrowed(s)) => Scalar::Text(self.source_text(s)),
                 Value::Shared(index) => {
@@ -309,6 +310,7 @@ impl<'a> ValueSink<'a> {
             Value::Number(_) => Scalar::Error(map_error_code(ExcelErrorKind::Num)),
             Value::Boolean(b) => Scalar::Boolean(b),
             Value::Error(e) => Scalar::Error(error_code(e)),
+            Value::ExtendedError(kind) => Scalar::Error(map_error_code(kind)),
             Value::Text(Cow::Owned(s)) => Scalar::Text(Cow::Owned(s)),
             Value::Text(Cow::Borrowed(s)) => Scalar::Text(self.source_text(s)),
             Value::Shared(index) => Scalar::Text(Cow::Borrowed(self.context.strings.get(index)?)),

@@ -24,7 +24,7 @@ def pytest_configure(config):
             args = list(args[1:] if class_method else args)
             positional = backend_position is not None and len(args) > backend_position
             selected = args[backend_position] if positional else kwargs.get("backend")
-            # Explicit Umya coverage and explicit native tests remain intact.
+            # Explicit native tests remain intact.
             if selected is None or (
                 isinstance(selected, str) and selected == "calamine"
             ):
@@ -49,8 +49,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     stats = getattr(config, "_formualizer_backend_stats", None)
     if stats is not None:
         terminalreporter.write_line(
-            f"Forced {stats['backend']} on {stats['calls']} default/Calamine load calls; "
-            "explicit Umya coverage preserved."
+            f"Forced {stats['backend']} on {stats['calls']} default/Calamine load calls."
         )
 
 

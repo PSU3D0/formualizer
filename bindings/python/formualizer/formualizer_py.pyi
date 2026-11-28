@@ -1758,7 +1758,7 @@ class Workbook:
         
         Args:
             path: Path to the `.xlsx` file.
-            backend: `native` (default), `calamine` (native alias), or `umya`.
+            backend: `native` (default) or `calamine` (native compatibility alias).
             path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
                 `XlsxPathSource.DIRECT_MMAP`. Direct mmap requires a native
                 Calamine `.xlsx` path whose underlying file is not destructively
@@ -1815,9 +1815,9 @@ class Workbook:
         Serialize the current workbook contents into XLSX bytes.
         
         Notes:
-        - This currently uses the `umya` backend.
+        - Uses Formualizer's built-in native OOXML serializer (`backend="native"`).
         - Output is generated from the in-memory workbook model; original XLSX styling
-          and package metadata are not preserved by the Python binding.
+          and unrelated package metadata are not preserved.
         """
     def add_sheet(self, name: builtins.str) -> None:
         r"""
@@ -2413,7 +2413,7 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
     Args:
         path: Path to an `.xlsx` file.
         strategy: Currently accepted for backward compatibility; loading is eager.
-        backend: `native` (default), `calamine` (native alias), or `umya`.
+        backend: `native` (default) or `calamine` (native compatibility alias).
         path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
             `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
             mapping; the underlying file must not be destructively modified or
@@ -2441,9 +2441,9 @@ def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = N
     Load an XLSX workbook from in-memory bytes.
     
     This is the byte-oriented counterpart to `load_workbook(...)`. All hosts,
-    including Pyodide, default to `native`. `backend="calamine"` is a native
-    compatibility alias; explicit `umya` rich reading remains available.
-    `load_limits` has the same native-only dictionary semantics as `load_workbook`.
+    including Pyodide, default to `native`; `backend="calamine"` is a native
+    compatibility alias. `load_limits` has the same native-only dictionary
+    semantics as `load_workbook`.
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:
@@ -2475,20 +2475,35 @@ def parse_formula(formula: builtins.str, dialect: typing.Optional[FormulaDialect
     Convenience function to parse a formula string directly
     """
 
-def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] = None) -> typing.Any:
+def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] = None, *, limits: SourceRecalculateLimits | None = None) -> typing.Any:
     r"""
     Recalculate an XLSX workbook and write formula cached values back to file.
     
     Args:
         path: Input `.xlsx` path.
         output: Optional output path. If omitted, updates `path` in-place.
+        limits: Optional source-recalculation bounds dictionary (same schema as
+            `recalculate_xlsx_file(..., limits=...)`, e.g. `{"maxFormulaCells": 500_000}`).
+            Omitted fields use `XlsxRecalculateOptions::workbook()` defaults
+            (100,000 formula cells, 64 MiB input/output, 8,000,000 cells, 16,384 columns).
     
     Returns:
-        A summary dictionary containing total/per-sheet evaluated counts and errors.
+        A summary dictionary with `status` (`"success"` or `"errors_found"`),
+        `coverage` (`"complete"` or `"partial"`), `evaluated`, `errors`,
+        `total_formulas`, `total_errors`, `sheets`, `unknown_functions`, and
+        `error_summary` (when non-empty).
     
     Note:
-        Formula text is preserved. Cached-value typing follows the active
-        `umya-spreadsheet` implementation.
+        Uses Formualizer's native source-preserving `xlsx-recalc` engine
+        (`XlsxRecalculateOptions::workbook()`), which honours the workbook's
+        `<calcPr>` and date system while retaining formula text, formatting,
+        and unrelated package parts. Atomic file replacement refuses symlink
+        destinations for safety; pass the resolved target path or use
+        `recalculate_xlsx_file` with an explicit non-symlink output path.
+        When calculation coverage is `"partial"` (for example due to circular
+        references or unknown functions), affected caches are invalidated,
+        incomplete cells are folded into `errors` / `total_errors` / `error_summary`,
+        and `status` is `"errors_found"` rather than `"success"`.
     """
 
 def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached', profile: builtins.str = 'strict', calculation: SourceCalculationPolicy | None = None, require_complete: builtins.bool = False, limits: SourceRecalculateLimits | None = None, physical_telemetry: builtins.bool = False) -> SourceRecalculateResult:

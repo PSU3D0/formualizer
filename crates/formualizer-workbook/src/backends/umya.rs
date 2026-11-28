@@ -48,10 +48,3 @@ fn write_document_writer(
 }
 
 include!("umya_impl.rs");
-
-impl UmyaAdapter {
-    // The existing Workbook save convenience API constructs this 2.x adapter.
-    pub(crate) fn set_date_system(&mut self, date_system: formualizer_eval::engine::DateSystem) {
-        self.date_system = date_system;
-    }
-}

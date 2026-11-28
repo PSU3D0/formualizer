@@ -121,7 +121,7 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 /// Args:
 ///     path: Path to an `.xlsx` file.
 ///     strategy: Currently accepted for backward compatibility; loading is eager.
-///     backend: `native` (default), `calamine` (native alias), or `umya`.
+///     backend: `native` (default) or `calamine` (native compatibility alias).
 ///     path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
 ///         `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
 ///         mapping; the underlying file must not be destructively modified or
@@ -177,9 +177,9 @@ fn load_workbook(
 /// Load an XLSX workbook from in-memory bytes.
 ///
 /// This is the byte-oriented counterpart to `load_workbook(...)`. All hosts,
-/// including Pyodide, default to `native`. `backend="calamine"` is a native
-/// compatibility alias; explicit `umya` rich reading remains available.
-/// `load_limits` has the same native-only dictionary semantics as `load_workbook`.
+/// including Pyodide, default to `native`; `backend="calamine"` is a native
+/// compatibility alias. `load_limits` has the same native-only dictionary
+/// semantics as `load_workbook`.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
@@ -213,29 +213,85 @@ fn load_workbook_bytes<'py>(
 /// Args:
 ///     path: Input `.xlsx` path.
 ///     output: Optional output path. If omitted, updates `path` in-place.
+///     limits: Optional source-recalculation bounds dictionary (same schema as
+///         `recalculate_xlsx_file(..., limits=...)`, e.g. `{"maxFormulaCells": 500_000}`).
+///         Omitted fields use `XlsxRecalculateOptions::workbook()` defaults
+///         (100,000 formula cells, 64 MiB input/output, 8,000,000 cells, 16,384 columns).
 ///
 /// Returns:
-///     A summary dictionary containing total/per-sheet evaluated counts and errors.
+///     A summary dictionary with `status` (`"success"` or `"errors_found"`),
+///     `coverage` (`"complete"` or `"partial"`), `evaluated`, `errors`,
+///     `total_formulas`, `total_errors`, `sheets`, `unknown_functions`, and
+///     `error_summary` (when non-empty).
 ///
 /// Note:
-///     Formula text is preserved. Cached-value typing follows the active
-///     `umya-spreadsheet` implementation.
+///     Uses Formualizer's native source-preserving `xlsx-recalc` engine
+///     (`XlsxRecalculateOptions::workbook()`), which honours the workbook's
+///     `<calcPr>` and date system while retaining formula text, formatting,
+///     and unrelated package parts. Atomic file replacement refuses symlink
+///     destinations for safety; pass the resolved target path or use
+///     `recalculate_xlsx_file` with an explicit non-symlink output path.
+///     When calculation coverage is `"partial"` (for example due to circular
+///     references or unknown functions), affected caches are invalidated,
+///     incomplete cells are folded into `errors` / `total_errors` / `error_summary`,
+///     and `status` is `"errors_found"` rather than `"success"`.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
 )]
 #[pyfunction]
-#[pyo3(signature = (path, output=None))]
-fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResult<Py<PyAny>> {
-    let input = std::path::Path::new(path);
-    let output_path = output.map(std::path::Path::new);
+#[pyo3(signature = (path, output=None, *, limits=None))]
+fn recalculate_file(
+    py: Python<'_>,
+    path: &str,
+    output: Option<&str>,
+    limits: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Py<PyAny>> {
+    let mut options = formualizer::workbook::XlsxRecalculateOptions::workbook();
+    source_calculation::apply_limits(&mut options, limits)?;
 
-    let summary = formualizer::workbook::recalculate_file(input, output_path).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
-    })?;
+    #[cfg(not(target_os = "emscripten"))]
+    let result = {
+        let input = std::path::PathBuf::from(path);
+        let output_path = output.map(std::path::PathBuf::from);
+        py.detach(move || {
+            formualizer::workbook::recalculate_xlsx_file(&input, output_path.as_deref(), options)
+        })
+        .map_err(format_recalculate_file_error)?
+    };
+
+    #[cfg(target_os = "emscripten")]
+    let result = {
+        let input = std::path::Path::new(path);
+        let output_path = output.map(std::path::Path::new);
+        let source = std::fs::read(input).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
+        })?;
+        let result = formualizer::workbook::recalculate_xlsx_bytes(&source, options)
+            .map_err(format_recalculate_file_error)?;
+        let dest = output_path.unwrap_or(input);
+        if dest != input || result.bytes != source {
+            // Pyodide uses an in-memory virtual filesystem, where direct write is appropriate.
+            std::fs::write(dest, &result.bytes).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
+            })?;
+        }
+        result
+    };
+
+    let mut summary = result.summary;
+    let coverage_str = match result.coverage {
+        formualizer::workbook::SourceCalculationCoverage::Complete => "complete",
+        formualizer::workbook::SourceCalculationCoverage::Partial => "partial",
+    };
+
+    if result.coverage == formualizer::workbook::SourceCalculationCoverage::Partial {
+        fold_partial_coverage_into_summary(&mut summary, &result.operation_diagnostics);
+    }
 
     let out = pyo3::types::PyDict::new(py);
     out.set_item("status", summary.status.as_str())?;
+    out.set_item("coverage", coverage_str)?;
     out.set_item("evaluated", summary.evaluated)?;
     out.set_item("errors", summary.errors)?;
     out.set_item("total_formulas", summary.evaluated)?;
@@ -270,6 +326,146 @@ fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResul
     )?;
 
     Ok(out.into_any().unbind())
+}
+
+fn format_recalculate_file_error(error: formualizer::workbook::IoError) -> PyErr {
+    match &error {
+        formualizer::workbook::IoError::Unsupported { feature, .. }
+            if feature.contains("limit") =>
+        {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "recalculate failed: {error} (pass limits={{...}} to recalculate_file or use recalculate_xlsx_file(..., limits=...) to raise this bound)"
+            ))
+        }
+        formualizer::workbook::IoError::Unsupported { feature, .. }
+            if feature.contains("symlink") =>
+        {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
+                "recalculate failed: {error} (atomic XLSX output refuses symlink destinations for safety; pass the resolved target path or use recalculate_xlsx_file(..., output=...) with a non-symlink path)"
+            ))
+        }
+        _ => PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {error}")),
+    }
+}
+
+fn fold_partial_coverage_into_summary(
+    summary: &mut formualizer::workbook::RecalculateSummary,
+    diagnostics: &formualizer::workbook::SourceOperationDiagnostics,
+) {
+    use formualizer::workbook::{RecalculateStatus, SourceUnavailableOperation};
+
+    let mut seen_cell_locations = std::collections::HashSet::new();
+    let mut sampled_circ = 0usize;
+    let mut sampled_unknown_fn = 0usize;
+
+    for sample in &diagnostics.samples {
+        let (token, message): (&str, Option<String>) = match &sample.operation {
+            SourceUnavailableOperation::InternalResult { token } => {
+                if token == "#CIRC!" {
+                    sampled_circ += 1;
+                    (token.as_str(), Some("Circular reference".to_owned()))
+                } else {
+                    (token.as_str(), None)
+                }
+            }
+            SourceUnavailableOperation::UnknownFunction { name } => {
+                sampled_unknown_fn += 1;
+                ("#NAME?", Some(format!("Unknown function: {name}")))
+            }
+            SourceUnavailableOperation::UnimplementedFunction { name } => {
+                ("#N/IMPL!", Some(format!("Unimplemented function: {name}")))
+            }
+            SourceUnavailableOperation::UnimplementedFunctionMode { name, mode } => (
+                "#N/IMPL!",
+                Some(format!("Unimplemented function mode: {name} ({mode})")),
+            ),
+            SourceUnavailableOperation::UnverifiedFunctionMode { name, mode } => (
+                "#N/IMPL!",
+                Some(format!("Unverified function mode: {name} ({mode})")),
+            ),
+            SourceUnavailableOperation::UnverifiedProvider { name } => {
+                ("#N/IMPL!", Some(format!("Unverified provider: {name}")))
+            }
+            SourceUnavailableOperation::FunctionPanicked { name } => {
+                ("#ERROR!", Some(format!("Function panicked: {name}")))
+            }
+            SourceUnavailableOperation::PostfixInvocation => (
+                "#N/IMPL!",
+                Some("Unsupported postfix invocation".to_owned()),
+            ),
+            SourceUnavailableOperation::SourceFeature { name } => (
+                "#N/IMPL!",
+                Some(format!("Unsupported source feature: {name}")),
+            ),
+        };
+
+        let entry = summary.error_summary.entry(token.to_owned()).or_default();
+        entry.count += 1;
+        if let Some(loc) = &sample.location {
+            entry.locations.push(loc.clone());
+            entry.messages.push(message);
+            if seen_cell_locations.insert(loc.clone())
+                && let Some((sheet_name, _)) = loc.rsplit_once('!')
+            {
+                summary
+                    .sheets
+                    .entry(sheet_name.to_owned())
+                    .or_default()
+                    .errors += 1;
+            }
+        } else {
+            entry.locations.push("<workbook>".to_owned());
+            entry.messages.push(message);
+        }
+    }
+
+    if diagnostics.samples_truncated > 0 {
+        let mut accounted_truncated = 0usize;
+        let circ_delta = diagnostics
+            .unavailable_result_cells
+            .saturating_sub(sampled_circ);
+        if circ_delta > 0 {
+            let entry = summary
+                .error_summary
+                .entry("#CIRC!".to_owned())
+                .or_default();
+            entry.count += circ_delta;
+            entry.locations_truncated += circ_delta;
+            accounted_truncated += circ_delta;
+        }
+        let unknown_total: usize = summary.unknown_functions.values().sum();
+        let unknown_delta = unknown_total.saturating_sub(sampled_unknown_fn);
+        if unknown_delta > 0 {
+            let entry = summary
+                .error_summary
+                .entry("#NAME?".to_owned())
+                .or_default();
+            entry.count += unknown_delta;
+            entry.locations_truncated += unknown_delta;
+            accounted_truncated += unknown_delta;
+        }
+        let remaining_truncated = diagnostics
+            .samples_truncated
+            .saturating_sub(accounted_truncated);
+        if remaining_truncated > 0 {
+            let entry = summary
+                .error_summary
+                .entry("#N/IMPL!".to_owned())
+                .or_default();
+            entry.count += remaining_truncated;
+            entry.locations_truncated += remaining_truncated;
+        }
+    }
+
+    let incomplete_errors = (diagnostics.logical_root_cell_count
+        + diagnostics.unavailable_result_cells
+        + diagnostics.source_regions
+        + diagnostics.logical_named_reason_count
+        + diagnostics.workbook_features.len())
+    .max(seen_cell_locations.len())
+    .max(1);
+    summary.errors += incomplete_errors;
+    summary.status = RecalculateStatus::ErrorsFound;
 }
 
 /// `[{"name": ..., "cells": ...}]`, as in the CLI's `unknown_functions`.

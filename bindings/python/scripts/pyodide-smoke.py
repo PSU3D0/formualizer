@@ -134,7 +134,7 @@ assert len(xlsx_bytes) > 100
 from_bytes = fz.Workbook.from_bytes(xlsx_bytes)
 assert from_bytes.evaluate_cell("Sheet1", 1, 2) == 42.0
 
-from_top_level = fz.load_workbook_bytes(xlsx_bytes, backend="umya")
+from_top_level = fz.load_workbook_bytes(xlsx_bytes, backend="native")
 assert from_top_level.evaluate_cell("Sheet1", 1, 2) == 42.0
 
 from_calamine = fz.Workbook.from_bytes(xlsx_bytes, backend="calamine")

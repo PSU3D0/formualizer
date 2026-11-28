@@ -7,7 +7,7 @@ use crate::{
 
 use formualizer_common::{LiteralValue, RangeAddress};
 use formualizer_workbook::{
-    LoadStrategy, SpreadsheetReader, UmyaAdapter, Workbook, WorkbookConfig,
+    CalamineAdapter, LoadStrategy, SpreadsheetReader, Workbook, WorkbookConfig,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -192,7 +192,7 @@ pub unsafe extern "C" fn fz_workbook_open_xlsx_with_span_evaluation(
         }
 
         let path_str = unsafe { CStr::from_ptr(path).to_string_lossy() };
-        let backend = UmyaAdapter::open_path(path_str.as_ref()).map_err(|e| e.to_string())?;
+        let backend = CalamineAdapter::open_path(path_str.as_ref()).map_err(|e| e.to_string())?;
         let cfg = WorkbookConfig::interactive().with_span_evaluation(span_evaluation);
         let wb = Workbook::from_reader(backend, LoadStrategy::EagerAll, cfg)
             .map_err(|e| e.to_string())?;

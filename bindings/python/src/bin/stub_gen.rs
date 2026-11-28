@@ -228,6 +228,17 @@ if typing.TYPE_CHECKING:
                     line.replace_range(start..end, &format!("{name}: {shape} | None"));
                 }
                 line.replace("-> typing.Any:", "-> SourceRecalculateResult:")
+            } else if line.starts_with("def recalculate_file(") {
+                let mut line = line.to_owned();
+                let start = line
+                    .find("limits: ")
+                    .expect("recalculate_file limits argument");
+                let end = start
+                    + line[start..]
+                        .find(" = None")
+                        .expect("optional limits argument");
+                line.replace_range(start..end, "limits: SourceRecalculateLimits | None");
+                line
             } else if line.trim_start().starts_with("def evaluate_async(") {
                 line.replace(
                     "on_progress: typing.Optional[typing.Any]",

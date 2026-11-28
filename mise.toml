@@ -1,6 +1,6 @@
 [tools]
 uv = "latest"
-rust = "1.99.0"
+rust = "1.100.0"
 act = "latest"
 "github:BurntSushi/ripgrep" = "latest"
 "npm:@anthropic-ai/claude-code" = "latest"

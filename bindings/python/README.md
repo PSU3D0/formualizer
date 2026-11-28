@@ -177,9 +177,9 @@ print(wb.evaluate_cell("Summary", 1, 2))
 out = wb.to_xlsx_bytes()
 ```
 
-All Python hosts, including Pyodide, use `native` by default for path-based and byte-oriented XLSX loading. `backend="calamine"` is a compatibility alias to native. Explicit `umya` rich reading and XLSX byte export remain available; native is read-only.
+All Python hosts, including Pyodide, use `native` by default for path-based and byte-oriented XLSX loading as well as `Workbook.to_xlsx_bytes()` export. `backend="calamine"` is a compatibility alias to native for loading.
 
-The native XLSX reader is the default for `load_workbook`, `load_workbook_bytes`, `Workbook.from_path`, `Workbook.load_path`, and `Workbook.from_bytes`. Filesystem loading supports the same `SHARED_FILE` and host-only `DIRECT_MMAP` path sources; the native backend is read-only.
+The native XLSX reader is the default for `load_workbook`, `load_workbook_bytes`, `Workbook.from_path`, `Workbook.load_path`, and `Workbook.from_bytes`. Filesystem loading supports the same `SHARED_FILE` and host-only `DIRECT_MMAP` path sources.
 
 ```python
 wb = fz.load_workbook("financial_model.xlsx", backend="native")
@@ -201,8 +201,8 @@ summary = fz.recalculate_file(
 )
 ```
 
-> Formula text is preserved. Cached-value typing follows the active
-> `umya-spreadsheet` implementation.
+> Uses Formualizer's native source-preserving `xlsx-recalc` engine: formula text,
+> formatting, and unrelated package parts are preserved while cached values are updated.
 
 ### Cache-only XLSX recalculation
 
@@ -566,7 +566,7 @@ tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
 parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
 load_workbook(path: str, strategy: str = None, *, backend: str | None = None, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
 load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None, *, span_evaluation: bool | None = None) -> Workbook
-recalculate_file(path: str, output: str | None = None) -> dict
+recalculate_file(path: str, output: str | None = None, *, limits: SourceRecalculateLimits | None = None) -> dict
 recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None, external_links: str = "cached") -> dict
 recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None, external_links: str = "cached") -> dict
 ```
@@ -598,7 +598,7 @@ Full type stubs are included in the package (`.pyi` files) for IDE autocompletio
 
 ## Building from source
 
-Requires Rust 1.99.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
+Requires Rust 1.100.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
 
 ```bash
 pip install maturin
@@ -631,7 +631,7 @@ wb.evaluate_cell("Sheet1", 1, 2)  # -> 42.0
 
 **Pyodide-specific behavior:**
 - `EvaluationConfig()` and `Workbook()` default `enable_parallel = False` on `sys.platform == "emscripten"` (Pyodide has no threads). You can still opt in, but it falls back to single-threaded execution.
-- XLSX byte loading defaults to `native` on every host, including Pyodide; `calamine` is a compatibility alias. XLSX byte export uses `umya` on all platforms.
+- XLSX byte loading and export (`to_xlsx_bytes()`) both default to `native` on every host, including Pyodide; `calamine` is a compatibility alias for loading.
 - Source-preserving recalculation is available as `recalculate_xlsx_bytes` (the CLI and `recalculate_xlsx_file` are not). There is no system clock: workbooks using `TODAY`/`NOW` are refused unless `deterministic_timestamp_utc` is passed, and `result["clock"]["now"]` is `None` otherwise.
 - Python UDFs registered via `Workbook.register_function` work identically to native; single-cell refs arrive as scalars (Excel-native semantics).
 
