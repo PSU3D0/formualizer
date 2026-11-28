@@ -683,6 +683,11 @@ export interface CycleTelemetry {
   elapsedMs: number;
 }
 
+/**
+ * setValues, setColumns and setCells validate caller inputs before writing. Above
+ * 2,000,000 cells the engine commits each chunk independently. If it rejects a
+ * later chunk, earlier chunks remain on the sheet.
+ */
 export interface SheetApi extends Omit<wasm.Sheet, 'setValues'> {
   setValues(startRow: number, startCol: number, rows: readonly (readonly CellScalarInput[])[]): WriteRangeReport;
   setColumns(
@@ -692,10 +697,11 @@ export interface SheetApi extends Omit<wasm.Sheet, 'setValues'> {
     options?: SetColumnsOptions,
   ): WriteRangeReport;
   setCells(cells: SetCellsInput): WriteRangeReport;
-  /** Present only when built with Cargo feature `arrow-ipc`. */
+  /** Requires Cargo feature `arrow-ipc`. Headers and record batches commit as they are read. */
   setArrowIpc?(startRow: number, startCol: number, bytes: Uint8Array, options?: SetArrowIpcOptions): WriteRangeReport;
 }
 
+/** Bulk methods use the input validation and per-chunk commit semantics of {@link SheetApi}. */
 export interface WorkbookApi extends Omit<wasm.Workbook, 'sheet' | 'beginRecalc' | 'pendingCellsInRect' | 'hasPendingInRect' | '_beginRecalcDriver'> {
   sheet(name: string): SheetApi;
   setValues(sheet: string, startRow: number, startCol: number, rows: readonly (readonly CellScalarInput[])[]): WriteRangeReport;

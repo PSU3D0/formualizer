@@ -73,7 +73,7 @@ export interface ArrowTableLike {
   numRows?: number;
   numCols?: number;
   getChildAt?: (index: number) => ArrowColumnLike | null | undefined;
-  getChild?: (name: string) => ArrowColumnLike | null | undefined;
+  getChild?(name: string): ArrowColumnLike | null | undefined;
   batches?: readonly {
     numRows: number;
     getChildAt?: (index: number) => ArrowColumnLike | null | undefined;
@@ -292,8 +292,17 @@ function resolveArrowType(
     if (norm === 'date32' || norm === 'date32<day>') return { kind: 'date', unit: 0 };
     if (norm === 'date64' || norm === 'date64<millisecond>') return { kind: 'date', unit: 1 };
     if (norm.startsWith('timestamp')) {
-      const unit = norm.includes('nano') ? 3 : norm.includes('micro') ? 2 : norm.includes('milli') ? 1 : 0;
-      return { kind: 'timestamp', unit };
+      // Apache Arrow renders e.g. Timestamp<MILLISECOND, +05:30>. Preserve
+      // the timezone verbatim so unsupported zones still fail by column name.
+      let suffix = rawType.trim().slice('timestamp'.length);
+      if ((suffix.startsWith('<') && suffix.endsWith('>')) || (suffix.startsWith('[') && suffix.endsWith(']'))) {
+        suffix = suffix.slice(1, -1);
+      }
+      const [unitName, timezone, ...extra] = suffix.split(',').map(part => part.trim());
+      const units = [['s', 'second'], ['ms', 'millisecond'], ['us', 'microsecond'], ['ns', 'nanosecond']];
+      const unit = units.findIndex(names => names.includes(unitName.toLowerCase() || 'second'));
+      if (unit < 0 || extra.length) return { kind: 'unsupported', label: rawType };
+      return { kind: 'timestamp', unit, timezone: timezone?.replace(/^tz=/i, '') };
     }
     if (norm.startsWith('duration')) {
       const unit = norm.includes('nano') ? 3 : norm.includes('micro') ? 2 : norm.includes('milli') ? 1 : 0;
@@ -780,7 +789,7 @@ function convertChunks(
           out[dst] = v / denom;
         }
       }
-      return { kind: 'date', values: out, validity, name: colName };
+      return { kind: 'time', values: out, validity, name: colName };
     }
 
     case 'duration': {
@@ -816,13 +825,16 @@ function convertChunks(
       if (resolved.bitWidth !== 128) {
         throw arrowColError(colName, `unsupported Decimal bitWidth ${resolved.bitWidth} (expected 128)`);
       }
-      const scaleDiv = 10 ** resolved.scale;
       const out = new Float64Array(totalRows);
       let dst = 0;
       for (const ch of chunks) {
-        const vals = ch.values;
+        const raw = ch.values;
+        // Flechette stores two 64-bit words, Apache Arrow four 32-bit words.
+        const vals = raw instanceof BigUint64Array
+          ? new Uint32Array(raw.buffer, raw.byteOffset, raw.length * 2)
+          : raw;
         if (!(vals instanceof Uint32Array) && !(vals instanceof Int32Array)) {
-          throw arrowColError(colName, 'Decimal128 column must provide 32-bit word buffer');
+          throw arrowColError(colName, 'unsupported Decimal128 word buffer');
         }
         for (let i = 0; i < ch.length; i++, dst++) {
           if (!isChunkValid(ch, i)) {
@@ -835,108 +847,72 @@ function convertChunks(
           const w2 = BigInt(vals[base + 2] >>> 0);
           const w3 = BigInt(vals[base + 3] | 0);
           const int128 = (w3 << 96n) | (w2 << 64n) | (w1 << 32n) | w0;
-          out[dst] = Number(int128) / scaleDiv;
+          out[dst] = Number(`${int128}e${-resolved.scale}`);
         }
       }
       return { kind: 'number', values: out, validity, name: colName };
     }
 
     case 'dictionary': {
-      // Decode dictionary chunks by materializing keys against each chunk's dictionary values.
-      if (chunks.length === 0) {
-        return { kind: 'null', length: 0, name: colName };
+      if (!chunks.length) return { kind: 'null', length: 0, name: colName };
+      const dictionaries = new Map<ArrowColumnLike | ArrowDataLike, (string | number | null)[]>();
+      const first = chunks[0].dictionary;
+      if (!first) throw arrowColError(colName, 'Dictionary chunk is missing dictionary values');
+      const partsOf = (ref: ArrowColumnLike | ArrowDataLike) =>
+        'data' in ref && ref.data ? ref.data : [ref as ArrowDataLike];
+      const sample = partsOf(first)[0];
+      const kind = resolveArrowType(resolved.valueType ?? first.type ?? sample?.type, sample);
+      if (!['utf8', 'int', 'float', 'decimal'].includes(kind.kind)) {
+        throw arrowColError(colName, `unsupported dictionary value kind: ${kind.kind}`);
       }
-      const firstDict = chunks[0].dictionary;
-      if (!firstDict) {
-        throw arrowColError(colName, 'Dictionary column is missing dictionary values');
-      }
-      const firstDictChunk: ArrowDataLike =
-        'data' in firstDict && Array.isArray(firstDict.data)
-          ? firstDict.data[0]
-          : (firstDict as ArrowDataLike);
-      const valKind = resolveArrowType(resolved.valueType ?? firstDictChunk.type, firstDictChunk);
-      if (valKind.kind === 'utf8') {
-        const decoder = new TextDecoder();
-        const outStrings: (string | null)[] = new Array(totalRows);
-        let dst = 0;
-        for (const ch of chunks) {
-          const dictRef = ch.dictionary;
-          if (!dictRef) throw arrowColError(colName, 'Dictionary chunk is missing dictionary values');
-          const dictChunk: ArrowDataLike =
-            'data' in dictRef && Array.isArray(dictRef.data)
-              ? dictRef.data[0]
-              : (dictRef as ArrowDataLike);
-          const dictBytes = dictChunk.values;
-          const dictOffs = getValueOffsets(dictChunk);
-          if (!(dictBytes instanceof Uint8Array) || !dictOffs || dictOffs.length < dictChunk.length + 1) {
-            throw arrowColError(
-              colName,
-              'Dictionary Utf8 values must provide Uint8Array values and valueOffsets (apache-arrow) or offsets (Flechette)',
-            );
+      const column = kind.kind === 'utf8'
+        ? { kind: 'text' as const, values: new Array<string | null>(totalRows) }
+        : { kind: 'number' as const, values: new Float64Array(totalRows), validity: new Uint8Array(Math.ceil(totalRows / 8)) };
+      let hasNull = false;
+      let dst = 0;
+      for (const ch of chunks) {
+        const ref = ch.dictionary;
+        if (!ref) throw arrowColError(colName, 'Dictionary chunk is missing dictionary values');
+        let entries = dictionaries.get(ref);
+        if (!entries) {
+          const decoded = convertChunks(partsOf(ref), kind, colName, dateSystem);
+          if (!('kind' in decoded) || (decoded.kind !== 'text' && decoded.kind !== 'number')) {
+            throw arrowColError(colName, `unsupported dictionary value kind: ${kind.kind}`);
           }
-          const dictCache = new Array<string | null>(dictChunk.length);
-          for (let d = 0; d < dictChunk.length; d++) {
-            if (!isChunkValid(dictChunk, d)) {
-              dictCache[d] = null;
-            } else {
-              const s0 = Number(dictOffs[d]);
-              const s1 = Number(dictOffs[d + 1]);
-              dictCache[d] = decoder.decode(dictBytes.subarray(s0, s1));
+          const packed = 'bytes' in decoded.values ? decoded.values : null;
+          const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
+          const length = packed ? packed.offsets.length - 1 : (decoded.values as ArrayLike<unknown>).length;
+          entries = Array.from({ length }, (_, i) => {
+            if (decoded.validity && !(decoded.validity[i >> 3] & (1 << (i & 7)))) return null;
+            if (packed) return decoder.decode(packed.bytes.subarray(packed.offsets[i], packed.offsets[i + 1]));
+            return (decoded.values as ArrayLike<string | number | null>)[i];
+          });
+          dictionaries.set(ref, entries);
+        }
+        const keys = ch.values as ArrayLike<number>;
+        for (let i = 0; i < ch.length; i++, dst++) {
+          let value: string | number | null = null;
+          if (isChunkValid(ch, i)) {
+            const key = Number(keys[i]);
+            if (!Number.isInteger(key) || key < 0 || key >= entries.length) {
+              throw arrowColError(colName, `dictionary key ${key} out of bounds`);
             }
+            value = entries[key];
           }
-          const keys = ch.values as ArrayLike<number>;
-          for (let i = 0; i < ch.length; i++, dst++) {
-            if (!isChunkValid(ch, i)) {
-              outStrings[dst] = null;
-              continue;
+          if (column.kind === 'number') {
+            if (value === null) hasNull = true;
+            else {
+              column.values[dst] = value as number;
+              column.validity[dst >> 3] |= 1 << (dst & 7);
             }
-            const k = Number(keys[i]);
-            if (k < 0 || k >= dictCache.length) {
-              throw arrowColError(colName, `dictionary key ${k} out of bounds (len ${dictCache.length})`);
-            }
-            outStrings[dst] = dictCache[k];
+          } else {
+            column.values[dst] = value as string | null;
           }
         }
-        return { kind: 'text', values: outStrings, name: colName };
       }
-
-      // Non-string dictionary: decode dictionary values and index into them.
-      const dictDecoded = convertChunks([firstDictChunk], valKind, colName, dateSystem);
-      if (typeof dictDecoded === 'object' && 'kind' in dictDecoded && dictDecoded.kind === 'number') {
-        const out = new Float64Array(totalRows);
-        const outValidity = new Uint8Array(Math.ceil(totalRows / 8));
-        let anyNull = false;
-        let dst = 0;
-        for (const ch of chunks) {
-          const keys = ch.values as ArrayLike<number>;
-          for (let i = 0; i < ch.length; i++, dst++) {
-            if (!isChunkValid(ch, i)) {
-              anyNull = true;
-              continue;
-            }
-            const k = Number(keys[i]);
-            if (k < 0 || k >= dictDecoded.values.length) {
-              throw arrowColError(colName, `dictionary key ${k} out of bounds`);
-            }
-            const dictValid =
-              dictDecoded.validity === undefined ||
-              ((dictDecoded.validity[k >> 3] >> (k & 7)) & 1) !== 0;
-            if (!dictValid) {
-              anyNull = true;
-              continue;
-            }
-            out[dst] = dictDecoded.values[k];
-            outValidity[dst >> 3] |= 1 << (dst & 7);
-          }
-        }
-        return {
-          kind: 'number',
-          values: out,
-          validity: anyNull ? outValidity : undefined,
-          name: colName,
-        };
-      }
-      throw arrowColError(colName, `unsupported dictionary value kind: ${valKind.kind}`);
+      return column.kind === 'number'
+        ? { ...column, validity: hasNull ? column.validity : undefined, name: colName }
+        : { ...column, name: colName };
     }
   }
 }
