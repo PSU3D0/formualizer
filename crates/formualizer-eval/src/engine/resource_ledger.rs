@@ -815,6 +815,13 @@ impl ResourceLedger {
         Ok(())
     }
 
+    /// Whether the request has a deadline or a work-unit limit, the two
+    /// budgets a function can run into mid-call.
+    #[inline]
+    pub(crate) fn limits_time_or_work(&self) -> bool {
+        self.budgets.deadline.max_elapsed.is_some() || self.budgets.work.max_work_units.is_some()
+    }
+
     /// Time left before the deadline and the configured limit, if one is set.
     pub(crate) fn deadline_remaining(&self) -> Option<(Duration, Duration)> {
         let limit = self.budgets.deadline.max_elapsed?;

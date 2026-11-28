@@ -1228,7 +1228,12 @@ pub struct Engine<R> {
     active_evaluation_deadline: Option<Instant>,
     /// Lock-free mirror of the active request's deadline and work budget, polled
     /// by functions through the request-scoped [`CancelToken`](crate::engine::CancelToken).
-    pub(in crate::engine) request_limits: Arc<crate::engine::cancel::RequestLimits>,
+    ///
+    /// `None` until the request has a deadline or a work budget to mirror
+    /// (see `sync_request_limits`). Most requests never do: with neither set
+    /// there is nothing for a function to run into, functions poll the
+    /// caller's token directly, and the request pays nothing for the mirror.
+    pub(in crate::engine) request_limits: Option<Arc<crate::engine::cancel::RequestLimits>>,
 
     /// Engine-level action depth.
     ///
@@ -3414,7 +3419,7 @@ where
             formula_ingest_report_total: FormulaIngestReport::default(),
             active_cancel_flag: None,
             active_evaluation_deadline: None,
-            request_limits: Arc::default(),
+            request_limits: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
@@ -3606,7 +3611,7 @@ where
             formula_ingest_report_total: FormulaIngestReport::default(),
             active_cancel_flag: None,
             active_evaluation_deadline: None,
-            request_limits: Arc::default(),
+            request_limits: None,
             action_depth: 0,
             last_virtual_dep_telemetry: VirtualDepTelemetry::default(),
             virtual_dep_fallback_activations: 0,
@@ -3879,9 +3884,10 @@ where
                 ledger.resume_job(state.work_units, state.active_elapsed);
             }
             self.active_resource_ledger = Some(ledger);
-            // Each request gets its own limits, so a token a function kept
-            // from an earlier request can neither trip nor observe this one.
-            self.request_limits = Arc::default();
+            // Each request gets its own limits (created when first armed),
+            // so a token a function kept from an earlier request can neither
+            // trip nor observe this one.
+            self.request_limits = None;
         }
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_add(1);
@@ -3914,7 +3920,9 @@ where
             // Account the in-function work of the final units; the request is
             // over, so a budget crossed here no longer changes its outcome.
             let _ = self.sync_request_limits();
-            self.request_limits.disarm();
+            if let Some(limits) = &self.request_limits {
+                limits.disarm();
+            }
         }
         if outermost && result.is_err() {
             self.freshness_abort_pass();
@@ -4095,7 +4103,7 @@ where
         // Only a request has limits; unmetered work (planning, inspection)
         // between requests must not inherit the last request's stop.
         self.active_resource_ledger.as_ref()?;
-        let (reason, limit, observed) = self.request_limits.tripped()?;
+        let (reason, limit, observed) = self.request_limits.as_ref()?.tripped()?;
         Some(
             crate::engine::ResourceLedgerError::Exhausted(
                 formualizer_common::ResourceExhaustionDetail {
@@ -4119,6 +4127,17 @@ where
         let Some(ledger) = self.active_resource_ledger.as_mut() else {
             return Ok(());
         };
+        // Nothing to mirror until the request has a deadline or a work budget
+        // (the composed-request deadline can arrive after the request began).
+        // Without a mirror no function holds a request-scoped token, so there
+        // is no in-function work to account and no trip to report either.
+        if self.request_limits.is_none()
+            && self.active_evaluation_deadline.is_none()
+            && !ledger.limits_time_or_work()
+        {
+            return Ok(());
+        }
+        let limits = self.request_limits.get_or_insert_with(Arc::default);
         let mut deadline = ledger.deadline_remaining();
         if let Some(at) = self.active_evaluation_deadline {
             let remaining = at.saturating_duration_since(Instant::now());
@@ -4127,7 +4146,7 @@ where
             }
         }
         let (work_charged, work_limit) = ledger.work_state();
-        let pending = self.request_limits.sync(deadline, work_charged, work_limit);
+        let pending = limits.sync(deadline, work_charged, work_limit);
         if pending > 0 {
             ledger
                 .charge_work(pending)
@@ -20338,10 +20357,10 @@ where
     fn cancellation_token(&self) -> Option<crate::engine::CancelToken> {
         // With a deadline or work budget in force, functions get a token that
         // also reports those, so every poll site honours all three stops.
-        if self.request_limits.armed() {
+        if let Some(limits) = self.request_limits.as_ref().filter(|limits| limits.armed()) {
             return Some(crate::engine::CancelToken::request_scoped(
                 self.active_cancel_flag.as_ref(),
-                Arc::clone(&self.request_limits),
+                Arc::clone(limits),
             ));
         }
         self.active_cancel_flag.clone()

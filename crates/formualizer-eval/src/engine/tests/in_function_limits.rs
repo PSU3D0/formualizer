@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::engine::range_view::RangeView;
 use crate::engine::{
     CancelToken, DateSystem, DeadlineResourceBudget, Engine, EvalConfig, EvaluationBudgets,
-    WorkResourceBudget,
+    EvaluationTarget, TargetEvalOptions, WorkResourceBudget,
 };
 use crate::test_workbook::TestWorkbook;
 use formualizer_common::{
@@ -616,16 +616,96 @@ fn a_token_kept_from_a_finished_request_does_not_affect_the_next() {
         "=MATCH(SEQUENCE(150,150),SEQUENCE(150,150))",
     );
     assert!(engine.evaluate_all().is_err());
-    let stale = std::sync::Arc::clone(&engine.request_limits);
+    let stale = engine.request_limits.clone().expect("armed request");
     assert!(stale.tripped().is_some());
     engine
         .set_cell_formula("Sheet1", 1, 1, parse("=1+1").unwrap())
         .unwrap();
     engine.evaluate_all().unwrap();
-    assert!(!std::sync::Arc::ptr_eq(&stale, &engine.request_limits));
-    assert!(engine.request_limits.tripped().is_none());
+    let current = engine.request_limits.as_ref().expect("armed request");
+    assert!(!std::sync::Arc::ptr_eq(&stale, current));
+    assert!(current.tripped().is_none());
     assert_eq!(
         engine.get_cell_value("Sheet1", 1, 1),
         Some(LiteralValue::Number(2.0))
     );
+}
+
+#[test]
+fn a_request_with_no_deadline_or_work_budget_keeps_no_limit_mirror() {
+    // The common request: nothing to mirror, so nothing is allocated or
+    // synchronised for it.
+    let mut engine = engine_with(EvaluationBudgets::default(), "=SUM(MATCH({2,3},{1,2,3},0))");
+    engine.evaluate_all().unwrap();
+    assert!(engine.request_limits.is_none());
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(5.0))
+    );
+
+    // A caller's token alone needs no mirror either, and is still honoured
+    // inside the function: IFERROR cannot turn the stop into a result.
+    let mut engine = engine_with(
+        EvaluationBudgets::default(),
+        "=IFERROR(MATCH(SEQUENCE(150,150),SEQUENCE(150,150)),0)",
+    );
+    let token = CancelToken::new();
+    let remote = token.clone();
+    let canceller = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        remote.cancel();
+    });
+    let started = Instant::now();
+    let error = engine
+        .evaluate_all_cancellable(token)
+        .expect_err("cancelled, not Ok(0)");
+    canceller.join().unwrap();
+    assert_eq!(error.kind, ExcelErrorKind::Cancelled);
+    assert!(started.elapsed() < PROMPT);
+    assert!(engine.request_limits.is_none());
+    assert_ne!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(0.0))
+    );
+}
+
+#[test]
+fn a_deadline_composed_onto_an_unbudgeted_request_still_stops_a_function() {
+    // The call's own deadline arrives after the request has begun; the mirror
+    // is armed then, so the function stops and IFERROR cannot hide it.
+    let mut engine = engine_with(
+        EvaluationBudgets::default(),
+        "=IFERROR(MATCH(SEQUENCE(150,150),SEQUENCE(150,150)),0)",
+    );
+    let started = Instant::now();
+    let error = engine
+        .evaluate_targets_with_options(
+            &[EvaluationTarget::Cell {
+                sheet: "Sheet1".to_string(),
+                row: 1,
+                col: 1,
+            }],
+            TargetEvalOptions {
+                deadline: Some(Instant::now() + Duration::from_millis(150)),
+                ..TargetEvalOptions::default()
+            },
+        )
+        .expect_err("deadline, not Ok(0)");
+    assert_eq!(
+        resource_reason(&error),
+        Some(ResourceExhaustionReason::Deadline)
+    );
+    assert!(started.elapsed() < PROMPT);
+    assert!(engine.request_limits.is_some());
+    assert_ne!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(0.0))
+    );
+
+    // The next, unlimited request drops the mirror again.
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=1+1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert!(engine.request_limits.is_none());
 }
