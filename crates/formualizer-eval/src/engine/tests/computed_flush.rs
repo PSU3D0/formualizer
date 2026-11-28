@@ -1166,3 +1166,30 @@ fn user_edit_removes_same_cell_computed_fragment_before_compaction() {
     assert_eq!(asheet.get_cell_value(0, 0), LiteralValue::Number(9.0));
     assert_eq!(engine.overlay_memory_usage(), 0);
 }
+
+/// A structural row insert can leave a sheet's last chunk longer than
+/// `chunk_rows`. Buffered writes past it must land in the chunk growth
+/// actually creates: the plan and the store share one boundary rule.
+#[test]
+fn buffered_writes_past_an_oversized_chunk_are_not_dropped() {
+    let mut engine = Engine::new(TestWorkbook::new(), super::common::arrow_eval_config());
+    let name = "Sheet1";
+    let id = engine.graph.sheet_id_mut(name);
+    {
+        let mut ab = engine.begin_bulk_ingest_arrow();
+        ab.add_sheet(name, 1, 4);
+        ab.finish().unwrap();
+    }
+    let sheet = engine.sheet_store_mut().sheet_mut(name).unwrap();
+    sheet.insert_rows(0, 10);
+    assert_eq!(sheet.chunk_starts, vec![0]);
+    let mut buffer = ComputedWriteBuffer::default();
+    for row in 10..12 {
+        buffer.push_cell(id, row, 0, OverlayValue::Number(row as f64));
+    }
+    engine.flush_computed_write_buffer(&mut buffer).unwrap();
+    let sheet = engine.sheet_store().sheet(name).unwrap();
+    assert_eq!(sheet.chunk_starts, vec![0, 10]);
+    assert_eq!(sheet.get_cell_value(10, 0), LiteralValue::Number(10.0));
+    assert_eq!(sheet.get_cell_value(11, 0), LiteralValue::Number(11.0));
+}
