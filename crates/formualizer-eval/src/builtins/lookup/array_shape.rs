@@ -74,8 +74,8 @@ pub struct ToColFn;
 pub struct ToRowFn;
 
 fn schema() -> &'static [ArgSchema] {
-    use once_cell::sync::Lazy;
-    static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+    use std::sync::LazyLock;
+    static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
         vec![
             ArgSchema {
                 kinds: smallvec::smallvec![ArgKind::Range, ArgKind::Any],

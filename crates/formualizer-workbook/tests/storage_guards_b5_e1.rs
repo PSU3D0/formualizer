@@ -251,13 +251,13 @@ fn f4_write_built_30k_sheet_keeps_written_columns_dense_for_sumifs() {
     assert_eq!(wb.get_value("S", 2, 3), Some(LiteralValue::Number(3_000.0)));
 
     let asheet = wb.engine().sheet_store().sheet("S").unwrap();
-    for col_idx in 0..2 {
+    for (col_idx, column) in asheet.columns.iter().enumerate().take(2) {
         assert!(
-            asheet.columns[col_idx].sparse_chunks.is_empty(),
+            column.sparse_chunks.is_empty(),
             "write-built column {col_idx} must have no sparse chunks so CriteriaMaskCache stays active"
         );
         assert!(
-            !asheet.columns[col_idx].chunks.is_empty(),
+            !column.chunks.is_empty(),
             "write-built column {col_idx} must keep dense chunks"
         );
     }

@@ -282,8 +282,8 @@ impl Function for TextSplitFn {
     }
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_textsplit);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_textsplit);
         &SCHEMA
     }
 
@@ -534,8 +534,8 @@ impl Function for ValueToTextFn {
     }
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_valuetotext);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_valuetotext);
         &SCHEMA
     }
 
@@ -665,8 +665,8 @@ impl Function for ArrayToTextFn {
     }
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_arraytotext);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_arraytotext);
         &SCHEMA
     }
 

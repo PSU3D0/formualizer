@@ -73,7 +73,7 @@ impl Function for RandFn {
     ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
         let mut rng = ctx.rng_for_current(self.function_salt());
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Number(
-            rng.gen_range(0.0..1.0),
+            rng.random_range(0.0..1.0),
         )))
     }
 }
@@ -244,7 +244,7 @@ impl Function for RandBetweenFn {
         let n = if hi.wrapping_sub(lo) as u64 == u64::MAX {
             lo
         } else {
-            rng.gen_range(lo..=hi)
+            rng.random_range(lo..=hi)
         };
         Ok(crate::traits::CalcValue::Scalar(LiteralValue::Int(n)))
     }

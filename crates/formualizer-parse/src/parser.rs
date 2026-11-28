@@ -16,7 +16,6 @@ use formualizer_common::coord::{
 use formualizer_common::{
     AxisBound, RelativeCoord, SheetCellRef, SheetLocator, SheetRangeRef, SheetRef,
 };
-use once_cell::sync::Lazy;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::error::Error;
@@ -24,6 +23,7 @@ use std::fmt::{self, Display};
 use std::hash::{Hash, Hasher};
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 type VolatilityFn = dyn Fn(&str) -> bool + Send + Sync + 'static;
 type VolatilityClassifierBox = Box<VolatilityFn>;
@@ -51,7 +51,7 @@ impl Display for ParserError {
 impl Error for ParserError {}
 
 // Column lookup table for common columns (A-ZZ = 702 columns)
-static COLUMN_LOOKUP: Lazy<Vec<String>> = Lazy::new(|| {
+static COLUMN_LOOKUP: LazyLock<Vec<String>> = LazyLock::new(|| {
     let mut cols = Vec::with_capacity(702);
     // Single letters A-Z
     for c in b'A'..=b'Z' {

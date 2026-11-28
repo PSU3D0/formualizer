@@ -34,26 +34,23 @@ formualizer-parse = { version = "4.2.0", path = "crates/formualizer-parse" }
 formualizer-eval = { version = "0.15.0", path = "crates/formualizer-eval" }
 formualizer-workbook = { version = "0.15.0", path = "crates/formualizer-workbook" }
 
-chrono = { version = "0.4.41", default-features = false, features = ["std"] }
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
 serde = "1.0.228"
-serde_json = { version = "1.0.142", features = ["float_roundtrip"] }
+serde_json = { version = "1.0.149", features = ["float_roundtrip"] }
 serde_yaml = "0.9.34"
 schemars = "1.0.4"
 semver = "1.0.26"
-regex = "1.11.1"
-clap = "4.5.48"
-anyhow = "1.0.100"
-thiserror = "2.0.17"
-once_cell = "1.21.3"
-smallvec = "1.13"
-rustc-hash = "1.1"
-tempfile = "3.10"
+regex = "1.12.3"
+clap = "4.5.57"
+anyhow = "1.0.104"
+thiserror = "2.0.21"
+smallvec = "1.15.1"
+rustc-hash = "2.1"
+tempfile = "3.25"
 web-time = "1.1.0"
-pyo3 = "0.29.0"
-wasm-bindgen = "0.2.95"
-wasm-bindgen-futures = "0.4.45"
-js-sys = "0.3.72"
-web-sys = "0.3.72"
+pyo3 = "0.30.1"
+wasm-bindgen = "0.2.130"
+js-sys = "0.3.107"
 syn = "2.0"
 
 # Panic-free lint policy. Crates opt in with `[lints] workspace = true` once

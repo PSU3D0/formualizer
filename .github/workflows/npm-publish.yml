@@ -34,7 +34,7 @@ jobs:
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
-          toolchain: 1.99.0
+          toolchain: 1.100.0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

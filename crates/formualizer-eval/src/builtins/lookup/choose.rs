@@ -85,8 +85,8 @@ impl Function for ChooseFn {
     func_caps!(PURE, LOOKUP, SHORT_CIRCUIT, RETURNS_REFERENCE, MAY_SPILL);
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // index_num (strict numeric)
                 ArgSchema {
@@ -300,8 +300,8 @@ impl Function for ChooseColsFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // array
                 ArgSchema {
@@ -456,8 +456,8 @@ impl Function for ChooseRowsFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // array
                 ArgSchema {

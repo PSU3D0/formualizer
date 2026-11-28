@@ -400,16 +400,16 @@ struct CampaignStats {
 }
 
 fn random_sheet<'a>(rng: &mut SmallRng, sheets: &'a [String]) -> &'a str {
-    &sheets[rng.gen_range(0..sheets.len())]
+    &sheets[rng.random_range(0..sheets.len())]
 }
 
 fn random_formula(rng: &mut SmallRng, sheets: &[String], current_sheet: &str) -> String {
-    let row1 = rng.gen_range(1..=MAX_ROW);
-    let row2 = rng.gen_range(row1..=MAX_ROW);
-    let col1 = rng.gen_range(1..=MAX_COL);
+    let row1 = rng.random_range(1..=MAX_ROW);
+    let row2 = rng.random_range(row1..=MAX_ROW);
+    let col1 = rng.random_range(1..=MAX_COL);
     let other = random_sheet(rng, sheets);
     let col_letter = Coord::col_to_letters(col1 - 1);
-    match rng.gen_range(0..8) {
+    match rng.random_range(0..8) {
         0 => format!("={col_letter}{row1}+1"),
         1 => format!("=SUM(A{row1}:B{row2})"),
         2 => "=SUM(A1:H10)".to_string(),
@@ -465,17 +465,17 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
     let mut stats = CampaignStats::default();
 
     for operation in 0..campaign.operations {
-        let force_redo = can_redo && rng.gen_bool(0.4);
+        let force_redo = can_redo && rng.random_bool(0.4);
         if force_redo {
             engine.redo_logged(&mut undo, &mut log).unwrap();
             can_redo = false;
             stats.redo += 1;
         }
 
-        let choice = rng.gen_range(0..100);
+        let choice = rng.random_range(0..100);
         let sheet = random_sheet(&mut rng, &sheets).to_string();
-        let row = rng.gen_range(1..=MAX_ROW);
-        let col = rng.gen_range(1..=MAX_COL);
+        let row = rng.random_range(1..=MAX_ROW);
+        let col = rng.random_range(1..=MAX_COL);
 
         match choice {
             _ if force_redo => {}
@@ -486,7 +486,7 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
                             &sheet,
                             row,
                             col,
-                            LiteralValue::Number(rng.gen_range(-100.0..100.0)),
+                            LiteralValue::Number(rng.random_range(-100.0..100.0)),
                         )
                     })
                     .unwrap();
@@ -531,7 +531,7 @@ fn run_campaign(campaign: Campaign) -> CampaignStats {
             }
             72..=79 => {
                 let formulas = engine.graph.formula_vertices();
-                if let Some(formula) = formulas.get(rng.gen_range(0..formulas.len().max(1))) {
+                if let Some(formula) = formulas.get(rng.random_range(0..formulas.len().max(1))) {
                     let target = engine.graph.get_cell_ref(*formula).unwrap();
                     let target_sheet = engine.graph.sheet_name(target.sheet_id).to_string();
                     engine

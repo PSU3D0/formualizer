@@ -1790,17 +1790,17 @@ impl DependencyGraph {
     /// built once, at the first request, instead of at every propagation
     /// and symbol revision of the load).
     pub(crate) fn authority_load_skips_closures(&self) -> bool {
-        if !self.first_load_assume_new || self.store.dirty_ever_cleared() {
-            return false;
-        }
+        let skip = self.first_load_assume_new && !self.store.dirty_ever_cleared();
         #[cfg(test)]
-        for v in self.vertex_formulas.keys() {
-            debug_assert!(
-                self.store.is_deleted(v) || self.store.is_dirty(v),
-                "load closure skip requires every formula dirty; {v:?} is clean"
-            );
+        if skip {
+            for v in self.vertex_formulas.keys() {
+                debug_assert!(
+                    self.store.is_deleted(v) || self.store.is_dirty(v),
+                    "load closure skip requires every formula dirty; {v:?} is clean"
+                );
+            }
         }
-        true
+        skip
     }
 
     /// Log a symbol definition change for the next sync: `Some(vertex)` of

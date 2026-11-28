@@ -1007,8 +1007,8 @@ impl IndexShadow {
             let n = level_size(j);
             let (mut p, mut b, mut dead) = (self.buf_points, self.buf_boxes, 0);
             let mut old_bytes = 0;
-            for i in 0..j {
-                let (lp, lb, ld) = self.levels[i].take().expect("full");
+            for level in &mut self.levels[..j] {
+                let (lp, lb, ld) = level.take().expect("full");
                 old_bytes += Level::predicted_bytes(lp, lb);
                 p += lp;
                 b += lb;

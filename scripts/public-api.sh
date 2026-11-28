@@ -6,8 +6,8 @@ readonly PUBLIC_API_VERSION="0.52.0"
 readonly PUBLIC_API_VERSION_REQ="=${PUBLIC_API_VERSION}"
 readonly INSTALLER_TOOLCHAIN="1.93.0"
 readonly INSTALLER_RUSTC="rustc 1.93.0 (254b59607 2026-01-19)"
-readonly RUSTDOC_TOOLCHAIN="nightly-2026-02-16"
-readonly RUSTDOC_RUSTC="rustc 1.95.0-nightly (873b4beb0 2026-02-15)"
+readonly RUSTDOC_TOOLCHAIN="nightly-2026-09-09"
+readonly RUSTDOC_RUSTC="rustc 1.100.0-nightly (4aa1fbcf4 2026-09-08)"
 readonly TARGET="x86_64-unknown-linux-gnu"
 readonly SCRIPT_DIR="$(CDPATH= cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly ROOT="$(CDPATH= cd -P -- "${SCRIPT_DIR}/.." && pwd -P)"
@@ -72,7 +72,7 @@ feature_profile() {
       printf '%s\n' 'system-clock,serde,tracing,tracing_chrome,perf_instrumentation,formula_plane_diagnostics'
       ;;
     formualizer-workbook)
-      printf '%s\n' 'system-clock,json,csv,calamine,xlsx-recalc,umya,umya3,mmap,io_builtins,import_range,webservice,tracing,perf_instrumentation,compression,calamine_integration,umya_integration,wasm_plugins,wasm_runtime_wasmtime'
+      printf '%s\n' 'system-clock,json,csv,calamine,xlsx-recalc,umya,umya3,mmap,tracing,perf_instrumentation,calamine_integration,umya_integration,wasm_plugins,wasm_runtime_wasmtime'
       ;;
     formualizer-sheetport)
       printf '%s\n' 'system-clock,umya'

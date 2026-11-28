@@ -83,8 +83,8 @@ impl Function for RowFn {
     }
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // Optional reference
                 ArgSchema {
@@ -219,8 +219,8 @@ impl Function for RowsFn {
     func_caps!(PURE);
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // Required reference/range or array
                 ArgSchema {
@@ -373,8 +373,8 @@ impl Function for ColumnFn {
     }
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // Optional reference
                 ArgSchema {
@@ -509,8 +509,8 @@ impl Function for ColumnsFn {
     func_caps!(PURE);
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // Required reference/range or array
                 ArgSchema {

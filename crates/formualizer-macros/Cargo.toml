@@ -17,5 +17,3 @@ proc-macro = true
 [dependencies]
 syn   = { workspace = true, features = ["full"] }
 quote = "1.0"
-proc-macro2 = "1.0"
-formualizer-common = { workspace = true }

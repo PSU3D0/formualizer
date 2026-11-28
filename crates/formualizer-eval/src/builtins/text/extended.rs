@@ -375,8 +375,8 @@ impl Function for TextBeforeFn {
         2
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_textbefore);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_textbefore);
         &SCHEMA
     }
     fn eval<'a, 'b, 'c>(
@@ -506,8 +506,8 @@ impl Function for TextAfterFn {
         2
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_textbefore);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_textbefore);
         &SCHEMA
     }
     fn eval<'a, 'b, 'c>(
@@ -663,8 +663,8 @@ impl Function for DollarFn {
         1
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_dollar);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_dollar);
         &SCHEMA
     }
     fn eval<'a, 'b, 'c>(
@@ -836,8 +836,8 @@ impl Function for FixedFn {
         1
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_fixed);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_fixed);
         &SCHEMA
     }
     fn eval<'a, 'b, 'c>(

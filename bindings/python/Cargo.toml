@@ -36,8 +36,8 @@ tracing_chrome = ["tracing", "formualizer/tracing_chrome"]
 allocator-jemalloc = ["dep:tikv-jemallocator"]
 
 [dependencies]
-arrow-array = { version = "59.2.0", features = ["ffi"] }
-arrow-schema = { version = "59.2.0", features = ["ffi"] }
+arrow-array = { version = "60.2.0", features = ["ffi"] }
+arrow-schema = { version = "60.2.0", features = ["ffi"] }
 pyo3 = { workspace = true, features = ["chrono", "abi3-py310", "multiple-pymethods"] }
 chrono = { workspace = true }
 serde_json = { workspace = true }
@@ -53,7 +53,7 @@ chrono = { workspace = true, features = ["clock"] }
 # volatile date/time builtin answers 1970-01-01. The emscripten target below is
 # left as-is: ambient wall-clock time is not part of the portable wasm profile.
 formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "system-clock", "arrow"] }
-pyo3-stub-gen = "0.23.0"
+pyo3-stub-gen = "0.23.3"
 
 # Pyodide 314 builds with Rust 1.93, so Calamine and source recalculation are
 # available there. There is no system clock: TODAY()/NOW() workbooks are

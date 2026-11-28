@@ -339,7 +339,7 @@ pub sheetport_spec::Manifest::spec: alloc::string::String
 pub sheetport_spec::Manifest::spec_version: sheetport_spec::SpecVersion
 impl sheetport_spec::Manifest
 pub fn sheetport_spec::Manifest::effective_profile(&self) -> sheetport_spec::Profile
-pub fn sheetport_spec::Manifest::from_yaml_reader<R: std::io::Read>(R) -> core::result::Result<Self, serde_yaml::error::Error>
+pub fn sheetport_spec::Manifest::from_yaml_reader<R: alloc::io::read::Read>(R) -> core::result::Result<Self, serde_yaml::error::Error>
 pub fn sheetport_spec::Manifest::from_yaml_str(&str) -> core::result::Result<Self, serde_yaml::error::Error>
 pub fn sheetport_spec::Manifest::normalize(&mut self)
 pub fn sheetport_spec::Manifest::normalized(self) -> Self
@@ -713,7 +713,7 @@ pub const sheetport_spec::CURRENT_SPEC_VERSION: &str
 pub const sheetport_spec::SPEC_IDENT: &str
 pub fn sheetport_spec::generate_schema_json_pretty() -> alloc::string::String
 pub fn sheetport_spec::generate_schema_value() -> serde_json::value::Value
-pub fn sheetport_spec::load_manifest_from_reader<R: std::io::Read>(R) -> core::result::Result<sheetport_spec::Manifest, serde_yaml::error::Error>
+pub fn sheetport_spec::load_manifest_from_reader<R: alloc::io::read::Read>(R) -> core::result::Result<sheetport_spec::Manifest, serde_yaml::error::Error>
 pub fn sheetport_spec::load_manifest_from_str(&str) -> core::result::Result<sheetport_spec::Manifest, serde_yaml::error::Error>
 pub fn sheetport_spec::manifest_to_yaml(&sheetport_spec::Manifest) -> core::result::Result<alloc::string::String, serde_yaml::error::Error>
 pub fn sheetport_spec::schema_json() -> &'static str

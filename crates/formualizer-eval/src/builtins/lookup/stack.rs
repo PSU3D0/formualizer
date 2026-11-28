@@ -108,8 +108,8 @@ impl Function for HStackFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![ArgSchema {
                 kinds: smallvec::smallvec![ArgKind::Range, ArgKind::Any],
                 required: true,
@@ -285,8 +285,8 @@ impl Function for VStackFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![ArgSchema {
                 kinds: smallvec::smallvec![ArgKind::Range, ArgKind::Any],
                 required: true,

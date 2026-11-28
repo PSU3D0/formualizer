@@ -50,7 +50,7 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       with:
-        toolchain: 1.99.0
+        toolchain: 1.100.0
         components: rustfmt, clippy
 
     - name: Cache Rust dependencies
@@ -121,7 +121,7 @@ jobs:
     - name: Set up pinned rustdoc nightly
       uses: dtolnay/rust-toolchain@4fd1da8b0805d2d2e936788875a7d65dbd677dc2 # nightly
       with:
-        toolchain: nightly-2026-02-16
+        toolchain: nightly-2026-09-09
         targets: x86_64-unknown-linux-gnu
 
     - name: Cache public API tooling and build output
@@ -131,9 +131,9 @@ jobs:
           target/public-api-tools/
           target/public-api-cargo-home/
           target/public-api/
-        key: ${{ runner.os }}-public-api-0.52.0-nightly-2026-02-16-${{ hashFiles('**/Cargo.lock', 'scripts/public-api.sh') }}
+        key: ${{ runner.os }}-public-api-0.52.0-nightly-2026-09-09-${{ hashFiles('**/Cargo.lock', 'scripts/public-api.sh') }}
         restore-keys: |
-          ${{ runner.os }}-public-api-0.52.0-nightly-2026-02-16-
+          ${{ runner.os }}-public-api-0.52.0-nightly-2026-09-09-
 
     - name: Test CI automation and release preflight helpers
       run: |
@@ -164,14 +164,14 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       with:
-        toolchain: 1.99.0
+        toolchain: 1.100.0
 
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
         # Avoid maturin-action's broken automatic range resolution on Node 24.
-        maturin-version: v1.11.5
-        rust-toolchain: 1.99.0
+        maturin-version: v1.16.0
+        rust-toolchain: 1.100.0
         working-directory: bindings/python
         # Build a single abi3 wheel (not one per Python interpreter)
         # In `act` (local CI), avoid nested manylinux Docker to keep things working.
@@ -214,7 +214,7 @@ jobs:
     - name: Set up Rust
       uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
       with:
-        toolchain: 1.99.0
+        toolchain: 1.100.0
 
     - name: Cache Rust dependencies
       uses: actions/cache@v4

@@ -256,11 +256,8 @@ impl Table for BackendTable {
         })?;
         let (start, end_excl) = self.body_bounds();
         let mut out: Vec<Vec<LiteralValue>> = Vec::with_capacity(end_excl.saturating_sub(start));
-        for r in start..end_excl {
-            let v = self.full[r]
-                .get(idx)
-                .cloned()
-                .unwrap_or(LiteralValue::Empty);
+        for row in &self.full[start..end_excl] {
+            let v = row.get(idx).cloned().unwrap_or(LiteralValue::Empty);
             out.push(vec![v]);
         }
         Ok(Box::new(InMemoryRange::new(out)))

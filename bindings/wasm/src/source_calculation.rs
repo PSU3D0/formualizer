@@ -139,7 +139,7 @@ impl PreparedRequest {
 /// Date timestamps keep their established APIs; calculation is JSON-style only.
 pub(crate) fn prepare(value: &JsValue) -> Result<PreparedRequest, JsValue> {
     // Missing fields must not be filled from Object.prototype by legacy readers.
-    let object = Object::create(JsValue::NULL.unchecked_ref());
+    let object = Object::create(JsValue::NULL.unchecked_ref::<Object>());
     let mut calculation = None;
     let mut limits = None;
     let mut physical_telemetry = false;

@@ -613,8 +613,14 @@ impl VertexStore {
         let mut dropped = 0;
         let first_page = a.div_ceil(COLD_PAGE);
         let last_page_end = end >> COLD_PAGE_BITS; // pages [first_page, last_page_end)
-        for page in first_page..last_page_end {
-            let ColdPage::Dense(c) = &self.pages[page] else {
+        for (page, slot) in self
+            .pages
+            .iter_mut()
+            .enumerate()
+            .take(last_page_end)
+            .skip(first_page)
+        {
+            let ColdPage::Dense(c) = &*slot else {
                 continue;
             };
             if c.coords.len() != COLD_PAGE {
@@ -632,7 +638,7 @@ impl VertexStore {
             if !exact {
                 continue;
             }
-            self.pages[page] = ColdPage::Virtual(Box::new([VirtualSpan {
+            *slot = ColdPage::Virtual(Box::new([VirtualSpan {
                 start: 0,
                 len: COLD_PAGE as u32,
                 sheet,
@@ -679,9 +685,9 @@ impl VertexStore {
                     let ColdPage::Dense(c) = &mut self.pages[page] else {
                         unreachable!("densified");
                     };
-                    for off in (idx - page_start)..(hi - page_start) {
-                        if let Some(g) = c.coords[off].as_grid() {
-                            c.coords[off] = VertexAddr::grid(shift(g));
+                    for coord in &mut c.coords[(idx - page_start)..(hi - page_start)] {
+                        if let Some(g) = coord.as_grid() {
+                            *coord = VertexAddr::grid(shift(g));
                         }
                     }
                 }

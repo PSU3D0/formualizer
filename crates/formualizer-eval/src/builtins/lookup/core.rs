@@ -194,8 +194,8 @@ impl Function for MatchFn {
     }
     func_caps!(PURE, LOOKUP);
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // lookup_value (any scalar)
                 ArgSchema {
@@ -512,8 +512,8 @@ impl Function for VLookupFn {
     }
     func_caps!(PURE, LOOKUP);
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // lookup_value
                 ArgSchema {
@@ -793,8 +793,8 @@ impl Function for HLookupFn {
     }
     func_caps!(PURE, LOOKUP);
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // lookup_value
                 ArgSchema {

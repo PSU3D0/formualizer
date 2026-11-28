@@ -29,9 +29,9 @@ fn sparse_overlay_write_does_not_densify_untouched_columns() {
             .sheet(sheet)
             .expect("arrow sheet exists");
         assert_eq!(asheet.columns.len(), ncols);
-        for c in 0..ncols {
+        for (c, col) in asheet.columns.iter().enumerate().take(ncols) {
             assert_eq!(
-                asheet.columns[c].chunks.len(),
+                col.chunks.len(),
                 1,
                 "expected exactly one base chunk at start (col={c})"
             );
@@ -51,12 +51,12 @@ fn sparse_overlay_write_does_not_densify_untouched_columns() {
     assert!(asheet.nrows >= far_row, "sheet should track logical growth");
 
     // Untouched columns should not be densified with hundreds of empty chunks.
-    for c in 0..ncols {
+    for (c, col) in asheet.columns.iter().enumerate().take(ncols) {
         assert_eq!(
-            asheet.columns[c].chunks.len(),
+            col.chunks.len(),
             1,
             "unexpected densification (col={c}, chunks={})",
-            asheet.columns[c].chunks.len()
+            col.chunks.len()
         );
     }
 

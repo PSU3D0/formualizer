@@ -1246,9 +1246,9 @@ fn corpus_has_both_value_and_circ_workbooks() {
         let wb = gen_workbook(seed);
         let oracle = Oracle::new(&wb);
         let mut any_circ = false;
-        for i in 0..wb.n() {
+        for &is_member in oracle.member.iter().take(wb.n()) {
             total_cells += 1;
-            if oracle.member[i] {
+            if is_member {
                 any_circ = true;
                 circ_cells += 1;
             }

@@ -471,11 +471,11 @@ pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::clone(&self) -> for
 impl<R: core::cmp::Eq> core::cmp::Eq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 impl<R: core::cmp::PartialEq> core::cmp::PartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::eq(&self, &formualizer_eval::engine::arena::ast::AstNodeData<R>) -> bool
+impl<R: core::cmp::PartialEq> core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 impl<R: core::fmt::Debug> core::fmt::Debug for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<R: core::hash::Hash> core::hash::Hash for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl<R> core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub enum formualizer_eval::engine::arena::ast::CompactRefType
 pub formualizer_eval::engine::arena::ast::CompactRefType::Cell
 pub formualizer_eval::engine::arena::ast::CompactRefType::Cell::col: u32
@@ -873,11 +873,11 @@ pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::clone(&self) -> for
 impl<R: core::cmp::Eq> core::cmp::Eq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 impl<R: core::cmp::PartialEq> core::cmp::PartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::eq(&self, &formualizer_eval::engine::arena::ast::AstNodeData<R>) -> bool
+impl<R: core::cmp::PartialEq> core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 impl<R: core::fmt::Debug> core::fmt::Debug for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<R: core::hash::Hash> core::hash::Hash for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub fn formualizer_eval::engine::arena::ast::AstNodeData<R>::hash<__H: core::hash::Hasher>(&self, &mut __H)
-impl<R> core::marker::StructuralPartialEq for formualizer_eval::engine::arena::ast::AstNodeData<R>
 pub enum formualizer_eval::engine::arena::CompactRefType
 pub formualizer_eval::engine::arena::CompactRefType::Cell
 pub formualizer_eval::engine::arena::CompactRefType::Cell::col: u32
@@ -1279,7 +1279,7 @@ pub fn formualizer_eval::engine::cancel::CancelToken::is_cancelled(&self) -> boo
 pub fn formualizer_eval::engine::cancel::CancelToken::new() -> Self
 impl core::clone::Clone for formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::clone(&self) -> formualizer_eval::engine::cancel::CancelToken
-impl core::convert::From<alloc::sync::Arc<core::sync::atomic::AtomicBool>> for formualizer_eval::engine::cancel::CancelToken
+impl core::convert::From<alloc::sync::Arc<core::sync::atomic::Atomic<bool>>> for formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::from(alloc::sync::Arc<core::sync::atomic::AtomicBool>) -> Self
 impl core::default::Default for formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::default() -> formualizer_eval::engine::cancel::CancelToken
@@ -6259,7 +6259,7 @@ pub fn formualizer_eval::engine::cancel::CancelToken::is_cancelled(&self) -> boo
 pub fn formualizer_eval::engine::cancel::CancelToken::new() -> Self
 impl core::clone::Clone for formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::clone(&self) -> formualizer_eval::engine::cancel::CancelToken
-impl core::convert::From<alloc::sync::Arc<core::sync::atomic::AtomicBool>> for formualizer_eval::engine::cancel::CancelToken
+impl core::convert::From<alloc::sync::Arc<core::sync::atomic::Atomic<bool>>> for formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::from(alloc::sync::Arc<core::sync::atomic::AtomicBool>) -> Self
 impl core::default::Default for formualizer_eval::engine::cancel::CancelToken
 pub fn formualizer_eval::engine::cancel::CancelToken::default() -> formualizer_eval::engine::cancel::CancelToken

@@ -41,7 +41,7 @@ pub fn formualizer_workbook::CalamineAdapter::open_bytes_cancellable_with_limits
 pub fn formualizer_workbook::CalamineAdapter::open_bytes_with_limits(alloc::vec::Vec<u8>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source_and_limits<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -54,7 +54,7 @@ pub fn formualizer_workbook::CalamineAdapter::load_stats(&self) -> core::option:
 pub fn formualizer_workbook::CalamineAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
@@ -174,7 +174,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::new() -> Self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::new_with_options(formualizer_workbook::backends::csv::CsvReadOptions, formualizer_workbook::backends::csv::CsvWriteOptions) -> Self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes_with_options(alloc::vec::Vec<u8>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_path_with_options<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader_with_options(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader_with_options(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_options(&self) -> &formualizer_workbook::backends::csv::CsvReadOptions
 pub fn formualizer_workbook::backends::csv::CsvAdapter::set_write_options(&mut self, formualizer_workbook::backends::csv::CsvWriteOptions)
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_options(&self) -> &formualizer_workbook::backends::csv::CsvWriteOptions
@@ -194,7 +194,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> cor
 pub fn formualizer_workbook::backends::csv::CsvAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -214,7 +214,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to<'a>(&mut self, f
 pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::csv::CsvAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -272,7 +272,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::json::JsonAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -292,7 +292,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::json::JsonAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::json::JsonAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -348,7 +348,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -368,7 +368,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::umya::UmyaAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -415,7 +415,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::load_stats(&self) -> 
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -435,16 +435,16 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to<'a>(&mut self
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::umya3::UmyaAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya3::read_document(&[u8]) -> core::result::Result<umya_spreadsheet::structs::workbook::Workbook, umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya3::read_document_path(impl core::convert::AsRef<std::path::Path>) -> core::result::Result<umya_spreadsheet::structs::workbook::Workbook, umya_spreadsheet::structs::error::XlsxError>
-pub fn formualizer_workbook::backends::umya3::read_document_reader(impl std::io::Read) -> core::result::Result<umya_spreadsheet::structs::workbook::Workbook, umya_spreadsheet::structs::error::XlsxError>
+pub fn formualizer_workbook::backends::umya3::read_document_reader(impl alloc::io::read::Read) -> core::result::Result<umya_spreadsheet::structs::workbook::Workbook, umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya3::write_document(&umya_spreadsheet::structs::workbook::Workbook) -> core::result::Result<alloc::vec::Vec<u8>, umya_spreadsheet::structs::error::XlsxError>
 pub fn formualizer_workbook::backends::umya3::write_document_path(&umya_spreadsheet::structs::workbook::Workbook, impl core::convert::AsRef<std::path::Path>) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
-pub fn formualizer_workbook::backends::umya3::write_document_writer(&umya_spreadsheet::structs::workbook::Workbook, impl std::io::Write) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
+pub fn formualizer_workbook::backends::umya3::write_document_writer(&umya_spreadsheet::structs::workbook::Workbook, impl core::io::write::Write) -> core::result::Result<(), umya_spreadsheet::structs::error::XlsxError>
 pub enum formualizer_workbook::backends::XlsxPathSource
 pub formualizer_workbook::backends::XlsxPathSource::DirectMmap
 pub formualizer_workbook::backends::XlsxPathSource::SharedFile
@@ -466,7 +466,7 @@ pub fn formualizer_workbook::CalamineAdapter::open_bytes_cancellable_with_limits
 pub fn formualizer_workbook::CalamineAdapter::open_bytes_with_limits(alloc::vec::Vec<u8>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source_and_limits<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -479,7 +479,7 @@ pub fn formualizer_workbook::CalamineAdapter::load_stats(&self) -> core::option:
 pub fn formualizer_workbook::CalamineAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
@@ -495,7 +495,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::new() -> Self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::new_with_options(formualizer_workbook::backends::csv::CsvReadOptions, formualizer_workbook::backends::csv::CsvWriteOptions) -> Self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes_with_options(alloc::vec::Vec<u8>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_path_with_options<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader_with_options(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader_with_options(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_options(&self) -> &formualizer_workbook::backends::csv::CsvReadOptions
 pub fn formualizer_workbook::backends::csv::CsvAdapter::set_write_options(&mut self, formualizer_workbook::backends::csv::CsvWriteOptions)
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_options(&self) -> &formualizer_workbook::backends::csv::CsvWriteOptions
@@ -515,7 +515,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> cor
 pub fn formualizer_workbook::backends::csv::CsvAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -535,7 +535,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to<'a>(&mut self, f
 pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::csv::CsvAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -588,7 +588,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::json::JsonAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -608,7 +608,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::json::JsonAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::json::JsonAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -619,7 +619,7 @@ pub fn formualizer_workbook::CalamineAdapter::open_bytes_cancellable_with_limits
 pub fn formualizer_workbook::CalamineAdapter::open_bytes_with_limits(alloc::vec::Vec<u8>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source_and_limits<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -632,7 +632,7 @@ pub fn formualizer_workbook::CalamineAdapter::load_stats(&self) -> core::option:
 pub fn formualizer_workbook::CalamineAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
@@ -662,7 +662,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::load_stats(&self) -> 
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -682,7 +682,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to<'a>(&mut self
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::umya3::UmyaAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -706,7 +706,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -726,7 +726,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::umya::UmyaAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -754,7 +754,6 @@ pub fn formualizer_workbook::builtins::BuiltinsGuard::clone(&self) -> formualize
 impl core::fmt::Debug for formualizer_workbook::builtins::BuiltinsGuard
 pub fn formualizer_workbook::builtins::BuiltinsGuard::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub fn formualizer_workbook::builtins::ensure_builtins_loaded() -> &'static formualizer_workbook::builtins::BuiltinsGuard
-pub fn formualizer_workbook::builtins::load_io_builtins() -> usize
 pub fn formualizer_workbook::builtins::register_function_dynamic(alloc::sync::Arc<dyn formualizer_eval::function::Function>)
 pub fn formualizer_workbook::builtins::try_load_builtins() -> core::result::Result<formualizer_workbook::builtins::BuiltinsGuard, &'static str>
 pub mod formualizer_workbook::bulk
@@ -913,7 +912,7 @@ pub fn formualizer_workbook::calc_pr::apply_calc_settings_to_cycle(&formualizer_
 pub fn formualizer_workbook::calc_pr::calc_settings_from_cycle(&formualizer_eval::engine::CycleConfig) -> formualizer_workbook::traits::CalcSettings
 pub fn formualizer_workbook::calc_pr::parse_calc_pr(&[u8]) -> core::option::Option<formualizer_workbook::traits::CalcSettings>
 pub fn formualizer_workbook::calc_pr::rewrite_calc_pr_in_workbook_xml(&str, &formualizer_workbook::traits::CalcSettings) -> alloc::string::String
-pub fn formualizer_workbook::calc_pr::rewrite_calc_pr_in_zip(&[u8], &formualizer_workbook::traits::CalcSettings) -> core::result::Result<alloc::vec::Vec<u8>, std::io::error::Error>
+pub fn formualizer_workbook::calc_pr::rewrite_calc_pr_in_zip(&[u8], &formualizer_workbook::traits::CalcSettings) -> core::result::Result<alloc::vec::Vec<u8>, core::io::error::Error>
 pub mod formualizer_workbook::error
 pub enum formualizer_workbook::error::CalculationDeferredReason
 pub formualizer_workbook::error::CalculationDeferredReason::AffectedArrayCoverageUnverified
@@ -955,7 +954,7 @@ pub formualizer_workbook::error::IoError::HistoryDisabled
 pub formualizer_workbook::error::IoError::InvalidOptions
 pub formualizer_workbook::error::IoError::InvalidOptions::field: alloc::string::String
 pub formualizer_workbook::error::IoError::InvalidOptions::message: alloc::string::String
-pub formualizer_workbook::error::IoError::Io(std::io::error::Error)
+pub formualizer_workbook::error::IoError::Io(core::io::error::Error)
 pub formualizer_workbook::error::IoError::Json(serde_json::error::Error)
 pub formualizer_workbook::error::IoError::LoadBudgetExceeded
 pub formualizer_workbook::error::IoError::LoadBudgetExceeded::backend: alloc::string::String
@@ -971,14 +970,14 @@ pub formualizer_workbook::error::IoError::XlsxRead(formualizer_workbook::XlsxRea
 impl formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from_backend<E: core::error::Error>(&str, E) -> Self
 pub fn formualizer_workbook::error::IoError::load_budget_exceeded(&str, &str, alloc::string::String) -> Self
+impl core::convert::From<core::io::error::Error> for formualizer_workbook::error::IoError
+pub fn formualizer_workbook::error::IoError::from(core::io::error::Error) -> Self
 impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from(formualizer_common::error::ExcelError) -> Self
 impl core::convert::From<formualizer_workbook::XlsxReadError> for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from(formualizer_workbook::XlsxReadError) -> Self
 impl core::convert::From<serde_json::error::Error> for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from(serde_json::error::Error) -> Self
-impl core::convert::From<std::io::error::Error> for formualizer_workbook::error::IoError
-pub fn formualizer_workbook::error::IoError::from(std::io::error::Error) -> Self
 impl core::error::Error for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for formualizer_workbook::error::IoError
@@ -1464,7 +1463,7 @@ pub enum formualizer_workbook::traits::SaveDestination<'a>
 pub formualizer_workbook::traits::SaveDestination::Bytes
 pub formualizer_workbook::traits::SaveDestination::InPlace
 pub formualizer_workbook::traits::SaveDestination::Path(&'a std::path::Path)
-pub formualizer_workbook::traits::SaveDestination::Writer(&'a mut dyn std::io::Write)
+pub formualizer_workbook::traits::SaveDestination::Writer(&'a mut dyn core::io::write::Write)
 pub struct formualizer_workbook::traits::AdapterLoadStats
 pub formualizer_workbook::traits::AdapterLoadStats::formula_cells_handed_to_engine: core::option::Option<u64>
 pub formualizer_workbook::traits::AdapterLoadStats::formula_cells_observed: core::option::Option<u64>
@@ -1659,7 +1658,7 @@ pub fn formualizer_workbook::traits::SpreadsheetReader::load_stats(&self) -> cor
 pub fn formualizer_workbook::traits::SpreadsheetReader::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::traits::SpreadsheetReader::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::traits::SpreadsheetReader::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::traits::SpreadsheetReader::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::traits::SpreadsheetReader::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::traits::SpreadsheetReader::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::traits::SpreadsheetReader::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::traits::SpreadsheetReader::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -1678,7 +1677,7 @@ pub fn formualizer_workbook::CalamineAdapter::load_stats(&self) -> core::option:
 pub fn formualizer_workbook::CalamineAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
@@ -1697,7 +1696,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> cor
 pub fn formualizer_workbook::backends::csv::CsvAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -1716,7 +1715,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::json::JsonAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -1735,7 +1734,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::load_stats(&self) -> 
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -1754,7 +1753,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -1774,7 +1773,7 @@ pub fn formualizer_workbook::traits::SpreadsheetWriter::save_to<'a>(&mut self, f
 pub fn formualizer_workbook::traits::SpreadsheetWriter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::traits::SpreadsheetWriter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::traits::SpreadsheetWriter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::traits::SpreadsheetWriter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::traits::SpreadsheetWriter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::csv::CsvAdapter
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -1788,7 +1787,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to<'a>(&mut self, f
 pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::json::JsonAdapter
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -1802,7 +1801,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::json::JsonAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya3::UmyaAdapter
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -1816,7 +1815,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to<'a>(&mut self
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya::UmyaAdapter
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -1830,7 +1829,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::workbook::Workbook
 pub type formualizer_workbook::workbook::Workbook::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::workbook::Workbook::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -1844,7 +1843,7 @@ pub fn formualizer_workbook::workbook::Workbook::save_to<'a>(&mut self, formuali
 pub fn formualizer_workbook::workbook::Workbook::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::workbook::Workbook::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::workbook::Workbook::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::workbook::Workbook::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::workbook::Workbook::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 pub type formualizer_workbook::traits::StyleId = u32
 pub mod formualizer_workbook::transaction
 pub enum formualizer_workbook::transaction::WriteOp
@@ -2215,7 +2214,7 @@ pub fn formualizer_workbook::workbook::Workbook::save_to<'a>(&mut self, formuali
 pub fn formualizer_workbook::workbook::Workbook::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::workbook::Workbook::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::workbook::Workbook::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::workbook::Workbook::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::workbook::Workbook::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 pub struct formualizer_workbook::workbook::WorkbookAction<'a>
 impl formualizer_workbook::workbook::WorkbookAction<'_>
 pub fn formualizer_workbook::workbook::WorkbookAction<'_>::resize_table(&mut self, &str, u32) -> core::result::Result<formualizer_eval::engine::eval::TableMetadata, formualizer_workbook::error::IoError>
@@ -2403,7 +2402,7 @@ pub formualizer_workbook::IoError::HistoryDisabled
 pub formualizer_workbook::IoError::InvalidOptions
 pub formualizer_workbook::IoError::InvalidOptions::field: alloc::string::String
 pub formualizer_workbook::IoError::InvalidOptions::message: alloc::string::String
-pub formualizer_workbook::IoError::Io(std::io::error::Error)
+pub formualizer_workbook::IoError::Io(core::io::error::Error)
 pub formualizer_workbook::IoError::Json(serde_json::error::Error)
 pub formualizer_workbook::IoError::LoadBudgetExceeded
 pub formualizer_workbook::IoError::LoadBudgetExceeded::backend: alloc::string::String
@@ -2419,14 +2418,14 @@ pub formualizer_workbook::IoError::XlsxRead(formualizer_workbook::XlsxReadError)
 impl formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from_backend<E: core::error::Error>(&str, E) -> Self
 pub fn formualizer_workbook::error::IoError::load_budget_exceeded(&str, &str, alloc::string::String) -> Self
+impl core::convert::From<core::io::error::Error> for formualizer_workbook::error::IoError
+pub fn formualizer_workbook::error::IoError::from(core::io::error::Error) -> Self
 impl core::convert::From<formualizer_common::error::ExcelError> for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from(formualizer_common::error::ExcelError) -> Self
 impl core::convert::From<formualizer_workbook::XlsxReadError> for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from(formualizer_workbook::XlsxReadError) -> Self
 impl core::convert::From<serde_json::error::Error> for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from(serde_json::error::Error) -> Self
-impl core::convert::From<std::io::error::Error> for formualizer_workbook::error::IoError
-pub fn formualizer_workbook::error::IoError::from(std::io::error::Error) -> Self
 impl core::error::Error for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for formualizer_workbook::error::IoError
@@ -2673,11 +2672,11 @@ pub formualizer_workbook::XlsxError::ColumnNumberOverflow
 pub formualizer_workbook::XlsxError::DimensionCount(usize)
 pub formualizer_workbook::XlsxError::Encoding(quick_xml::encoding::EncodingError)
 pub formualizer_workbook::XlsxError::FileNotFound(alloc::string::String)
-pub formualizer_workbook::XlsxError::Io(std::io::error::Error)
+pub formualizer_workbook::XlsxError::Io(core::io::error::Error)
 pub formualizer_workbook::XlsxError::NotAWorksheet(alloc::string::String)
 pub formualizer_workbook::XlsxError::NumericColumn(u8)
 pub formualizer_workbook::XlsxError::Parse(alloc::string::ParseError)
-pub formualizer_workbook::XlsxError::ParseFloat(core::num::dec2flt::ParseFloatError)
+pub formualizer_workbook::XlsxError::ParseFloat(core::num::float_parse::ParseFloatError)
 pub formualizer_workbook::XlsxError::ParseInt(core::num::error::ParseIntError)
 pub formualizer_workbook::XlsxError::Password
 pub formualizer_workbook::XlsxError::PivotTableNotFound(alloc::string::String)
@@ -2696,10 +2695,12 @@ pub formualizer_workbook::XlsxError::Xml(quick_xml::errors::Error)
 pub formualizer_workbook::XlsxError::XmlAttr(quick_xml::events::attributes::AttrError)
 pub formualizer_workbook::XlsxError::XmlEof(&'static str)
 pub formualizer_workbook::XlsxError::Zip(zip::result::ZipError)
-impl core::convert::From<core::num::dec2flt::ParseFloatError> for formualizer_workbook::XlsxError
-pub fn formualizer_workbook::XlsxError::from(core::num::dec2flt::ParseFloatError) -> Self
+impl core::convert::From<core::io::error::Error> for formualizer_workbook::XlsxError
+pub fn formualizer_workbook::XlsxError::from(core::io::error::Error) -> Self
 impl core::convert::From<core::num::error::ParseIntError> for formualizer_workbook::XlsxError
 pub fn formualizer_workbook::XlsxError::from(core::num::error::ParseIntError) -> Self
+impl core::convert::From<core::num::float_parse::ParseFloatError> for formualizer_workbook::XlsxError
+pub fn formualizer_workbook::XlsxError::from(core::num::float_parse::ParseFloatError) -> Self
 impl core::convert::From<formualizer_workbook::XlsxError> for formualizer_workbook::XlsxReadError
 pub fn formualizer_workbook::XlsxReadError::from(formualizer_workbook::XlsxError) -> Self
 impl core::convert::From<quick_xml::encoding::EncodingError> for formualizer_workbook::XlsxError
@@ -2708,8 +2709,6 @@ impl core::convert::From<quick_xml::errors::Error> for formualizer_workbook::Xls
 pub fn formualizer_workbook::XlsxError::from(quick_xml::errors::Error) -> Self
 impl core::convert::From<quick_xml::events::attributes::AttrError> for formualizer_workbook::XlsxError
 pub fn formualizer_workbook::XlsxError::from(quick_xml::events::attributes::AttrError) -> Self
-impl core::convert::From<std::io::error::Error> for formualizer_workbook::XlsxError
-pub fn formualizer_workbook::XlsxError::from(std::io::error::Error) -> Self
 impl core::convert::From<zip::result::ZipError> for formualizer_workbook::XlsxError
 pub fn formualizer_workbook::XlsxError::from(zip::result::ZipError) -> Self
 impl core::error::Error for formualizer_workbook::XlsxError
@@ -2733,14 +2732,14 @@ pub fn formualizer_workbook::XlsxPathSource::fmt(&self, &mut core::fmt::Formatte
 impl core::marker::Copy for formualizer_workbook::XlsxPathSource
 impl core::marker::StructuralPartialEq for formualizer_workbook::XlsxPathSource
 pub enum formualizer_workbook::XlsxReadError
-pub formualizer_workbook::XlsxReadError::Io(std::io::error::Error)
+pub formualizer_workbook::XlsxReadError::Io(core::io::error::Error)
 pub formualizer_workbook::XlsxReadError::Xlsx(formualizer_workbook::XlsxError)
+impl core::convert::From<core::io::error::Error> for formualizer_workbook::XlsxReadError
+pub fn formualizer_workbook::XlsxReadError::from(core::io::error::Error) -> Self
 impl core::convert::From<formualizer_workbook::XlsxError> for formualizer_workbook::XlsxReadError
 pub fn formualizer_workbook::XlsxReadError::from(formualizer_workbook::XlsxError) -> Self
 impl core::convert::From<formualizer_workbook::XlsxReadError> for formualizer_workbook::error::IoError
 pub fn formualizer_workbook::error::IoError::from(formualizer_workbook::XlsxReadError) -> Self
-impl core::convert::From<std::io::error::Error> for formualizer_workbook::XlsxReadError
-pub fn formualizer_workbook::XlsxReadError::from(std::io::error::Error) -> Self
 impl core::error::Error for formualizer_workbook::XlsxReadError
 pub fn formualizer_workbook::XlsxReadError::source(&self) -> core::option::Option<&(dyn core::error::Error + 'static)>
 impl core::fmt::Debug for formualizer_workbook::XlsxReadError
@@ -2808,7 +2807,7 @@ pub fn formualizer_workbook::CalamineAdapter::open_bytes_cancellable_with_limits
 pub fn formualizer_workbook::CalamineAdapter::open_bytes_with_limits(alloc::vec::Vec<u8>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source_and_limits<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -2821,7 +2820,7 @@ pub fn formualizer_workbook::CalamineAdapter::load_stats(&self) -> core::option:
 pub fn formualizer_workbook::CalamineAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
@@ -2863,7 +2862,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::new() -> Self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::new_with_options(formualizer_workbook::backends::csv::CsvReadOptions, formualizer_workbook::backends::csv::CsvWriteOptions) -> Self
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes_with_options(alloc::vec::Vec<u8>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_path_with_options<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader_with_options(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader_with_options(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::backends::csv::CsvReadOptions) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_options(&self) -> &formualizer_workbook::backends::csv::CsvReadOptions
 pub fn formualizer_workbook::backends::csv::CsvAdapter::set_write_options(&mut self, formualizer_workbook::backends::csv::CsvWriteOptions)
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_options(&self) -> &formualizer_workbook::backends::csv::CsvWriteOptions
@@ -2883,7 +2882,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> cor
 pub fn formualizer_workbook::backends::csv::CsvAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -2903,7 +2902,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to<'a>(&mut self, f
 pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::csv::CsvAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -3019,7 +3018,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::json::JsonAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -3039,7 +3038,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::json::JsonAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::json::JsonAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -3086,7 +3085,7 @@ pub fn formualizer_workbook::CalamineAdapter::open_bytes_cancellable_with_limits
 pub fn formualizer_workbook::CalamineAdapter::open_bytes_with_limits(alloc::vec::Vec<u8>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path_with_source_and_limits<P: core::convert::AsRef<std::path::Path>>(P, formualizer_workbook::XlsxPathSource, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader_with_limits(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>, formualizer_workbook::XlsxLoadLimits) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 impl formualizer_workbook::traits::SpreadsheetReader for formualizer_workbook::CalamineAdapter
 pub type formualizer_workbook::CalamineAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::CalamineAdapter::access_granularity(&self) -> formualizer_workbook::traits::AccessGranularity
@@ -3099,7 +3098,7 @@ pub fn formualizer_workbook::CalamineAdapter::load_stats(&self) -> core::option:
 pub fn formualizer_workbook::CalamineAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
@@ -3362,7 +3361,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::load_stats(&self) -> 
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -3382,7 +3381,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to<'a>(&mut self
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::umya3::UmyaAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -3406,7 +3405,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -3426,7 +3425,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl<R> formualizer_eval::engine::ingest::EngineLoadStream<R> for formualizer_workbook::backends::umya::UmyaAdapter where R: formualizer_eval::traits::EvaluationContext
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::stream_into_engine(&mut self, &mut formualizer_eval::engine::eval::Engine<R>) -> core::result::Result<(), Self::Error>
@@ -3698,7 +3697,7 @@ pub fn formualizer_workbook::workbook::Workbook::save_to<'a>(&mut self, formuali
 pub fn formualizer_workbook::workbook::Workbook::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::workbook::Workbook::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::workbook::Workbook::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::workbook::Workbook::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::workbook::Workbook::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 pub struct formualizer_workbook::WorkbookConfig
 pub formualizer_workbook::WorkbookConfig::enable_changelog: bool
 pub formualizer_workbook::WorkbookConfig::eval: formualizer_eval::engine::EvalConfig
@@ -3846,7 +3845,7 @@ pub fn formualizer_workbook::SpreadsheetReader::load_stats(&self) -> core::optio
 pub fn formualizer_workbook::SpreadsheetReader::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::SpreadsheetReader::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::SpreadsheetReader::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::SpreadsheetReader::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::SpreadsheetReader::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::SpreadsheetReader::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::SpreadsheetReader::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::SpreadsheetReader::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -3865,7 +3864,7 @@ pub fn formualizer_workbook::CalamineAdapter::load_stats(&self) -> core::option:
 pub fn formualizer_workbook::CalamineAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::CalamineAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, formualizer_workbook::error::IoError>
-pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
+pub fn formualizer_workbook::CalamineAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, formualizer_workbook::error::IoError>
 pub fn formualizer_workbook::CalamineAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, formualizer_workbook::error::IoError>
@@ -3884,7 +3883,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::load_stats(&self) -> cor
 pub fn formualizer_workbook::backends::csv::CsvAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::csv::CsvAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -3903,7 +3902,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::json::JsonAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::json::JsonAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -3922,7 +3921,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::load_stats(&self) -> 
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -3941,7 +3940,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::load_stats(&self) -> c
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::name_import_diagnostics(&self) -> alloc::vec::Vec<formualizer_workbook::traits::NameImportDiagnostic>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_bytes(alloc::vec::Vec<u8>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_path<P: core::convert::AsRef<std::path::Path>>(P) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn std::io::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::open_reader(alloc::boxed::Box<(dyn alloc::io::read::Read + core::marker::Send + core::marker::Sync)>) -> core::result::Result<Self, Self::Error> where Self: core::marker::Sized
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_cell(&mut self, &str, u32, u32) -> core::result::Result<core::option::Option<formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::read_sheet(&mut self, &str) -> core::result::Result<formualizer_workbook::traits::SheetData, Self::Error>
@@ -3961,7 +3960,7 @@ pub fn formualizer_workbook::SpreadsheetWriter::save_to<'a>(&mut self, formualiz
 pub fn formualizer_workbook::SpreadsheetWriter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::SpreadsheetWriter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::SpreadsheetWriter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::SpreadsheetWriter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::SpreadsheetWriter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::csv::CsvAdapter
 pub type formualizer_workbook::backends::csv::CsvAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::csv::CsvAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -3975,7 +3974,7 @@ pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to<'a>(&mut self, f
 pub fn formualizer_workbook::backends::csv::CsvAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::csv::CsvAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::csv::CsvAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::json::JsonAdapter
 pub type formualizer_workbook::backends::json::JsonAdapter::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::backends::json::JsonAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -3989,7 +3988,7 @@ pub fn formualizer_workbook::backends::json::JsonAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::json::JsonAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::json::JsonAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::json::JsonAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya3::UmyaAdapter
 pub type formualizer_workbook::backends::umya3::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -4003,7 +4002,7 @@ pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to<'a>(&mut self
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya3::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::backends::umya::UmyaAdapter
 pub type formualizer_workbook::backends::umya::UmyaAdapter::Error = umya_spreadsheet::structs::error::XlsxError
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -4017,7 +4016,7 @@ pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to<'a>(&mut self,
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::backends::umya::UmyaAdapter::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 impl formualizer_workbook::traits::SpreadsheetWriter for formualizer_workbook::workbook::Workbook
 pub type formualizer_workbook::workbook::Workbook::Error = formualizer_workbook::error::IoError
 pub fn formualizer_workbook::workbook::Workbook::clear_range(&mut self, &str, (u32, u32), (u32, u32)) -> core::result::Result<(), Self::Error>
@@ -4031,7 +4030,7 @@ pub fn formualizer_workbook::workbook::Workbook::save_to<'a>(&mut self, formuali
 pub fn formualizer_workbook::workbook::Workbook::save_to_bytes(&mut self) -> core::result::Result<alloc::vec::Vec<u8>, Self::Error>
 pub fn formualizer_workbook::workbook::Workbook::write_cell(&mut self, &str, u32, u32, formualizer_workbook::traits::CellData) -> core::result::Result<(), Self::Error>
 pub fn formualizer_workbook::workbook::Workbook::write_range(&mut self, &str, alloc::collections::btree::map::BTreeMap<(u32, u32), formualizer_workbook::traits::CellData>) -> core::result::Result<(), Self::Error>
-pub fn formualizer_workbook::workbook::Workbook::write_to<W: std::io::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
+pub fn formualizer_workbook::workbook::Workbook::write_to<W: core::io::write::Write>(&mut self, &mut W) -> core::result::Result<(), Self::Error>
 pub trait formualizer_workbook::WasmUdfRuntime: core::marker::Send + core::marker::Sync
 pub fn formualizer_workbook::WasmUdfRuntime::can_bind_functions(&self) -> bool
 pub fn formualizer_workbook::WasmUdfRuntime::invoke(&self, &str, &str, &str, u32, &[formualizer_common::value::LiteralValue], core::option::Option<&formualizer_workbook::workbook::WasmRuntimeHint>) -> core::result::Result<formualizer_common::value::LiteralValue, formualizer_common::error::ExcelError>

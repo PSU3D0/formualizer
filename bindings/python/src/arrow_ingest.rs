@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 
 use arrow_array::ffi::{FFI_ArrowArray, FFI_ArrowSchema, from_ffi};
-use arrow_array::ffi_stream::{ArrowArrayStreamReader, FFI_ArrowArrayStream};
+use arrow_array::ffi_stream::{FFI_ArrowArrayStream, RecordBatchStreamReader};
 use arrow_array::{Array, ArrayRef, RecordBatch, RecordBatchReader, StructArray, make_array};
 use formualizer::common::LiteralValue;
 use formualizer::common::error::ExcelErrorKind;
@@ -162,7 +162,7 @@ fn has_callable_attr(obj: &Bound<'_, PyAny>, name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn take_stream_from_capsule(capsule_obj: &Bound<'_, PyAny>) -> PyResult<ArrowArrayStreamReader> {
+fn take_stream_from_capsule(capsule_obj: &Bound<'_, PyAny>) -> PyResult<RecordBatchStreamReader> {
     let capsule = capsule_obj.cast::<PyCapsule>().map_err(|_| {
         pyo3::exceptions::PyTypeError::new_err(
             "__arrow_c_stream__ did not return a PyCapsule('arrow_array_stream')",
@@ -182,7 +182,7 @@ fn take_stream_from_capsule(capsule_obj: &Bound<'_, PyAny>) -> PyResult<ArrowArr
         let raw = ptr.as_ptr().cast::<FFI_ArrowArrayStream>();
         std::ptr::replace(raw, FFI_ArrowArrayStream::empty())
     };
-    ArrowArrayStreamReader::try_new(stream).map_err(|e| {
+    RecordBatchStreamReader::try_new(stream).map_err(|e| {
         pyo3::exceptions::PyValueError::new_err(format!("Failed to import Arrow table stream: {e}; wrap a single chunked column in a list or dict"))
     })
 }
@@ -226,9 +226,12 @@ fn take_array_from_capsules(
     let array_raw = array_ptr.as_ptr().cast::<FFI_ArrowArray>();
     let (schema_released, array_released, schema_format_null) = unsafe {
         (
-            (*schema_raw).release.is_none(),
-            (*array_raw).release.is_none(),
-            (*schema_raw).format.is_null(),
+            (*schema_raw).release().is_none(),
+            (*array_raw).is_released(),
+            // Per the Arrow C Data Interface ABI, `format: *const c_char` is the
+            // first field of `#[repr(C)] struct ArrowSchema`. Check it before
+            // `from_ffi` because `FFI_ArrowSchema::format()` asserts non-null.
+            (*schema_raw.cast::<*const std::ffi::c_char>()).is_null(),
         )
     };
     if schema_released || array_released {
@@ -264,7 +267,7 @@ fn take_array_from_capsules(
 fn extract_arrow_stream(
     py: Python<'_>,
     obj: &Bound<'_, PyAny>,
-) -> PyResult<ArrowArrayStreamReader> {
+) -> PyResult<RecordBatchStreamReader> {
     let capsule = obj.call_method1("__arrow_c_stream__", (py.None(),))?;
     take_stream_from_capsule(&capsule)
 }
@@ -311,7 +314,7 @@ fn convert_record_batch_columns(
 }
 
 fn drain_arrow_stream_detached(
-    reader: ArrowArrayStreamReader,
+    reader: RecordBatchStreamReader,
     start_row: u32,
     start_col: u32,
     headers: bool,
