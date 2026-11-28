@@ -183,7 +183,7 @@ fn take_stream_from_capsule(capsule_obj: &Bound<'_, PyAny>) -> PyResult<ArrowArr
         std::ptr::replace(raw, FFI_ArrowArrayStream::empty())
     };
     ArrowArrayStreamReader::try_new(stream).map_err(|e| {
-        pyo3::exceptions::PyValueError::new_err(format!("Failed to import Arrow stream: {e}"))
+        pyo3::exceptions::PyValueError::new_err(format!("Failed to import Arrow table stream: {e}; wrap a single chunked column in a list or dict"))
     })
 }
 
@@ -486,10 +486,26 @@ fn try_convert_buffer_column(
         return Ok(None);
     }
 
+    // A NumPy masked array exports only its underlying data through memoryview.
+    if obj.hasattr("__array_interface__")?
+        && let Ok(mask) = obj.getattr("mask")
+        && has_callable_attr(&mask, "any")
+        && mask.call_method0("any")?.is_truthy()?
+    {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Column '{col_label}': convert masked entries to None before writing"
+        )));
+    }
     let builtins = py.import("builtins")?;
     let mv = match builtins.getattr("memoryview")?.call1((obj,)) {
         Ok(mv) => mv,
         Err(err) if err.is_instance_of::<pyo3::exceptions::PyTypeError>(py) => return Ok(None),
+        Err(err) if err.is_instance_of::<pyo3::exceptions::PyValueError>(py) => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Column '{col_label}': {}",
+                err.value(py)
+            )));
+        }
         Err(err) => return Err(err),
     };
 
@@ -797,7 +813,7 @@ fn convert_sequence_column(
 
     let iter = obj.try_iter().map_err(|_| {
         pyo3::exceptions::PyTypeError::new_err(format!(
-            "Column '{col_label}': expected a sequence or iterable"
+            "Column '{col_label}': pass an iterable or a single Arrow array, or pass a whole table as data"
         ))
     })?;
 
@@ -807,8 +823,12 @@ fn convert_sequence_column(
     for (row_idx, item_res) in iter.enumerate() {
         let item = item_res?;
         let lit = py_to_cell_literal(&item, Some(col_label)).map_err(|err| {
-            // Attach row index if not already present.
-            if err.is_instance_of::<pyo3::exceptions::PyValueError>(item.py()) {
+            if err.is_instance_of::<pyo3::exceptions::PyTypeError>(item.py()) {
+                pyo3::exceptions::PyTypeError::new_err(format!(
+                    "Column '{col_label}': row {row_idx}: {}",
+                    err.value(item.py())
+                ))
+            } else if err.is_instance_of::<pyo3::exceptions::PyValueError>(item.py()) {
                 let msg = err.value(item.py()).to_string();
                 if msg.contains("Column '") {
                     err
@@ -1004,6 +1024,18 @@ fn convert_single_column(
     col_label: &str,
     date_system: DateSystem,
 ) -> PyResult<OwnedColumnData> {
+    // A PyArrow ChunkedArray exports a stream of scalars. The Arrow stream
+    // reader takes record batches, so use the producer's contiguous array.
+    let combined;
+    let obj = if obj.hasattr("num_chunks")?
+        && has_callable_attr(obj, "__arrow_c_stream__")
+        && has_callable_attr(obj, "combine_chunks")
+    {
+        combined = obj.call_method0("combine_chunks")?;
+        &combined
+    } else {
+        obj
+    };
     if has_callable_attr(obj, "__arrow_c_array__") {
         let array = extract_arrow_array(py, obj)?;
         return ColumnData::try_from_arrow_with_options(
@@ -1017,6 +1049,15 @@ fn convert_single_column(
         return Ok(col);
     }
     convert_sequence_column(obj, col_label, date_system)
+}
+
+// Snapshot built-in dicts before invoking conversion callbacks that can change their keys.
+fn mapping_items<'py>(mapping: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    if let Ok(dict) = mapping.cast::<PyDict>() {
+        Ok(dict.items().into_any())
+    } else {
+        mapping.call_method0("items")
+    }
 }
 
 fn is_mapping(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<bool> {
@@ -1041,6 +1082,16 @@ pub(crate) fn prepare_columns_input(
     // 1. Arrow PyCapsule Stream (Polars DataFrame, PyArrow Table/RecordBatchReader,
     //    DuckDB relation, pandas DataFrame with pyarrow installed, etc.)
     if has_callable_attr(data, "__arrow_c_stream__") {
+        // The record-batch reader discards the parent validity bitmap. A
+        // ChunkedArray exposes its null count before it hands off the stream.
+        if data.hasattr("num_chunks")?
+            && let Ok(count) = data.getattr("null_count")
+            && count.extract::<usize>()? > 0
+        {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "A table cannot contain top-level null rows; wrap a single chunked column in a list or dict",
+            ));
+        }
         let reader = extract_arrow_stream(py, data)?;
         // CRITICAL: Drain the stream with GIL released and NO workbook lock held!
         let prepared = py
@@ -1090,38 +1141,21 @@ pub(crate) fn prepare_columns_input(
     if is_mapping(py, data)? {
         let mut names = Vec::new();
         let mut cols = Vec::new();
-        if let Ok(dict) = data.cast::<PyDict>() {
-            names.reserve(dict.len());
-            cols.reserve(dict.len());
-            for (k, v) in dict.iter() {
-                let name: String = k.extract().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "set_columns mapping keys must be strings",
-                    )
-                })?;
-                let col = convert_single_column(py, &v, &name, date_system)?;
-                names.push(name);
-                cols.push(col);
-            }
-        } else {
-            let items = data.call_method0("items")?;
-            for entry in items.try_iter()? {
-                let entry = entry?;
-                let pair = entry.cast::<PyTuple>().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "Mapping.items() must yield (name, column) pairs",
-                    )
-                })?;
-                let name: String = pair.get_item(0)?.extract().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "set_columns mapping keys must be strings",
-                    )
-                })?;
-                let v = pair.get_item(1)?;
-                let col = convert_single_column(py, &v, &name, date_system)?;
-                names.push(name);
-                cols.push(col);
-            }
+        let items = mapping_items(data)?;
+        for entry in items.try_iter()? {
+            let entry = entry?;
+            let pair = entry.cast::<PyTuple>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "Mapping.items() must yield (name, column) pairs",
+                )
+            })?;
+            let name: String = pair.get_item(0)?.extract().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("set_columns mapping keys must be strings")
+            })?;
+            let v = pair.get_item(1)?;
+            let col = convert_single_column(py, &v, &name, date_system)?;
+            names.push(name);
+            cols.push(col);
         }
 
         let ncols = cols.len();
@@ -1291,20 +1325,25 @@ pub(crate) fn prepare_values_rows(rows: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<L
 // ---------------------------------------------------------------------------
 
 fn extract_1based_coord(obj: &Bound<'_, PyAny>) -> PyResult<u32> {
-    if obj.is_instance_of::<PyBool>() || !obj.is_instance_of::<PyInt>() {
+    if obj.is_instance_of::<PyBool>() {
         return Err(pyo3::exceptions::PyTypeError::new_err(
             "Cell coordinates must be positive 1-based integers",
         ));
     }
-    let val: i64 = obj.extract().map_err(|_| {
-        pyo3::exceptions::PyValueError::new_err("Row/col coordinate out of 1-based u32 range")
+    // PyO3 integer extraction follows Python's __index__ protocol.
+    let val = obj.extract::<u32>().map_err(|err| {
+        if err.is_instance_of::<pyo3::exceptions::PyOverflowError>(obj.py()) {
+            pyo3::exceptions::PyValueError::new_err("Row/col coordinate out of 1-based u32 range")
+        } else {
+            err
+        }
     })?;
-    if val <= 0 || val > i64::from(u32::MAX) {
+    if val == 0 {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "Row/col are 1-based",
         ));
     }
-    Ok(val as u32)
+    Ok(val)
 }
 
 struct SparseBatchBuilder {
@@ -1425,47 +1464,29 @@ pub(crate) fn prepare_sparse_cells(
     let mut builder = SparseBatchBuilder::with_capacity(hint, date_system);
 
     if is_mapping(py, cells)? {
-        if let Ok(dict) = cells.cast::<PyDict>() {
-            for (k, v) in dict.iter() {
-                let pair = k.cast::<PyTuple>().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "set_cells mapping keys must be (row, col) 2-tuples",
-                    )
-                })?;
-                if pair.len() != 2 {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "set_cells mapping keys must be (row, col) 2-tuples",
-                    ));
-                }
-                let r = extract_1based_coord(&pair.get_item(0)?)?;
-                let c = extract_1based_coord(&pair.get_item(1)?)?;
-                builder.push(r, c, &v)?;
+        let items = mapping_items(cells)?;
+        for entry in items.try_iter()? {
+            let entry = entry?;
+            let kv = entry.cast::<PyTuple>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "Mapping.items() must yield ((row, col), value) pairs",
+                )
+            })?;
+            let key = kv.get_item(0)?;
+            let pair = key.cast::<PyTuple>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "set_cells mapping keys must be (row, col) 2-tuples",
+                )
+            })?;
+            if pair.len() != 2 {
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "set_cells mapping keys must be (row, col) 2-tuples",
+                ));
             }
-        } else {
-            let items = cells.call_method0("items")?;
-            for entry in items.try_iter()? {
-                let entry = entry?;
-                let kv = entry.cast::<PyTuple>().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "Mapping.items() must yield ((row, col), value) pairs",
-                    )
-                })?;
-                let key = kv.get_item(0)?;
-                let pair = key.cast::<PyTuple>().map_err(|_| {
-                    pyo3::exceptions::PyTypeError::new_err(
-                        "set_cells mapping keys must be (row, col) 2-tuples",
-                    )
-                })?;
-                if pair.len() != 2 {
-                    return Err(pyo3::exceptions::PyValueError::new_err(
-                        "set_cells mapping keys must be (row, col) 2-tuples",
-                    ));
-                }
-                let r = extract_1based_coord(&pair.get_item(0)?)?;
-                let c = extract_1based_coord(&pair.get_item(1)?)?;
-                let v = kv.get_item(1)?;
-                builder.push(r, c, &v)?;
-            }
+            let r = extract_1based_coord(&pair.get_item(0)?)?;
+            let c = extract_1based_coord(&pair.get_item(1)?)?;
+            let v = kv.get_item(1)?;
+            builder.push(r, c, &v)?;
         }
     } else {
         let iter = cells.try_iter().map_err(|_| {

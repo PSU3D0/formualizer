@@ -48,7 +48,11 @@ dev = [
     "pytest-timeout>=2.3",
     "ruff>=0.1.0",
     "mypy>=1.0",
-    "openpyxl"
+    "openpyxl",
+    # Exercise the real bulk-ingest producers in the native Python test job.
+    "numpy",
+    "pyarrow",
+    "polars",
 ]
 
 [tool.maturin]

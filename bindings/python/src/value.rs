@@ -999,6 +999,23 @@ pub(crate) fn py_to_cell_literal(
     if value.is_instance_of::<PyList>() || value.is_instance_of::<PyTuple>() {
         return Err(array_err());
     }
+    // NumPy registers its scalar integers and floats with numbers.Real. Checking
+    // the ABC avoids converting arrays, complex numbers or temporal scalars
+    // just because their type exposes __float__.
+    if value.get_type().hasattr("__float__")? {
+        let py = value.py();
+        let numbers = py.import("numbers")?;
+        if value.is_instance(&numbers.getattr("Integral")?)? {
+            let index = py.import("operator")?.call_method1("index", (value,))?;
+            return Ok(LiteralValue::Int(check_safe_py_int(
+                index.cast()?,
+                col_context,
+            )?));
+        }
+        if value.is_instance(&numbers.getattr("Real")?)? {
+            return Ok(LiteralValue::Number(value.extract::<f64>()?).finite_or_num_error());
+        }
+    }
     let lit = py_to_literal(value)?;
     if matches!(lit, LiteralValue::Array(_)) {
         return Err(array_err());
