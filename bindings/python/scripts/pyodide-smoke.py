@@ -1,3 +1,4 @@
+import array
 import datetime
 import json
 import sys
@@ -111,6 +112,20 @@ wb_override.set_value("Sheet1", 1, 1, 1)
 wb_override.set_value("Sheet1", 2, 1, 2)
 wb_override.set_formula("Sheet1", 1, 2, "=SUM(A1:A2)")
 assert wb_override.evaluate_cell("Sheet1", 1, 2) == 3.0
+
+bulk = wb.sheet("Bulk")
+bulk.set_values(1, 1, [["rows", 10], ["next", 20]])
+bulk.set_columns(3, 1, {"label": ["x", "y"]})
+bulk.set_columns(3, 2, [array.array("d", [1.5, -2.5])])
+bulk.set_cells([(5, 2, "sparse"), (6, 1, 42)])
+assert [[wb.get_value("Bulk", row, col) for col in (1, 2)] for row in range(1, 7)] == [
+    ["rows", 10],
+    ["next", 20],
+    ["x", 1.5],
+    ["y", -2.5],
+    [None, "sparse"],
+    [42, None],
+]
 
 xlsx_bytes = wb.to_xlsx_bytes()
 assert isinstance(xlsx_bytes, bytes)
