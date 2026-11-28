@@ -276,8 +276,8 @@ fn row_at_a_time_growth_rebuilds_a_chunk_logarithmically() {
     for col in &sheet.columns {
         // The capacity is capped at a full chunk; nothing over-allocates past it.
         assert_eq!(col.chunks[0].len(), chunk_rows);
-        let reserve = col.chunks[0].reserve.as_deref().unwrap();
-        assert_eq!(reserve.type_tag.len(), chunk_rows);
+        // A full chunk cannot grow again, so it keeps no reserve.
+        assert!(col.chunks[0].reserve.is_none());
     }
     assert_eq!(sheet.get_cell_value(0, 0), LiteralValue::Number(1.0));
     assert_eq!(sheet.get_cell_value(0, 1), LiteralValue::Text("a".into()));
@@ -352,4 +352,84 @@ fn format_runs_grow_in_place() {
     assert_eq!(runs.to_ids(6)[..4], before.to_ids(4)[..]);
     assert_eq!(runs.to_ids(6)[4..], [FormatId::GENERAL.0; 2]);
     assert_eq!(runs.run_ends.len(), 2);
+}
+
+#[test]
+fn a_lane_replaced_with_the_same_offsets_is_not_reverted() {
+    // The replacement reuses the old lane's offsets and null buffers and only
+    // differs in its bytes, so nothing but the lane's identity tells them
+    // apart.
+    let mut sheet = seeded_sheet(3, 1);
+    sheet.ensure_row_capacity(4);
+    let ch = &mut sheet.columns[0].chunks[0];
+    let old = ch
+        .text
+        .as_ref()
+        .unwrap()
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .unwrap()
+        .clone();
+    let bytes: Vec<u8> = old.value_data().iter().map(|_| b'X').collect();
+    let replacement = StringArray::new(
+        old.offsets().clone(),
+        arrow_buffer::Buffer::from_vec(bytes),
+        old.nulls().cloned(),
+    );
+    let text_row = (0..3).find(|r| !old.is_null(*r)).unwrap();
+    let expected = replacement.value(text_row).to_string();
+    ch.text = Some(Arc::new(replacement));
+    assert!(!ch.reserve_backs_lanes());
+    sheet.ensure_row_capacity(5);
+    assert_eq!(
+        sheet.get_cell_value(text_row, 0),
+        LiteralValue::Text(expected)
+    );
+}
+
+#[test]
+fn compaction_releases_the_reserve_and_the_lanes_it_retired() {
+    let mut sheet = seeded_sheet(3, 1);
+    sheet.ensure_row_capacity(4);
+    let retired = Arc::downgrade(sheet.columns[0].chunks[0].text.as_ref().unwrap());
+    let empty = OverlayValue::from_literal_value(&LiteralValue::Empty, DateSystem::Excel1900);
+    for off in 0..4 {
+        sheet.columns[0].chunks[0]
+            .overlay
+            .set_scalar(off, empty.clone());
+    }
+    assert!(sheet.maybe_compact_chunk(0, 0, 0, 1) > 0);
+    let ch = &sheet.columns[0].chunks[0];
+    assert!(ch.reserve.is_none());
+    assert!(
+        retired.upgrade().is_none(),
+        "the old text lane is still owned"
+    );
+}
+
+#[test]
+fn planned_chunks_match_the_chunks_growth_creates() {
+    // Planning code locates rows past the end of the sheet before the store
+    // grows; both must agree, including after an oversized last chunk.
+    for seed_rows in [0usize, 3, 8, 9] {
+        for inserted in [0usize, 10] {
+            let mut sheet = seeded_sheet(seed_rows, 1);
+            if inserted > 0 {
+                sheet.insert_rows(0, inserted);
+            }
+            let rows = sheet.nrows as usize;
+            let planned: Vec<(usize, usize)> = (0..rows + 40)
+                .map(|r| sheet.chunk_of_row_after_growth(r))
+                .collect();
+            let starts: Vec<usize> = (0..8).map(|i| sheet.chunk_start_after_growth(i)).collect();
+            sheet.ensure_row_capacity(rows + 40);
+            for (row, (idx, start)) in planned.into_iter().enumerate() {
+                let (actual_idx, offset) = sheet.chunk_of_row(row).unwrap();
+                assert_eq!((idx, start), (actual_idx, row - offset), "row {row}");
+            }
+            for (idx, start) in sheet.chunk_starts.iter().enumerate().take(8) {
+                assert_eq!(starts[idx], *start, "chunk {idx}");
+            }
+        }
+    }
 }

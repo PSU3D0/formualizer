@@ -427,6 +427,7 @@ impl<'e, R: EvaluationContext> ArrowBulkUpdateBuilder<'e, R> {
                                 }
                             }
                         }
+                        ch.drop_growth_reserve();
                         ch.type_tag = Arc::new(tag_b.finish());
                         ch.numbers = if non_num == 0 {
                             None

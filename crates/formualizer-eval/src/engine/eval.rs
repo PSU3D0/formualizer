@@ -14267,12 +14267,9 @@ where
             return Self::locate_row_in_empty_sheet_for_computed_write_plan(row0, chunk_rows);
         }
 
-        let mut chunk_idx = sheet.chunk_starts.len().saturating_sub(1);
-        let mut chunk_start = sheet.chunk_starts[chunk_idx];
-        while chunk_start.saturating_add(chunk_rows) <= row0 {
-            chunk_idx = chunk_idx.saturating_add(1);
-            chunk_start = chunk_start.saturating_add(chunk_rows);
-        }
+        // Past the sheet's rows the plan must name the chunk the store will
+        // create when it grows, so both use the store's boundary rule.
+        let (chunk_idx, chunk_start) = sheet.chunk_of_row_after_growth(row0);
         (
             chunk_idx,
             chunk_start as u32,
@@ -14591,11 +14588,7 @@ where
 
         asheet.ensure_column_capacity_lazy(col0 + 1);
 
-        let start_row0 = asheet
-            .chunk_starts
-            .get(chunk_idx)
-            .copied()
-            .unwrap_or_else(|| chunk_idx.saturating_mul(asheet.chunk_rows.max(1)));
+        let start_row0 = asheet.chunk_start_after_growth(chunk_idx);
         let required_rows =
             start_row0.saturating_add(fragment.max_covered_offset().saturating_add(1));
         if required_rows > asheet.nrows as usize {

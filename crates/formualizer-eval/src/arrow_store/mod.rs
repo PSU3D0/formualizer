@@ -594,54 +594,56 @@ struct ChunkReserve {
     booleans: Option<BooleanArray>,
     errors: Option<UInt8Array>,
     text: Option<StringArray>,
+    /// The exact lane arrays the chunk exposed from this reserve. Holding
+    /// them makes identity unambiguous: the chunk's lanes are the reserve's
+    /// prefixes if and only if they are still these `Arc`s.
+    exposed: ExposedLanes,
+}
+
+#[derive(Debug, Clone)]
+struct ExposedLanes {
+    type_tag: Arc<UInt8Array>,
+    numbers: Option<Arc<Float64Array>>,
+    booleans: Option<Arc<BooleanArray>>,
+    errors: Option<Arc<UInt8Array>>,
+    text: Option<ArrayRef>,
 }
 
 /// Smallest physical capacity of a growing chunk, in rows.
 const CHUNK_RESERVE_MIN_ROWS: usize = 16;
 
 impl ColumnChunk {
-    /// Whether the exposed base lanes are prefixes of the reserve's arrays,
-    /// i.e. nothing replaced a lane since the reserve was built.
+    /// Whether the exposed base lanes are the prefixes this chunk last took
+    /// from its reserve, i.e. nothing replaced a lane since.
     fn reserve_backs_lanes(&self) -> bool {
         let Some(reserve) = self.reserve.as_deref() else {
             return false;
         };
-        fn same<T>(a: &[T], b: &[T]) -> bool {
-            std::ptr::eq(a.as_ptr(), b.as_ptr())
-        }
-        let tags = same(self.type_tag.values(), reserve.type_tag.values());
-        let numbers = match (&self.numbers, &reserve.numbers) {
-            (None, None) => true,
-            (Some(lane), Some(full)) => same(lane.values(), full.values()),
-            _ => false,
-        };
-        let booleans = match (&self.booleans, &reserve.booleans) {
-            (None, None) => true,
-            (Some(lane), Some(full)) => {
-                lane.values().offset() == full.values().offset()
-                    && same(lane.values().values(), full.values().values())
+        fn same<T: ?Sized>(a: &Option<Arc<T>>, b: &Option<Arc<T>>) -> bool {
+            match (a, b) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                _ => false,
             }
-            _ => false,
-        };
-        let errors = match (&self.errors, &reserve.errors) {
-            (None, None) => true,
-            (Some(lane), Some(full)) => same(lane.values(), full.values()),
-            _ => false,
-        };
-        let text = match (&self.text, &reserve.text) {
-            (None, None) => true,
-            (Some(lane), Some(full)) => lane
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .is_some_and(|lane| same(lane.value_offsets(), full.value_offsets())),
-            _ => false,
-        };
-        tags && numbers && booleans && errors && text
+        }
+        let exposed = &reserve.exposed;
+        Arc::ptr_eq(&self.type_tag, &exposed.type_tag)
+            && same(&self.numbers, &exposed.numbers)
+            && same(&self.booleans, &exposed.booleans)
+            && same(&self.errors, &exposed.errors)
+            && same(&self.text, &exposed.text)
+    }
+
+    /// Releases the growth reserve. Code that replaces the base lanes calls
+    /// this so the retired lanes are freed now rather than at the next growth
+    /// (a full chunk never grows again).
+    pub(crate) fn drop_growth_reserve(&mut self) {
+        self.reserve = None;
     }
 
     /// Exposes the first `len` rows of the reserve as the chunk's base lanes.
     fn expose_reserve_prefix(&mut self, len: usize) {
-        let Some(reserve) = self.reserve.as_deref() else {
+        let Some(reserve) = self.reserve.as_deref_mut() else {
             return;
         };
         self.type_tag = Arc::new(reserve.type_tag.slice(0, len));
@@ -652,6 +654,18 @@ impl ColumnChunk {
             .text
             .as_ref()
             .map(|a| Arc::new(a.slice(0, len)) as ArrayRef);
+        reserve.exposed = ExposedLanes {
+            type_tag: Arc::clone(&self.type_tag),
+            numbers: self.numbers.clone(),
+            booleans: self.booleans.clone(),
+            errors: self.errors.clone(),
+            text: self.text.clone(),
+        };
+        // A reserve with no room left cannot serve another growth; the
+        // exposed lanes already own the storage.
+        if len >= reserve.type_tag.len() {
+            self.reserve = None;
+        }
     }
 
     /// Grow the chunk to `new_len` rows like [`Self::grow_len_to`], reserving
@@ -690,6 +704,13 @@ impl ColumnChunk {
                     .text
                     .as_ref()
                     .and_then(|a| a.as_any().downcast_ref::<StringArray>().cloned()),
+                exposed: ExposedLanes {
+                    type_tag: Arc::clone(&self.type_tag),
+                    numbers: self.numbers.clone(),
+                    booleans: self.booleans.clone(),
+                    errors: self.errors.clone(),
+                    text: self.text.clone(),
+                },
             }));
         }
         self.expose_reserve_prefix(new_len);
@@ -5082,6 +5103,60 @@ impl ArrowSheet {
         }
     }
 
+    /// Start of the chunk that follows the current last one once the sheet
+    /// grows: a full `chunk_rows` after the last start, and never inside rows
+    /// the sheet already has (a structural row insert can leave the last
+    /// chunk longer than `chunk_rows`).
+    #[inline]
+    fn next_chunk_start_after_growth(&self) -> usize {
+        self.chunk_starts
+            .last()
+            .copied()
+            .unwrap_or(0)
+            .saturating_add(self.chunk_rows.max(1))
+            .max(self.nrows as usize)
+    }
+
+    /// Start row of chunk `ch_idx`, for an existing chunk or for one
+    /// [`Self::ensure_row_capacity`] would create.
+    pub(crate) fn chunk_start_after_growth(&self, ch_idx: usize) -> usize {
+        if let Some(start) = self.chunk_starts.get(ch_idx) {
+            return *start;
+        }
+        let chunk_rows = self.chunk_rows.max(1);
+        if self.chunk_starts.is_empty() {
+            return ch_idx.saturating_mul(chunk_rows);
+        }
+        let beyond = ch_idx - self.chunk_starts.len();
+        self.next_chunk_start_after_growth()
+            .saturating_add(beyond.saturating_mul(chunk_rows))
+    }
+
+    /// `(chunk index, chunk start)` of `abs_row`, for a row the sheet has or
+    /// one it would have after [`Self::ensure_row_capacity`]. Planning code
+    /// uses this so that it names the same chunk the store will create.
+    pub(crate) fn chunk_of_row_after_growth(&self, abs_row: usize) -> (usize, usize) {
+        let chunk_rows = self.chunk_rows.max(1);
+        if self.chunk_starts.is_empty() {
+            let idx = abs_row / chunk_rows;
+            return (idx, idx * chunk_rows);
+        }
+        let first_new = self.next_chunk_start_after_growth();
+        if abs_row < first_new {
+            let idx = match self.chunk_starts.binary_search(&abs_row) {
+                Ok(i) => i,
+                Err(0) => 0,
+                Err(i) => i - 1,
+            };
+            return (idx, self.chunk_starts[idx]);
+        }
+        let beyond = (abs_row - first_new) / chunk_rows;
+        (
+            self.chunk_starts.len() + beyond,
+            first_new + beyond * chunk_rows,
+        )
+    }
+
     /// Ensure capacity to address at least `target_rows` rows by extending the row chunk map.
     ///
     /// This updates `chunk_starts`/`nrows` but does **not** eagerly densify all columns with
@@ -5108,13 +5183,7 @@ impl ArrowSheet {
         // `chunk_rows`. Its rows stay in it: the next chunk starts after the
         // rows the sheet already has, never inside them (which would orphan
         // the chunk's tail and misalign every later row).
-        let mut next_start = self
-            .chunk_starts
-            .last()
-            .copied()
-            .unwrap_or(0)
-            .saturating_add(chunk_size)
-            .max(self.nrows as usize);
+        let mut next_start = self.next_chunk_start_after_growth();
         while next_start < target_rows {
             self.chunk_starts.push(next_start);
             next_start = next_start.saturating_add(chunk_size);
@@ -5624,6 +5693,7 @@ impl ArrowSheet {
             return 0;
         };
 
+        ch_mut.drop_growth_reserve();
         ch_mut.type_tag = tags;
         ch_mut.numbers = numbers;
         ch_mut.booleans = booleans;
@@ -5820,6 +5890,7 @@ impl ArrowSheet {
             return 0;
         };
 
+        ch_mut.drop_growth_reserve();
         ch_mut.type_tag = tags;
         ch_mut.numbers = numbers;
         ch_mut.booleans = booleans;
