@@ -406,6 +406,24 @@ mod tests {
             evaluate_formula("=\"Is true: \"&TRUE", &wb).unwrap(),
             LiteralValue::Text("Is true: TRUE".to_string())
         );
+
+        // Numbers are written with 15 significant digits, as in Excel
+        assert_eq!(
+            evaluate_formula("=\"Total: \"&(0.1+0.2)", &wb).unwrap(),
+            LiteralValue::Text("Total: 0.3".to_string())
+        );
+        assert_eq!(
+            evaluate_formula("=\"Avg \"&(10/3)", &wb).unwrap(),
+            LiteralValue::Text("Avg 3.33333333333333".to_string())
+        );
+        assert_eq!(
+            evaluate_formula("=TEXTJOIN(\",\",TRUE,0.1+0.2,1)", &wb).unwrap(),
+            LiteralValue::Text("0.3,1".to_string())
+        );
+        assert_eq!(
+            evaluate_formula("=LEN(0.1+0.2)", &wb).unwrap(),
+            LiteralValue::Int(3)
+        );
     }
 
     #[test]

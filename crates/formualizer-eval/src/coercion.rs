@@ -180,11 +180,52 @@ pub fn to_logical(value: &LiteralValue) -> Result<bool, ExcelError> {
     }
 }
 
+/// A number as Excel writes it into text: rounded to 15 significant digits,
+/// so `0.1+0.2` is `0.3`, not `0.30000000000000004`.
+pub(crate) fn number_to_text(n: f64) -> String {
+    if !n.is_finite() {
+        return n.to_string();
+    }
+    if n == 0.0 {
+        return "0".to_string();
+    }
+    if n.abs() < 1e15 && n.fract() == 0.0 {
+        return (n as i64).to_string();
+    }
+    let (mut coefficient, mut exponent) =
+        crate::builtins::math::numeric::fifteen_digit_view(n.abs(), true);
+    while coefficient % 10 == 0 {
+        coefficient /= 10;
+        exponent += 1;
+    }
+    let digits = coefficient.to_string();
+    let mut out = String::with_capacity(digits.len() + exponent.unsigned_abs() as usize + 3);
+    if n < 0.0 {
+        out.push('-');
+    }
+    if exponent >= 0 {
+        out.push_str(&digits);
+        out.extend(std::iter::repeat_n('0', exponent as usize));
+    } else {
+        let point = digits.len() as i64 + exponent;
+        if point > 0 {
+            out.push_str(&digits[..point as usize]);
+            out.push('.');
+            out.push_str(&digits[point as usize..]);
+        } else {
+            out.push_str("0.");
+            out.extend(std::iter::repeat_n('0', (-point) as usize));
+            out.push_str(&digits);
+        }
+    }
+    out
+}
+
 /// Invariant textification for comparisons/concatenation.
 pub fn to_text_invariant(value: &LiteralValue) -> String {
     match value {
         LiteralValue::Text(s) => s.clone(),
-        LiteralValue::Number(n) => n.to_string(),
+        LiteralValue::Number(n) => number_to_text(*n),
         LiteralValue::Int(i) => i.to_string(),
         LiteralValue::Boolean(b) => if *b { "TRUE" } else { "FALSE" }.into(),
         LiteralValue::Error(e) => e.to_string(),
@@ -220,6 +261,23 @@ pub fn to_datetime_serial(value: &LiteralValue) -> Result<f64, ExcelError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn number_to_text_uses_15_significant_digits() {
+        assert_eq!(number_to_text(0.1 + 0.2), "0.3");
+        assert_eq!(number_to_text(1.1 * 1.1), "1.21");
+        assert_eq!(number_to_text(1.0 / 3.0), "0.333333333333333");
+        assert_eq!(number_to_text(5.0), "5");
+        assert_eq!(number_to_text(-2.5), "-2.5");
+    }
+
+    #[test]
+    fn number_to_text_edge_values() {
+        assert_eq!(number_to_text(-0.0), "0");
+        let max_digits = format!("179769313486232{}", "0".repeat(294));
+        assert_eq!(number_to_text(f64::MAX), max_digits);
+        assert_eq!(number_to_text(f64::MIN), format!("-{max_digits}"));
+    }
 
     #[test]
     fn number_lenient_parses_text_and_booleans() {

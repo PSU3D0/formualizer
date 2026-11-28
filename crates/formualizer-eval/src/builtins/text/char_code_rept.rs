@@ -211,6 +211,7 @@ impl Function for CodeFn {
                 )));
             }
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            LiteralValue::Number(f) => crate::coercion::number_to_text(f),
             other => other.to_string(),
         };
 
@@ -338,6 +339,7 @@ impl Function for AscFn {
             LiteralValue::Text(t) => t,
             LiteralValue::Empty => String::new(),
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            LiteralValue::Number(f) => crate::coercion::number_to_text(f),
             other => other.to_string(),
         };
         Ok(CalcValue::Scalar(LiteralValue::Text(asc_convert(&s))))
@@ -411,6 +413,7 @@ impl Function for ReptFn {
             LiteralValue::Text(t) => t,
             LiteralValue::Empty => String::new(),
             LiteralValue::Error(e) => return Ok(CalcValue::Scalar(LiteralValue::Error(e))),
+            LiteralValue::Number(f) => crate::coercion::number_to_text(f),
             other => other.to_string(),
         };
 
@@ -565,6 +568,23 @@ mod tests {
         assert_eq!(rept("O", 0.0), LiteralValue::Text(String::new()));
         assert_eq!(rept("O", 0.9), LiteralValue::Text(String::new()));
         assert_eq!(rept("ab", 2.9), LiteralValue::Text("abab".to_string()));
+    }
+
+    #[test]
+    fn rept_writes_numbers_with_15_significant_digits() {
+        let wb = TestWorkbook::new().with_function(std::sync::Arc::new(ReptFn));
+        let ctx = interp(&wb);
+        let s = lit(LiteralValue::Number(0.1 + 0.2));
+        let n = lit(LiteralValue::Number(2.0));
+        let f = ctx.context.get_function("", "REPT").unwrap();
+        let out = f
+            .dispatch(
+                &[ArgumentHandle::new(&s, &ctx), ArgumentHandle::new(&n, &ctx)],
+                &ctx.function_context(None),
+            )
+            .unwrap()
+            .into_literal();
+        assert_eq!(out, LiteralValue::Text("0.30.3".to_string()));
     }
 
     #[test]
