@@ -321,7 +321,7 @@ pub fn calc_settings_from_cycle(cycle: &CycleConfig) -> CalcSettings {
 ///
 /// `calc_id` carries the `calcId` attribute from the file being rewritten so
 /// the save path keeps whatever the writer emitted.
-fn render_calc_pr(settings: &CalcSettings, calc_id: Option<&str>) -> String {
+pub(crate) fn render_calc_pr(settings: &CalcSettings, calc_id: Option<&str>) -> String {
     let mut out = String::from("<calcPr");
     if let Some(id) = calc_id {
         out.push_str(&format!(" calcId=\"{}\"", xml_escape_attr(id)));

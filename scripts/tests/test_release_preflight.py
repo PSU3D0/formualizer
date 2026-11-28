@@ -270,8 +270,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"python-native.*system-clock.*uncovered",
             (
                 "bindings/python/Cargo.toml",
-                ', "umya", "xlsx-recalc", "system-clock", "arrow"] }',
-                ', "umya", "xlsx-recalc", "arrow"] }',
+                ', "xlsx-recalc", "system-clock", "arrow"] }',
+                ', "xlsx-recalc", "arrow"] }',
             ),
         )
 
@@ -333,8 +333,8 @@ class ReleasePreflightTests(unittest.TestCase):
             ),
             (
                 "crates/formualizer-cffi/Cargo.toml",
-                'formualizer-workbook = { workspace = true, features = ["umya"] }',
-                'formualizer-workbook = { workspace = true, default-features = true, features = ["umya"] }',
+                "formualizer-workbook = { workspace = true }",
+                "formualizer-workbook = { workspace = true, default-features = true }",
             ),
         )
 
@@ -345,8 +345,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"unsupported workspace member inheritance",
             (
                 "crates/formualizer-cffi/Cargo.toml",
-                'formualizer-workbook = { workspace = true, features = ["umya"] }',
-                'formualizer-workbook = { workspace = true, path = "../formualizer-workbook", features = ["umya"] }',
+                "formualizer-workbook = { workspace = true }",
+                'formualizer-workbook = { workspace = true, path = "../formualizer-workbook" }',
             ),
         )
 
@@ -375,7 +375,7 @@ class ReleasePreflightTests(unittest.TestCase):
             r"alternate semantic dependency 'formualizer'|dependency 'formualizer' edges",
             (
                 "bindings/python/Cargo.toml",
-                'formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "system-clock", "arrow"] }',
+                'formualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "xlsx-recalc", "system-clock", "arrow"] }',
                 "",
             ),
             (
@@ -397,7 +397,7 @@ class ReleasePreflightTests(unittest.TestCase):
             ),
             (
                 "bindings/python/Cargo.toml",
-                '[target.\'cfg(target_os = "emscripten")\'.dependencies]\nformualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "arrow"] }',
+                '[target.\'cfg(target_os = "emscripten")\'.dependencies]\nformualizer = { path = "../../crates/formualizer", default-features = false, features = ["eval", "workbook", "sheetport", "parse", "xlsx-recalc", "arrow"] }',
                 "",
             ),
         )
@@ -541,8 +541,8 @@ class ReleasePreflightTests(unittest.TestCase):
             r"python-pyodide.*stale opt-out",
             (
                 "bindings/python/Cargo.toml",
-                'features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "arrow"] }\n\n#',
-                'features = ["eval", "workbook", "sheetport", "parse", "umya", "xlsx-recalc", "arrow", "system-clock"] }\n\n#',
+                'features = ["eval", "workbook", "sheetport", "parse", "xlsx-recalc", "arrow"] }\n\n#',
+                'features = ["eval", "workbook", "sheetport", "parse", "xlsx-recalc", "arrow", "system-clock"] }\n\n#',
             ),
         )
 

@@ -28,14 +28,17 @@ def test_load_workbook_bytes_accepts_explicit_backends(xlsx_builder):
     path = xlsx_builder(lambda wb: _populate_input_workbook(wb))
     payload = Path(path).read_bytes()
 
+    native = fz.load_workbook_bytes(payload, backend="native")
+    assert native.evaluate_cell("Sheet1", 1, 2) == 42.0
+
     calamine = fz.load_workbook_bytes(payload, backend="calamine")
     assert calamine.evaluate_cell("Sheet1", 1, 2) == 42.0
 
     calamine_classmethod = fz.Workbook.from_bytes(payload, backend="calamine")
     assert calamine_classmethod.evaluate_cell("Sheet1", 1, 2) == 42.0
 
-    umya = fz.Workbook.from_bytes(payload, backend="umya")
-    assert umya.evaluate_cell("Sheet1", 1, 2) == 42.0
+    with pytest.raises(ValueError, match="backend='umya' has been removed"):
+        fz.Workbook.from_bytes(payload, backend="umya")
 
 
 def test_to_xlsx_bytes_roundtrip_preserves_workbook_content():
@@ -49,6 +52,10 @@ def test_to_xlsx_bytes_roundtrip_preserves_workbook_content():
     payload = wb.to_xlsx_bytes()
     assert isinstance(payload, bytes)
     assert len(payload) > 100
+    assert wb.to_xlsx_bytes(backend="native") == payload
+
+    with pytest.raises(ValueError, match="backend='umya' has been removed"):
+        wb.to_xlsx_bytes(backend="umya")
 
     openpyxl_wb = openpyxl.load_workbook(BytesIO(payload), data_only=False)
     ws = openpyxl_wb["Export"]

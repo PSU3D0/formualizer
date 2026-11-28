@@ -121,7 +121,7 @@ fn parse(formula: &str, dialect: Option<PyFormulaDialect>) -> PyResult<PyASTNode
 /// Args:
 ///     path: Path to an `.xlsx` file.
 ///     strategy: Currently accepted for backward compatibility; loading is eager.
-///     backend: `native` (default), `calamine` (native alias), or `umya`.
+///     backend: `native` (default) or `calamine` (native compatibility alias).
 ///     path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
 ///         `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
 ///         mapping; the underlying file must not be destructively modified or
@@ -177,9 +177,9 @@ fn load_workbook(
 /// Load an XLSX workbook from in-memory bytes.
 ///
 /// This is the byte-oriented counterpart to `load_workbook(...)`. All hosts,
-/// including Pyodide, default to `native`. `backend="calamine"` is a native
-/// compatibility alias; explicit `umya` rich reading remains available.
-/// `load_limits` has the same native-only dictionary semantics as `load_workbook`.
+/// including Pyodide, default to `native`; `backend="calamine"` is a native
+/// compatibility alias. `load_limits` has the same native-only dictionary
+/// semantics as `load_workbook`.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
@@ -218,8 +218,9 @@ fn load_workbook_bytes<'py>(
 ///     A summary dictionary containing total/per-sheet evaluated counts and errors.
 ///
 /// Note:
-///     Formula text is preserved. Cached-value typing follows the active
-///     `umya-spreadsheet` implementation.
+///     Uses Formualizer's native source-preserving `xlsx-recalc` engine, which
+///     retains formula text, formatting, and unrelated package parts while
+///     updating formula cached values.
 #[cfg_attr(
     not(target_os = "emscripten"),
     gen_stub_pyfunction(module = "formualizer.formualizer_py")
@@ -229,10 +230,32 @@ fn load_workbook_bytes<'py>(
 fn recalculate_file(py: Python<'_>, path: &str, output: Option<&str>) -> PyResult<Py<PyAny>> {
     let input = std::path::Path::new(path);
     let output_path = output.map(std::path::Path::new);
+    let options = formualizer::workbook::XlsxRecalculateOptions::workbook();
 
-    let summary = formualizer::workbook::recalculate_file(input, output_path).map_err(|e| {
-        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
-    })?;
+    #[cfg(not(target_os = "emscripten"))]
+    let summary = formualizer::workbook::recalculate_xlsx_file(input, output_path, options)
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
+        })?
+        .summary;
+
+    #[cfg(target_os = "emscripten")]
+    let summary = {
+        let source = std::fs::read(input).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
+        })?;
+        let result =
+            formualizer::workbook::recalculate_xlsx_bytes(&source, options).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
+            })?;
+        let dest = output_path.unwrap_or(input);
+        if dest != input || result.bytes != source {
+            std::fs::write(dest, &result.bytes).map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("recalculate failed: {e}"))
+            })?;
+        }
+        result.summary
+    };
 
     let out = pyo3::types::PyDict::new(py);
     out.set_item("status", summary.status.as_str())?;

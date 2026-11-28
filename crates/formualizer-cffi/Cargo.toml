@@ -11,11 +11,10 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [dependencies]
 formualizer-common = { workspace = true, features = ["serde"] }
 formualizer-parse = { workspace = true, features = ["serde"] }
-formualizer-workbook = { workspace = true, features = ["umya"] }
+formualizer-workbook = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 ciborium = "0.2"
-umya-spreadsheet = "=2.3.2"
 
 [dev-dependencies]
 anyhow = { workspace = true }

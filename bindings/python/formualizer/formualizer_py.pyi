@@ -1758,7 +1758,7 @@ class Workbook:
         
         Args:
             path: Path to the `.xlsx` file.
-            backend: `native` (default), `calamine` (native alias), or `umya`.
+            backend: `native` (default) or `calamine` (native compatibility alias).
             path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
                 `XlsxPathSource.DIRECT_MMAP`. Direct mmap requires a native
                 Calamine `.xlsx` path whose underlying file is not destructively
@@ -1815,9 +1815,9 @@ class Workbook:
         Serialize the current workbook contents into XLSX bytes.
         
         Notes:
-        - This currently uses the `umya` backend.
+        - Uses Formualizer's built-in native OOXML serializer (`backend="native"`).
         - Output is generated from the in-memory workbook model; original XLSX styling
-          and package metadata are not preserved by the Python binding.
+          and unrelated package metadata are not preserved.
         """
     def add_sheet(self, name: builtins.str) -> None:
         r"""
@@ -2413,7 +2413,7 @@ def load_workbook(path: builtins.str, strategy: typing.Optional[builtins.str] = 
     Args:
         path: Path to an `.xlsx` file.
         strategy: Currently accepted for backward compatibility; loading is eager.
-        backend: `native` (default), `calamine` (native alias), or `umya`.
+        backend: `native` (default) or `calamine` (native compatibility alias).
         path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
             `XlsxPathSource.DIRECT_MMAP`. Direct mmap retains an actual read-only
             mapping; the underlying file must not be destructively modified or
@@ -2441,9 +2441,9 @@ def load_workbook_bytes(data: bytes, strategy: typing.Optional[builtins.str] = N
     Load an XLSX workbook from in-memory bytes.
     
     This is the byte-oriented counterpart to `load_workbook(...)`. All hosts,
-    including Pyodide, default to `native`. `backend="calamine"` is a native
-    compatibility alias; explicit `umya` rich reading remains available.
-    `load_limits` has the same native-only dictionary semantics as `load_workbook`.
+    including Pyodide, default to `native`; `backend="calamine"` is a native
+    compatibility alias. `load_limits` has the same native-only dictionary
+    semantics as `load_workbook`.
     """
 
 def parse(formula: builtins.str, dialect: typing.Optional[FormulaDialect] = None) -> ASTNode:
@@ -2487,8 +2487,9 @@ def recalculate_file(path: builtins.str, output: typing.Optional[builtins.str] =
         A summary dictionary containing total/per-sheet evaluated counts and errors.
     
     Note:
-        Formula text is preserved. Cached-value typing follows the active
-        `umya-spreadsheet` implementation.
+        Uses Formualizer's native source-preserving `xlsx-recalc` engine, which
+        retains formula text, formatting, and unrelated package parts while
+        updating formula cached values.
     """
 
 def recalculate_xlsx_bytes(data: bytes, *, error_location_limit: typing.Optional[builtins.int] = None, rng_seed: typing.Optional[builtins.int] = None, deterministic_timestamp_utc: typing.Optional[datetime.datetime] = None, deterministic_timezone: typing.Optional[typing.Any] = None, external_links: builtins.str = 'cached', profile: builtins.str = 'strict', calculation: SourceCalculationPolicy | None = None, require_complete: builtins.bool = False, limits: SourceRecalculateLimits | None = None, physical_telemetry: builtins.bool = False) -> SourceRecalculateResult:

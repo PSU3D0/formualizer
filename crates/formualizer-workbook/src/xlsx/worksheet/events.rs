@@ -12,6 +12,10 @@ pub(in crate::xlsx) enum Value<'a> {
     Number(f64),
     Boolean(bool),
     Error(ErrorToken),
+    /// Non-classic Excel / engine error tokens (`#SPILL!`, `#CALC!`, `#CIRC!`,
+    /// `#ERROR!`, `#N/IMPL!`, `#CANCELLED!`) accepted by the ordinary native
+    /// loader without relaxing the strict source-recalc 7-error vocabulary.
+    ExtendedError(formualizer_common::error::ExcelErrorKind),
     Text(Cow<'a, str>),
     Shared(usize),
     /// Bad scalar caches can occur in generated children and are masked by

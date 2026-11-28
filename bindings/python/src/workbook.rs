@@ -355,7 +355,7 @@ impl PyWorkbook {
     ///
     /// Args:
     ///     path: Path to the `.xlsx` file.
-    ///     backend: `native` (default), `calamine` (native alias), or `umya`.
+    ///     backend: `native` (default) or `calamine` (native compatibility alias).
     ///     path_source: `XlsxPathSource.SHARED_FILE` (the safe default) or
     ///         `XlsxPathSource.DIRECT_MMAP`. Direct mmap requires a native
     ///         Calamine `.xlsx` path whose underlying file is not destructively
@@ -501,26 +501,9 @@ impl PyWorkbook {
                 })?;
                 Ok(Self::from_inner_workbook(wb))
             }
-            "umya" => {
-                use formualizer::workbook::backends::UmyaAdapter;
-                use formualizer::workbook::traits::SpreadsheetReader;
-                let adapter =
-                    <UmyaAdapter as SpreadsheetReader>::open_path(std::path::Path::new(path))
-                        .map_err(|e| {
-                            PyErr::new::<pyo3::exceptions::PyIOError, _>(format!(
-                                "open failed: {e}"
-                            ))
-                        })?;
-                let wb = formualizer::workbook::Workbook::from_reader(
-                    adapter,
-                    formualizer::workbook::LoadStrategy::EagerAll,
-                    cfg,
-                )
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
-                })?;
-                Ok(Self::from_inner_workbook(wb))
-            }
+            "umya" => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "backend='umya' has been removed from Python builds in v0.16.0; use backend='native' (the default)",
+            )),
             _ => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Unsupported backend: {backend}"
             ))),
@@ -566,17 +549,17 @@ impl PyWorkbook {
     /// Serialize the current workbook contents into XLSX bytes.
     ///
     /// Notes:
-    /// - This currently uses the `umya` backend.
+    /// - Uses Formualizer's built-in native OOXML serializer (`backend="native"`).
     /// - Output is generated from the in-memory workbook model; original XLSX styling
-    ///   and package metadata are not preserved by the Python binding.
+    ///   and unrelated package metadata are not preserved.
     #[pyo3(signature = (backend=None))]
     pub fn to_xlsx_bytes<'py>(
         &self,
         py: Python<'py>,
         backend: Option<&str>,
     ) -> PyResult<Bound<'py, PyBytes>> {
-        match backend.unwrap_or("umya") {
-            "umya" => {
+        match backend.unwrap_or("native") {
+            "native" => {
                 let wb = self.read_inner()?;
                 let bytes = wb.to_xlsx_bytes().map_err(|e| {
                     PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("save failed: {e}"))
@@ -584,7 +567,10 @@ impl PyWorkbook {
                 Ok(PyBytes::new(py, &bytes))
             }
             "calamine" => Err(PyErr::new::<pyo3::exceptions::PyNotImplementedError, _>(
-                "backend='calamine' does not currently support XLSX byte export; use backend='umya'",
+                "backend='calamine' does not support XLSX byte export; use backend='native' (the default)",
+            )),
+            "umya" => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "backend='umya' has been removed from Python builds in v0.16.0; use backend='native' (the default)",
             )),
             other => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Unsupported backend: {other}"
@@ -2115,24 +2101,9 @@ impl PyWorkbook {
                 })?;
                 Ok(Self::from_inner_workbook(wb))
             }
-            "umya" => {
-                use formualizer::workbook::backends::UmyaAdapter;
-                use formualizer::workbook::traits::SpreadsheetReader;
-
-                let adapter =
-                    <UmyaAdapter as SpreadsheetReader>::open_bytes(data).map_err(|e| {
-                        PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("open failed: {e}"))
-                    })?;
-                let wb = formualizer::workbook::Workbook::from_reader(
-                    adapter,
-                    formualizer::workbook::LoadStrategy::EagerAll,
-                    cfg,
-                )
-                .map_err(|e| {
-                    PyErr::new::<pyo3::exceptions::PyIOError, _>(format!("load failed: {e}"))
-                })?;
-                Ok(Self::from_inner_workbook(wb))
-            }
+            "umya" => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                "backend='umya' has been removed from Python builds in v0.16.0; use backend='native' (the default)",
+            )),
             other => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                 "Unsupported backend: {other}"
             ))),

@@ -1865,76 +1865,9 @@ impl Workbook {
         Self::new_with_mode(WorkbookMode::Interactive)
     }
 
-    #[cfg(feature = "umya")]
+    #[cfg(feature = "xlsx-recalc")]
     pub fn to_xlsx_bytes(&self) -> Result<Vec<u8>, IoError> {
-        use crate::backends::UmyaAdapter;
-
-        let mut adapter = UmyaAdapter::new_empty();
-        adapter.set_date_system(self.engine.config.date_system);
-        let sheet_names = self.sheet_names();
-
-        if let Some((first_sheet, remaining_sheets)) = sheet_names.split_first() {
-            if first_sheet != "Sheet1" {
-                adapter
-                    .rename_sheet("Sheet1", first_sheet)
-                    .map_err(|e| IoError::from_backend("umya", e))?;
-            }
-
-            for sheet_name in remaining_sheets {
-                adapter
-                    .create_sheet(sheet_name)
-                    .map_err(|e| IoError::from_backend("umya", e))?;
-            }
-
-            for sheet_name in &sheet_names {
-                let Some((max_row, max_col)) = self.sheet_dimensions(sheet_name) else {
-                    continue;
-                };
-
-                for row in 1..=max_row {
-                    for col in 1..=max_col {
-                        let value = self.get_value(sheet_name, row, col);
-                        let formula = self.get_formula(sheet_name, row, col);
-
-                        if value.is_none() && formula.is_none() {
-                            continue;
-                        }
-
-                        adapter
-                            .write_cell(
-                                sheet_name,
-                                row,
-                                col,
-                                crate::traits::CellData {
-                                    value,
-                                    formula,
-                                    style: None,
-                                },
-                            )
-                            .map_err(|e| IoError::from_backend("umya", e))?;
-                    }
-                }
-            }
-        }
-
-        let bytes = adapter
-            .save_to_bytes()
-            .map_err(|e| IoError::from_backend("umya", e))?;
-
-        // Spec §9 save mapping: rewrite `xl/workbook.xml`'s `<calcPr>` to reflect
-        // the active cycle config's iterate settings. umya hard-codes
-        // `<calcPr calcId="122211"/>` with no API for the iterate attributes, so
-        // we post-process the written zip. iterate*/are sourced from the live
-        // engine config; calcMode/fullCalcOnLoad are preserved from the parsed
-        // load-time settings (umya drops them, so we carry them on `Workbook`).
-        let mut settings = crate::calc_pr::calc_settings_from_cycle(&self.engine.config.cycle);
-        if let Some(parsed) = &self.calc_settings {
-            settings.calc_mode = parsed.calc_mode.clone();
-            settings.full_calc_on_load = parsed.full_calc_on_load;
-        }
-        let bytes = crate::calc_pr::rewrite_calc_pr_in_zip(&bytes, &settings)
-            .map_err(|e| IoError::from_backend("umya", e))?;
-        Ok(bytes)
+        crate::xlsx::writer::write_workbook_to_xlsx_bytes(self)
     }
 
     pub fn register_custom_function(
