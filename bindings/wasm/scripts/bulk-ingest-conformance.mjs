@@ -15,6 +15,7 @@ import {
   prepareTransferableViews,
 } from 'formualizer/worker';
 import * as runtime from 'formualizer';
+import { Sheet } from '../pkg/formualizer_wasm.js';
 
 let passed = 0;
 async function test(name, fn) {
@@ -1108,6 +1109,107 @@ await test('B5: setColumns with headers: true is strictly atomic on bad data (di
   }
 });
 
+await test('detached typed columns reject without the detached getter, including header-only writes', () => {
+  const wb = new Workbook();
+  wb.addSheet('S');
+  const sheet = wb.sheet('S');
+  const values = new Float64Array([1, 2]);
+  structuredClone(values, { transfer: [values.buffer] });
+  const descriptor = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'detached');
+  try {
+    delete ArrayBuffer.prototype.detached;
+    assert.throws(() => sheet.setColumns(1, 1, [{ kind: 'number', values, name: 'lost' }], { headers: true }), /detached/i);
+    assert.equal(sheet.getValue(1, 1), null);
+  } finally {
+    if (descriptor) Object.defineProperty(ArrayBuffer.prototype, 'detached', descriptor);
+    sheet.free();
+    wb.free();
+  }
+});
+
+await test('out-of-range Dates match setValue in all bulk representations', () => {
+  const wb = new Workbook();
+  wb.addSheet('S');
+  const s = wb.sheet('S');
+  for (const ms of [-8.64e15, 8.64e15]) {
+    const d = new Date(ms);
+    s.setValue(1, 1, d);
+    s.setValues(1, 2, [[d]]);
+    s.setColumns(1, 3, [{ kind: 'mixed', values: [d] }]);
+    s.setCells([[1, 4, d]]);
+    for (let col = 1; col <= 4; col++) assert.equal(s.getValue(1, col), '#NUM!');
+  }
+  s.free();
+  wb.free();
+});
+
+await test('invalid input beyond the first packed chunk leaves the sheet untouched', () => {
+  const wb = new Workbook();
+  wb.addSheet('S');
+  const s = wb.sheet('S');
+  const wide = Array(16384).fill(1);
+  const rows = [[42], ...Array(121).fill([]), wide];
+  wide[wide.length - 1] = { kind: 'error', code: 'constructor' };
+  assert.throws(() => s.setValues(1, 1, rows), TypeError);
+  assert.equal(s.getValue(1, 1), null);
+
+  assert.throws(() => s.setColumns(1, 1, [{ kind: 'boolean', name: 'flag', values: [true, 'false'] }], { headers: true }), /expected boolean/);
+  assert.equal(s.getValue(1, 1), null);
+
+  const data = Array(1001).fill('ok');
+  const columns = Array(2000).fill({ kind: 'text', values: data, name: 'label' });
+  const offsets = Uint32Array.from({ length: 1002 }, (_, i) => i);
+  const bytes = new Uint8Array(1001).fill(65);
+  bytes[1000] = 0xff;
+  columns[0] = { kind: 'text', values: { bytes, offsets }, name: 'packed' };
+  assert.throws(() => s.setColumns(1, 1, columns, { headers: true }), TypeError);
+  assert.equal(s.getValue(1, 1), null);
+
+  const n = 2_000_001;
+  const entries = Array(n).fill([1, 1, 42]);
+  entries[n - 1] = { row: 0, col: 1, value: 50 };
+  assert.throws(() => s.setCells(entries), RangeError);
+  assert.equal(s.getValue(1, 1), null);
+  const block = { rows: new Uint32Array(n).fill(1), cols: new Uint32Array(n).fill(1),
+    tags: new Uint8Array(n).fill(CellTag.Number), numbers: new Float64Array(n).fill(42) };
+  block.tags[n - 1] = CellTag.Text;
+  assert.throws(() => s.setCells(block), /payload/);
+  assert.equal(s.getValue(1, 1), null);
+  s.free();
+  wb.free();
+});
+
+await test('worker publishes a committed chunk when a later engine call fails, including in editBatch', async () => {
+  const client = await createInProcessWorkbookWorker({ runtime });
+  const proto = Sheet.prototype;
+  const write = proto._setPackedBlock;
+  try {
+    await client.addSheet('S');
+    const frames = [];
+    const sub = await client.subscribeViewport({ rect: { sheet: 'S', startRow: 1, startColumn: 1, endRow: 1, endColumn: 1 },
+      mode: 'values', throttleMs: 0, onFrame: frame => frames.push(frame) });
+    // Inject a refusal at the WASM boundary after the real first chunk commits.
+    proto._setPackedBlock = function(mode, row, ...rest) {
+      if (row > 1) throw new Error('engine refused second chunk');
+      return write.call(this, mode, row, ...rest);
+    };
+    for (const value of [42, 43]) {
+      const values = [[value], ...Array(121).fill([]), Array(16384).fill(1)];
+      const revision = client.state.revision;
+      const op = { op: 'setValues', sheet: 'S', startRow: 1, startCol: 1, values };
+      await assert.rejects(value === 42 ? client.setValues('S', 1, 1, values) : client.editBatch([op]), /second chunk/);
+      assert.equal(await client.getValue('S', 1, 1), value);
+      assert.equal(await client.getValue('S', 123, 1), null);
+      assert.equal(client.state.revision, revision + 1);
+      assert.ok(frames.some(f => f.reason === 'mutation' && f.revision === revision + 1));
+    }
+    await sub.unsubscribe();
+  } finally {
+    proto._setPackedBlock = write;
+    await client.dispose();
+  }
+});
+
 // 7. Worker client end-to-end: setValues, setColumns, setCells, transfer: false/true, viewport changedRects
 await test('worker client exposes setValues, setColumns, setCells with safe transferables and targeted viewport rects', async () => {
   for (const mode of ['channel', 'thread']) {
@@ -1157,7 +1259,8 @@ await test('worker client exposes setValues, setColumns, setCells with safe tran
       const wasmMem = new WebAssembly.Memory({ initial: 1 });
       const wasmNums = new Float64Array(wasmMem.buffer, 0, 2);
       wasmNums.set([7, 8]);
-      await client.setColumns('W', 6, 1, [owned, wasmNums], { transfer: true });
+      await client.setColumns('W', 6, 1, [owned, wasmNums, { kind: 'time', values: new Float64Array([0.5, 0.25]) }], { transfer: true });
+      assert.equal(await client.getValue('W', 6, 3), '12:00:00');
       assert.equal(owned.buffer.detached, true, 'transfer: true detaches owned full-buffer view');
       assert.equal(wasmMem.buffer.detached, false, 'transfer: true must copy foreign WebAssembly.Memory view');
       assert.equal(await client.getValue('W', 7, 2), 8);

@@ -127,6 +127,18 @@ jobs:
         working-directory: bindings/wasm
         run: wasm-pack test --node
 
+      - name: Test packed writes and real Arrow tables
+        working-directory: bindings/wasm
+        run: |
+          pnpm run test:bulk-ingest-conformance
+          pnpm run test:arrow-conformance
+
+      - name: Smoke test Arrow IPC feature
+        working-directory: bindings/wasm
+        run: |
+          wasm-pack build --target nodejs --out-dir pkg-node/arrow-ipc --release --no-opt --features arrow-ipc
+          pnpm run test:arrow-ipc
+
       - name: Upload WASM pkg
         uses: actions/upload-artifact@v4
         with:

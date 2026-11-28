@@ -10,6 +10,7 @@ import {
   assertNotDetached,
   isSparseCellBlockInput,
   packOrderedStrings,
+  PartialBulkWriteError,
   resolveSparseBlockBuffers,
   type CellScalarInput,
   type DenseColumnInput,
@@ -328,7 +329,7 @@ function prepareWorkerColumns(
       throw new TypeError(`setColumns: column ${i} must be a TypedArray or column descriptor object`);
     }
     let colLen: number;
-    if (col.kind === 'number' || col.kind === 'date' || col.kind === 'datetime' || col.kind === 'duration') {
+    if (col.kind === 'number' || col.kind === 'date' || col.kind === 'datetime' || col.kind === 'time' || col.kind === 'duration') {
       assertNotDetached(col.values, `column ${i}`);
       colLen = col.values.length;
       const clone = { ...col };
@@ -600,6 +601,7 @@ export class WorkbookWorkerClient {
       return Promise.reject(error);
     }
   }
+  /** IPC commits in batches. A rejected IPC write invalidates the worker viewport because the engine may have committed a prefix. */
   setArrowIpc(sheet:string,startRow:number,startCol:number,bytes:XlsxBytesSource,options?:SetArrowIpcOptions & TransferRequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{
     try {
       const input=prepareTransferableBytes(bytes,options?.transfer===true);
@@ -1034,7 +1036,7 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
         applied=true;
       }}catch(error){
         // Native batches are ordered, not rollback-atomic. Publish completed edits even when a later operation refuses.
-        if(applied)mutate(clientSeq);
+        if(applied || error instanceof PartialBulkWriteError)mutate(clientSeq);
         throw error;
       }finally{if(a[1]?.actionDescription!==undefined)wb.endAction();}
       return mutate(clientSeq);
@@ -1042,12 +1044,16 @@ export async function attachWorkbookWorker(endpoint:WorkerEndpoint,options:Attac
     if(method==='setValues'||method==='setColumns'||method==='setCells'||method==='setArrowIpc'){
       const target=sheet(a[0]);
       let report:WriteRangeReport;
-      if(method==='setValues')report=target.setValues(a[1],a[2],a[3]);
-      else if(method==='setColumns')report=target.setColumns(a[1],a[2],a[3],a[4]);
-      else if(method==='setCells')report=target.setCells(a[1]);
-      else{
-        if(typeof target.setArrowIpc!=='function')throw domain('INVALID_OPTIONS','setArrowIpc requires a formualizer-wasm build with the `arrow-ipc` Cargo feature enabled');
-        report=target.setArrowIpc(a[1],a[2],a[3],a[4]);
+      if(method==='setArrowIpc' && !target.setArrowIpc)throw domain('INVALID_OPTIONS','setArrowIpc requires a formualizer-wasm build with the `arrow-ipc` Cargo feature enabled');
+      try {
+        if(method==='setValues')report=target.setValues(a[1],a[2],a[3]);
+        else if(method==='setColumns')report=target.setColumns(a[1],a[2],a[3],a[4]);
+        else if(method==='setCells')report=target.setCells(a[1]);
+        else report=target.setArrowIpc!(a[1],a[2],a[3],a[4]);
+      } catch (error) {
+        // IPC can commit headers and earlier record batches without returning a report.
+        if (method==='setArrowIpc' || error instanceof PartialBulkWriteError) mutate(clientSeq);
+        throw error;
       }
       const changed:FiniteRangeAddress[]=report.endRow>0&&report.endCol>0
         ?[{sheet:a[0],startRow:report.startRow,startColumn:report.startCol,endRow:report.endRow,endColumn:report.endCol}]

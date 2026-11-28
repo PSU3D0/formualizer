@@ -39,7 +39,9 @@
     "build:wasm": "wasm-pack build --target bundler --out-dir pkg --release && rm -f pkg/.gitignore",
     "build:ts": "tsc -p tsconfig.json",
     "prepack": "npm run build",
-    "test": "wasm-pack test --node && npm run build:ts && npm run test:ordinary-load-conformance && npm run test:inspect-conformance && npm run test:sheetport-conformance && npm run test:recalc-conformance && npm run test:bulk-ingest-conformance",
+    "test": "wasm-pack test --node && npm run build:ts && npm run test:ordinary-load-conformance && npm run test:inspect-conformance && npm run test:sheetport-conformance && npm run test:recalc-conformance && npm run test:bulk-ingest-conformance && npm run test:arrow-conformance",
+    "test:arrow-conformance": "tsc --noEmit --strict --skipLibCheck --target ES2022 --module ES2022 --moduleResolution bundler tests/arrow-types.ts && node scripts/arrow-conformance.mjs",
+    "test:arrow-ipc": "node scripts/arrow-ipc-smoke.mjs",
     "test:bulk-ingest-conformance": "node scripts/bulk-ingest-conformance.mjs",
     "test:ordinary-load-conformance": "node scripts/ordinary-load-conformance.mjs",
     "test:recalc-conformance": "node scripts/recalc-conformance.mjs && node scripts/recalc-types-conformance.mjs && node scripts/recalc-lifetime-conformance.mjs && node scripts/error-conversion-conformance.mjs",
@@ -68,6 +70,8 @@
   "devDependencies": {
     "@rollup/plugin-typescript": "^11.1.6",
     "@types/node": "^20.19.37",
+    "@uwdata/flechette": "2.8.1",
+    "apache-arrow": "21.2.0",
     "rollup": "^4.60.1",
     "typescript": "^5.9.3"
   },

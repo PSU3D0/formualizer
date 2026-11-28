@@ -105,6 +105,12 @@ export type DenseColumnInput =
       name?: string;
     }
   | {
+      kind: 'time';
+      values: Float64Array;
+      validity?: Uint8Array;
+      name?: string;
+    }
+  | {
       kind: 'datetime';
       values: Float64Array;
       validity?: Uint8Array;
@@ -255,6 +261,34 @@ export function mergeWriteRangeReports(
   };
 }
 
+/** An earlier chunk committed before the engine rejected a subsequent chunk. */
+export class PartialBulkWriteError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
+}
+
+function writeChunks(
+  length: number,
+  chunkSize: number,
+  write: (start: number, count: number) => WriteRangeReport,
+  firstChunkSize = chunkSize,
+): WriteRangeReport {
+  let combined = emptyWriteRangeReport();
+  let start = 0;
+  while (start < length) {
+    const count = Math.min(start === 0 ? firstChunkSize : chunkSize, length - start);
+    try {
+      combined = mergeWriteRangeReports(combined, write(start, count));
+    } catch (error) {
+      if (combined.endRow > 0) throw new PartialBulkWriteError(error);
+      throw error;
+    }
+    start += count;
+  }
+  return combined;
+}
+
 export function assertNotDetached(view: ArrayBufferView, label: string): void {
   const buf = view.buffer as ArrayBuffer & { detached?: boolean };
   if (buf.detached === true) {
@@ -305,11 +339,11 @@ export function validateBlockBounds(
 }
 
 export function parseExcelErrorCode(token: string): ExcelErrorCode {
-  const code = ERROR_CODE_BY_TOKEN[token.trim().toLowerCase()];
-  if (code === undefined) {
+  const key = token.trim().toLowerCase();
+  if (!Object.hasOwn(ERROR_CODE_BY_TOKEN, key)) {
     throw new TypeError(`unknown Excel error code: ${JSON.stringify(token)}`);
   }
-  return code;
+  return ERROR_CODE_BY_TOKEN[key];
 }
 
 const MS_PER_DAY = 86_400_000;
@@ -544,7 +578,9 @@ function encodeScalarInto(
   if (value instanceof Date) {
     const ms = value.getTime();
     const serial = utcMillisToExcelSerial(ms, dateSystem);
-    if (Number.isFinite(serial)) {
+    // Match chrono::NaiveDate::MIN/MAX used by setValue's from_timestamp_millis.
+    const year = value.getUTCFullYear();
+    if (year >= -262143 && year <= 262142) {
       const utcDays = Math.floor(ms / MS_PER_DAY);
       const msOfDay = ms - utcDays * MS_PER_DAY;
       tags[idx] = msOfDay === 0 ? CellTag.Date : CellTag.DateTime;
@@ -601,10 +637,12 @@ export function executeSetValues(
 
   const resolvedDateSystem = resolveTargetDateSystem(target, dateSystem);
   const rowsPerChunk = Math.max(1, Math.floor(MAX_CELLS_PER_WASM_CALL / ncols));
-  let combined = emptyWriteRangeReport();
-
-  for (let r0 = 0; r0 < nrows; r0 += rowsPerChunk) {
-    const chunkRows = Math.min(rowsPerChunk, nrows - r0);
+  if (nrows > rowsPerChunk) {
+    for (const row of rows) {
+      for (const value of row) validateScalarValue(value);
+    }
+  }
+  return writeChunks(nrows, rowsPerChunk, (r0, chunkRows) => {
     const total = chunkRows * ncols;
     const tags = new Uint8Array(total);
     const numbers = new Float64Array(total);
@@ -623,7 +661,7 @@ export function executeSetValues(
     }
 
     const { bytes, offsets } = strings.finish();
-    const report = target._setPackedBlock(
+    return target._setPackedBlock(
       PACKED_MODE_DENSE_ROW_MAJOR,
       startRow + r0,
       startCol,
@@ -636,17 +674,14 @@ export function executeSetValues(
       EMPTY_U32,
       EMPTY_U32,
     );
-    combined = mergeWriteRangeReports(combined, report);
-  }
-
-  return combined;
+  });
 }
 
 interface NormalizedColumn {
   name?: string;
   label: string;
   length: number;
-  kind: 'number' | 'boolean' | 'text' | 'date' | 'datetime' | 'duration' | 'null' | 'mixed';
+  kind: 'number' | 'boolean' | 'text' | 'date' | 'datetime' | 'time' | 'duration' | 'null' | 'mixed';
   numValues?: Float64Array | Int32Array | Uint32Array;
   boolValues?: Uint8Array | readonly (boolean | null | undefined)[];
   textArray?: readonly (string | null | undefined)[];
@@ -750,6 +785,14 @@ function normalizeColumn(col: DenseColumnInput, index: number): NormalizedColumn
         throw new TypeError(`${label}: 'boolean' values must be Uint8Array or boolean[]`);
       }
       validateValidityBitmap(col.validity, vals.length, label);
+      if (Array.isArray(vals)) {
+        for (let i = 0; i < vals.length; i++) {
+          const value = vals[i];
+          if (isValidityBitSet(col.validity, i) && value != null && typeof value !== 'boolean') {
+            throw new TypeError(`${label} row ${i}: expected boolean or null`);
+          }
+        }
+      }
       return { name, label, length: vals.length, kind: 'boolean', boolValues: vals, validity: col.validity };
     }
     case 'text': {
@@ -769,6 +812,7 @@ function normalizeColumn(col: DenseColumnInput, index: number): NormalizedColumn
     }
     case 'date':
     case 'datetime':
+    case 'time':
     case 'duration': {
       const vals = col.values;
       if (!(vals instanceof Float64Array)) {
@@ -959,6 +1003,13 @@ export function executeSetColumns(
             throw new TypeError(`${col.label} row ${r}: expected string or null`);
           }
         }
+      } else if (col.textPacked) {
+        // Each offset must delimit a complete UTF-8 string, even across chunk boundaries.
+        const decoder = new TextDecoder('utf-8', { fatal: true });
+        const { bytes, offsets } = col.textPacked;
+        for (let r = 0; r < nrows; r++) {
+          decoder.decode(bytes.subarray(offsets[r], offsets[r + 1]));
+        }
       } else if (col.kind === 'mixed' && col.mixedValues) {
         const vals = col.mixedValues;
         for (let r = 0; r < nrows; r++) {
@@ -968,15 +1019,11 @@ export function executeSetColumns(
     }
   }
 
-  let combined = emptyWriteRangeReport();
   const dataStartRow = headerNames !== null ? startRow + 1 : startRow;
 
-  let r0 = 0;
-  while (r0 < nrows) {
+  return writeChunks(nrows, rowsPerChunk, (r0, chunkRows) => {
     const includeHeader = headerNames !== null && r0 === 0;
     const headerRows = includeHeader ? 1 : 0;
-    const maxDataRows = includeHeader ? firstChunkMaxDataRows : rowsPerChunk;
-    const chunkRows = Math.min(maxDataRows, nrows - r0);
     const blockRows = chunkRows + headerRows;
     const total = blockRows * ncols;
     const tags = new Uint8Array(total);
@@ -1102,9 +1149,10 @@ export function executeSetColumns(
           break;
         }
         case 'date':
-        case 'datetime': {
+        case 'datetime':
+        case 'time': {
           const vals = col.numValues!;
-          const wireTag = col.kind === 'date' ? CellTag.Date : CellTag.DateTime;
+          const wireTag = { date: CellTag.Date, datetime: CellTag.DateTime, time: CellTag.Time }[col.kind];
           for (let i = 0; i < chunkRows; i++) {
             const srcIdx = r0 + i;
             if (!isValidityBitSet(validity, srcIdx)) {
@@ -1173,7 +1221,7 @@ export function executeSetColumns(
     void builderColumns;
     const { bytes, offsets } = arena.finish();
     const blockStartRow = includeHeader ? startRow : dataStartRow + r0;
-    const report = target._setPackedBlock(
+    return target._setPackedBlock(
       PACKED_MODE_DENSE_COL_MAJOR,
       blockStartRow,
       startCol,
@@ -1186,11 +1234,7 @@ export function executeSetColumns(
       EMPTY_U32,
       EMPTY_U32,
     );
-    combined = mergeWriteRangeReports(combined, report);
-    r0 += chunkRows;
-  }
-
-  return combined;
+  }, firstChunkMaxDataRows);
 }
 
 export function isSparseCellBlockInput(cells: SetCellsInput): cells is SparseCellBlockInput {
@@ -1282,6 +1326,35 @@ export function resolveSparseBlockBuffers(block: SparseCellBlockInput): {
   };
 }
 
+function readSparseEntry(entry: SparseCellTuple | SparseCellObject, index: number): SparseCellTuple {
+  let tuple: SparseCellTuple;
+  if (Array.isArray(entry) && entry.length >= 3) {
+    tuple = entry as unknown as SparseCellTuple;
+  } else if (entry && typeof entry === 'object' && 'row' in entry && 'col' in entry) {
+    tuple = [entry.row, entry.col, entry.value];
+  } else {
+    throw new TypeError(`setCells entry ${index}: expected [row, col, value] tuple or { row, col, value } object`);
+  }
+  validateCoord(tuple[0], tuple[1], 'setCells');
+  return tuple;
+}
+
+// Single chunks are validated by the engine before mutation. For multiple chunks,
+// check all coordinates and raw payloads before sending any part of the block.
+function validateSparsePayload(rows: Uint32Array, cols: Uint32Array, tags: Uint8Array, numbers: Float64Array, offsets: Uint32Array): void {
+  for (let i = 0; i < rows.length; i++) {
+    validateCoord(rows[i], cols[i], 'setCells');
+    const tag = tags[i];
+    const value = numbers[i];
+    if (tag > CellTag.Time ||
+        (tag === CellTag.Boolean && value !== 0 && value !== 1) ||
+        (tag === CellTag.Text && !(Number.isInteger(value) && value >= 0 && value < offsets.length - 1)) ||
+        (tag === CellTag.Error && !(Number.isInteger(value) && value >= 1 && value <= ExcelErrorCode.Cancelled))) {
+      throw new TypeError(`setCells: invalid wire tag ${tag} or payload ${value} at index ${i}`);
+    }
+  }
+}
+
 /**
  * Execute `sheet.setCells(cells)` supporting `[row, col, value][]`, `{ row, col, value }[]`,
  * and typed columnar `SparseCellBlockInput` (`rows`, `cols`, `tags`/`kinds`, `numbers`, `texts`/`strings`/`textBytes`+`textOffsets`).
@@ -1312,10 +1385,10 @@ export function executeSetCells(
         cols,
       );
     }
-    let combined = emptyWriteRangeReport();
-    for (let i0 = 0; i0 < n; i0 += MAX_CELLS_PER_WASM_CALL) {
-      const i1 = Math.min(i0 + MAX_CELLS_PER_WASM_CALL, n);
-      const report = target._setPackedBlock(
+    validateSparsePayload(rows, cols, tags, numbers, textOffsets);
+    return writeChunks(n, MAX_CELLS_PER_WASM_CALL, (i0, count) => {
+      const i1 = i0 + count;
+      return target._setPackedBlock(
         PACKED_MODE_SPARSE,
         0,
         0,
@@ -1328,9 +1401,7 @@ export function executeSetCells(
         rows.subarray(i0, i1),
         cols.subarray(i0, i1),
       );
-      combined = mergeWriteRangeReports(combined, report);
-    }
-    return combined;
+    });
   }
 
   if (!Array.isArray(cells)) {
@@ -1344,9 +1415,13 @@ export function executeSetCells(
   }
 
   const resolvedDateSystem = resolveTargetDateSystem(target, dateSystem);
-  let combined = emptyWriteRangeReport();
-  for (let i0 = 0; i0 < n; i0 += MAX_CELLS_PER_WASM_CALL) {
-    const chunkLen = Math.min(MAX_CELLS_PER_WASM_CALL, n - i0);
+  if (n > MAX_CELLS_PER_WASM_CALL) {
+    for (let i = 0; i < n; i++) {
+      const [, , value] = readSparseEntry(cells[i], i);
+      validateScalarValue(value);
+    }
+  }
+  return writeChunks(n, MAX_CELLS_PER_WASM_CALL, (i0, chunkLen) => {
     const rows = new Uint32Array(chunkLen);
     const cols = new Uint32Array(chunkLen);
     const tags = new Uint8Array(chunkLen);
@@ -1354,34 +1429,14 @@ export function executeSetCells(
     const strings = new StringTableBuilder();
 
     for (let j = 0; j < chunkLen; j++) {
-      const entry = cells[i0 + j];
-      let row: number;
-      let col: number;
-      let value: unknown;
-      if (Array.isArray(entry)) {
-        if (entry.length < 3) {
-          throw new TypeError(`setCells entry ${i0 + j}: tuple must have [row, col, value]`);
-        }
-        row = entry[0] as number;
-        col = entry[1] as number;
-        value = entry[2];
-      } else if (entry && typeof entry === 'object' && 'row' in entry && 'col' in entry) {
-        row = (entry as SparseCellObject).row;
-        col = (entry as SparseCellObject).col;
-        value = (entry as SparseCellObject).value;
-      } else {
-        throw new TypeError(
-          `setCells entry ${i0 + j}: expected [row, col, value] tuple or { row, col, value } object`,
-        );
-      }
-      validateCoord(row, col, `setCells[${i0 + j}]`);
+      const [row, col, value] = readSparseEntry(cells[i0 + j], i0 + j);
       rows[j] = row;
       cols[j] = col;
       encodeScalarInto(value, j, tags, numbers, strings, resolvedDateSystem);
     }
 
     const { bytes, offsets } = strings.finish();
-    const report = target._setPackedBlock(
+    return target._setPackedBlock(
       PACKED_MODE_SPARSE,
       0,
       0,
@@ -1394,8 +1449,5 @@ export function executeSetCells(
       rows,
       cols,
     );
-    combined = mergeWriteRangeReports(combined, report);
-  }
-
-  return combined;
+  });
 }
