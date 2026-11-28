@@ -304,6 +304,34 @@ pub struct PyWorkbook {
         std::sync::Arc<std::sync::Mutex<Option<formualizer::eval::engine::CancelToken>>>,
 }
 
+impl PyWorkbook {
+    /// Runs one blocking evaluation under the workbook's cancel flag and
+    /// consumes the flag when it returns (see `cancel()` for the contract).
+    ///
+    /// The flag is deliberately not cleared on entry: a `cancel()` that
+    /// arrives before the evaluation starts must stop it, not be lost. With a
+    /// cooperative recalculation job active the flag belongs to the job and is
+    /// left alone.
+    fn evaluate_under_cancel_flag<T>(
+        &self,
+        wb: &mut formualizer::workbook::Workbook,
+        evaluate: impl FnOnce(
+            &mut formualizer::workbook::Workbook,
+            formualizer::eval::engine::CancelToken,
+        ) -> Result<T, formualizer::workbook::IoError>,
+    ) -> Result<T, formualizer::workbook::IoError> {
+        let result = evaluate(
+            wb,
+            formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
+        );
+        if !wb.has_active_recalc_job() {
+            self.cancel_flag
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+        result
+    }
+}
+
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pymethods)]
 #[pymethods]
 impl PyWorkbook {
@@ -989,8 +1017,17 @@ impl PyWorkbook {
     ) -> PyResult<PyObject> {
         validate_cell_coords(row, col)?;
 
-        let res = py.detach(|| self.write_inner_detached()?.evaluate_cell(sheet, row, col));
-        let v = res.map_err(workbook_error_to_pyerr)?;
+        let res = py.detach(|| {
+            let mut wb = self.write_inner_detached()?;
+            self.evaluate_under_cancel_flag(&mut wb, |wb, token| {
+                wb.evaluate_cells_cancellable(&[(sheet, row, col)], token)
+            })
+        });
+        let v = res
+            .map_err(workbook_error_to_pyerr)?
+            .into_iter()
+            .next()
+            .unwrap_or(formualizer::common::LiteralValue::Empty);
         literal_to_py(py, &v)
     }
 
@@ -1190,13 +1227,7 @@ impl PyWorkbook {
     pub fn evaluate_all(&self, py: Python<'_>) -> PyResult<()> {
         py.detach(|| {
             let mut wb = self.write_inner_detached()?;
-            if !wb.has_active_recalc_job() {
-                self.cancel_flag
-                    .store(false, std::sync::atomic::Ordering::SeqCst);
-            }
-            wb.evaluate_all_cancellable(formualizer::eval::engine::CancelToken::from_flag(
-                self.cancel_flag.clone(),
-            ))
+            self.evaluate_under_cancel_flag(&mut wb, |wb, token| wb.evaluate_all_cancellable(token))
         })
         .map_err(workbook_error_to_pyerr)?;
         Ok(())
@@ -1255,14 +1286,9 @@ impl PyWorkbook {
         let results = py
             .detach(|| {
                 let mut wb = self.write_inner_detached()?;
-                if !wb.has_active_recalc_job() {
-                    self.cancel_flag
-                        .store(false, std::sync::atomic::Ordering::SeqCst);
-                }
-                wb.evaluate_cells_cancellable(
-                    &refs,
-                    formualizer::eval::engine::CancelToken::from_flag(self.cancel_flag.clone()),
-                )
+                self.evaluate_under_cancel_flag(&mut wb, |wb, token| {
+                    wb.evaluate_cells_cancellable(&refs, token)
+                })
             })
             .map_err(workbook_error_to_pyerr)?;
 
@@ -1301,6 +1327,45 @@ impl PyWorkbook {
         Ok(eval_plan_to_py(plan))
     }
 
+    /// Request cancellation of an evaluation on this workbook.
+    ///
+    /// Safe to call from any thread and from inside a custom-function
+    /// callback (it only sets a flag; it never takes the workbook lock).
+    ///
+    /// Contract
+    /// --------
+    /// A cancel request stops exactly one blocking evaluation
+    /// (`evaluate_all`, `evaluate_cell`, `evaluate_cells`):
+    ///
+    /// - If one is running, it stops at its next checkpoint (between formula
+    ///   cells, and inside long-running functions) and raises
+    ///   `ExcelEvaluationError` with `kind == "Cancelled"`. Cells that had not
+    ///   finished are left dirty: they keep their previous values and are
+    ///   recomputed by the next evaluation.
+    /// - If none is running, the request stays pending and the *next* blocking
+    ///   evaluation raises the same error without computing anything. A
+    ///   request is therefore never lost to a race with the start of an
+    ///   evaluation. `reset_cancel()` withdraws a pending request.
+    ///
+    /// Either way the request is consumed when that evaluation returns, so
+    /// the evaluation after it runs normally. An evaluation that finishes
+    /// before it observes a late request returns normally and still consumes
+    /// it.
+    ///
+    /// Cooperative recalculation (`begin_recalc`, `recalc`, `evaluate_async`)
+    /// has its own handle: `cancel()` also stops the step that is running,
+    /// but starting a job discards a pending request; use `RecalcJob.cancel()`
+    /// or the step's `CancelToken` there.
+    ///
+    /// Example:
+    /// ```python
+    ///     wb.cancel()
+    ///     try:
+    ///         wb.evaluate_all()
+    ///     except fz.ExcelEvaluationError as e:
+    ///         assert e.kind == "Cancelled"
+    ///     wb.evaluate_all()  # the request was consumed; this one runs
+    /// ```
     pub fn cancel(&self) {
         self.cancel_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -1309,6 +1374,9 @@ impl PyWorkbook {
         }
     }
 
+    /// Withdraw a pending `cancel()` request, so the next evaluation runs.
+    ///
+    /// Has no effect on an evaluation that has already observed the request.
     pub fn reset_cancel(&self) {
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);

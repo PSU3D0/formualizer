@@ -192,6 +192,17 @@ thread_local! {
 }
 
 impl<'a> CalcValue<'a> {
+    /// Collapses the value to a [`LiteralValue`], copying a multi-cell range
+    /// into an array.
+    ///
+    /// The conversion is infallible by signature, so a copy that cannot
+    /// complete yields an error *value* rather than a partial array:
+    /// `#NUM!` when the range exceeds the materialisation budget, and
+    /// `#CANCELLED` when the range's cancellation token fires during the
+    /// copy (polled before the first cell and every 4,096 cells). Neither is
+    /// silently dropped: an error value propagates through the calling
+    /// function like any other, and the engine never commits a result
+    /// computed across a live cancellation, deadline or work-budget stop.
     pub fn into_literal(self) -> LiteralValue {
         match self {
             CalcValue::Scalar(s) | CalcValue::AnnotatedScalar(s, _) => s,
@@ -205,7 +216,12 @@ impl<'a> CalcValue<'a> {
                     LiteralValue::Error(error)
                 } else {
                     let mut data = Vec::with_capacity(rows);
+                    let mut since_poll = RangeView::WALK_POLL_CELLS;
                     for row_idx in 0..rows {
+                        if let Err(cancelled) = rv.poll_walk(&mut since_poll) {
+                            return LiteralValue::Error(cancelled);
+                        }
+                        since_poll += cols.max(1);
                         let mut row = Vec::with_capacity(cols);
                         for col_idx in 0..cols {
                             row.push(rv.get_cell(row_idx, col_idx));

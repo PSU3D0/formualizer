@@ -223,8 +223,7 @@ class TestCompoundActions:
 class TestCancel:
     """Tests for cooperative cancellation."""
 
-    # In-flight cancellation needs the separate #417 contract; calling cancel()
-    # synchronously before evaluate_all() does not test cancellation during work.
+    # The cancellation contract itself is tested in test_cancel_contract.py.
 
     def test_cancel_then_reset(self):
         wb = fz.Workbook()

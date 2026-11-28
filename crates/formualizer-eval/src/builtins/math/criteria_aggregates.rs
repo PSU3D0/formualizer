@@ -316,10 +316,19 @@ fn eval_if_family<'a, 'b>(
     let use_equality_counts =
         !multi && agg_type == AggregationType::Count && rows * cols >= EQUALITY_COUNTS_MIN_ELEMENTS;
     let mut equality_counts: Option<Option<EqualityCounts>> = None;
+    // One aggregate per criteria element is `elements x range` work in a
+    // single call: stop between elements on cancellation, the deadline or the
+    // work budget, charging each element the cells its pass reads.
+    let token = ctx.cancellation_token();
+    let pass_cost = args[0].range_view().map_or(1, |view| {
+        let (rows, cols) = view.dims();
+        (rows as u64).saturating_mul(cols as u64).max(1)
+    });
     let mut out = Vec::with_capacity(rows);
     for r in 0..rows {
         let mut out_row = Vec::with_capacity(cols);
         for c in 0..cols {
+            crate::engine::cancel::checkpoint(token.as_ref(), pass_cost)?;
             let preds: Vec<_> = values
                 .iter()
                 .zip(&shapes)

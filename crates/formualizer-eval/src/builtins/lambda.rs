@@ -29,28 +29,39 @@ fn local_name_from_ast(node: &ASTNode) -> Result<String, ExcelError> {
 ///
 /// The value carried is byte-for-byte what it was before the reference was
 /// preserved, so only the by-ref argument path sees any difference.
-fn binding_from_calc_value(cv: CalcValue<'_>, reference: Option<ReferenceType>) -> LocalBinding {
+///
+/// A range is copied into an array value, so it is held to the same
+/// `materialized_array_cells` budget as any other materialisation: a range
+/// over it binds `#NUM!` (which only surfaces if the name is used), and the
+/// copy stops with `Err(Cancelled)` when the request is cancelled or out of
+/// time.
+fn binding_from_calc_value(
+    cv: CalcValue<'_>,
+    reference: Option<ReferenceType>,
+) -> Result<LocalBinding, ExcelError> {
     let with_reference = |value: LiteralValue| match reference {
         Some(reference) => LocalBinding::ValueWithReference { value, reference },
         None => LocalBinding::Value(value),
     };
-    match cv {
+    Ok(match cv {
         CalcValue::Scalar(v) | CalcValue::AnnotatedScalar(v, _) => with_reference(v),
         CalcValue::Range(rv) => {
             let (rows, cols) = rv.dims();
             if rows == 1 && cols == 1 {
                 with_reference(rv.get_cell(0, 0))
+            } else if let Some(error) = rv.materialization_error() {
+                with_reference(LiteralValue::Error(error))
             } else {
                 let mut data = Vec::with_capacity(rows);
-                let _ = rv.for_each_row(&mut |row| {
+                rv.for_each_row(&mut |row| {
                     data.push(row.to_vec());
                     Ok(())
-                });
+                })?;
                 with_reference(LiteralValue::Array(data))
             }
         }
         CalcValue::Callable(c) => LocalBinding::Callable(c),
-    }
+    })
 }
 
 #[derive(Debug)]
@@ -190,7 +201,7 @@ impl Function for LetFn {
             }
             let bound_reference = args[pair_idx + 1].bound_reference_in_env(&env);
             let bound = args[pair_idx + 1].value_with_env(env.clone())?;
-            env = env.with_binding(&name, binding_from_calc_value(bound, bound_reference));
+            env = env.with_binding(&name, binding_from_calc_value(bound, bound_reference)?);
         }
 
         args[args.len() - 1].value_with_env(env)

@@ -250,9 +250,12 @@ impl Function for XLookupFn {
         // in Excel: one lookup per element, each giving the first cell of its
         // return row or column (`XLOOKUP(D1:D6, H1:H3, I1:J3)` is a column).
         match args[0].value()?.into_literal() {
-            LiteralValue::Array(needles) => lift_lookup_values(ctx, needles, |needle| {
-                XLookupFn::lookup_one(args, ctx, needle)
-            }),
+            LiteralValue::Array(needles) => {
+                let cost = super::lookup_utils::lookup_cost(&args[1]);
+                lift_lookup_values(ctx, needles, cost, |needle| {
+                    XLookupFn::lookup_one(args, ctx, needle)
+                })
+            }
             lookup_value => XLookupFn::lookup_one(args, ctx, lookup_value),
         }
     }
@@ -265,6 +268,7 @@ impl Function for XLookupFn {
 fn lift_lookup_values<'b>(
     ctx: &dyn FunctionContext<'b>,
     needles: Vec<Vec<LiteralValue>>,
+    lookup_cost: u64,
     mut one: impl FnMut(LiteralValue) -> Result<crate::traits::CalcValue<'b>, ExcelError>,
 ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
     let (rows, cols) = (needles.len(), needles.first().map_or(0, |r| r.len()));
@@ -275,10 +279,14 @@ fn lift_lookup_values<'b>(
     ) {
         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
     }
+    // One lookup per element is `elements x table` work in a single call:
+    // stop between elements on cancellation, the deadline or the work budget.
+    let token = ctx.cancellation_token();
     let mut out = Vec::with_capacity(rows);
     for row in needles {
         let mut out_row = Vec::with_capacity(row.len());
         for needle in row {
+            crate::engine::cancel::checkpoint(token.as_ref(), lookup_cost)?;
             out_row.push(match one(needle) {
                 Ok(value) => match value.into_literal() {
                     LiteralValue::Array(found) => found
@@ -714,9 +722,12 @@ impl Function for XMatchFn {
         }
         // An array of lookup values gives an array of positions, as in Excel.
         match args[0].value()?.into_literal() {
-            LiteralValue::Array(needles) => lift_lookup_values(ctx, needles, |needle| {
-                XMatchFn::lookup_one(args, ctx, needle)
-            }),
+            LiteralValue::Array(needles) => {
+                let cost = super::lookup_utils::lookup_cost(&args[1]);
+                lift_lookup_values(ctx, needles, cost, |needle| {
+                    XMatchFn::lookup_one(args, ctx, needle)
+                })
+            }
             lookup_value => XMatchFn::lookup_one(args, ctx, lookup_value),
         }
     }

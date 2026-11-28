@@ -34,14 +34,28 @@ pub(crate) fn reference_extent(reference: &ReferenceType) -> Option<(usize, usiz
     }
 }
 
+/// The work one lookup into `table` is charged (see
+/// [`lift_lookup_values`]): the cells of the table it reads. An argument
+/// that is not a range costs one unit.
+pub(crate) fn lookup_cost(table: &crate::traits::ArgumentHandle<'_, '_>) -> u64 {
+    table.range_view().map_or(1, |view| {
+        let (rows, cols) = view.dims();
+        (rows as u64).saturating_mul(cols as u64).max(1)
+    })
+}
+
 /// A lookup whose lookup value is an array (or a multi-cell range): one
 /// lookup per element, as in Excel, giving an array of the same shape. An
 /// element whose own lookup returns several cells contributes its first
 /// cell. A single lookup value never comes here, so the scalar path (and
 /// the family memo that reuses its results) is unchanged.
+///
+/// `lookup_cost` is the work one element's lookup is charged against the
+/// request's `max_work_units` (see [`lookup_cost`]).
 pub(crate) fn lift_lookup_values<'b>(
     ctx: &dyn crate::traits::FunctionContext<'b>,
     needles: Vec<Vec<LiteralValue>>,
+    lookup_cost: u64,
     mut one: impl FnMut(LiteralValue) -> Result<crate::traits::CalcValue<'b>, ExcelError>,
 ) -> Result<crate::traits::CalcValue<'b>, ExcelError> {
     let (rows, cols) = (needles.len(), needles.first().map_or(0, |r| r.len()));
@@ -52,10 +66,14 @@ pub(crate) fn lift_lookup_values<'b>(
     ) {
         return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(error)));
     }
+    // One lookup per element is `elements x table` work in a single call:
+    // stop between elements on cancellation, the deadline or the work budget.
+    let token = ctx.cancellation_token();
     let mut out = Vec::with_capacity(rows);
     for row in needles {
         let mut out_row = Vec::with_capacity(row.len());
         for needle in row {
+            crate::engine::cancel::checkpoint(token.as_ref(), lookup_cost)?;
             out_row.push(match one(needle) {
                 Ok(value) => match value.into_literal() {
                     LiteralValue::Array(found) => found

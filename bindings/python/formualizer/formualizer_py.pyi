@@ -2053,8 +2053,54 @@ class Workbook:
         """
     def evaluate_cells(self, targets: list) -> typing.Any: ...
     def get_eval_plan(self, targets: list, *, build_graph_if_needed: builtins.bool = True) -> EvaluationPlan: ...
-    def cancel(self) -> None: ...
-    def reset_cancel(self) -> None: ...
+    def cancel(self) -> None:
+        r"""
+        Request cancellation of an evaluation on this workbook.
+        
+        Safe to call from any thread and from inside a custom-function
+        callback (it only sets a flag; it never takes the workbook lock).
+        
+        Contract
+        --------
+        A cancel request stops exactly one blocking evaluation
+        (`evaluate_all`, `evaluate_cell`, `evaluate_cells`):
+        
+        - If one is running, it stops at its next checkpoint (between formula
+          cells, and inside long-running functions) and raises
+          `ExcelEvaluationError` with `kind == "Cancelled"`. Cells that had not
+          finished are left dirty: they keep their previous values and are
+          recomputed by the next evaluation.
+        - If none is running, the request stays pending and the *next* blocking
+          evaluation raises the same error without computing anything. A
+          request is therefore never lost to a race with the start of an
+          evaluation. `reset_cancel()` withdraws a pending request.
+        
+        Either way the request is consumed when that evaluation returns, so
+        the evaluation after it runs normally. An evaluation that finishes
+        before it observes a late request returns normally and still consumes
+        it.
+        
+        Cooperative recalculation (`begin_recalc`, `recalc`, `evaluate_async`)
+        has its own handle: `cancel()` also stops the step that is running,
+        but starting a job discards a pending request; use `RecalcJob.cancel()`
+        or the step's `CancelToken` there.
+        
+        Example:
+        ```python
+            wb.cancel()
+            try:
+                wb.evaluate_all()
+            except fz.ExcelEvaluationError as e:
+                assert e.kind == "Cancelled"
+            wb.evaluate_all()  # the request was consumed; this one runs
+        ```
+        """
+    def reset_cancel(self) -> None:
+        r"""
+        Withdraw a pending `cancel()` request, so the next evaluation runs.
+        
+        Has no effect on an evaluation that has already observed the request.
+        """
     def set_temporal_egress(self, policy: builtins.str) -> None:
         r"""
         Choose temporal output as native Python datetime values (default) or floats.

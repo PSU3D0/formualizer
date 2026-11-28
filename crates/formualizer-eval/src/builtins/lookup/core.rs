@@ -248,7 +248,8 @@ impl Function for MatchFn {
         // in Excel: one MATCH per element, giving an array of results.
         match args[0].value()?.into_literal() {
             LiteralValue::Array(needles) => {
-                super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
+                let cost = super::lookup_utils::lookup_cost(&args[1]);
+                super::lookup_utils::lift_lookup_values(ctx, needles, cost, |needle| {
                     MatchFn::lookup_one(args, ctx, needle)
                 })
             }
@@ -576,7 +577,8 @@ impl Function for VLookupFn {
         // in Excel: one VLOOKUP per element, giving an array of results.
         match args[0].value()?.into_literal() {
             LiteralValue::Array(needles) => {
-                super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
+                let cost = super::lookup_utils::lookup_cost(&args[1]);
+                super::lookup_utils::lift_lookup_values(ctx, needles, cost, |needle| {
                     VLookupFn::lookup_one(args, ctx, needle)
                 })
             }
@@ -856,7 +858,8 @@ impl Function for HLookupFn {
         // in Excel: one HLOOKUP per element, giving an array of results.
         match args[0].value()?.into_literal() {
             LiteralValue::Array(needles) => {
-                super::lookup_utils::lift_lookup_values(ctx, needles, |needle| {
+                let cost = super::lookup_utils::lookup_cost(&args[1]);
+                super::lookup_utils::lift_lookup_values(ctx, needles, cost, |needle| {
                     HLookupFn::lookup_one(args, ctx, needle)
                 })
             }

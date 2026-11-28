@@ -182,6 +182,15 @@ pub struct ScratchResourceBudget {
 /// Default for [`ScratchResourceBudget::materialized_array_cells`].
 pub(crate) const DEFAULT_MATERIALIZED_ARRAY_CELLS: u64 = 1 << 24;
 
+/// What one column of a materialised array costs, in cells, whatever its
+/// height. With the default budget this caps a one-row array at 131,072
+/// columns.
+pub(crate) const MATERIALIZED_COLUMN_OVERHEAD_CELLS: u64 = 128;
+
+/// Arrays no wider than a sheet (16,384 columns) are charged by cell count
+/// alone.
+pub(crate) const MATERIALIZED_UNCHARGED_COLS: usize = 16_384;
+
 /// `#NUM!` when a `rows x cols` dense array would exceed `budget` cells.
 /// Overflowing products fail closed. One multiply and one compare: call it
 /// once per materialisation, before allocating, never per cell.
@@ -191,7 +200,21 @@ pub(crate) fn materialized_cells_exceed(
     cols: usize,
     budget: u64,
 ) -> Option<ExcelError> {
-    match (rows as u64).checked_mul(cols as u64) {
+    if rows == 0 || cols == 0 {
+        return None;
+    }
+    // A dense array is stored by column, and a column costs about as much as
+    // `MATERIALIZED_COLUMN_OVERHEAD_CELLS` cells however short it is. Up to
+    // the grid's width that overhead is bounded (tens of MB); an array wider
+    // than the grid, which can only be an intermediate, is charged for at
+    // least that many rows per column (#621: a 1 x 1,048,576 array is 1M
+    // cells but gigabytes of column lanes).
+    let charged_rows = if cols > MATERIALIZED_UNCHARGED_COLS {
+        (rows as u64).max(MATERIALIZED_COLUMN_OVERHEAD_CELLS)
+    } else {
+        rows as u64
+    };
+    match charged_rows.checked_mul(cols as u64) {
         Some(cells) if cells <= budget => None,
         _ => Some(materialization_budget_error()),
     }
@@ -790,6 +813,18 @@ impl ResourceLedger {
         }
         self.work_charged = next;
         Ok(())
+    }
+
+    /// Time left before the deadline and the configured limit, if one is set.
+    pub(crate) fn deadline_remaining(&self) -> Option<(Duration, Duration)> {
+        let limit = self.budgets.deadline.max_elapsed?;
+        let elapsed = (self.elapsed)().saturating_add(self.active_elapsed_before_step);
+        Some((limit.saturating_sub(elapsed), limit))
+    }
+
+    /// `(work charged so far, work limit)`.
+    pub(crate) fn work_state(&self) -> (u64, Option<u64>) {
+        (self.work_charged, self.budgets.work.max_work_units)
     }
 
     pub fn checkpoint_deadline(&mut self) -> Result<(), ResourceLedgerError> {

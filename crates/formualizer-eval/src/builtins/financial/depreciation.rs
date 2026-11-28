@@ -348,6 +348,9 @@ impl Function for DbFn {
     }
 }
 
+/// DDB periods computed by iterating; longer schedules use the closed form.
+const DDB_LOOP_PERIODS: f64 = (1u32 << 20) as f64;
+
 /// DB periods computed by iterating; later periods use the closed form.
 const DB_LOOP_PERIODS: i32 = 1 << 20;
 
@@ -453,25 +456,47 @@ impl Function for DdbFn {
         }
 
         // Truncate period to integer, matching Excel and the sibling DB function.
-        let period_int = period.trunc() as i32;
+        // Kept as a float: a period beyond `i32::MAX` is still that period.
+        let period_int = period.trunc();
 
-        if period_int < 1 || period_int as f64 > life {
+        if period_int < 1.0 || period_int > life {
             return Ok(CalcValue::Scalar(
                 LiteralValue::Error(ExcelError::new_num()),
             ));
         }
 
         let rate = factor / life;
+
+        // A long schedule is computed in closed form rather than one iteration
+        // per period (`=DDB(1000,0,1E10,1E10)` would otherwise loop billions
+        // of times): before the book value reaches salvage it shrinks by
+        // `(1 - rate)` per period. Shorter schedules keep the exact loop.
+        if period_int > DDB_LOOP_PERIODS && rate < 1.0 {
+            let value = if cost <= salvage {
+                cost
+            } else {
+                (cost * ((period_int - 1.0) * (-rate).ln_1p()).exp()).max(salvage)
+            };
+            let depreciation = (value * rate).min((value - salvage).max(0.0));
+            return Ok(CalcValue::Scalar(LiteralValue::Number(depreciation)));
+        }
+
         let mut value = cost;
         let mut depreciation = 0.0;
 
-        for _p in 1..=period_int {
+        // `rate >= 1` takes the value to salvage in the first period and
+        // depreciates nothing after it, so the loop can stop there.
+        let periods = period_int.min(DDB_LOOP_PERIODS) as u32;
+        for _p in 1..=periods {
             depreciation = value * rate;
             // Don't depreciate below salvage value
             if value - depreciation < salvage {
                 depreciation = (value - salvage).max(0.0);
             }
             value -= depreciation;
+        }
+        if period_int > DDB_LOOP_PERIODS {
+            depreciation = 0.0;
         }
 
         Ok(CalcValue::Scalar(LiteralValue::Number(depreciation)))
