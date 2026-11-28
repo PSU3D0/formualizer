@@ -2099,7 +2099,9 @@ class Workbook:
         r"""
         Withdraw a pending `cancel()` request, so the next evaluation runs.
         
-        Has no effect on an evaluation that has already observed the request.
+        This is for a request no evaluation has started on. Calling it from
+        another thread while an evaluation is running races with that
+        evaluation: it may or may not still be stopped.
         """
     def set_temporal_egress(self, policy: builtins.str) -> None:
         r"""

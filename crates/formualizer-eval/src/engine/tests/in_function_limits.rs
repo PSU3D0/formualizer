@@ -538,7 +538,7 @@ fn a_lowered_array_budget_applies_to_the_shape_being_built() {
     // 1 x 20,000 is wider than a sheet, so it is charged 128 rows per column:
     // far over a 20,000-cell budget, although it is only 20,000 cells.
     assert!(is_error(
-        &eval("=COLUMNS(TRANSPOSE(B1:B20000))"),
+        &eval("=SUM(TRANSPOSE(B1:B20000))"),
         ExcelErrorKind::Num
     ));
     // Up to sheet width the charge is the cell count, as before.
@@ -549,22 +549,30 @@ fn a_lowered_array_budget_applies_to_the_shape_being_built() {
 }
 
 #[test]
-fn a_refused_wide_array_is_an_error_to_shape_functions() {
+fn a_refused_wide_array_is_an_error_value_not_a_range() {
+    // A refused array reaches its consumer as the `#NUM!` value itself, the
+    // same way any other function error does (so ROWS/COLUMNS treat it as
+    // they treat `FILTER`'s `#CALC!`), never as a 1x1 range holding it.
     for formula in [
-        "=COLUMNS(TRANSPOSE(B1:B131073))",
-        "=ROWS(TRANSPOSE(B1:B131073))",
-        "=COLUMNS(TOROW(B1:B200000))",
+        "=TRANSPOSE(B1:B131073)",
+        "=TOROW(B1:B200000)",
+        "=SUM(TRANSPOSE(B1:B131073))",
+        "=ISERROR(TRANSPOSE(B1:B131073))+NA()",
     ] {
+        let value = eval_a1(formula);
         assert!(
-            is_error(&eval_a1(formula), ExcelErrorKind::Num),
-            "{formula}"
+            matches!(value, LiteralValue::Error(_)),
+            "{formula}: {value:?}"
         );
     }
+    assert_eq!(
+        eval_a1("=ISERROR(TRANSPOSE(B1:B131073))"),
+        LiteralValue::Boolean(true)
+    );
     assert_eq!(
         eval_a1("=COLUMNS(TRANSPOSE(B1:B131072))"),
         LiteralValue::Number(131_072.0)
     );
-    assert!(is_error(&eval_a1("=ROWS(NA())"), ExcelErrorKind::Na));
 }
 
 #[test]

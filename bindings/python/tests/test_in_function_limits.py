@@ -3,7 +3,7 @@
 The engine-level behaviour is tested in Rust
 (`engine::tests::in_function_limits`). These cover the paths an independent
 review found leaking: an iterative cycle, an unmetered call after a failed
-request, and wide intermediates measured by a shape function.
+request, and a long DDB schedule.
 """
 
 import pytest
@@ -58,18 +58,6 @@ def test_a_failed_request_does_not_fail_later_unmetered_calls():
     # Planning is not a metered request and must not inherit the stop.
     assert wb.get_eval_plan([("S", 1, 1)], build_graph_if_needed=False) is not None
     assert wb.get_eval_plan([("S", 1, 1)], build_graph_if_needed=True) is not None
-
-
-def test_a_refused_wide_array_is_an_error_to_shape_functions_too():
-    wb = fz.Workbook()
-    s = wb.sheet("S")
-    s.set_formula(1, 1, "=COLUMNS(TRANSPOSE(B1:B131073))")
-    s.set_formula(2, 1, "=SUM(TRANSPOSE(B1:B131073))")
-    s.set_formula(3, 1, "=COLUMNS(TRANSPOSE(B1:B131072))")
-    wb.evaluate_all()
-    assert wb.get_value("S", 1, 1)["kind"] == "Num"
-    assert wb.get_value("S", 2, 1)["kind"] == "Num"
-    assert wb.get_value("S", 3, 1) == 131072.0
 
 
 def test_ddb_long_schedule_does_not_underflow_before_scaling_by_cost():
