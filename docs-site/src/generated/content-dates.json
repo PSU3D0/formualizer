@@ -52,8 +52,8 @@
     "sha256": "5060cbb2c0a8df05e7f62df1240e1ce5701571915c4e8a5e961af277694e06a3"
   },
   "docs-site/content/docs/guides/large-workbook-performance.mdx": {
-    "date": "2026-11-04",
-    "sha256": "1be394ea609523cca74bf8aa6a88175619e14f0b9723a42c829c057eb283bada"
+    "date": "2026-11-28",
+    "sha256": "8f5256814969000f391c6eab7a8a07ddfc0d76d3f04d3cd6809a04f8ac7ee8e9"
   },
   "docs-site/content/docs/guides/let-lambda-and-callables.mdx": {
     "date": "2026-02-23",
@@ -68,8 +68,8 @@
     "sha256": "a1c81f4e77b06b435252911dc5b8d1e6042a2cd0f5d25931509b64e63d6e1fc1"
   },
   "docs-site/content/docs/guides/workbook-edits-and-batching.mdx": {
-    "date": "2026-02-23",
-    "sha256": "bc20a9834dc392c81019ffe39ba48fabd77f6b74b5c9fd32c49236db6a829a15"
+    "date": "2026-11-28",
+    "sha256": "52c2611cb2cc7b1ad9d1f4bb64d3ece8e895b75298ffa2145a359fa1cf1b80e6"
   },
   "docs-site/content/docs/index.mdx": {
     "date": "2026-02-23",
@@ -124,32 +124,32 @@
     "sha256": "6eec1bdb835aab2f543208e7f485800d3a67bc3704b9b00039c89479545d5df5"
   },
   "docs-site/content/docs/quickstarts/first-workbook-in-5-minutes.mdx": {
-    "date": "2026-02-23",
-    "sha256": "c86558980d6805e7ffc980b68ad61879e2c9361e02e71e741df01db0c165c3d7"
+    "date": "2026-11-28",
+    "sha256": "10d703f43eb8956dfb0aaf9a20bece0aa51d929d570ac0df5ffa7dcd3788272e"
   },
   "docs-site/content/docs/quickstarts/index.mdx": {
     "date": "2026-10-04",
     "sha256": "8fe5dec8174839a0eb3d063499f96d07d89da3135d75e95dd9092bede0955863"
   },
   "docs-site/content/docs/quickstarts/js-wasm-quickstart.mdx": {
-    "date": "2026-02-23",
-    "sha256": "ed78242a78cead0d98719bd213c540d840240f3cb4074853543c0899bc746f69"
+    "date": "2026-11-28",
+    "sha256": "1cbe00a5d02ac36ae861be1140e5d7356d07f77969ec1863eb381713d2e41616"
   },
   "docs-site/content/docs/quickstarts/meta.json": {
     "date": "2026-04-16",
     "sha256": "99bf5697bd241ce209384834dc43ba7ddb9396482fca8415b0c46a843dc78427"
   },
   "docs-site/content/docs/quickstarts/pyodide-quickstart.mdx": {
-    "date": "2026-10-24",
-    "sha256": "d1106da4f658de76c025cc73b21fcc3be1341ad0f2e2789eea9fa55d14cdfda4"
+    "date": "2026-11-28",
+    "sha256": "62a36c020713b3634871ab6b7de7258218be306dd7f342baf934ce0da0e022f0"
   },
   "docs-site/content/docs/quickstarts/python-quickstart.mdx": {
-    "date": "2026-09-05",
-    "sha256": "c5182fab84c0069d6cae127e7eba0d2433d27458439c2a9613c01f8aeae814f7"
+    "date": "2026-11-28",
+    "sha256": "4b566abfe04fdd0c6b181dba2113cb2ac7dfa93c7e9873ec72f418ecdfeada0f"
   },
   "docs-site/content/docs/quickstarts/rust-quickstart.mdx": {
-    "date": "2026-02-22",
-    "sha256": "c58b43c3664c958779ca8a967610980b3d8520962202348c805ac512eaf3f3bb"
+    "date": "2026-11-28",
+    "sha256": "dcb2a13fadc98e6a06742d53ea52049a11c0d62e15738c06e28b1ba6dab4463f"
   },
   "docs-site/content/docs/recalc-cli/agent-skill.mdx": {
     "date": "2026-10-03",
@@ -2004,20 +2004,20 @@
     "sha256": "5b8523a94f90753c80908f7358bbdee76374c56ea141c466a7ab079d821491c2"
   },
   "docs-site/content/docs/reference/js-wasm-api-map.mdx": {
-    "date": "2026-11-08",
-    "sha256": "044ff3af6e20eb96a660d53de99ec5d3d9333bba44623ba616e1e1d524e58fc5"
+    "date": "2026-11-28",
+    "sha256": "65084491e6d148285b88daa55b33ea1281a0cb0c426ec7afdbd987626b195ead"
   },
   "docs-site/content/docs/reference/meta.json": {
     "date": "2026-06-10",
     "sha256": "d50f4632f561d7dfb0e6bf9df85f805e6b2a096ed4e622f6fcd8574516625c5c"
   },
   "docs-site/content/docs/reference/python-api-map.mdx": {
-    "date": "2026-11-06",
-    "sha256": "21a1042ac234ff6f7033603ccc5acea24b74fe612a9cc4ee323bae498df9a4d4"
+    "date": "2026-11-28",
+    "sha256": "9d29adefa7e04a93793929bc8831ae686a08e9b200b42744f3bc7184830c6fbd"
   },
   "docs-site/content/docs/reference/rust-api-map.mdx": {
-    "date": "2026-11-04",
-    "sha256": "a3f4ef5fec84d31dc12c772d7ac151d254fc10b7170481f1e36d855a74cf7c21"
+    "date": "2026-11-28",
+    "sha256": "11174a431277600f36a393864b488e5a51e578ec0489cc004da144571ed872c4"
   },
   "docs-site/content/docs/sheetport/index.mdx": {
     "date": "2026-10-14",

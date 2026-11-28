@@ -28,7 +28,7 @@ All three bulk value methods return `WriteRangeReport(start_row, start_col, end_
 
 A pandas DataFrame goes through its Arrow PyCapsule export and requires `pyarrow`. Without it, pandas raises `ImportError` before any cells are written. For a NumPy-backed float column, passing `df["price"].to_numpy()` as a column writes `NaN` as `#NUM!`. Passing the same DataFrame directly lets pandas export missing values as Arrow nulls, which write empty cells.
 
-`Workbook.cancel()` stops one blocking evaluation on that workbook, either the running call or the next `evaluate_all()`, `evaluate_cell()`, or `evaluate_cells()`. That call raises `ExcelEvaluationError` with `kind == "Cancelled"`, preserves the previous values of unfinished cells, and consumes the request. `reset_cancel()` withdraws a pending request.
+`Workbook.cancel()` targets the running or next blocking `evaluate_all()`, `evaluate_cell()`, or `evaluate_cells()` on that workbook. The call consumes the request when it returns, and if it observes cancellation it raises `ExcelEvaluationError` with `kind == "Cancelled"` and keeps the previous values of unfinished cells. Use `reset_cancel()` to withdraw a pending request before evaluation starts.
 
 ## Interruptible recalculation
 

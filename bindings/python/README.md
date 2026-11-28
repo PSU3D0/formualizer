@@ -59,7 +59,7 @@ Runnable, self-contained examples (from this directory, with a compatible native
 
 Run, for example, `python examples/interruptible_viewport_grid.py`. Each script checks its final results; timings and step counts depend on the machine and native build.
 
-`Workbook.cancel()` stops one blocking evaluation on that workbook, either the running call or the next `evaluate_all()`, `evaluate_cell()`, or `evaluate_cells()`. That call raises `ExcelEvaluationError` with `kind == "Cancelled"`, preserves the previous values of unfinished cells, and consumes the request. `reset_cancel()` withdraws a pending request.
+`Workbook.cancel()` targets the running or next blocking `evaluate_all()`, `evaluate_cell()`, or `evaluate_cells()` on that workbook. The call consumes the request when it returns, and if it observes cancellation it raises `ExcelEvaluationError` with `kind == "Cancelled"` and keeps the previous values of unfinished cells. Use `reset_cancel()` to withdraw a pending request before evaluation starts.
 
 ## Command line
 
