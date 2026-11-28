@@ -48,7 +48,8 @@ assert session.read_inputs() == {
 }
 
 yaml_text = (
-    Path(__file__).resolve().parents[3] / "examples/sheetport/loan-calculator.fio.yaml"
+    Path(__file__).resolve().parents[3]
+    / "crates/sheetport-spec/examples/loan-calculator.fio.yaml"
 ).read_text()
 # region yaml
 session = fz.SheetPortSession.from_manifest_yaml(yaml_text, wb)

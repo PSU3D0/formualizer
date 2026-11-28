@@ -83,7 +83,7 @@ jobs:
       - name: Build portable wasm probe artifact
         run: |
           cargo build \
-            --manifest-path tools/wasm-portable-probe/Cargo.toml \
+            --manifest-path tests/wasm-portable-probe/Cargo.toml \
             --target wasm32-unknown-unknown \
             --release
 
@@ -91,7 +91,7 @@ jobs:
         run: |
           python3 scripts/check-wasm-artifact-imports.py \
             portable \
-            tools/wasm-portable-probe/target/wasm32-unknown-unknown/release/formualizer_wasm_portable_probe.wasm
+            tests/wasm-portable-probe/target/wasm32-unknown-unknown/release/formualizer_wasm_portable_probe.wasm
 
       - name: Check wasm-js facade
         run: |

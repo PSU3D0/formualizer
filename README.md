@@ -398,7 +398,7 @@ println!("{payment:?}"); // Some(Number(1266.71...))
 <details>
 <summary>The same manifest as YAML</summary>
 
-<!-- example: examples/sheetport/loan-calculator.fio.yaml -->
+<!-- example: crates/sheetport-spec/examples/loan-calculator.fio.yaml -->
 ```yaml
 spec: fio
 spec_version: "0.3.0"
