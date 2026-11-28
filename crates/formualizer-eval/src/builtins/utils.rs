@@ -502,10 +502,12 @@ pub fn collapse_if_scalar(
     if rows.len() == 1 && rows[0].len() == 1 {
         crate::traits::CalcValue::Scalar(rows[0][0].clone())
     } else {
-        crate::traits::CalcValue::Range(crate::engine::range_view::RangeView::from_owned_rows(
-            rows,
-            date_system,
-        ))
+        // An array too wide to store is the function's error value, not a
+        // 1x1 range a shape function (ROWS, COLUMNS) could measure.
+        match crate::engine::range_view::RangeView::try_from_owned_rows(rows, date_system, None) {
+            Ok(view) => crate::traits::CalcValue::Range(view),
+            Err(error) => crate::traits::CalcValue::Scalar(LiteralValue::Error(error)),
+        }
     }
 }
 

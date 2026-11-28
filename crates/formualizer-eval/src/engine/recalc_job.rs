@@ -500,7 +500,14 @@ impl<R: EvaluationContext> Engine<R> {
                                         stopped = true;
                                         break;
                                     }
-                                    Err(e) => return Err(e),
+                                    Err(e) => {
+                                        // A cycle stopped by the deadline or
+                                        // the work budget is as unfinished as
+                                        // a cancelled one: its tentative
+                                        // iterations are not results.
+                                        self.restore_cancelled_recalc_cycle(vertices);
+                                        return Err(e);
+                                    }
                                 }
                                 Self::note_slow_unit(
                                     &mut longest,

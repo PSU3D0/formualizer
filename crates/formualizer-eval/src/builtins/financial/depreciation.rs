@@ -475,7 +475,12 @@ impl Function for DdbFn {
             let value = if cost <= salvage {
                 cost
             } else {
-                (cost * ((period_int - 1.0) * (-rate).ln_1p()).exp()).max(salvage)
+                // exp(ln(cost) + (p - 1) ln(1 - rate)): taking the logarithm of
+                // the cost first keeps a huge cost from being multiplied by a
+                // decay factor that has already underflowed to zero.
+                (cost.ln() + (period_int - 1.0) * (-rate).ln_1p())
+                    .exp()
+                    .max(salvage)
             };
             let depreciation = (value * rate).min((value - salvage).max(0.0));
             return Ok(CalcValue::Scalar(LiteralValue::Number(depreciation)));

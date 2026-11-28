@@ -199,7 +199,8 @@ impl<'a> CalcValue<'a> {
     /// complete yields an error *value* rather than a partial array:
     /// `#NUM!` when the range exceeds the materialisation budget, and
     /// `#CANCELLED` when the range's cancellation token fires during the
-    /// copy (polled before the first cell and every 4,096 cells). Neither is
+    /// copy (polled before the first row and between rows, every 4,096 cells
+    /// or more; a single cell is a read and has no checkpoint). Neither is
     /// silently dropped: an error value propagates through the calling
     /// function like any other, and the engine never commits a result
     /// computed across a live cancellation, deadline or work-budget stop.

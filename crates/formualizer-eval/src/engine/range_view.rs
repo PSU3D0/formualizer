@@ -2333,8 +2333,9 @@ impl<'a> RangeView<'a> {
 
     /// The polling contract of the cell-by-cell walks ([`Self::for_each_row`],
     /// [`Self::for_each_col`], and the copy in `CalcValue::into_literal`): the
-    /// attached token is polled before the first cell and then at least once
-    /// every [`Self::WALK_POLL_CELLS`] cells. A cancelled walk returns
+    /// attached token is polled before the first cell and then once at least
+    /// [`Self::WALK_POLL_CELLS`] cells have been visited since the last poll
+    /// (row walks and the literal copy poll between rows). A cancelled walk returns
     /// `Err(Cancelled)` without visiting further cells; the visitor has seen
     /// only whole rows (columns) up to that point.
     #[inline]
@@ -2352,9 +2353,10 @@ impl<'a> RangeView<'a> {
 
     /// Visit each row as a borrowed slice (buffered).
     ///
-    /// Polls the attached cancellation token before the first row and then at
-    /// least once every 4,096 cells, between rows; a cancelled walk returns
-    /// `Err(Cancelled)`. An error returned by `f` stops the walk and is
+    /// Polls the attached cancellation token before the first row and then
+    /// between rows, once at least 4,096 cells have been visited since the
+    /// last poll (so at most one row plus 4,096 cells apart); a cancelled walk
+    /// returns `Err(Cancelled)`. An error returned by `f` stops the walk and is
     /// returned unchanged.
     pub fn for_each_row(
         &self,

@@ -142,6 +142,25 @@ def test_cancel_from_another_thread_stops_a_long_running_function():
     assert wb.get_value("S", 1, 1) == 42.0
 
 
+def test_an_empty_target_list_still_observes_a_pending_cancel():
+    wb = chain_workbook()
+    wb.cancel()
+    with pytest.raises(fz.ExcelEvaluationError) as excinfo:
+        wb.evaluate_cells([])
+    assert_cancelled(excinfo)
+    wb.evaluate_all()
+    assert wb.get_value("S", 1, 3) == 21.0
+
+
+def test_a_cancel_aimed_at_a_job_does_not_stop_the_next_evaluation():
+    wb = chain_workbook()
+    job = wb.begin_recalc()
+    wb.cancel()
+    job.cancel()
+    wb.evaluate_all()
+    assert wb.get_value("S", 1, 3) == 21.0
+
+
 def test_cancelling_one_workbook_does_not_affect_another():
     wb1 = chain_workbook()
     wb2 = chain_workbook()

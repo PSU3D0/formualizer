@@ -3805,6 +3805,15 @@ impl Function for TransposeFn {
         if let Some(e) = view.materialization_error() {
             return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
         }
+        // The result is `cols x rows`, and a wide array is charged more than
+        // a tall one of the same cell count: check the shape being built.
+        if let Some(e) = crate::engine::resource_ledger::materialized_cells_exceed(
+            cols,
+            rows,
+            _ctx.materialized_array_cells(),
+        ) {
+            return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(e)));
+        }
         if rows == 0 || cols == 0 {
             return Ok(crate::traits::CalcValue::Range(
                 crate::engine::range_view::RangeView::from_owned_rows(vec![], _ctx.date_system()),

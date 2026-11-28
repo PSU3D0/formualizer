@@ -515,3 +515,109 @@ fn literal_conversion_reports_cancellation_as_an_error_value() {
     let cell = CalcValue::Range(view_with(1, 1, &token)).into_literal();
     assert_eq!(cell, LiteralValue::Number(0.0));
 }
+
+// ---- Review regressions ----
+
+#[test]
+fn a_lowered_array_budget_applies_to_the_shape_being_built() {
+    use crate::engine::ScratchResourceBudget;
+    let budgets = EvaluationBudgets {
+        scratch: ScratchResourceBudget {
+            materialized_array_cells: Some(20_000),
+            ..ScratchResourceBudget::default()
+        },
+        ..EvaluationBudgets::default()
+    };
+    let eval = |formula: &str| {
+        let mut engine = engine_with(budgets.clone(), formula);
+        engine.evaluate_all().unwrap();
+        engine
+            .get_cell_value("Sheet1", 1, 1)
+            .unwrap_or(LiteralValue::Empty)
+    };
+    // 1 x 20,000 is wider than a sheet, so it is charged 128 rows per column:
+    // far over a 20,000-cell budget, although it is only 20,000 cells.
+    assert!(is_error(
+        &eval("=COLUMNS(TRANSPOSE(B1:B20000))"),
+        ExcelErrorKind::Num
+    ));
+    // Up to sheet width the charge is the cell count, as before.
+    assert_eq!(
+        eval("=COLUMNS(TRANSPOSE(B1:B16384))"),
+        LiteralValue::Number(16_384.0)
+    );
+}
+
+#[test]
+fn a_refused_wide_array_is_an_error_to_shape_functions() {
+    for formula in [
+        "=COLUMNS(TRANSPOSE(B1:B131073))",
+        "=ROWS(TRANSPOSE(B1:B131073))",
+        "=COLUMNS(TOROW(B1:B200000))",
+    ] {
+        assert!(
+            is_error(&eval_a1(formula), ExcelErrorKind::Num),
+            "{formula}"
+        );
+    }
+    assert_eq!(
+        eval_a1("=COLUMNS(TRANSPOSE(B1:B131072))"),
+        LiteralValue::Number(131_072.0)
+    );
+    assert!(is_error(&eval_a1("=ROWS(NA())"), ExcelErrorKind::Na));
+}
+
+#[test]
+fn a_formula_name_does_not_cache_a_value_computed_across_a_stop() {
+    use crate::engine::named_range::{NameScope, NamedDefinition};
+    let mut engine = engine_with(work(100), "=Expensive+1");
+    let ast = parse("=IFERROR(SUM(MATCH(SEQUENCE(10),SEQUENCE(100))),987)").unwrap();
+    engine
+        .define_name(
+            "Expensive",
+            NamedDefinition::Formula {
+                ast,
+                dependencies: Vec::new(),
+                range_deps: Vec::new(),
+            },
+            NameScope::Workbook,
+        )
+        .unwrap();
+    let error = engine.evaluate_all().expect_err("work budget");
+    assert_eq!(
+        resource_reason(&error),
+        Some(ResourceExhaustionReason::WorkUnits)
+    );
+    let cached = engine.get_cell_value("Sheet1", 1, 1);
+    assert!(
+        !matches!(&cached, Some(LiteralValue::Number(n)) if *n == 988.0),
+        "IFERROR's fallback over a stopped MATCH was published: {cached:?}"
+    );
+    assert!(
+        !matches!(&cached, Some(LiteralValue::Error(e)) if e.kind == ExcelErrorKind::Cancelled),
+        "#CANCELLED was published: {cached:?}"
+    );
+}
+
+#[test]
+fn a_token_kept_from_a_finished_request_does_not_affect_the_next() {
+    // Each request has its own limits: tripping the first leaves the engine's
+    // next request with a clean, independent mirror.
+    let mut engine = engine_with(
+        work(1_000_000),
+        "=MATCH(SEQUENCE(150,150),SEQUENCE(150,150))",
+    );
+    assert!(engine.evaluate_all().is_err());
+    let stale = std::sync::Arc::clone(&engine.request_limits);
+    assert!(stale.tripped().is_some());
+    engine
+        .set_cell_formula("Sheet1", 1, 1, parse("=1+1").unwrap())
+        .unwrap();
+    engine.evaluate_all().unwrap();
+    assert!(!std::sync::Arc::ptr_eq(&stale, &engine.request_limits));
+    assert!(engine.request_limits.tripped().is_none());
+    assert_eq!(
+        engine.get_cell_value("Sheet1", 1, 1),
+        Some(LiteralValue::Number(2.0))
+    );
+}

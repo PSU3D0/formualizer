@@ -182,6 +182,7 @@ impl RequestLimits {
     }
 
     /// Starts a request: clears the previous request's trip and limits.
+    #[cfg(test)]
     pub(crate) fn begin_request(&self) {
         self.disarm();
         self.tripped.store(TRIP_NONE, Ordering::Relaxed);

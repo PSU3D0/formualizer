@@ -662,6 +662,7 @@ const EXPENSIVE_VERTEX_NS: u128 = 10_000;
 const UNIT_CANCELLED: &str = "Evaluation cancelled; the evaluated unit was not committed";
 const GROUP_CANCELLED: &str =
     "Parallel evaluation cancelled; the evaluated group was not committed";
+const NAME_CANCELLED: &str = "Evaluation cancelled; the named formula was not cached";
 const SCC_CANCELLED: &str = "Evaluation cancelled; the evaluated cycle was not completed";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1227,7 +1228,7 @@ pub struct Engine<R> {
     active_evaluation_deadline: Option<Instant>,
     /// Lock-free mirror of the active request's deadline and work budget, polled
     /// by functions through the request-scoped [`CancelToken`](crate::engine::CancelToken).
-    request_limits: Arc<crate::engine::cancel::RequestLimits>,
+    pub(in crate::engine) request_limits: Arc<crate::engine::cancel::RequestLimits>,
 
     /// Engine-level action depth.
     ///
@@ -3878,7 +3879,9 @@ where
                 ledger.resume_job(state.work_units, state.active_elapsed);
             }
             self.active_resource_ledger = Some(ledger);
-            self.request_limits.begin_request();
+            // Each request gets its own limits, so a token a function kept
+            // from an earlier request can neither trip nor observe this one.
+            self.request_limits = Arc::default();
         }
         self.evaluation_resource_request_depth =
             self.evaluation_resource_request_depth.saturating_add(1);
@@ -4089,6 +4092,9 @@ where
     /// `#CANCELLED`, which is not a finished result: the caller must not
     /// commit it and reports this instead.
     fn function_limit_error(&self) -> Option<ExcelError> {
+        // Only a request has limits; unmetered work (planning, inspection)
+        // between requests must not inherit the last request's stop.
+        self.active_resource_ledger.as_ref()?;
         let (reason, limit, observed) = self.request_limits.tripped()?;
         Some(
             crate::engine::ResourceLedgerError::Exhausted(
@@ -16337,23 +16343,26 @@ where
                 let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
                     .with_resolved_functions(&self.resolved_functions)
                     .with_arena_cells(self);
-                match interpreter.evaluate_ast(ast) {
-                    Ok(cv) => {
-                        let value = cv.into_literal();
-                        match value {
-                            LiteralValue::Array(_) => {
-                                let err = ExcelError::new(ExcelErrorKind::NImpl)
-                                    .with_message("Array result in scalar named range".to_string());
-                                let err_val = LiteralValue::Error(err.clone());
-                                self.graph.update_vertex_value_ref(vertex_id, &err_val);
-                                Ok(err_val)
-                            }
-                            other => {
-                                self.graph.update_vertex_value_ref(vertex_id, &other);
-                                Ok(other)
-                            }
+                let evaluated = interpreter
+                    .evaluate_ast(ast)
+                    .map(crate::traits::CalcValue::into_literal);
+                // A name's value is cached outside the guarded cell commit
+                // path: refuse one computed across a stop before caching it.
+                self.live_cancellation_after_work(NAME_CANCELLED)?;
+                match evaluated {
+                    Ok(value) => match value {
+                        LiteralValue::Array(_) => {
+                            let err = ExcelError::new(ExcelErrorKind::NImpl)
+                                .with_message("Array result in scalar named range".to_string());
+                            let err_val = LiteralValue::Error(err.clone());
+                            self.graph.update_vertex_value_ref(vertex_id, &err_val);
+                            Ok(err_val)
                         }
-                    }
+                        other => {
+                            self.graph.update_vertex_value_ref(vertex_id, &other);
+                            Ok(other)
+                        }
+                    },
                     Err(err) => {
                         let err_val = LiteralValue::Error(err.clone());
                         self.graph.update_vertex_value_ref(vertex_id, &err_val);
@@ -16442,14 +16451,15 @@ where
                 let interpreter = Interpreter::new_with_cell(self, sheet_name, cell_ref)
                     .with_resolved_functions(&self.resolved_functions)
                     .with_arena_cells(self);
-                match interpreter.evaluate_ast(ast) {
-                    Ok(cv) => {
-                        let v = cv.into_literal();
-                        match v {
-                            LiteralValue::Array(_) => v,
-                            other => LiteralValue::Array(vec![vec![other]]),
-                        }
-                    }
+                let evaluated = interpreter
+                    .evaluate_ast(ast)
+                    .map(crate::traits::CalcValue::into_literal);
+                self.live_cancellation_after_work(NAME_CANCELLED)?;
+                match evaluated {
+                    Ok(v) => match v {
+                        LiteralValue::Array(_) => v,
+                        other => LiteralValue::Array(vec![vec![other]]),
+                    },
                     Err(err) => LiteralValue::Error(err),
                 }
             }
@@ -17597,6 +17607,10 @@ where
         cancel_flag: &AtomicBool,
     ) -> Result<Vec<Option<LiteralValue>>, ExcelError> {
         self.validate_deterministic_mode()?;
+        if cancel_flag.load(Ordering::Relaxed) {
+            return Err(ExcelError::new(ExcelErrorKind::Cancelled)
+                .with_message("Evaluation cancelled before target preparation"));
+        }
         if targets.is_empty() {
             return Ok(Vec::new());
         }
@@ -21738,6 +21752,14 @@ where
                 } else {
                     if i < recordable && collector.finish_member_targets(&mut out_edges[i]) {
                         member_edges_changed = true;
+                    }
+                    // Members commit write-through, so a value computed by a
+                    // function the deadline or the work budget stopped must be
+                    // refused here, before it becomes visible. (An explicit
+                    // cancellation keeps its pinned contract: it is honoured
+                    // at the pass boundaries and completed passes stand.)
+                    if let Some(error) = self.function_limit_error() {
+                        return Err(error);
                     }
                     self.graph.update_vertex_value_ref(m.vertex, &value);
                     self.mirror_vertex_value_to_overlay(m.vertex, &value);

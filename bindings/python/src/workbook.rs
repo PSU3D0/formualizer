@@ -1369,14 +1369,21 @@ impl PyWorkbook {
     pub fn cancel(&self) {
         self.cancel_flag
             .store(true, std::sync::atomic::Ordering::SeqCst);
-        if let Some(token) = self.step_cancel.lock().expect("step token lock").as_ref() {
+        if let Some(token) = self.step_cancel.lock().expect("step token lock").as_ref()
+            // A step using the workbook's own flag already has the signal.
+            // Cancelling it again here could re-set the flag after that step
+            // consumed it, leaving a request pending for the next evaluation.
+            && !std::sync::Arc::ptr_eq(token.as_flag(), &self.cancel_flag)
+        {
             token.cancel();
         }
     }
 
     /// Withdraw a pending `cancel()` request, so the next evaluation runs.
     ///
-    /// Has no effect on an evaluation that has already observed the request.
+    /// This is for a request no evaluation has started on. Calling it from
+    /// another thread while an evaluation is running races with that
+    /// evaluation: it may or may not still be stopped.
     pub fn reset_cancel(&self) {
         self.cancel_flag
             .store(false, std::sync::atomic::Ordering::SeqCst);
