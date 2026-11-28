@@ -302,6 +302,12 @@ impl PyRecalcJob {
             }
             let result = wb.step_recalc(stop);
             admission.keep = result.is_ok() && wb.has_active_recalc_job();
+            if !wb.has_active_recalc_job() {
+                // A `Workbook.cancel()` aimed at this job ended with it: a
+                // cancel request is consumed by the evaluation it stops and
+                // must not also stop the next one.
+                self.workbook.cancel_flag.store(false, Ordering::SeqCst);
+            }
             let report = result.map_err(recalc_error_to_pyerr)?;
             Ok(PyStepReport::from_engine(&wb, report))
         })
