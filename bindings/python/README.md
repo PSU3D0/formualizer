@@ -59,6 +59,8 @@ Runnable, self-contained examples (from this directory, with a compatible native
 
 Run, for example, `python examples/interruptible_viewport_grid.py`. Each script checks its final results; timings and step counts depend on the machine and native build.
 
+`Workbook.cancel()` stops one blocking evaluation on that workbook, either the running call or the next `evaluate_all()`, `evaluate_cell()`, or `evaluate_cells()`. That call raises `ExcelEvaluationError` with `kind == "Cancelled"`, preserves the previous values of unfinished cells, and consumes the request. `reset_cancel()` withdraws a pending request.
+
 ## Command line
 
 Native wheels include the `formualizer` command, which recalculates the cached formula values in an `.xlsx` after another tool has edited it:
@@ -411,35 +413,29 @@ Runnable [custom-function example](https://github.com/psu3d0/formualizer/blob/ma
 
 ## Bulk ingest
 
-Write dense grids, typed/Arrow columns, or sparse point patches atomically and inspect the returned `WriteRangeReport`:
+Use `set_values` for a grid (including ragged rows), `set_columns` for equal-length columns, and `set_cells` for scattered edits. Coordinates start at 1. Each method returns a `WriteRangeReport` with inclusive bounds and `history_cleared`. Workbook methods take the sheet name first.
 
 ```python
-import array
+import formualizer as fz
 
-# 1. Dense row-major values (supports ragged rows; set_values_batch is a deprecated alias)
-rep = s.set_values(1, 1, [[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]])
-
-# 2. Dense column-major values (Arrow PyCapsule, dict[str, col], or sequence of columns)
-# Polars, PyArrow, DuckDB, and Nanoarrow expose Arrow PyCapsules natively;
-# pandas exposes the PyCapsule interface when `pyarrow` is installed.
-rep = s.set_columns(
-    1,
-    1,
-    {"price": array.array("d", [10.0, 20.0]), "qty": [2, 3]},
-    headers=True,
-)
-# Also accepts PyArrow Table/RecordBatch/RecordBatchReader or Polars DataFrame directly:
-# s.set_columns(1, 1, df, headers=True)
-
-# 3. Sparse cell patches (iterable of (row, col, value) triples or {(row, col): value} mapping)
-rep = s.set_cells([(1, 1, 100.0), (50, 3, "note")])
+wb = fz.Workbook()
+s = wb.sheet("Sales")
+s.set_values(1, 1, [["Item", "Units"], ["Tea", 3]])  # A1:B2
+s.set_columns(1, 3, {"Price": [2.5, 4.0]}, headers=True)  # C1:C3
+report = s.set_cells([(2, 2, 5), (4, 1, "Total")])
+assert wb.get_value("Sales", 2, 2) == 5.0
+assert (report.end_row, report.end_col) == (4, 2)
 ```
+
+`set_columns` accepts Arrow PyCapsule producers such as PyArrow tables and Polars DataFrames, mappings, and sequences of columns. A column can be a Python sequence, a one-dimensional buffer such as a NumPy array, or a PyArrow chunked array. With `headers=True`, column names occupy the first row. `set_values_batch` is deprecated in favor of `set_values`.
+
+A pandas DataFrame goes through its Arrow PyCapsule export and requires `pyarrow`. Without it, pandas raises `ImportError` before any cells are written. For a NumPy-backed float column, passing `df["price"].to_numpy()` as a column writes `NaN` as `#NUM!`. Passing the same DataFrame directly lets pandas export missing values as Arrow nulls, which write empty cells.
 
 > **Note:** Numeric cells are stored as IEEE-754 `f64` and read back as Python `float`. Integers beyond `±2^53` fail preflight with `ValueError` rather than silently rounding; cast 64-bit IDs explicitly to `str` or `float`.
 
 ## Undo / redo
 
-The changelog is opt-in. Once enabled, every edit is tracked:
+Changelog recording defaults to `False`. Use `fz.Workbook(enable_changelog=True)` for a new workbook or enable it before editing an existing workbook.
 
 ```python
 wb.set_changelog_enabled(True)
@@ -449,7 +445,7 @@ s.set_value(1, 1, fz.LiteralValue.number(20.0))
 wb.undo()  # back to 10
 wb.redo()  # back to 20
 
-# Batch methods are auto-grouped as one undo step.
+# A bulk write that fits the history limit is one undo step.
 # For manual grouping of multiple calls:
 wb.begin_action("update prices")
 s.set_value(1, 1, fz.LiteralValue.number(100.0))

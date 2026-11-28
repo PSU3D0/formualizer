@@ -13,16 +13,17 @@ This walkthrough gives one tiny but realistic workbook flow:
 
 <CodeTabs
   title="Pricing discount: A1 base price, A2 discount → B1 result"
-  rust={`use formualizer_common::LiteralValue;
-use formualizer_workbook::Workbook;
+  rust={`use formualizer::{LiteralValue, Workbook};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut wb = Workbook::new();
     wb.add_sheet("Pricing")?;
 
     // Inputs
-    wb.set_value("Pricing", 1, 1, LiteralValue::Number(100.0))?; // A1 base price
-    wb.set_value("Pricing", 2, 1, LiteralValue::Number(0.15))?;  // A2 discount
+    wb.set_values("Pricing", 1, 1, &[
+        vec![LiteralValue::Number(100.0)],
+        vec![LiteralValue::Number(0.15)],
+    ])?;
 
     // Formula
     wb.set_formula("Pricing", 1, 2, "=A1*(1-A2)")?;              // B1
@@ -39,8 +40,7 @@ wb = fz.Workbook()
 wb.add_sheet("Pricing")
 
 # Inputs
-wb.set_value("Pricing", 1, 1, 100.0)  # A1 base price
-wb.set_value("Pricing", 2, 1, 0.15)   # A2 discount
+wb.set_values("Pricing", 1, 1, [[100.0], [0.15]])
 
 # Formula
 wb.set_formula("Pricing", 1, 2, "=A1*(1-A2)")  # B1
@@ -55,8 +55,7 @@ const wb = new Workbook();
 wb.addSheet("Pricing");
 
 // Inputs
-wb.setValue("Pricing", 1, 1, 100);   // A1 base price
-wb.setValue("Pricing", 2, 1, 0.15);  // A2 discount
+wb.sheet("Pricing").setValues(1, 1, [[100], [0.15]]);
 
 // Formula
 wb.setFormula("Pricing", 1, 2, "=A1*(1-A2)");  // B1

@@ -56,6 +56,20 @@ The `Workbook` class manages stateful evaluation across multiple sheets and cell
 - `evaluateAll()`: Re-evaluate all dirty cells in the workbook.
 - `sheet(name: string)`: Returns a sheet facade with helper methods like `setValues` and `setFormulas`.
 
+### Bulk values and history
+
+| Workbook method | Input |
+| --- | --- |
+| `setValues(sheet, startRow, startCol, rows)` | Row-major grid, including ragged rows |
+| `setColumns(sheet, startRow, startCol, columns, options?)` | Typed columns with optional `headers` |
+| `setCells(sheet, cells)` | Sparse triples, cell objects or a packed block |
+
+On a sheet handle omit the sheet name. Each method returns `{ startRow, startCol, endRow, endCol, historyCleared }` with 1-based inclusive bounds. Recording defaults to off. Pass `{ enableChangelog: true }` to `new Workbook` to retain ordinary edits. Use `canUndo()` and `canRedo()` to enable history controls.
+
+JS converts a `Date` from its UTC instant. Exact UTC midnight becomes a date and any other time becomes a datetime. `new Date(2024, 0, 1)` is local midnight and can fall on the previous UTC day. Use `new Date(Date.UTC(2024, 0, 1))` for January 1.
+
+`arrowColumns(table, options?)` from `formualizer/arrow` converts Apache Arrow JS and Flechette tables for `setColumns`. Pass `{ dateSystem: '1904' }` for a 1904 workbook. Only builds with the optional `arrow-ipc` feature expose `setArrowIpc` on workbook and sheet handles for uncompressed IPC streams or files.
+
 ## Recalculation jobs
 
 | API | Behavior |
@@ -88,7 +102,7 @@ The subpath export `formualizer/worker` provides a zero-WASM client proxy (`crea
 | `createInProcessWorkbookWorker(options?)` | Create an in-process `MessageChannel` host + client pair |
 | `client.state`, `client.hasInFlightMutations`, `client.onStatusChange(fn)` | Inspect `{ revision, evaluatedRevision, ackClientSeq, recalcStatus, hasActiveJob }` and causal optimistic-edit state |
 | `client.loadEmpty`, `client.loadFromJson`, `client.loadFromXlsxBytes` | Reset/reload the worker workbook (`revision` resets to `0`, `ackClientSeq` advances, `transfer: true` supported for XLSX bytes) |
-| `client.setValue`, `client.setFormula`, `client.setValues`, `client.setFormulas`, `client.editBatch` | Mutate cells or run ordered batches (with optional `actionDescription` undo grouping), advancing `revision` and scheduling `autoRecalc` when enabled |
+| `client.setValue`, `client.setFormula`, `client.setValues`, `client.setColumns`, `client.setCells`, `client.setFormulas`, `client.editBatch` | Mutate cells or run ordered batches (with optional `actionDescription` undo grouping), advancing `revision` and scheduling `autoRecalc` when enabled |
 | `client.getValue`, `client.getValueWithState`, `client.getFormula`, `client.readRange`, `client.readRangeWithState` | Read cached values or `{ data, ...state }` without creating missing sheets |
 | `client.subscribeViewport(options)` | Subscribe a 1-based inclusive rectangle in `values` (`grid` or `patches`), `snapshots`, `deltas`, or transferable `columnar` (`tags`, `numbers`, `strings`, `pendingBitset`) mode with automatic job priority and credit-based flow control |
 | `client.recalc`, `client.recalcStream`, `client.beginRecalc`, `client.stepRecalc`, `client.pauseRecalc`, `client.cancelRecalc`, `client.prioritize` | Drive or stream interruptible recalculation across the worker boundary with `AbortSignal` and pause/inspect/repair/resume support |
@@ -103,6 +117,8 @@ Extend the engine with your own logic:
 - `registerFunction(name: string, callback: Function, options?)`: Add a custom function.
 - `unregisterFunction(name: string)`: Remove a custom function.
 - `listFunctions()`: Get a list of all registered functions.
+
+Worker bulk calls copy by default. With `transfer: true`, eligible whole buffers move to the worker and detach from the caller. Subviews are copied. Later engine-chunk failures keep the committed prefix and trigger a mutation event. An IPC failure can invalidate the viewport because earlier record batches may already have committed.
 
 ## SheetPort
 

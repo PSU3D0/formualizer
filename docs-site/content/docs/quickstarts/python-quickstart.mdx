@@ -17,8 +17,7 @@ import formualizer as fz
 wb = fz.Workbook()
 wb.add_sheet("Sheet1")
 
-wb.set_value("Sheet1", 1, 1, 100)
-wb.set_value("Sheet1", 2, 1, 20)
+wb.set_values("Sheet1", 1, 1, [[100], [20]])
 wb.set_formula("Sheet1", 1, 2, "=A1-A2")
 
 result = wb.evaluate_cell("Sheet1", 1, 2)

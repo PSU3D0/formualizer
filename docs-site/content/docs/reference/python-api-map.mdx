@@ -9,7 +9,7 @@ The `formualizer` Python package provides a high-performance interface to the Ru
 
 The `Workbook` class is the primary entry point for managing spreadsheet state and evaluation.
 
-- `Workbook(mode='shared', config=None)`: Initialize a new workbook.
+- `Workbook(*, mode=None, config=None, enable_changelog=None, span_evaluation=None)`: Initialize a new workbook.
 - `load_path(path: str)`: Load a workbook from a file path.
 - `from_path(path: str)`: (Alias) Load a workbook from a file path.
 - `add_sheet(name: str)`: Add a new sheet.
@@ -19,8 +19,16 @@ The `Workbook` class is the primary entry point for managing spreadsheet state a
 - `evaluate_cell(sheet: str, row: int, col: int) -> Any`: Evaluate and return a cell value.
 - `evaluate_all()`: Re-evaluate all dirty cells in the workbook.
 - `evaluate_cells(targets: List[Tuple[str, int, int]])`: Evaluate a specific list of target cells.
-- `set_values_batch(row: int, col: int, grid: List[List[Any]])`: Efficiently set a block of values.
-- `set_formulas_batch(row: int, col: int, grid: List[List[str]])`: Efficiently set a block of formulas.
+- `set_values(sheet, start_row, start_col, rows)` writes row-major values, including ragged rows. `set_values_batch` is deprecated.
+- `set_columns(sheet, start_row, start_col, data, *, headers=False)` writes equal-length columns from Arrow, a mapping, or a sequence of columns.
+- `set_cells(sheet, cells)` writes sparse triples or a mapping from coordinate pairs to values. Duplicate coordinates use the last value.
+- `set_formulas_batch(sheet, start_row, start_col, formulas)` writes a grid of formula strings.
+
+All three bulk value methods return `WriteRangeReport(start_row, start_col, end_row, end_col, history_cleared)`. On a `Sheet`, omit the leading sheet name. Coordinates start at 1.
+
+A pandas DataFrame goes through its Arrow PyCapsule export and requires `pyarrow`. Without it, pandas raises `ImportError` before any cells are written. For a NumPy-backed float column, passing `df["price"].to_numpy()` as a column writes `NaN` as `#NUM!`. Passing the same DataFrame directly lets pandas export missing values as Arrow nulls, which write empty cells.
+
+`Workbook.cancel()` stops one blocking evaluation on that workbook, either the running call or the next `evaluate_all()`, `evaluate_cell()`, or `evaluate_cells()`. That call raises `ExcelEvaluationError` with `kind == "Cancelled"`, preserves the previous values of unfinished cells, and consumes the request. `reset_cancel()` withdraws a pending request.
 
 ## Interruptible recalculation
 
@@ -53,6 +61,8 @@ See [Interruptible Recalculation](/docs/guides/interruptible-recalculation) for 
 - `list_functions() -> List[str]`: List all available functions.
 
 ## History and Undo
+
+Recording defaults to off. Create a workbook with `fz.Workbook(enable_changelog=True)` to retain ordinary edits. The `changelog_enabled`, `can_undo`, and `can_redo` properties report the current state.
 
 - `set_changelog_enabled(enabled: bool)`: Enable or disable tracking of changes.
 - `begin_action(description: str)`: Group following changes into a single undoable action.

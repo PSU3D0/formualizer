@@ -8,7 +8,9 @@ Formualizer supports both single-cell edits and grouped updates. Use the grouped
 ## Choose the right edit path
 
 - **Single edit:** `set_value` / `set_formula` (simple and direct).
-- **Rectangular batch write:** `set_values`, `set_formulas`, or `write_range` (Rust); `set_values_batch` / `set_formulas_batch` (Python); `setValues` / `setFormulas` (JS sheet facade).
+- For row-major values, use `set_values` (`setValues` in JS). Ragged rows leave omitted trailing cells alone.
+- For equal-length typed columns or Arrow data, use `set_columns` (`setColumns`). For sparse points use `set_cells` (`setCells`). At duplicate coordinates the last value wins.
+- For formula grids use Rust `set_formulas`, Python `Workbook.set_formulas_batch`, or JS `Sheet.setFormulas`.
 - **Atomic multi-step edit:** `Workbook::action(...)` in Rust rolls back all changes if one step fails.
 - **Undo/redo grouping:** `begin_action(...)` + `end_action(...)` groups many writes into one user-visible action.
 
@@ -16,19 +18,15 @@ Formualizer supports both single-cell edits and grouped updates. Use the grouped
 
 <CodeTabs
   title="Seed a pricing block and evaluate"
-  rust={`use formualizer_common::LiteralValue;
-use formualizer_workbook::Workbook;
+  rust={`use formualizer::{LiteralValue, Workbook};
 
 let mut wb = Workbook::new();
 wb.add_sheet("S")?;
-wb.set_changelog_enabled(true);
-
-wb.action("seed pricing block", |tx| {
-    tx.set_value("S", 1, 1, LiteralValue::Number(100.0))?;
-    tx.set_value("S", 2, 1, LiteralValue::Number(0.1))?;
-    tx.set_formula("S", 1, 2, "=A1*(1-A2)")?;
-    Ok(())
-})?;
+wb.set_values("S", 1, 1, &[
+    vec![LiteralValue::Number(100.0)],
+    vec![LiteralValue::Number(0.1)],
+])?;
+wb.set_formula("S", 1, 2, "=A1*(1-A2)")?;
 
 let out = wb.evaluate_cells(&[("S", 1, 2)])?;
 assert_eq!(out[0], LiteralValue::Number(90.0));`}
@@ -37,8 +35,8 @@ assert_eq!(out[0], LiteralValue::Number(90.0));`}
 wb = fz.Workbook()
 s = wb.sheet("S")
 
-s.set_values_batch(1, 1, [[100.0], [0.1]])
-s.set_formulas_batch(1, 2, [["=A1*(1-A2)"]])
+s.set_values(1, 1, [[100.0], [0.1]])
+wb.set_formula("S", 1, 2, "=A1*(1-A2)")
 
 assert wb.evaluate_cell("S", 1, 2) == 90.0`}
   ts={`import init, { Workbook } from "formualizer";
@@ -47,8 +45,7 @@ await init();
 const wb = new Workbook();
 wb.addSheet("S");
 
-wb.setValue("S", 1, 1, 100);
-wb.setValue("S", 2, 1, 0.1);
+wb.sheet("S").setValues(1, 1, [[100], [0.1]]);
 wb.setFormula("S", 1, 2, "=A1*(1-A2)");
 
 wb.evaluateAll();
@@ -57,8 +54,8 @@ console.log(wb.evaluateCell("S", 1, 2)); // 90`}
 
 ## Practical notes
 
-- Batch helpers reduce repeated graph/editor churn compared with many per-cell calls.
-- In Python/JS bindings, batch helpers internally wrap writes in an action for cleaner undo history.
+- A bulk value write returns its 1-based inclusive bounds. With recording enabled, an engine batch that fits the history limit becomes one undo step. Oversized batches clear history. Inspect `history_cleared` (`historyCleared` in JS) on the report.
+- Recording defaults to off. Enable it before the first edit with Rust `wb.set_changelog_enabled(true)`, Python `wb.set_changelog_enabled(True)`, or JS `wb.setChangelogEnabled(true)`.
 - After staging formulas, run `evaluate_cell`, `evaluate_cells`, or `evaluate_all` explicitly where your flow needs computed values.
 - For large imports, evaluate only target cells first (`evaluate_cells`) before full-sheet recomputation.
 

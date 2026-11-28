@@ -7,22 +7,7 @@ Formualizer's default path uses the stable dependency graph and is appropriate f
 
 ## Choose the right XLSX backend
 
-Formualizer supports multiple XLSX paths behind feature flags:
-
-- **Calamine**: read-focused backend optimized for loading workbooks.
-- **Umya**: read/write backend used when preserving or writing XLSX files is required.
-
-For read-heavy workloads, prefer the Calamine backend when available. In 0.6, the publishable Calamine path remains compatible with crates.io Calamine while using sparse-friendly engine ingest to avoid expanding formatting-only worksheet regions.
-
-Python example:
-
-```python
-import formualizer as fz
-
-wb = fz.Workbook.from_path("model.xlsx", backend="calamine")
-```
-
-Rust users enable the `calamine` feature on `formualizer-workbook` or the top-level `formualizer` crate.
+Use the native XLSX reader for loading and cache-only recalculation. In Python, `fz.Workbook.from_path("model.xlsx")` uses it by default. The `calamine` backend name is a compatibility alias. Use `umya` when you need the rich read/write backend.
 
 ## Use sparse-friendly imports
 
@@ -37,7 +22,13 @@ If a workbook fails a load budget, inspect whether it contains:
 
 ## Batch writes before recalculation
 
-For generated or programmatically edited workbooks, write values and formulas in batches before evaluating. This reduces graph/editor churn and keeps undo/redo history cleaner.
+| Input | Rust / Python | JS/WASM |
+| --- | --- | --- |
+| A row-major grid or ragged rows | `set_values` | `setValues` |
+| Equal-length typed columns, including Arrow data | `set_columns` | `setColumns` |
+| Scattered changes that should leave nearby cells alone | `set_cells` | `setCells` |
+
+Keep data in the producer’s layout. In the 5M-cell run below, importing columns directly took 28.3 ms. Recalculate after writing all inputs. For imports that do not need undo, the default workbook already has recording disabled.
 
 See [Workbook Edits and Batching](/docs/guides/workbook-edits-and-batching).
 
@@ -55,20 +46,54 @@ Targeted evaluation is often enough for API-style spreadsheet workflows.
 
 Rust hosts can spread recalculation over calls, retain a schedule, and prioritize a visible viewport. See [Interruptible Recalculation](/docs/guides/interruptible-recalculation) for soft budgets, progress, cancellation and pending values. Graph and schedule builds and individual family runs remain atomic.
 
+### Limit a tenant’s evaluation
+
+- Set `deadline.max_elapsed` for an elapsed-time budget. Long lookups, criteria functions and range traversals now poll inside the function. A deadline or cancellation fails the request at a checkpoint, even when the formula wraps the work in `IFERROR`. A spill commit that has begun completes atomically, so allow for cooperative stop latency.
+- Set `work.max_work_units` for a work budget. An array-lifted lookup charges the table size per lookup value. Array-lifted criteria charge the scanned range per element. This supplements the existing vertex accounting. A stopped request reports the reason (`Deadline`, `WorkUnits`, or cancellation) and keeps unfinished results out of the workbook.
+- Set `scratch.materialized_array_cells` to bound intermediate arrays and copied `LET` range bindings. Arrays wider than a worksheet incur a higher per-column charge. An over-budget result gives `#NUM!`. A `LET` expression can still ignore an over-budget binding or use its range dimensions by reference. This limit measures array work in cells and does not cap process RSS.
+
 ## Copied-formula families
 
 Copied formulas that share a shape (a column of `=B2*C2`, `=B3*C3`, ...) are evaluated together as one family over Arrow columns. This is the default and needs no configuration.
 
 FormulaPlane span evaluation, the opt-in accelerator in earlier releases, was removed in 0.10.0. `WorkbookConfig::with_span_evaluation`, `FormulaPlaneMode` and the Python/WASM `span_evaluation` toggles are still accepted but ignored, and the default engine is faster than span mode was. Remove them when convenient.
 
-## Benchmark responsibly
+## Release measurements
 
-When comparing results, separate:
+Release build, Rust Workbook API, changelog off, best of three on one 24-core Linux host. [Benchmark record and revision](https://github.com/PSU3D0/formualizer/blob/main/benchmarks/bulk-ingest-0.16.md).
 
-- load time from calculation time
-- first full evaluation from warmed incremental recalculation
-- backend choice (`calamine` vs `umya`)
-- Calamine's current two-range formula API vs future formula-record streaming once available upstream
-- default graph mode from opt-in span mode
+### Bulk writes
 
-This avoids attributing XLSX load improvements to formula execution, or span-runtime improvements to the default path.
+| Workload | Result |
+| --- | --- |
+| Overwrite 10,000 formulas with values | `set_values` 7.78 ms, `set_value` loop 59.1 ms (8×) |
+| Date-formatted column, 100,000 rows | First date write 0.08 ms, dates over dates 0.07 ms, numbers over dates 0.09 ms. The last write cleared the format and read back as plain numbers. |
+| Fresh sheet, 1,000,000 rows × 5 columns (5M cells) | `set_columns` 28.3 ms (6 ns/cell), `set_values` 93.9 ms (19 ns/cell). Peak RSS for the whole run was 287 MB. |
+| Overwrite 100,000 rows of `Data!A` with 200 cross-sheet readers of `=SUM(Data!A:A)` | Bulk write 0.22 ms, recalculation 1.92 ms. All readers returned the correct result. |
+| XLSX with one 100,000-row shared formula and deferred graph building | Load 132 ms, two bulk writes totaling 150,000 cells (half over shared-formula cells) 0.56 ms, `evaluate_all` 81.7 ms. Overwritten cells held values and surviving formulas read the new inputs. |
+
+### Row-at-a-time writes
+
+Row-major `set_value` loop on a fresh sheet without preallocation.
+
+| Rows × columns | Before | After |
+| --- | ---: | ---: |
+| 1,000 × 10 | 46.2 ms | 26.8 ms |
+| 4,000 × 10 | 410 ms | 98.9 ms |
+| 16,000 × 10 | 5,625 ms | 405 ms |
+| 32,768 × 10 | 23,095 ms | 865 ms |
+| 65,536 × 10 | 45,896 ms | 1,663 ms |
+| 100,000 × 4 | 26,560 ms | 994 ms |
+
+### Evaluation limits
+
+One formula on an empty sheet with a 2 s deadline.
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| `SUMIF` with array criteria | 12.6 s | Deadline at 2.00 s |
+| `MATCH` with array lookup values | 20.2 s | Deadline at 2.00 s |
+| `DDB` with a long depreciation schedule | 3.2 s | Under 1 ms |
+| `FREQUENCY` with large data and bin arrays | Over 60 s | 0.39 s |
+| `TRANSPOSE` producing a wide intermediate array | Aborted over 4 GB | `#NUM!` at 41 MB |
+| `LET` with an unused range binding | Aborted over 8 GB | `0` at 10 MB |
