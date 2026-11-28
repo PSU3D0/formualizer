@@ -88,8 +88,8 @@
     "sha256": "0a212dbd56bd9d3b7496d8e55e8f54d4b3385aa33f11f6a33290a976f844774e"
   },
   "docs-site/content/docs/introduction/versioning-and-stability.mdx": {
-    "date": "2026-10-03",
-    "sha256": "842d1d1f6993bb8c43f5ca5d2d160525f4eaff3fd4c8f1578b11662aec4d70fc"
+    "date": "2026-11-28",
+    "sha256": "286483f8ef25d9ad9b73cf9254302306a07b64299a9183d1cbe8900432a703bc"
   },
   "docs-site/content/docs/introduction/what-is-formualizer.mdx": {
     "date": "2026-02-22",
@@ -2032,8 +2032,8 @@
     "sha256": "77ead2a2610165dfb6872b5b2014cfc9b8a0f852ff6baaed41c2380128226969"
   },
   "docs-site/content/docs/sheetport/quickstart.mdx": {
-    "date": "2026-10-14",
-    "sha256": "8a2576631898dc97a9ece8670b26e833f9d54968d2bb700014c2cdac50faf01b"
+    "date": "2026-11-28",
+    "sha256": "299a806daab36390ece754a147136443c3e309b8bb1a1767bef3c920121da1f6"
   },
   "docs-site/content/docs/sheetport/sessions-and-evaluation.mdx": {
     "date": "2026-10-14",
@@ -2107,10 +2107,6 @@
     "date": "2026-10-09",
     "sha256": "5d1a01e1da6192831ccc5584b892d9e04fc9b1547253c90939fef8ec82ab730d"
   },
-  "docs/architecture/adaptive-formula-partition.md": {
-    "date": "2026-07-16",
-    "sha256": "ed8b94d764ee729bdd241192d9d4907a36fdb598b66ceaa1e0d584537b601933"
-  },
   "docs/architecture/arrow-canonical-contract.md": {
     "date": "2026-02-06",
     "sha256": "b05a267c276ba663c9909cdb1e5a24cabcd1f09a2ef505fad4989a7076841b7c"
@@ -2123,41 +2119,9 @@
     "date": "2026-07-24",
     "sha256": "7415a3fcc5846013989bd1aed04114ae70644bbc782bb2646c7422b40d31daf6"
   },
-  "docs/architecture/evaluation-c1-exit-gate.md": {
-    "date": "2026-07-16",
-    "sha256": "91b4a982d8f5a73438c675595d585005e6fc7689e02539772deb23883ed50e5f"
-  },
-  "docs/architecture/evaluation-c6-calibration.md": {
-    "date": "2026-07-25",
-    "sha256": "8d4c2f4f6663208ca1f7903ba5e48bc2c908d2cea96823c9cea342418bbd6911"
-  },
-  "docs/architecture/evaluation-resource-target-driven-cutover.md": {
-    "date": "2026-08-04",
-    "sha256": "c274c5c6eff26912ebbd38e2eb7cd3ef082fc9ffc44ade4498552503fdef7367"
-  },
   "docs/architecture/extension-api-v1.md": {
     "date": "2026-02-22",
     "sha256": "7aa095413124a2ee93ede81f1e94c9e9753e6f221abd205d7e482e0d4c0f378e"
-  },
-  "docs/architecture/formula-family-stream-ingest.md": {
-    "date": "2026-07-11",
-    "sha256": "3112d52c81216524b3b8e06158b6fa0592c71735cb286b99c596a179c9d0c963"
-  },
-  "docs/architecture/formula-function-closure-fragmented-families.md": {
-    "date": "2026-07-14",
-    "sha256": "ffc8fb1fb43c92331ee2e06b5c9bfccea15d6dc8de048777dbb4c532a62f3817"
-  },
-  "docs/architecture/formula-plane-coverage-ledger.md": {
-    "date": "2026-09-26",
-    "sha256": "568e914865e610691711d473eee2a5d392b906582c9758dd881f12a3cfd2bcbb"
-  },
-  "docs/architecture/formula-plane-span-coverage-audit.md": {
-    "date": "2026-09-01",
-    "sha256": "af99d834e0e2113c5710a9220b6f520c4798efff2b9bb48eb3032be2508d7f66"
-  },
-  "docs/architecture/imported-target-source-isolation.md": {
-    "date": "2026-09-10",
-    "sha256": "71f20159b8c57ac1c0da74812f779c2df6ec8715fb749d44a3d6ae745dae686d"
   },
   "docs/architecture/subtotal-aggregate-visibility-contract.md": {
     "date": "2026-10-07",
@@ -2179,22 +2143,6 @@
     "date": "2026-10-07",
     "sha256": "2fcb782f3a470e4269b6eb75a36ff2b526c1e652d9e47370636c03c04247e325"
   },
-  "docs/criteria-ingest-compatibility.md": {
-    "date": "2026-11-13",
-    "sha256": "d9551086780f30d9bcf88ccb91f55c1811f349f90daee652a179f4579dd8fc02"
-  },
-  "docs/dependency-authority-migration.md": {
-    "date": "2026-09-28",
-    "sha256": "54a746fc95e775b0776337d9d96826ad49ee4f1071fe076dce428e5a44df9074"
-  },
-  "docs/formula-assignment-failures.md": {
-    "date": "2026-09-10",
-    "sha256": "b4a54d916e01b2dd81617ea9ffdd50c2f5c5866f3bc9742ab974659a0e1f2b97"
-  },
-  "docs/imported-target-preparation.md": {
-    "date": "2026-09-10",
-    "sha256": "075283c03822a46059286bbc9e42dd0d6112baa864a70ea5d07219b1a5500824"
-  },
   "docs/json-workbook-format.md": {
     "date": "2026-07-25",
     "sha256": "0ee71112350a76fb3c393670b76e95c904e02e04652dc6e32069c7b60cebe4d7"
@@ -2207,14 +2155,6 @@
     "date": "2026-10-25",
     "sha256": "63df12e1b99b641e2a4698bae78e80562b2fd53890600964212f50b92fb57902"
   },
-  "docs/parser-divergences.md": {
-    "date": "2026-05-21",
-    "sha256": "7d6a4ad642361dacd292d7c1afa8c445e8562154c592ad825c2d62ceb3228788"
-  },
-  "docs/parser-sdk-3-migration.md": {
-    "date": "2026-07-30",
-    "sha256": "de7d4c6c2e7ab619d0625af437a6505ebafefb854979a8a7bbf0636666326479"
-  },
   "docs/preparation-error-policy.md": {
     "date": "2026-09-25",
     "sha256": "8ba24935d0230ace4a59c0851cda8e3e5622fc18c4628fefedc60670c914e9b6"
@@ -2222,10 +2162,6 @@
   "docs/testing/scenario-framework.md": {
     "date": "2026-09-24",
     "sha256": "405440ece846d89abc5ef2ea50819bf08ad09e0748ee1cabb12943462e6ff9ab"
-  },
-  "docs/umya3-import.md": {
-    "date": "2026-09-09",
-    "sha256": "fcc111ce5661284146749cbd0d469455198cea192ba624dc7d42d2523a80e837"
   },
   "skills/formualizer-recalc/SKILL.md": {
     "date": "2026-10-09",
