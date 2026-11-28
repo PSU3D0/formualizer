@@ -42,6 +42,7 @@ export interface WorkerStateHeader {
 }
 export interface RequestOptions { signal?: AbortSignal }
 export interface TransferRequestOptions extends RequestOptions { transfer?: boolean }
+type WorkerRequestArgs = unknown[] | (() => { args: unknown[]; transfer: ArrayBuffer[] });
 export interface ReadResult<T> extends WorkerStateHeader { data: T }
 export type MutationResult = WorkerStateHeader;
 export type WorkerRecalcOutcome = WorkerStateHeader & (
@@ -556,60 +557,62 @@ export class WorkbookWorkerClient {
     }
   }
   /** Internal RPC; callers use the typed methods below. */
-  private request(method:string,args:unknown[]=[],req?:RequestOptions,transfer:any[]=[]):Promise<any> {
+  private request(method:string,args:WorkerRequestArgs=[],req?:RequestOptions):Promise<any> {
     // Browser module workers can yield during WASM initialization before installing listeners.
     // Do not send the first command until the host announces readiness.
-    return this.isReady?this.sendRequest(method,args,req,transfer):this.ready.then(()=>this.sendRequest(method,args,req,transfer));
+    return this.isReady?this.sendRequest(method,args,req):this.ready.then(()=>this.sendRequest(method,args,req));
   }
-  private sendRequest(method:string,args:unknown[]=[],req?:RequestOptions,transfer:any[]=[]):Promise<any> {
+  private sendRequest(method:string,input:WorkerRequestArgs,req?:RequestOptions):Promise<any> {
     if(this.disposed)return Promise.reject(new Error('Workbook worker disposed'));
     if(this.failure!==undefined)return Promise.reject(this.failure);
     if(req?.signal?.aborted)return Promise.reject(abortError());
     const id=++this.next;
-    const clientSeq=mutationMethods.has(method)?++this.seq:undefined;
     return new Promise((resolve,reject)=>{
+      // Resolve ownership transfers only after readiness, disposal and cancellation checks.
+      const { args, transfer } = typeof input === 'function' ? input() : { args: input, transfer: [] };
+      const clientSeq=mutationMethods.has(method)?++this.seq:undefined;
       const abort=()=>{this.pending.delete(id);req?.signal?.removeEventListener('abort',abort);reject(abortError());};
       const cleanup=()=>req?.signal?.removeEventListener('abort',abort);
       this.pending.set(id,{resolve,reject,cleanup});req?.signal?.addEventListener('abort',abort,{once:true});
       try{this.endpoint.postMessage({protocol:'formualizer-worker',type:'request',id,method,args,clientSeq},transfer);}
-      catch(e){this.pending.delete(id);cleanup();reject(e);}
+      catch(e){
+        if(clientSeq === this.seq)this.seq--;
+        this.pending.delete(id);cleanup();reject(e);
+      }
     });
   }
   loadEmpty(options?:WorkbookLoadOptions,req?:RequestOptions):Promise<WorkerStateHeader>{return this.request('loadEmpty',[options],req);}
   loadFromJson(json:string,options?:WorkbookLoadOptions,req?:RequestOptions):Promise<WorkerStateHeader>{return this.request('loadFromJson',[json,options],req);}
   loadFromXlsxBytes(bytes:XlsxBytesSource,options?:WorkbookLoadOptions,req?:TransferRequestOptions):Promise<WorkerStateHeader>{
-    const input=prepareTransferableBytes(bytes,req?.transfer);return this.request('loadFromXlsxBytes',[input.bytes,options],req,input.transfer);
+    return this.request('loadFromXlsxBytes', () => {
+      const input = prepareTransferableBytes(bytes, req?.transfer);
+      return { args: [input.bytes, options], transfer: input.transfer };
+    }, req);
   }
   setAutoRecalc(enabled:boolean,options?:{budgetMs?:number;maxDeltaRecords?:number}):Promise<WorkerStateHeader>{return this.request('setAutoRecalc',[enabled,options]);}
   setValue(sheet:string,row:number,col:number,value:CellValue):Promise<WorkerStateHeader>{return this.request('setValue',[sheet,row,col,value]);}
   setFormula(sheet:string,row:number,col:number,formula:string):Promise<WorkerStateHeader>{return this.request('setFormula',[sheet,row,col,formula]);}
   setValues(sheet:string,startRow:number,startCol:number,values:readonly (readonly CellScalarInput[])[],req?:RequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{return this.request('setValues',[sheet,startRow,startCol,values],req);}
   setColumns(sheet:string,startRow:number,startCol:number,columns:readonly DenseColumnInput[],options?:SetColumnsOptions & TransferRequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{
-    try {
+    return this.request('setColumns', () => {
       const prepared=prepareWorkerColumns(columns,options?.transfer===true);
       const wireOpts=options?.headers!==undefined?{headers:options.headers}:undefined;
-      return this.request('setColumns',[sheet,startRow,startCol,prepared.columns,wireOpts],options,prepared.transfer);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+      return { args: [sheet,startRow,startCol,prepared.columns,wireOpts], transfer: prepared.transfer };
+    }, options);
   }
   setCells(sheet:string,cells:SetCellsInput,options?:TransferRequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{
-    try {
+    return this.request('setCells', () => {
       const prepared=prepareWorkerCells(cells,options?.transfer===true);
-      return this.request('setCells',[sheet,prepared.cells],options,prepared.transfer);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+      return { args: [sheet,prepared.cells], transfer: prepared.transfer };
+    }, options);
   }
   /** IPC commits in batches. A rejected IPC write invalidates the worker viewport because the engine may have committed a prefix. */
   setArrowIpc(sheet:string,startRow:number,startCol:number,bytes:XlsxBytesSource,options?:SetArrowIpcOptions & TransferRequestOptions):Promise<WorkerStateHeader & WriteRangeReport>{
-    try {
+    return this.request('setArrowIpc', () => {
       const input=prepareTransferableBytes(bytes,options?.transfer===true);
       const wireOpts=options?.headers!==undefined?{headers:options.headers}:undefined;
-      return this.request('setArrowIpc',[sheet,startRow,startCol,input.bytes,wireOpts],options,input.transfer);
-    } catch (error) {
-      return Promise.reject(error);
-    }
+      return { args: [sheet,startRow,startCol,input.bytes,wireOpts], transfer: input.transfer };
+    }, options);
   }
   setFormulas(sheet:string,row:number,col:number,formulas:string[][]):Promise<WorkerStateHeader>{return this.request('setFormulas',[sheet,row,col,formulas]);}
   editBatch(ops:WorkbookEditOp[],options?:{actionDescription?:string}):Promise<WorkerStateHeader>{return this.request('editBatch',[ops,options]);}
@@ -668,7 +671,10 @@ export class WorkbookWorkerClient {
     return this.request('evaluateSheetPort',[manifest,options],req);
   }
   recalculateXlsxBytes(bytes:XlsxBytesSource,errorLocationLimit?:number,options?:XlsxRecalculateOptions,req?:TransferRequestOptions):Promise<XlsxRecalculateResult>{
-    const input=prepareTransferableBytes(bytes,req?.transfer);return this.request('recalculateXlsxBytes',[input.bytes,errorLocationLimit,options,req?.transfer],req,input.transfer);
+    return this.request('recalculateXlsxBytes', () => {
+      const input = prepareTransferableBytes(bytes, req?.transfer);
+      return { args: [input.bytes,errorLocationLimit,options,req?.transfer], transfer: input.transfer };
+    }, req);
   }
   tokenize(formula:string,dialect?:FormulaDialect,req?:RequestOptions):Promise<Token[]>{return this.request('tokenize',[formula,dialect],req);}
   parse(formula:string,dialect?:FormulaDialect,req?:RequestOptions):Promise<ASTNodeData>{return this.request('parse',[formula,dialect],req);}

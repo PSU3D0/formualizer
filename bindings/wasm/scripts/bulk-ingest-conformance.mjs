@@ -1231,6 +1231,15 @@ await test('worker client exposes setValues, setColumns, setCells with safe tran
         onFrame: (f) => frames.push(f),
       });
 
+      const retained = new Float64Array([31]);
+      await assert.rejects(client.setColumns('W', 1, 1, [retained], { signal: AbortSignal.abort(), transfer: true }), { name: 'AbortError' });
+      assert.deepEqual([...retained], [31]);
+      const seq = client.lastSentClientSeq;
+      await assert.rejects(client.setValues('W', 1, 1, [[() => 7]]), { name: 'DataCloneError' });
+      assert.equal(client.hasInFlightMutations, false);
+      assert.equal(client.lastSentClientSeq, seq);
+      assert.equal(await client.getValue('W', 1, 1), null);
+
       // setValues returns WriteRangeReport + WorkerStateHeader
       const rVals = await client.setValues('W', 1, 1, [
         [1, 2],
