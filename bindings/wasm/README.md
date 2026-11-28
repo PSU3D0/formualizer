@@ -282,7 +282,34 @@ const ast = await parse('=IF(A1>100, A1*0.9, A1)');
 console.log(ast);  // AST with node types, references, operators
 ```
 
+### Bulk writes
+
+Use `setValues` for rows, `setColumns` for equal-length typed columns, and `setCells` for sparse edits. Coordinates start at 1. Workbook methods take the sheet name first. All three return a `WriteRangeReport` with inclusive bounds and `historyCleared`.
+
+```javascript
+import init, { Workbook } from 'formualizer';
+
+await init();
+const wb = new Workbook();
+wb.addSheet('Sales');
+const sheet = wb.sheet('Sales');
+sheet.setValues(1, 1, [['Item', 'Units'], ['Tea', 3]]); // A1:B2
+sheet.setColumns(1, 3, [new Float64Array([2.5, 4])]);  // C1:C2
+const report = sheet.setCells([[2, 2, 5], [4, 1, 'Total']]);
+console.log(report.endRow, report.endCol); // 4 2
+```
+
+JS converts a `Date` from its UTC instant. Exact UTC midnight becomes a date and any other time becomes a datetime. `new Date(2024, 0, 1)` is local midnight and can fall on the previous UTC day. Use `new Date(Date.UTC(2024, 0, 1))` for January 1. Invalid or out-of-range dates write `#NUM!`. A typed `{ kind: 'date', values: Float64Array }` column takes serials in the workbook’s date system.
+
+To import Apache Arrow JS or Flechette tables, import `arrowColumns` from `formualizer/arrow`, then call `sheet.setColumns(1, 1, arrowColumns(table), { headers: true })`. The adapter uses no WASM and has no runtime dependencies. For 1904 workbooks pass `{ dateSystem: '1904' }` to `arrowColumns`.
+
+The default package omits the IPC decoder. To enable `setArrowIpc(startRow, startCol, bytes, options?)` on a sheet, build from `bindings/wasm` with `wasm-pack build --target bundler --out-dir pkg --release --features arrow-ipc`, then `pnpm run build:ts`. It accepts uncompressed Arrow IPC streams and files. Headers and record batches commit as they are read.
+
+Workers copy typed arrays by default. Pass `{ transfer: true }` to a worker column write to move eligible whole buffers. Transferred buffers detach on the caller side. Subviews are copied so their parent buffers remain usable. JS inputs are validated before writing, but each engine chunk commits separately above 2,000,000 cells. On a later engine error, subscribers receive an update for the committed prefix.
+
 ### Undo / redo
+
+Changelog recording defaults to `false`. Use `new Workbook({ enableChangelog: true })` or call `wb.setChangelogEnabled(true)` before editing.
 
 ```typescript
 const wb = new Workbook();
@@ -402,7 +429,9 @@ parse(formula: string, dialect?: FormulaDialect): Promise<ASTNodeData>
 | `getValue(row, col)` | Get a cell's current value |
 | `setFormula(row, col, formula)` | Set a cell formula |
 | `getFormula(row, col)` | Get a cell's formula (if any) |
-| `setValues(startRow, startCol, data)` | Bulk-set a 2D array of values |
+| `setValues(startRow, startCol, rows)` | Write row-major values |
+| `setColumns(startRow, startCol, columns, options?)` | Write typed columns with optional headers |
+| `setCells(cells)` | Write sparse points, with the last value winning at a duplicate coordinate |
 | `setFormulas(startRow, startCol, data)` | Bulk-set a 2D array of formulas |
 | `evaluateCell(row, col)` | Evaluate a single cell |
 | `readRange(startRow, startCol, endRow, endCol)` | Read a range of values |

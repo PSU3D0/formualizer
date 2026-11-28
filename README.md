@@ -121,7 +121,7 @@ The native XLSX reader is the default in 0.13. See the [migration guide](docs/na
 
 ```toml
 [dependencies]
-formualizer = { version = "0.13", features = ["xlsx-recalc"] }
+formualizer = { version = "0.16", features = ["xlsx-recalc"] }
 ```
 
 ```rust
@@ -147,14 +147,87 @@ await init();
 
 const wb = new Workbook();
 wb.addSheet('Loans');
-wb.setValue('Loans', 1, 1, 250000);  // principal
-wb.setValue('Loans', 2, 1, 0.045);   // annual rate
-wb.setValue('Loans', 3, 1, 360);     // months
+wb.setValues('Loans', 1, 1, [[250000], [0.045], [360]]); // principal, annual rate, months
 wb.setFormula('Loans', 1, 2, '=PMT(A2/12, A3, -A1)');
 console.log(wb.evaluateCell('Loans', 1, 2)); // ~1266.71
 ```
 
 More in the [quickstarts](https://www.formualizer.dev/docs/quickstarts) for [Rust](https://www.formualizer.dev/docs/quickstarts/rust-quickstart), [Python](https://www.formualizer.dev/docs/quickstarts/python-quickstart), [Pyodide](https://www.formualizer.dev/docs/quickstarts/pyodide-quickstart) and [JS/WASM](https://www.formualizer.dev/docs/quickstarts/js-wasm-quickstart).
+
+## Bulk writes in 0.16
+
+Use rows for a grid, columns for typed data, and sparse coordinates for scattered edits. Rows and columns start at 1. All three calls return the affected bounds and a history-cleared flag.
+
+### Rust bulk writes
+
+```rust
+use formualizer::{LiteralValue, Workbook};
+use formualizer::workbook::{BulkCellTag, CellBatch, ColumnData};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Sales")?;
+    wb.set_values("Sales", 1, 1, &[vec![LiteralValue::Text("Tea".into())]])?;
+    let prices = ColumnData::Float64 { values: &[2.5, 4.0], validity: None };
+    wb.set_columns("Sales", 1, 2, &[prices])?;
+    let patch = CellBatch {
+        rows: &[2], cols: &[3], tags: &[BulkCellTag::Number as u8],
+        numbers: &[5.0], text_bytes: &[], text_offsets: &[0],
+    };
+    let report = wb.set_cells("Sales", &patch)?;
+    assert_eq!((report.end_row, report.end_col), (2, 3));
+    Ok(())
+}
+```
+
+Enable the `arrow` Cargo feature on `formualizer` to import Arrow arrays and record batches.
+
+### Python bulk writes
+
+```python
+import formualizer as fz
+
+wb = fz.Workbook()
+s = wb.sheet("Sales")
+s.set_values(1, 1, [["Item", "Units"], ["Tea", 3]])  # A1:B2
+s.set_columns(1, 3, {"Price": [2.5, 4.0]}, headers=True)  # C1:C3
+report = s.set_cells([(2, 2, 5), (4, 1, "Total")])
+assert wb.get_value("Sales", 2, 2) == 5.0
+assert (report.end_row, report.end_col) == (4, 2)
+```
+
+A pandas DataFrame goes through its Arrow PyCapsule export and requires `pyarrow`. Without it, pandas raises `ImportError` before any cells are written. For a NumPy-backed float column, passing `df["price"].to_numpy()` as a column writes `NaN` as `#NUM!`. Passing the same DataFrame directly lets pandas export missing values as Arrow nulls, which write empty cells.
+
+`Workbook.cancel()` targets the running or next blocking `evaluate_all()`, `evaluate_cell()`, or `evaluate_cells()` on that workbook. The call consumes the request when it returns, and if it observes cancellation it raises `ExcelEvaluationError` with `kind == "Cancelled"` and keeps the previous values of unfinished cells. Use `reset_cancel()` to withdraw a pending request before evaluation starts.
+
+### JavaScript bulk writes
+
+```javascript
+import init, { Workbook } from 'formualizer';
+
+await init();
+const wb = new Workbook();
+wb.addSheet('Sales');
+const sheet = wb.sheet('Sales');
+sheet.setValues(1, 1, [['Item', 'Units'], ['Tea', 3]]); // A1:B2
+sheet.setColumns(1, 3, [new Float64Array([2.5, 4])]);  // C1:C2
+const report = sheet.setCells([[2, 2, 5], [4, 1, 'Total']]);
+console.log(report.endRow, report.endCol); // 4 2
+```
+
+JS converts a `Date` from its UTC instant. Exact UTC midnight becomes a date and any other time becomes a datetime. `new Date(2024, 0, 1)` is local midnight and can fall on the previous UTC day. Use `new Date(Date.UTC(2024, 0, 1))` for January 1. Use `arrowColumns` from `formualizer/arrow` for Arrow tables. Source builds with the optional `arrow-ipc` feature also read uncompressed IPC bytes.
+
+### Upgrading undo/redo
+
+Changelog recording defaults to off in 0.16. To keep undo/redo for ordinary edits, enable recording when you create the workbook or before the first edit.
+
+| Language | New workbook | Existing workbook |
+| --- | --- | --- |
+| Rust | `Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true))` | `wb.set_changelog_enabled(true)` |
+| Python | `fz.Workbook(enable_changelog=True)` | `wb.set_changelog_enabled(True)` |
+| JS/WASM | `new Workbook({ enableChangelog: true })` | `wb.setChangelogEnabled(true)` |
+
+See the [release notes](CHANGELOG.md#unreleased) for evaluation budget and binding changes.
 
 ## What you get
 

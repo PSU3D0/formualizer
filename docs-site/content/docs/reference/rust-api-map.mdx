@@ -19,10 +19,7 @@ Formualizer is organized as a modular Rust workspace, allowing users to depend o
 
 ## Feature Flags
 
-- `wasm_plugins`: Enables loading custom functions via WebAssembly modules.
-- `wasm_runtime_wasmtime`: Uses Wasmtime as the backend for WASM plugins.
-- `umya_integration`: Provides helpers for integrating with the `umya-spreadsheet` crate.
-- `serde`: Enables Serde serialization/deserialization for core types.
+The `formualizer` facade enables the workbook by default. Add the optional `arrow` feature for `ColumnData::try_from_arrow` and `Workbook::set_record_batches`. Typed column buffers and sparse writes are available with the workbook feature alone.
 
 ## Key Types and Methods
 
@@ -47,9 +44,13 @@ Used within `ExcelError` to categorize calculation failures.
 The `Workbook` type in `formualizer-workbook` is the central coordinator.
 
 - `add_sheet(name)`: Create a new sheet.
-- `set_value(address, value)`: Update a cell with a literal.
-- `set_formula(address, formula)`: Update a cell with a formula string.
-- `evaluate(address)`: Trigger evaluation for a specific cell and its dependencies.
+- `set_value(sheet, row, col, value)` and `set_formula(sheet, row, col, formula)` edit one cell.
+- `set_values(sheet, start_row, start_col, rows)` writes row-major slices of `Vec<LiteralValue>`.
+- `set_columns(sheet, start_row, start_col, columns)` writes a slice of equal-length `ColumnData` buffers.
+- `set_cells(sheet, &batch)` writes 1-based coordinates and tagged values from a `CellBatch`. At repeated coordinates, the last entry wins.
+- `evaluate_cell(sheet, row, col)` evaluates a cell and its dependencies.
+
+All three bulk methods return `Result<WriteRangeReport, IoError>`. The report contains inclusive bounds and `history_cleared`. Recording defaults to off. Use `Workbook::new_with_config(WorkbookConfig::interactive().with_changelog(true))` to retain ordinary edits, and inspect `can_undo()` and `can_redo()` before navigating history.
 
 ### Interruptible Recalculation
 
