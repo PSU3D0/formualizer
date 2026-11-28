@@ -43,7 +43,7 @@ The CFFI, Python, and WASM Cargo packages are deliberately non-publishable. Thei
 
 ## Deterministic generation
 
-Canonical generation is supported on Linux (`x86_64-unknown-linux-gnu`), including the repository devcontainer and the `ubuntu-24.04` CI runner. It requires rustup, Python 3 for feature-policy validation, and standard Linux utilities (`diff`, `flock`, `realpath`, and `mktemp`). Run review generation in that environment rather than treating output from macOS or Windows as canonical.
+Canonical generation is supported on Linux (`x86_64-unknown-linux-gnu`), including the `ubuntu-24.04` CI runner. It requires rustup, Python 3 for feature-policy validation, and standard Linux utilities (`diff`, `flock`, `realpath`, and `mktemp`). Run review generation in that environment rather than treating output from macOS or Windows as canonical.
 
 Generation pins these inputs and neutralizes host configuration:
 

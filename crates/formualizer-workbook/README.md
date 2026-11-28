@@ -103,7 +103,7 @@ cargo run -p formualizer-workbook --features wasm_runtime_wasmtime --example was
 - **I/O backends** — pluggable readers/writers behind feature flags:
   - `xlsx-recalc` — native Compatible XLSX reading and source-preserving recalculation (`calamine` is a compatibility feature alias; no Calamine dependency). XLSX paths default to the safe `XlsxPathSource::SharedFile`; use `NativeXlsxAdapter::open_path_with_source(..., XlsxPathSource::DirectMmap)` for an explicit native read-only mapping. Direct mmap never falls back and requires the underlying file/inode not be destructively modified or truncated for the adapter lifetime (violations can terminate a Unix process with `SIGBUS`). The legacy `mmap` feature no longer selects behavior.
   - `umya` — existing Umya 2 XLSX backend
-  - `umya3` — opt-in Umya 3 backend sharing the same adapter algorithms. Includes paired cold import/export repair for border-colour loss and colour-selector hash collisions, retaining theme/indexed/RGB identity. See [Umya 3 import compatibility](../../docs/umya3-import.md).
+  - `umya3` — opt-in Umya 3 backend sharing the same adapter algorithms. Includes paired cold import/export repair for border-colour loss and colour-selector hash collisions, retaining theme/indexed/RGB identity.
   - `json` — structured JSON serialization
   - `csv` — CSV/TSV import/export
 - **Batch transactions** — atomic multi-cell operations with rollback.

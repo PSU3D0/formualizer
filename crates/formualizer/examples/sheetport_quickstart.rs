@@ -63,7 +63,7 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The same manifest, shipped as YAML.
     let yaml = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/sheetport/loan-calculator.fio.yaml"
+        "/../sheetport-spec/examples/loan-calculator.fio.yaml"
     ))?;
     let from_yaml = Manifest::from_yaml_str(&yaml)?;
     assert_eq!(from_yaml.to_yaml()?, session.manifest().to_yaml()?);

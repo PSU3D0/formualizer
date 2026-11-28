@@ -32,7 +32,7 @@ assert.throws(() => session.writeInputs({ rate: 0.05, principal: -1 }), error =>
   Array.isArray(error.violations) && error.violations.some(v => JSON.stringify(v).includes('principal')));
 assert.equal(session.readInputs().rate, 0.045, 'a rejected update writes nothing');
 
-const yaml = await import('node:fs').then(fs => fs.readFileSync(new URL('../../../examples/sheetport/loan-calculator.fio.yaml', import.meta.url), 'utf8'));
+const yaml = await import('node:fs').then(fs => fs.readFileSync(new URL('../../../crates/sheetport-spec/examples/loan-calculator.fio.yaml', import.meta.url), 'utf8'));
 const fromYaml = SheetPortSession.fromManifestYaml(yaml, wb);
 assert.deepEqual(fromYaml.manifest(), session.manifest());
 fromYaml.free();

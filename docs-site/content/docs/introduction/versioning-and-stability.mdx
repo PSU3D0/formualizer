@@ -20,7 +20,7 @@ cargo test -p formualizer-eval
 cargo test -p formualizer-workbook
 
 # Python bindings
-./scripts/dev-test.sh
+uv run --directory bindings/python pytest
 
 # WASM bindings
 cd bindings/wasm && npm test
