@@ -1509,7 +1509,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "formualizer"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "formualizer-common",
  "formualizer-eval",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-cli"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "chrono",
  "clap",
@@ -1579,7 +1579,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-common"
-version = "4.2.0"
+version = "4.3.0"
 dependencies = [
  "chrono",
  "serde",
@@ -1588,7 +1588,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-eval"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "arrow-arith",
  "arrow-array",
@@ -1623,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-macros"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "quote",
  "syn 2.0.119",
@@ -1631,7 +1631,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-parse"
-version = "4.2.0"
+version = "4.3.0"
 dependencies = [
  "formualizer-common",
  "serde",
@@ -1640,7 +1640,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-python"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -1655,7 +1655,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-sheetport"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "chrono",
  "formualizer-common",
@@ -1689,7 +1689,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-wasm"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "arrow-ipc",
  "chrono",
@@ -1706,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "formualizer-workbook"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "arrow-array",
  "arrow-schema",
@@ -3737,7 +3737,7 @@ dependencies = [
 
 [[package]]
 name = "sheetport-spec"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "anyhow",
  "assert_cmd",
