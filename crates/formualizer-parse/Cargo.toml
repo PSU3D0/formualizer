@@ -19,7 +19,6 @@ default = []
 serde = ["dep:serde", "formualizer-common/serde"]
 
 [dependencies]
-once_cell = { workspace = true }
 formualizer-common = { workspace = true }
 smallvec = { workspace = true }
 serde = { workspace = true, optional = true, features = ["derive"] }

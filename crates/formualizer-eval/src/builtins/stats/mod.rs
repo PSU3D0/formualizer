@@ -11012,14 +11012,14 @@ mod tests_selection_vs_sort_oracle {
     fn quickselect_paths_match_full_sort_oracle_bitwise() {
         let mut rng = SmallRng::seed_from_u64(0x5EED_57A7_u64);
         for _case in 0..1000 {
-            let n = rng.gen_range(1..=64);
+            let n = rng.random_range(1..=64);
             let data: Vec<f64> = (0..n)
                 .map(|_| {
-                    if rng.gen_bool(0.35) {
+                    if rng.random_bool(0.35) {
                         // Tie-heavy grid: exact duplicates are common.
-                        f64::from(rng.gen_range(-4i32..=4)) * 0.5
+                        f64::from(rng.random_range(-4i32..=4)) * 0.5
                     } else {
-                        rng.gen_range(-1.0e6..1.0e6)
+                        rng.random_range(-1.0e6..1.0e6)
                     }
                 })
                 .collect();
@@ -11061,13 +11061,13 @@ mod tests_selection_vs_sort_oracle {
             // PERCENTILE.INC / .EXC with random p, plus the exact endpoints
             // and quartile points (0.25/0.5/0.75 also covers QUARTILE.*).
             let ps = [
-                rng.r#gen::<f64>(),
+                rng.random::<f64>(),
                 0.0,
                 0.25,
                 0.5,
                 0.75,
                 1.0,
-                rng.gen_range(-0.5..1.5), // sometimes out of range
+                rng.random_range(-0.5..1.5), // sometimes out of range
             ];
             for p in ps {
                 let mut buf = data.clone();
@@ -11100,7 +11100,9 @@ mod tests_selection_vs_sort_oracle {
     #[ignore = "perf probe; run manually with --release --nocapture"]
     fn large_quickselect_perf_probe() {
         let mut rng = SmallRng::seed_from_u64(42);
-        let data: Vec<f64> = (0..100_000).map(|_| rng.gen_range(-1.0e9..1.0e9)).collect();
+        let data: Vec<f64> = (0..100_000)
+            .map(|_| rng.random_range(-1.0e9..1.0e9))
+            .collect();
         let k = 50usize;
         let rounds = 50u32;
 

@@ -28,32 +28,29 @@ formualizer-parse = { workspace = true }
 formualizer-macros  = { workspace = true }
 formualizer-common = { workspace = true }
 serde = { workspace = true, features = ["derive"], optional = true }
-once_cell = { workspace = true }
 rustc-hash = { workspace = true }
 # Unicode simple case folding, the equality Arrow `ilike` (through `regex`) gives text criteria.
 regex-syntax = { version = "0.8", default-features = false, features = ["std", "unicode-case"] }
 # default-features = false: SmallRng + seeded PRNG only; no OsRng / getrandom at runtime.
-rand = { version = "0.8.5", default-features = false, features = ["small_rng"] }
+rand = { version = "0.9.5", default-features = false, features = ["small_rng"] }
 rayon = "1.8"
-dashmap = "6.1.0"
 # clock feature controlled by the `system-clock` cargo feature below.
 chrono = { workspace = true }
 bitflags = "2.9.1"
-bumpalo = { version = "3.16", features = ["collections"] }
 smallvec = { workspace = true }
 # web-time is only needed for the js-runtime (browser/wasm-bindgen) profile.
 web-time = { workspace = true, optional = true }
 
 # Arrow — depend directly on the compute crates used by engine fast paths.
-arrow-array = "59.2.0"
-arrow-buffer = "59.2.0"
-arrow-schema = "59.2.0"
-arrow-select = "59.2.0"
-arrow-arith = "59.2.0"
-arrow-ord = "59.2.0"
+arrow-array = "60.2.0"
+arrow-buffer = "60.2.0"
+arrow-schema = "60.2.0"
+arrow-select = "60.2.0"
+arrow-arith = "60.2.0"
+arrow-ord = "60.2.0"
 # Uncalled public compute_prelude cast/comparison APIs retain source compatibility.
-arrow-cast = "59.2.0"
-arrow-string = "59.2.0"
+arrow-cast = "60.2.0"
+arrow-string = "60.2.0"
 
 [dependencies.tracing]
 version = "0.1"
@@ -76,7 +73,6 @@ optional = true
 # seeded from context and no ambient OsRng calls are made.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
-getrandom02 = { package = "getrandom", version = "0.2", features = ["js"], optional = true }
 
 [dev-dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -126,7 +122,7 @@ serde = ["dep:serde", "formualizer-common/serde"]
 # sample) works on wasm32-unknown-unknown instead of panicking with
 # "time not implemented on this platform".
 # Used by the formualizer-wasm binding crate; NOT enabled by default.
-js-runtime = ["dep:web-time", "dep:getrandom", "dep:getrandom02", "chrono/wasmbind"]
+js-runtime = ["dep:web-time", "dep:getrandom", "chrono/wasmbind"]
 
 tracing = ["dep:tracing", "dep:tracing-subscriber"]
 tracing_chrome = ["tracing", "dep:tracing-chrome"]

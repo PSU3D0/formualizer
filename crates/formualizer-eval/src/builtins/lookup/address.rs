@@ -80,8 +80,8 @@ impl Function for AddressFn {
     func_caps!(PURE);
 
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // row_num (required, strict number)
                 ArgSchema {

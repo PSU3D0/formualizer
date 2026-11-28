@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use arrow_array::builder::{BooleanBuilder, Float64Builder, StringBuilder, UInt8Builder};
 use arrow_array::{ArrayRef, BooleanArray, Float64Array, StringArray, UInt8Array, UInt32Array};
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 
 use crate::format::FormatId;
 use formualizer_common::{ExcelError, ExcelErrorKind, LiteralValue};
@@ -554,12 +554,12 @@ pub struct ColumnChunk {
     pub format: Option<FormatRuns>,
     pub meta: ColumnChunkMeta,
     // Lazy null providers (per-chunk)
-    lazy_null_numbers: OnceCell<Arc<Float64Array>>,
-    lazy_null_booleans: OnceCell<Arc<BooleanArray>>,
-    lazy_null_text: OnceCell<ArrayRef>,
-    lazy_null_errors: OnceCell<Arc<UInt8Array>>,
+    lazy_null_numbers: OnceLock<Arc<Float64Array>>,
+    lazy_null_booleans: OnceLock<Arc<BooleanArray>>,
+    lazy_null_text: OnceLock<ArrayRef>,
+    lazy_null_errors: OnceLock<Arc<UInt8Array>>,
     // Cache: lowered text lane, nulls preserved
-    lowered_text: OnceCell<ArrayRef>,
+    lowered_text: OnceLock<ArrayRef>,
     // Whole-chunk merged (base + overlays) lanes, reused across range reads
     // until either overlay or the base changes (decision 20.3).
     merged: MergedLaneCache,
@@ -723,11 +723,11 @@ impl ColumnChunk {
     }
 
     fn reset_length_caches(&mut self) {
-        self.lazy_null_numbers = OnceCell::new();
-        self.lazy_null_booleans = OnceCell::new();
-        self.lazy_null_text = OnceCell::new();
-        self.lazy_null_errors = OnceCell::new();
-        self.lowered_text = OnceCell::new();
+        self.lazy_null_numbers = OnceLock::new();
+        self.lazy_null_booleans = OnceLock::new();
+        self.lazy_null_text = OnceLock::new();
+        self.lazy_null_errors = OnceLock::new();
+        self.lowered_text = OnceLock::new();
     }
 
     /// Value generations for exact derived products; includes same-layer writes.
@@ -968,11 +968,11 @@ impl ColumnChunk {
         }
 
         // Length-dependent caches must be dropped.
-        self.lazy_null_numbers = OnceCell::new();
-        self.lazy_null_booleans = OnceCell::new();
-        self.lazy_null_text = OnceCell::new();
-        self.lazy_null_errors = OnceCell::new();
-        self.lowered_text = OnceCell::new();
+        self.lazy_null_numbers = OnceLock::new();
+        self.lazy_null_booleans = OnceLock::new();
+        self.lazy_null_text = OnceLock::new();
+        self.lazy_null_errors = OnceLock::new();
+        self.lowered_text = OnceLock::new();
 
         self.meta.len = new_len;
     }
@@ -1523,11 +1523,11 @@ impl IngestBuilder {
                     non_null_text: self.lane_counts[c].n_text,
                     non_null_err: self.lane_counts[c].n_err,
                 },
-                lazy_null_numbers: OnceCell::new(),
-                lazy_null_booleans: OnceCell::new(),
-                lazy_null_text: OnceCell::new(),
-                lazy_null_errors: OnceCell::new(),
-                lowered_text: OnceCell::new(),
+                lazy_null_numbers: OnceLock::new(),
+                lazy_null_booleans: OnceLock::new(),
+                lazy_null_text: OnceLock::new(),
+                lazy_null_errors: OnceLock::new(),
+                lowered_text: OnceLock::new(),
                 merged: MergedLaneCache::default(),
                 reserve: None,
                 overlay: Overlay::new(),
@@ -5384,11 +5384,11 @@ impl ArrowSheet {
                 non_null_text: 0,
                 non_null_err: 0,
             },
-            lazy_null_numbers: OnceCell::new(),
-            lazy_null_booleans: OnceCell::new(),
-            lazy_null_text: OnceCell::new(),
-            lazy_null_errors: OnceCell::new(),
-            lowered_text: OnceCell::new(),
+            lazy_null_numbers: OnceLock::new(),
+            lazy_null_booleans: OnceLock::new(),
+            lazy_null_text: OnceLock::new(),
+            lazy_null_errors: OnceLock::new(),
+            lowered_text: OnceLock::new(),
             merged: MergedLaneCache::default(),
             reserve: None,
             overlay: Overlay::new(),
@@ -5417,11 +5417,11 @@ impl ArrowSheet {
             formula_id: None,
             format,
             meta,
-            lazy_null_numbers: OnceCell::new(),
-            lazy_null_booleans: OnceCell::new(),
-            lazy_null_text: OnceCell::new(),
-            lazy_null_errors: OnceCell::new(),
-            lowered_text: OnceCell::new(),
+            lazy_null_numbers: OnceLock::new(),
+            lazy_null_booleans: OnceLock::new(),
+            lazy_null_text: OnceLock::new(),
+            lazy_null_errors: OnceLock::new(),
+            lowered_text: OnceLock::new(),
             merged: MergedLaneCache::default(),
             reserve: None,
             overlay,
@@ -5490,11 +5490,11 @@ impl ArrowSheet {
                 non_null_text,
                 non_null_err,
             },
-            lazy_null_numbers: OnceCell::new(),
-            lazy_null_booleans: OnceCell::new(),
-            lazy_null_text: OnceCell::new(),
-            lazy_null_errors: OnceCell::new(),
-            lowered_text: OnceCell::new(),
+            lazy_null_numbers: OnceLock::new(),
+            lazy_null_booleans: OnceLock::new(),
+            lazy_null_text: OnceLock::new(),
+            lazy_null_errors: OnceLock::new(),
+            lowered_text: OnceLock::new(),
             merged: MergedLaneCache::default(),
             reserve: None,
             overlay,
@@ -5700,7 +5700,7 @@ impl ArrowSheet {
         ch_mut.text = text;
         ch_mut.errors = errors;
         let freed = ch_mut.overlay.clear();
-        ch_mut.lowered_text = OnceCell::new();
+        ch_mut.lowered_text = OnceLock::new();
         ch_mut.meta.len = len;
         ch_mut.meta.non_null_num = non_num;
         ch_mut.meta.non_null_bool = non_bool;
@@ -5897,7 +5897,7 @@ impl ArrowSheet {
         ch_mut.text = text;
         ch_mut.errors = errors;
         let freed = ch_mut.computed_overlay.clear();
-        ch_mut.lowered_text = OnceCell::new();
+        ch_mut.lowered_text = OnceLock::new();
         ch_mut.meta.len = len;
         ch_mut.meta.non_null_num = non_num;
         ch_mut.meta.non_null_bool = non_bool;
@@ -5960,11 +5960,10 @@ impl ArrowSheet {
             // Rebuild chunks for each column (including inserted empty chunk) and recompute starts.
             for col in &mut self.columns {
                 let mut new_chunks: Vec<ColumnChunk> = Vec::with_capacity(col.chunks.len() + 2);
-                for i in 0..col.chunks.len() {
+                for (i, orig) in col.chunks.iter().enumerate() {
                     if i != split_idx {
-                        new_chunks.push(col.chunks[i].clone());
+                        new_chunks.push(orig.clone());
                     } else {
-                        let orig = &col.chunks[i];
                         let len = orig.type_tag.len();
                         if split_off > 0 {
                             new_chunks.push(Self::slice_chunk(orig, 0, split_off));
@@ -8321,34 +8320,34 @@ mod tests {
     fn points_only_patch_matches_per_offset_layering() {
         use rand::{Rng, SeedableRng, rngs::SmallRng};
         let mut rng = SmallRng::seed_from_u64(0x5eed);
-        let pick = |rng: &mut SmallRng| match rng.gen_range(0..7) {
-            0 => OverlayValue::Number(rng.gen_range(-5.0..5.0)),
-            1 => OverlayValue::DateTime(rng.gen_range(0.0..5.0)),
+        let pick = |rng: &mut SmallRng| match rng.random_range(0..7) {
+            0 => OverlayValue::Number(rng.random_range(-5.0..5.0)),
+            1 => OverlayValue::DateTime(rng.random_range(0.0..5.0)),
             2 => OverlayValue::Text(Arc::from("t")),
             3 => OverlayValue::Empty,
-            4 => OverlayValue::Error(rng.gen_range(1..8)),
-            5 => OverlayValue::Boolean(rng.gen_bool(0.5)),
+            4 => OverlayValue::Error(rng.random_range(1..8)),
+            5 => OverlayValue::Boolean(rng.random_bool(0.5)),
             _ => OverlayValue::Number(-0.0),
         };
         reset_overlay_select_stats();
         for case in 0..400 {
-            let n = rng.gen_range(17..300);
+            let n = rng.random_range(17..300);
             let total = n + 10;
             let base_nulls = case % 2 == 0;
             let nums: Vec<Option<f64>> = (0..total)
-                .map(|i| (!base_nulls || !rng.gen_bool(0.3)).then_some(i as f64 + 0.5))
+                .map(|i| (!base_nulls || !rng.random_bool(0.3)).then_some(i as f64 + 0.5))
                 .collect();
             let errs: Vec<Option<u8>> = (0..total)
-                .map(|i| (!base_nulls || rng.gen_bool(0.3)).then_some((i % 7) as u8 + 1))
+                .map(|i| (!base_nulls || rng.random_bool(0.3)).then_some((i % 7) as u8 + 1))
                 .collect();
             let (nums, errs) = (Float64Array::from(nums), UInt8Array::from(errs));
-            let start = rng.gen_range(0..10);
+            let start = rng.random_range(0..10);
             let range = start..start + n;
             let (mut user, mut computed) = (Overlay::new(), Overlay::new());
-            for _ in 0..rng.gen_range(1..40) {
-                let off = rng.gen_range(0..total);
+            for _ in 0..rng.random_range(1..40) {
+                let off = rng.random_range(0..total);
                 let v = pick(&mut rng);
-                if rng.gen_bool(0.5) {
+                if rng.random_bool(0.5) {
                     user.set_scalar(off, v);
                 } else {
                     computed.set_scalar(off, v);

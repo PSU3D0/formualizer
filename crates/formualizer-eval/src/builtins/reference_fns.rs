@@ -477,8 +477,8 @@ impl Function for IndexFn {
         2
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_byref_array);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_byref_array);
         &SCHEMA
     }
 
@@ -726,8 +726,8 @@ impl Function for OffsetFn {
         3
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_byref_reference);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_byref_reference);
         &SCHEMA
     }
 
@@ -1031,8 +1031,8 @@ impl Function for IndirectFn {
         1
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(arg_indirect);
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(arg_indirect);
         &SCHEMA
     }
 

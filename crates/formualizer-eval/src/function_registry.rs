@@ -3,9 +3,9 @@ use crate::function_contract::{
     FunctionDependencySemantics, FunctionEnvironmentSemantics, FunctionEvaluationSemantics,
     FunctionResultSemantics, FunctionSemanticContract, FunctionSemanticIdentity,
 };
-use once_cell::sync::Lazy;
 use std::collections::{HashMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -88,7 +88,8 @@ pub struct ResolvedFunction {
     pub semantics: SemanticContractResolution,
 }
 
-static REGISTRY: Lazy<RwLock<RegistryState>> = Lazy::new(|| RwLock::new(RegistryState::default()));
+static REGISTRY: LazyLock<RwLock<RegistryState>> =
+    LazyLock::new(|| RwLock::new(RegistryState::default()));
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Lock-free mirror of `RegistryState::semantic_epoch`.

@@ -163,8 +163,8 @@ impl Function for XLookupFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // lookup_value
                 ArgSchema {
@@ -657,8 +657,8 @@ impl Function for XMatchFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // lookup_value
                 ArgSchema {
@@ -1025,8 +1025,8 @@ impl Function for SortFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // array
                 ArgSchema {
@@ -1281,8 +1281,8 @@ impl Function for SortByFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // array
                 ArgSchema {
@@ -1543,8 +1543,8 @@ impl Function for RandArrayFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // rows (default 1)
                 ArgSchema {
@@ -1675,11 +1675,11 @@ impl Function for RandArrayFn {
                             ExcelError::new(ExcelErrorKind::Value),
                         )));
                     }
-                    let rand_int = rng.gen_range(min_int..=max_int);
+                    let rand_int = rng.random_range(min_int..=max_int);
                     LiteralValue::Int(rand_int)
                 } else {
                     // Generate random float in range [min, max)
-                    let rand_float = rng.r#gen::<f64>() * (max_val - min_val) + min_val;
+                    let rand_float = rng.random::<f64>() * (max_val - min_val) + min_val;
                     LiteralValue::Number(rand_float)
                 };
                 row_vec.push(value);
@@ -1939,8 +1939,8 @@ impl Function for GroupByFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // row_fields - range to group by
                 ArgSchema {
@@ -2519,8 +2519,8 @@ impl Function for PivotByFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // row_fields - range to group rows by
                 ArgSchema {
@@ -3146,8 +3146,8 @@ impl Function for FilterFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // array
                 ArgSchema {
@@ -3411,8 +3411,8 @@ impl Function for UniqueFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 ArgSchema {
                     kinds: smallvec::smallvec![ArgKind::Range],
@@ -3604,8 +3604,8 @@ impl Function for SequenceFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 // rows
                 ArgSchema {
@@ -3777,8 +3777,8 @@ impl Function for TransposeFn {
         false
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![ArgSchema {
                 kinds: smallvec::smallvec![ArgKind::Range],
                 required: true,
@@ -3901,8 +3901,8 @@ impl Function for TakeFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 ArgSchema {
                     kinds: smallvec::smallvec![ArgKind::Range],
@@ -4089,8 +4089,8 @@ impl Function for DropFn {
         true
     }
     fn arg_schema(&self) -> &'static [ArgSchema] {
-        use once_cell::sync::Lazy;
-        static SCHEMA: Lazy<Vec<ArgSchema>> = Lazy::new(|| {
+        use std::sync::LazyLock;
+        static SCHEMA: LazyLock<Vec<ArgSchema>> = LazyLock::new(|| {
             vec![
                 ArgSchema {
                     kinds: smallvec::smallvec![ArgKind::Range],

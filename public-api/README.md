@@ -36,7 +36,7 @@ The CFFI, Python, and WASM Cargo packages are deliberately non-publishable. Thei
 | `formualizer-common` | `serde` | Includes the only optional native integration. |
 | `formualizer-parse` | `serde` | Includes serialized AST support. |
 | `formualizer-eval` | `system-clock`, `tracing`, `tracing_chrome`, `perf_instrumentation`, `formula_plane_diagnostics` | Includes native clock and supported diagnostics. Excludes browser-only `js-runtime`, private `benchmark_internal`, and private test gate `test-support`. |
-| `formualizer-workbook` | `system-clock`, `json`, `csv`, `calamine`, `umya`, `mmap`, `io_builtins`, `import_range`, `webservice`, `tracing`, `perf_instrumentation`, `compression`, `calamine_integration`, `umya_integration`, `wasm_plugins`, `wasm_runtime_wasmtime` | Includes all native loaders, I/O builtins, diagnostics, compression, and the native Wasmtime plugin runtime. `mmap` is retained as a compatibility alias; XLSX source behavior is selected at runtime. Excludes browser-only `js-runtime` and private `benchmark_internal`. |
+| `formualizer-workbook` | `system-clock`, `json`, `csv`, `calamine`, `xlsx-recalc`, `umya`, `umya3`, `mmap`, `tracing`, `perf_instrumentation`, `calamine_integration`, `umya_integration`, `wasm_plugins`, `wasm_runtime_wasmtime` | Includes all native loaders, diagnostics, and the native Wasmtime plugin runtime. `mmap` is retained as a compatibility alias; XLSX source behavior is selected at runtime. Excludes browser-only `js-runtime`, opt-in `arrow`, and private `benchmark_internal`. |
 | `formualizer-sheetport` | `system-clock`, `umya` | Includes native clock and workbook adapter APIs. Excludes browser-only `js-runtime` and private `benchmark_internal`. |
 | `sheetport-spec` | none | The crate has no Cargo features. |
 | `formualizer-macros` | none | The proc-macro crate has no Cargo features. |
@@ -48,7 +48,7 @@ Canonical generation is supported on Linux (`x86_64-unknown-linux-gnu`), includi
 Generation pins these inputs and neutralizes host configuration:
 
 - exact `cargo-public-api =0.52.0`, installed with Rust `1.93.0` under versioned `target/public-api-tools/` rather than replacing a global Cargo plugin
-- rustdoc `nightly-2026-02-16` (`rustc 1.95.0-nightly`)
+- rustdoc `nightly-2026-09-09` (`rustc 1.100.0-nightly`)
 - target `x86_64-unknown-linux-gnu`
 - `LC_ALL=C`, `TZ=UTC`, and `CARGO_TERM_COLOR=never`
 - unset plain and encoded rust/rustdoc flags, inherited `CARGO`, compiler overrides, wrappers, target linker/runner overrides, and their Cargo build equivalents

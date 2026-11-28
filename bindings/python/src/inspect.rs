@@ -336,12 +336,7 @@ impl PyStateStamp {
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "OmittedCount",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "OmittedCount", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyOmittedCount {
     inner: core::OmittedCount,
@@ -391,8 +386,7 @@ impl PyOmittedCount {
 #[pyclass(
     name = "TruncationReport",
     module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
+    frozen
 )]
 #[derive(Clone)]
 pub struct PyTruncationReport {
@@ -438,12 +432,7 @@ fn truncation_dict(py: Python<'_>, value: &core::TruncationReport) -> PyResult<P
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "SpillRole",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "SpillRole", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PySpillRole {
     inner: core::SpillRole,
@@ -492,12 +481,7 @@ impl PySpillRole {
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "CellSnapshot",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "CellSnapshot", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyCellSnapshot {
     inner: core::CellSnapshot,
@@ -578,8 +562,7 @@ fn cell_dict(py: Python<'_>, value: &core::CellSnapshot) -> PyResult<PyObject> {
 #[pyclass(
     name = "CellSnapshotReport",
     module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
+    frozen
 )]
 #[derive(Clone)]
 pub struct PyCellSnapshotReport {
@@ -618,12 +601,7 @@ impl PyCellSnapshotReport {
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "NameResolution",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "NameResolution", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyNameResolution {
     inner: core::NameResolution,
@@ -705,8 +683,7 @@ impl PyNameResolution {
 #[pyclass(
     name = "SemanticReference",
     module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
+    frozen
 )]
 #[derive(Clone)]
 pub struct PySemanticReference {
@@ -834,12 +811,7 @@ fn reference_dict(py: Python<'_>, value: &core::SemanticReference) -> PyResult<P
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "Precedent",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "Precedent", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyPrecedent {
     inner: core::Precedent,
@@ -880,8 +852,7 @@ impl PyPrecedent {
 #[pyclass(
     name = "PrecedentReport",
     module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
+    frozen
 )]
 #[derive(Clone)]
 pub struct PyPrecedentReport {
@@ -940,12 +911,7 @@ impl PyPrecedentReport {
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "Dependent",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "Dependent", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyDependent {
     inner: core::Dependent,
@@ -986,8 +952,7 @@ impl PyDependent {
 #[pyclass(
     name = "DependentsReport",
     module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
+    frozen
 )]
 #[derive(Clone)]
 pub struct PyDependentsReport {
@@ -1090,12 +1055,7 @@ fn trace_node_index(graph: &TraceGraphData, id: core::TraceNodeId) -> PyResult<u
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "TraceNode",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "TraceNode", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyTraceNode {
     graph: Arc<TraceGraphData>,
@@ -1148,12 +1108,7 @@ impl PyTraceNode {
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "TraceLinkKind",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "TraceLinkKind", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyTraceLinkKind {
     inner: core::TraceLinkKind,
@@ -1193,8 +1148,7 @@ impl PyTraceLinkKind {
 #[pyclass(
     name = "TraceLinkTarget",
     module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
+    frozen
 )]
 #[derive(Clone)]
 pub struct PyTraceLinkTarget {
@@ -1233,12 +1187,7 @@ impl PyTraceLinkTarget {
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "TraceLink",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "TraceLink", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyTraceLink {
     graph: Arc<TraceGraphData>,
@@ -1317,12 +1266,7 @@ impl PyTraceLink {
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "TraceNodes",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "TraceNodes", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyTraceNodes {
     graph: Arc<TraceGraphData>,
@@ -1428,12 +1372,7 @@ impl PyTraceNodesIter {
 ///     )
 /// ```
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "TraceGraph",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "TraceGraph", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyTraceGraph {
     inner: Arc<TraceGraphData>,
@@ -1546,12 +1485,7 @@ impl PyTraceGraph {
 }
 
 #[cfg_attr(not(target_os = "emscripten"), gen_stub_pyclass)]
-#[pyclass(
-    name = "RangePage",
-    module = "formualizer.formualizer_py",
-    frozen,
-    skip_from_py_object
-)]
+#[pyclass(name = "RangePage", module = "formualizer.formualizer_py", frozen)]
 #[derive(Clone)]
 pub struct PyRangePage {
     inner: core::RangePage,

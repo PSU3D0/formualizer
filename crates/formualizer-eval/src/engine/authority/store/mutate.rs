@@ -1115,8 +1115,7 @@ impl Store {
             self.add_rec(g, p);
         }
         if let Some(n) = &newf {
-            for i in 0..pred.egroup_of.len() {
-                let g = pred.egroup_of[i];
+            for &g in &pred.egroup_of {
                 self.add_rec(g, Rect::cell(n.cell.1, n.cell.2));
             }
         }

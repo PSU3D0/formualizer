@@ -25,6 +25,9 @@ All notable changes to Formualizer will be documented in this file.
 
 - **Evaluation work budgets now include array-lifted lookups and criteria.** Each lookup value is charged for its table and each criteria element for its scanned range. Revisit `max_work_units` if you tuned it to vertex counts. Ordinary range aggregates keep their previous accounting. (#619, #638)
 - **Python `Workbook.cancel()` now stops the running or next blocking evaluation.** Calling it before `evaluate_all()`, `evaluate_cell()`, or `evaluate_cells()` makes that call raise `ExcelEvaluationError` with `kind == "Cancelled"`. The call consumes the request. Use `reset_cancel()` to withdraw a pending request before evaluation starts. (#417, #638)
+- **Removed unused placeholder `formualizer-workbook` Cargo features (`io_builtins`, `import_range`, `webservice`, `compression`) and `formualizer_workbook::builtins::load_io_builtins`.** None of these features had live runtime implementations; removing them drops unused `reqwest` and `zstd` optional dependencies from the workspace.
+- **Upgraded `rand` from `0.8` to `0.9` in `formualizer-eval`.** Seeded `RAND()`, `RANDBETWEEN()`, and `RANDARRAY()` outputs remain deterministic for a given seed and epoch, but specific numeric sequences differ from `rand 0.8` (`SmallRng` algorithm/sampling update). Upgrading also removes `rand_core 0.6` and the `getrandom 0.2` wasm32 shim from `formualizer-eval`.
+- **Upgraded Apache Arrow crates (`arrow-*`) from `59.2` to `60.2`, `rustc-hash` from `1.1` to `2.1`, `wasmtime` from `43.0` to `51.0` (with `wasmparser`/`wasm-encoder` aligned to `0.263`), `pyo3` from `0.29` to `0.30.1`, and `wasm-bindgen` to `0.2.130`.** Rust CI/release toolchains are aligned to `1.100.0` and `maturin` to `1.16.0`.
 
 ### Added
 

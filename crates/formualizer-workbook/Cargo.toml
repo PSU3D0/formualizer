@@ -21,14 +21,13 @@ serde_json = { workspace = true, optional = true }
 csv = { version = "1.3.1", optional = true }
 parking_lot = "0.12"
 chrono = { workspace = true }
-once_cell = { workspace = true }
 rustc-hash = { workspace = true }
 zip = { version = "9.4", default-features = false, features = ["deflate-flate2-zlib-rs"], optional = true }
 atoi_simd = "0.18"
 fast-float2 = "0.2"
 quick-xml = { version = "0.41", features = ["encoding"], optional = true }
-arrow-array = { version = "59.2.0", optional = true }
-arrow-schema = { version = "59.2.0", optional = true }
+arrow-array = { version = "60.2.0", optional = true }
+arrow-schema = { version = "60.2.0", optional = true }
 
 [features]
 # system-clock: forwards eval's ambient-time feature (Local::now/Utc::now).
@@ -56,44 +55,32 @@ umya3 = ["dep:umya-spreadsheet3", "dep:zip", "dep:quick-xml", "dep:getrandom04"]
 # through the explicit `XlsxPathSource::DirectMmap`. Safe to drop downstream.
 # Pinned by `legacy_mmap_feature_does_not_select_path_behaviour`.
 mmap = ["dep:memmap2"]
-io_builtins = []
-import_range = ["io_builtins"]
-webservice = ["io_builtins", "dep:reqwest"]
 tracing = ["dep:tracing"]
 perf_instrumentation = ["formualizer-eval/perf_instrumentation"]
 benchmark_internal = ["formualizer-eval/benchmark_internal"]
-compression = ["dep:zstd"]
 calamine_integration = ["calamine"]
 umya_integration = ["umya"]
 wasm_plugins = ["dep:wasmparser", "dep:serde_json", "formualizer-common/serde"]
 wasm_runtime_wasmtime = ["wasm_plugins", "dep:wasmtime"]
 
-[dependencies.reqwest]
-version = "0.11"
-optional = true
-
 [dependencies.tracing]
 version = "0.1"
 optional = true
 
-[dependencies.zstd]
-version = "0.13"
-optional = true
-
 [dependencies.wasmparser]
-version = "0.240"
+version = "0.263"
 optional = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tempfile = { workspace = true }
-wasmtime = { version = "43.0.2", optional = true }
+wasmtime = { version = "51.0.0", optional = true }
 
 [target.'cfg(any(unix, windows))'.dependencies]
 memmap2 = { version = "0.9", optional = true }
 
 [dev-dependencies]
 formualizer-eval = { path = "../formualizer-eval", version = "0.15.0", default-features = false, features = ["test-support"] }
-wasm-encoder = "0.240"
+wasm-encoder = "0.263"
 formualizer-testkit = { path = "../formualizer-testkit" }
 tempfile = { workspace = true }
 umya-spreadsheet = "=2.3.2"

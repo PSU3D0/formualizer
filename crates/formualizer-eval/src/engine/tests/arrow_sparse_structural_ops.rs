@@ -39,12 +39,12 @@ fn sparse_overlay_survives_row_and_column_structural_ops_without_densifying_othe
         let av = asheet.range_view(r0, 0, r0, 0);
         assert_eq!(av.get_cell(0, 0), LiteralValue::Number(1.0));
 
-        for c in 0..ncols {
+        for (c, col) in asheet.columns.iter().enumerate().take(ncols) {
             assert!(
-                asheet.columns[c].total_chunk_count() <= 2,
+                col.total_chunk_count() <= 2,
                 "unexpected pre-op densification (col={c}, chunks={}, sparse={})",
-                asheet.columns[c].chunks.len(),
-                asheet.columns[c].sparse_chunks.len()
+                col.chunks.len(),
+                col.sparse_chunks.len()
             );
         }
     }
@@ -60,12 +60,12 @@ fn sparse_overlay_survives_row_and_column_structural_ops_without_densifying_othe
         assert_eq!(av.get_cell(0, 0), LiteralValue::Number(1.0));
 
         // Untouched columns should not be forced to allocate hundreds of empty chunks.
-        for c in 0..ncols {
+        for (c, col) in asheet.columns.iter().enumerate().take(ncols) {
             assert!(
-                asheet.columns[c].total_chunk_count() <= 6,
+                col.total_chunk_count() <= 6,
                 "unexpected post-insert densification (col={c}, chunks={}, sparse={})",
-                asheet.columns[c].chunks.len(),
-                asheet.columns[c].sparse_chunks.len()
+                col.chunks.len(),
+                col.sparse_chunks.len()
             );
         }
     }
@@ -80,12 +80,12 @@ fn sparse_overlay_survives_row_and_column_structural_ops_without_densifying_othe
         let av = asheet.range_view(r0, 0, r0, 0);
         assert_eq!(av.get_cell(0, 0), LiteralValue::Number(1.0));
 
-        for c in 0..ncols {
+        for (c, col) in asheet.columns.iter().enumerate().take(ncols) {
             assert!(
-                asheet.columns[c].total_chunk_count() <= 8,
+                col.total_chunk_count() <= 8,
                 "unexpected post-delete densification (col={c}, chunks={}, sparse={})",
-                asheet.columns[c].chunks.len(),
-                asheet.columns[c].sparse_chunks.len()
+                col.chunks.len(),
+                col.sparse_chunks.len()
             );
         }
     }
