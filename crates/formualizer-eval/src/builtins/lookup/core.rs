@@ -451,7 +451,8 @@ pub struct VLookupFn;
 /// - Approximate matching assumes the first column is sorted ascending. Unsorted data is detected and returns `#N/A` rather than a silently wrong row, matching LibreOffice Calc (#283).
 /// - Numeric `range_lookup` values use logical coercion: zero is exact and nonzero is approximate.
 /// - If the lookup value is not found, returns `#N/A`.
-/// - If `col_index_num` is invalid, returns `#REF!` (or `#VALUE!` if non-numeric).
+/// - If the value is found and `col_index_num` is out of range, returns `#REF!`; a value that
+///   isn't found is `#N/A` either way. A non-numeric `col_index_num` returns `#VALUE!`.
 /// - A matched empty target cell is materialized as numeric `0`.
 ///
 /// # Examples
@@ -616,11 +617,6 @@ impl VLookupFn {
             let current_sheet = ctx.current_sheet();
             let rv = ctx.resolve_range_view(&table_ref, current_sheet)?;
             let (rows, cols) = rv.dims();
-            if col_index as usize > cols {
-                return Ok(crate::traits::CalcValue::Scalar(LiteralValue::Error(
-                    ExcelError::new(ExcelErrorKind::Ref),
-                )));
-            }
 
             let row_idx_opt = if !approximate {
                 let wildcard_mode = matches!(lookup_value, LiteralValue::Text(ref s) if s.contains('*') || s.contains('?') || s.contains('~'));
@@ -654,6 +650,11 @@ impl VLookupFn {
             };
 
             match row_idx_opt {
+                // Excel looks first: a value it doesn't find is #N/A even when the
+                // column is out of range.
+                Some(_) if col_index as usize > cols => Ok(crate::traits::CalcValue::Scalar(
+                    LiteralValue::Error(ExcelError::new(ExcelErrorKind::Ref)),
+                )),
                 Some(i) => {
                     let target_col_idx = (col_index - 1) as usize;
                     // An empty matched cell stays Empty, as in Excel: an enclosing
