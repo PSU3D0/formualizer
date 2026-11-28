@@ -39,7 +39,7 @@ fn roundtrip_sheet_order_special_names_strings_numbers_booleans_and_formulas() {
         wb.delete_sheet("Sheet1").unwrap();
     }
 
-    // Sheet 1: strings (special XML chars, leading/trailing spaces, newlines, CRLF, emoji, _x00HH_ literal)
+    // Sheet 1: strings (special XML chars, leading/trailing spaces, newlines, CRLF, emoji, _xHHHH_ literals)
     let s1 = sheet_names[0];
     let test_strings = [
         "plain",
@@ -48,6 +48,7 @@ fn roundtrip_sheet_order_special_names_strings_numbers_booleans_and_formulas() {
         "a & b < c > d \"e\" 'f'",
         "Unicode: café 日本語 🚀✨",
         "literal _x000A_ escape",
+        "literal _x4E2D_ escape",
         "\tindented\t",
     ];
     for (i, text) in test_strings.iter().enumerate() {
@@ -179,8 +180,8 @@ fn roundtrip_sheet_order_special_names_strings_numbers_booleans_and_formulas() {
 }
 
 #[test]
-fn roundtrip_all_13_excel_error_kinds() {
-    let kinds = [
+fn roundtrip_all_13_excel_error_kinds_and_recalculate_xlsx_bytes() {
+    let classic_kinds = [
         ExcelErrorKind::Null,
         ExcelErrorKind::Ref,
         ExcelErrorKind::Name,
@@ -188,16 +189,30 @@ fn roundtrip_all_13_excel_error_kinds() {
         ExcelErrorKind::Div,
         ExcelErrorKind::Na,
         ExcelErrorKind::Num,
-        ExcelErrorKind::Error,
-        ExcelErrorKind::NImpl,
+    ];
+    let non_classic_literal_kinds = [
         ExcelErrorKind::Spill,
         ExcelErrorKind::Calc,
+        ExcelErrorKind::Error,
+        ExcelErrorKind::NImpl,
         ExcelErrorKind::Circ,
         ExcelErrorKind::Cancelled,
     ];
+    let all_kinds: Vec<ExcelErrorKind> = classic_kinds
+        .iter()
+        .chain(non_classic_literal_kinds.iter())
+        .copied()
+        .collect();
+    assert_eq!(all_kinds.len(), 13);
+
     let mut wb = Workbook::new();
     wb.add_sheet("Errors").unwrap();
-    for (i, &kind) in kinds.iter().enumerate() {
+    if wb.sheet_names().iter().any(|s| s == "Sheet1") {
+        wb.delete_sheet("Sheet1").unwrap();
+    }
+
+    // Column A: literal error values for all 13 error kinds
+    for (i, &kind) in all_kinds.iter().enumerate() {
         wb.set_value(
             "Errors",
             (i + 1) as u32,
@@ -207,24 +222,165 @@ fn roundtrip_all_13_excel_error_kinds() {
         .unwrap();
     }
 
+    // Column B: formula cells producing Excel errors and non-error results
+    // plus a cyclic pair (C1/C2) and a spill-blocked formula (D1/D2) so
+    // cached formula errors across classic, Excel 365 (#SPILL!), and engine-only (#CIRC!)
+    // error kinds are exercised in the exported XML.
+    wb.set_formula("Errors", 1, 2, "=1/0").unwrap(); // #DIV/0!
+    wb.set_formula("Errors", 2, 2, "=NA()").unwrap(); // #N/A
+    wb.set_formula("Errors", 3, 2, "=\"x\"+1").unwrap(); // #VALUE!
+    wb.set_formula("Errors", 4, 2, "=SQRT(-1)").unwrap(); // #NUM!
+    wb.set_formula("Errors", 5, 2, "=A1").unwrap(); // #NULL!
+    wb.set_formula("Errors", 6, 2, "=A2").unwrap(); // #REF!
+    wb.set_formula("Errors", 7, 2, "=A3").unwrap(); // #NAME?
+    wb.set_formula("Errors", 8, 2, "=A8").unwrap(); // references literal "#SPILL!" text
+    wb.set_formula("Errors", 9, 2, "=A9").unwrap(); // references literal "#CALC!" text
+    wb.set_formula("Errors", 10, 2, "=A10").unwrap(); // references literal "#ERROR!" text
+    wb.set_formula("Errors", 11, 2, "=A11").unwrap(); // references literal "#N/IMPL!" text
+    wb.set_formula("Errors", 12, 2, "=A12").unwrap(); // references literal "#CIRC!" text
+    wb.set_formula("Errors", 13, 2, "=A13").unwrap(); // references literal "#CANCELLED!" text
+    // Real #CIRC! formula pair in C1/C2
+    wb.set_formula("Errors", 1, 3, "=C2+1").unwrap();
+    wb.set_formula("Errors", 2, 3, "=C1+1").unwrap();
+    // Real #SPILL! formula in D1 (blocked by D2)
+    wb.set_value("Errors", 2, 4, LiteralValue::Number(99.0))
+        .unwrap();
+    wb.set_formula("Errors", 1, 4, "=SEQUENCE(2,1)").unwrap();
+    wb.evaluate_all().unwrap();
+
     let bytes = wb.to_xlsx_bytes().unwrap();
+
+    // Inspect raw sheet XML to confirm OOXML error encoding rules:
+    // - Classic 7 literal errors use t="e"
+    // - Non-classic/engine-only literal errors use t="inlineStr"
+    // - Formula cached #CIRC! uses t="str" (never t="e")
+    // - Formula cached #SPILL! uses t="e"
+    let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
+    let mut sheet_xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut sheet_xml)
+        .unwrap();
+    for kind in &classic_kinds {
+        assert!(
+            sheet_xml.contains(&format!(r#"t="e"><v>{kind}</v>"#)),
+            "expected classic literal error {kind} as t=\"e\": {sheet_xml}"
+        );
+    }
+    for kind in &non_classic_literal_kinds {
+        assert!(
+            sheet_xml.contains(&format!(r#"t="inlineStr"><is><t>{kind}</t></is>"#)),
+            "expected non-classic literal error {kind} as inlineStr: {sheet_xml}"
+        );
+    }
+    assert!(
+        !sheet_xml.contains(r#"t="e"><v>#CIRC!</v>"#)
+            && !sheet_xml.contains(r#"t="e"><f>C2 + 1</f><v>#CIRC!</v>"#),
+        "engine-only #CIRC! must never be emitted with t=\"e\": {sheet_xml}"
+    );
+    assert!(
+        sheet_xml.contains(r#"t="str"><f>C2 + 1</f><v>#CIRC!</v>"#),
+        "expected cyclic formula cache #CIRC! as t=\"str\": {sheet_xml}"
+    );
+    assert!(
+        sheet_xml.contains(r#"t="e"><f>SEQUENCE(2, 1)</f><v>#SPILL!</v>"#),
+        "expected Excel 365 formula cache #SPILL! as t=\"e\": {sheet_xml}"
+    );
+    for (row, kind) in [
+        (10, ExcelErrorKind::Error),
+        (11, ExcelErrorKind::NImpl),
+        (12, ExcelErrorKind::Circ),
+        (13, ExcelErrorKind::Cancelled),
+    ] {
+        let expected_cell = format!(r#"<c r="B{row}" t="str"><f>A{row}</f><v>{kind}</v></c>"#);
+        assert!(
+            sheet_xml.contains(&expected_cell),
+            "engine-only formula error {kind} must use t=\"str\" ({expected_cell}): {sheet_xml}"
+        );
+        assert!(
+            !sheet_xml.contains(&format!(r#"t="e"><v>{kind}</v>"#)),
+            "engine-only {kind} must never appear as t=\"e\": {sheet_xml}"
+        );
+    }
+
+    // 1. Reopen with NativeXlsxAdapter
     let reopened = reopen_native(bytes.clone());
-    for (i, &kind) in kinds.iter().enumerate() {
+    for (i, &kind) in classic_kinds.iter().enumerate() {
         match reopened.get_value("Errors", (i + 1) as u32, 1) {
             Some(LiteralValue::Error(e)) => {
-                assert_eq!(e.kind, kind, "error kind mismatch at row {}", i + 1)
+                assert_eq!(e.kind, kind, "classic error mismatch at row {}", i + 1)
             }
             other => panic!("expected error {kind} at row {}, got {other:?}", i + 1),
         }
     }
+    for (offset, &kind) in non_classic_literal_kinds.iter().enumerate() {
+        let row = (classic_kinds.len() + offset + 1) as u32;
+        assert_eq!(
+            reopened.get_value("Errors", row, 1),
+            Some(LiteralValue::Text(kind.to_string())),
+            "non-classic literal error at row {row} should reload as string"
+        );
+    }
 
-    // Cross-verify umya-spreadsheet reads the archive cleanly
+    // 2. Round-trip through recalculate_xlsx_bytes (Workbook profile handles cycles cleanly)
+    let recalced_workbook = recalculate_xlsx_bytes(&bytes, XlsxRecalculateOptions::workbook())
+        .expect(
+            "to_xlsx_bytes -> recalculate_xlsx_bytes(workbook) must succeed for all 13 error kinds",
+        );
+    assert!(recalced_workbook.summary.evaluated >= 15);
+    assert!(
+        recalced_workbook
+            .summary
+            .error_summary
+            .contains_key("#DIV/0!"),
+        "expected #DIV/0! in recalc summary"
+    );
+
+    // 3. Also verify Strict profile succeeds on all 13 literal error kinds + non-cyclic formulas
+    let mut strict_wb = Workbook::new();
+    strict_wb.add_sheet("StrictErrors").unwrap();
+    for (i, &kind) in all_kinds.iter().enumerate() {
+        strict_wb
+            .set_value(
+                "StrictErrors",
+                (i + 1) as u32,
+                1,
+                LiteralValue::Error(ExcelError::new(kind)),
+            )
+            .unwrap();
+    }
+    strict_wb.set_formula("StrictErrors", 1, 2, "=1/0").unwrap();
+    strict_wb
+        .set_formula("StrictErrors", 2, 2, "=LEN(A12)")
+        .unwrap();
+    strict_wb.evaluate_all().unwrap();
+    let strict_bytes = strict_wb.to_xlsx_bytes().unwrap();
+    let recalced_strict = recalculate_xlsx_bytes(&strict_bytes, XlsxRecalculateOptions::default())
+        .expect("to_xlsx_bytes -> recalculate_xlsx_bytes(strict) must succeed for all 13 literal error kinds");
+    assert_eq!(recalced_strict.summary.evaluated, 2);
+    assert_eq!(recalced_strict.summary.errors, 1);
+
+    // 4. Cross-verify umya-spreadsheet reads the archive cleanly
     let umya_book = umya_spreadsheet::reader::xlsx::read_reader(Cursor::new(&bytes), true)
         .expect("umya-spreadsheet reads error workbook");
     let ws = umya_book.get_sheet_by_name("Errors").unwrap();
-    for (i, &kind) in kinds.iter().enumerate() {
+    for (i, &kind) in all_kinds.iter().enumerate() {
         assert_eq!(ws.get_value((1, (i + 1) as u32)), kind.to_string());
     }
+}
+
+#[test]
+fn rejects_illegal_xml_control_characters_in_sheet_names() {
+    let mut wb = Workbook::new();
+    wb.add_sheet("Bad\u{0001}Name").unwrap();
+    let err = wb
+        .to_xlsx_bytes()
+        .expect_err("illegal XML 1.0 control char in sheet name must fail");
+    assert!(
+        err.to_string().contains("control character"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

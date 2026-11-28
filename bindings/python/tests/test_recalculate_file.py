@@ -75,3 +75,103 @@ def test_recalculate_file_output_path_keeps_input_unmodified(tmp_path: Path):
 
     assert in_after["Sheet1"]["B1"].value is None
     assert out_after["Sheet1"]["B1"].value in (10, 10.0, "10")
+    assert summary["coverage"] == "complete"
+
+
+def test_recalculate_file_cyclic_workbook_reports_errors_not_success(tmp_path: Path):
+    path = tmp_path / "cyclic.xlsx"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = "=B1+1"
+    ws["B1"] = "=A1+1"
+    wb.save(path)
+
+    summary = fz.recalculate_file(str(path))
+
+    assert summary["status"] == "errors_found"
+    assert summary["coverage"] == "partial"
+    assert summary["evaluated"] == 2
+    assert summary["errors"] == 2
+    assert summary["total_errors"] == 2
+    assert summary["sheets"]["Sheet1"] == {"evaluated": 2, "errors": 2}
+    assert summary["error_summary"]["#CIRC!"]["count"] == 2
+    assert set(summary["error_summary"]["#CIRC!"]["locations"]) == {
+        "Sheet1!A1",
+        "Sheet1!B1",
+    }
+
+
+def test_recalculate_file_unknown_function_reports_errors_not_success(tmp_path: Path):
+    path = tmp_path / "unknown_fn.xlsx"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = "=NOSUCHFN(1)"
+    wb.save(path)
+
+    summary = fz.recalculate_file(str(path))
+
+    assert summary["status"] == "errors_found"
+    assert summary["coverage"] == "partial"
+    assert summary["evaluated"] == 1
+    assert summary["errors"] == 1
+    assert summary["total_errors"] == 1
+    assert summary["sheets"]["Sheet1"] == {"evaluated": 1, "errors": 1}
+    assert summary["unknown_functions"] == [{"name": "NOSUCHFN", "cells": 1}]
+    assert summary["error_summary"]["#NAME?"]["count"] == 1
+    assert summary["error_summary"]["#NAME?"]["locations"] == ["Sheet1!A1"]
+    assert summary["error_summary"]["#NAME?"]["messages"] == [
+        "Unknown function: NOSUCHFN"
+    ]
+
+
+def test_recalculate_file_limits_override_and_helpful_error(tmp_path: Path):
+    path = tmp_path / "two_formulas.xlsx"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = 10
+    ws["B1"] = "=A1+1"
+    ws["B2"] = "=B1+1"
+    wb.save(path)
+
+    with pytest.raises(OSError) as exc_info:
+        fz.recalculate_file(str(path), limits={"maxFormulaCells": 1})
+    msg = str(exc_info.value)
+    assert "formula cell count limit" in msg
+    assert "recalculate_xlsx_file(..., limits=...)" in msg
+
+    summary = fz.recalculate_file(str(path), limits={"maxFormulaCells": 10})
+    assert summary["status"] == "success"
+    assert summary["coverage"] == "complete"
+    assert summary["evaluated"] == 2
+    assert summary["errors"] == 0
+
+
+def test_recalculate_file_refuses_symlink_destination(tmp_path: Path):
+    target = tmp_path / "target.xlsx"
+    link = tmp_path / "link.xlsx"
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws["A1"] = 2
+    ws["B1"] = "=A1*5"
+    wb.save(target)
+    original_bytes = target.read_bytes()
+
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks not supported in this environment")
+
+    with pytest.raises(OSError) as exc_info:
+        fz.recalculate_file(str(link))
+    msg = str(exc_info.value)
+    assert "symlink" in msg
+    assert "recalculate_xlsx_file" in msg
+    assert target.read_bytes() == original_bytes

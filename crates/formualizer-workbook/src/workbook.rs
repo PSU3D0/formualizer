@@ -1865,9 +1865,9 @@ impl Workbook {
         Self::new_with_mode(WorkbookMode::Interactive)
     }
 
-    #[cfg(feature = "xlsx-recalc")]
+    #[cfg(any(feature = "xlsx-recalc", feature = "umya"))]
     pub fn to_xlsx_bytes(&self) -> Result<Vec<u8>, IoError> {
-        crate::xlsx::writer::write_workbook_to_xlsx_bytes(self)
+        crate::xlsx_writer::write_workbook_to_xlsx_bytes(self)
     }
 
     pub fn register_custom_function(

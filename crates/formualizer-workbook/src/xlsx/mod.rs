@@ -13,8 +13,6 @@ pub(crate) mod package;
 pub mod recalculate;
 #[cfg(feature = "xlsx-recalc")]
 pub(crate) mod worksheet;
-#[cfg(feature = "xlsx-recalc")]
-pub(crate) mod writer;
 pub(crate) mod xml;
 
 pub(crate) mod source;

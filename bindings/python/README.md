@@ -566,7 +566,7 @@ tokenize(formula: str, dialect: FormulaDialect = None) -> Tokenizer
 parse(formula: str, dialect: FormulaDialect = None) -> ASTNode
 load_workbook(path: str, strategy: str = None, *, backend: str | None = None, path_source: XlsxPathSource | None = None, span_evaluation: bool | None = None) -> Workbook
 load_workbook_bytes(data: bytes, strategy: str = None, backend: str | None = None, *, span_evaluation: bool | None = None) -> Workbook
-recalculate_file(path: str, output: str | None = None) -> dict
+recalculate_file(path: str, output: str | None = None, *, limits: SourceRecalculateLimits | None = None) -> dict
 recalculate_xlsx_bytes(data: bytes, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None, external_links: str = "cached") -> dict
 recalculate_xlsx_file(path: str, output: str | None = None, *, error_location_limit: int | None = None, rng_seed: int | None = None, deterministic_timestamp_utc: datetime | None = None, deterministic_timezone: str | int | None = None, external_links: str = "cached") -> dict
 ```
@@ -598,7 +598,7 @@ Full type stubs are included in the package (`.pyi` files) for IDE autocompletio
 
 ## Building from source
 
-Requires Rust 1.99.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
+Requires Rust 1.100.0 (the pinned release toolchain; edition 2024) and [maturin](https://github.com/PyO3/maturin):
 
 ```bash
 pip install maturin

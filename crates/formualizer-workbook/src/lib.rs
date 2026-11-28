@@ -29,6 +29,9 @@ pub use source_outcome::{
 };
 #[cfg(feature = "xlsx-recalc")]
 mod xlsx;
+#[cfg(any(feature = "xlsx-recalc", feature = "umya"))]
+#[path = "xlsx/writer.rs"]
+pub(crate) mod xlsx_writer;
 #[cfg(feature = "xlsx-recalc")]
 pub use cached_external_links::CachedExternalLinkValues;
 pub mod error;

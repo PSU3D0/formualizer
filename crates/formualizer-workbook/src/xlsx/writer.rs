@@ -1,7 +1,7 @@
 //! Native OOXML `.xlsx` serializer for in-memory [`Workbook`] instances.
 //!
-//! Emits a self-contained, standards-compliant SpreadsheetML package using only
-//! `zip` and UTF-8 XML formatting — zero `umya-spreadsheet` dependency.
+//! Emits a self-contained SpreadsheetML package using only `zip` and UTF-8 XML
+//! formatting — zero `umya-spreadsheet` dependency.
 //!
 //! Package layout:
 //! - `[Content_Types].xml`
@@ -11,7 +11,8 @@
 //! - `xl/styles.xml` (minimal valid stylesheet; temporal values serialize as
 //!   date-system-aware numeric serials per #355, leaving number-format fidelity
 //!   to the format channel)
-//! - `xl/worksheets/sheet{N}.xml` (numbers, inline strings, booleans, errors, formulas + caches)
+//! - `xl/worksheets/sheet{N}.xml` (numbers, inline strings, booleans, Excel-standard
+//!   error cells, and formulas with cached values)
 
 use crate::calc_pr::{calc_settings_from_cycle, render_calc_pr};
 use crate::error::{IoError, col_to_a1};
@@ -46,6 +47,17 @@ pub(crate) fn write_workbook_to_xlsx_bytes(workbook: &Workbook) -> Result<Vec<u8
     } else {
         vec!["Sheet1".to_string()]
     };
+
+    for name in &sheet_names {
+        if name.chars().any(is_illegal_xml10_char) {
+            return Err(IoError::Unsupported {
+                feature: "control character in worksheet name".into(),
+                context: format!(
+                    "worksheet name contains XML 1.0 illegal control characters: {name:?}"
+                ),
+            });
+        }
+    }
 
     let date_system = workbook.engine().config.date_system;
     let mut calc_settings = calc_settings_from_cycle(&workbook.engine().config.cycle);
@@ -245,6 +257,29 @@ fn write_worksheet_xml(
     out.push_str("</sheetData></worksheet>");
 }
 
+/// Classic OOXML `t="e"` error tokens accepted by both Excel and Calamine/source-recalc
+/// on literal and formula cells.
+fn is_classic_ooxml_error(kind: ExcelErrorKind) -> bool {
+    matches!(
+        kind,
+        ExcelErrorKind::Null
+            | ExcelErrorKind::Div
+            | ExcelErrorKind::Value
+            | ExcelErrorKind::Ref
+            | ExcelErrorKind::Name
+            | ExcelErrorKind::Num
+            | ExcelErrorKind::Na
+    )
+}
+
+/// Excel-standard error tokens valid as cached formula `<v>` payloads with `t="e"`
+/// (classic OOXML errors plus Excel 365 `#SPILL!` and `#CALC!`).
+/// Engine-only errors (`#CIRC!`, `#N/IMPL!`, `#ERROR!`, `#CANCELLED!`) are not
+/// Excel `t="e"` tokens and serialize as string payloads instead.
+fn is_excel_formula_cache_error(kind: ExcelErrorKind) -> bool {
+    is_classic_ooxml_error(kind) || matches!(kind, ExcelErrorKind::Spill | ExcelErrorKind::Calc)
+}
+
 fn write_formula_cell(
     out: &mut String,
     col_a1: &str,
@@ -261,7 +296,7 @@ fn write_formula_cell(
         Number(f64),
         Int(i64),
         Bool(bool),
-        Str(&'a str),
+        Str(std::borrow::Cow<'a, str>),
         Error(ExcelErrorKind),
     }
 
@@ -276,8 +311,14 @@ fn write_formula_cell(
             }
         }
         Some(LiteralValue::Boolean(b)) => CachedEncoding::Bool(*b),
-        Some(LiteralValue::Text(s)) => CachedEncoding::Str(s.as_str()),
-        Some(LiteralValue::Error(e)) => CachedEncoding::Error(e.kind),
+        Some(LiteralValue::Text(s)) => CachedEncoding::Str(std::borrow::Cow::Borrowed(s.as_str())),
+        Some(LiteralValue::Error(e)) => {
+            if is_excel_formula_cache_error(e.kind) {
+                CachedEncoding::Error(e.kind)
+            } else {
+                CachedEncoding::Str(std::borrow::Cow::Owned(e.kind.to_string()))
+            }
+        }
         Some(LiteralValue::Date(d)) => match d.and_hms_opt(0, 0, 0) {
             Some(dt) => CachedEncoding::Number(datetime_to_serial_for(date_system, &dt)),
             None => CachedEncoding::Error(ExcelErrorKind::Num),
@@ -316,7 +357,7 @@ fn write_formula_cell(
         CachedEncoding::Bool(b) => {
             out.push_str(if b { "<v>1</v>" } else { "<v>0</v>" });
         }
-        CachedEncoding::Str(s) => {
+        CachedEncoding::Str(ref s) => {
             if needs_xml_space_preserve(s) {
                 out.push_str(r#"<v xml:space="preserve">"#);
             } else {
@@ -361,16 +402,19 @@ fn write_value_cell(
             let _ = write!(out, r#"<c r="{col_a1}{row}" t="b"><v>{bit}</v></c>"#);
         }
         LiteralValue::Text(s) => {
-            let _ = write!(out, r#"<c r="{col_a1}{row}" t="inlineStr"><is><t"#);
-            if needs_xml_space_preserve(s) {
-                out.push_str(r#" xml:space="preserve""#);
-            }
-            out.push('>');
-            push_xml_escaped_ooxml_string(out, s);
-            out.push_str("</t></is></c>");
+            write_inline_string_cell(out, col_a1, row, s);
         }
         LiteralValue::Error(e) => {
-            let _ = write!(out, r#"<c r="{col_a1}{row}" t="e"><v>{}</v></c>"#, e.kind);
+            if is_classic_ooxml_error(e.kind) {
+                let _ = write!(out, r#"<c r="{col_a1}{row}" t="e"><v>{}</v></c>"#, e.kind);
+            } else {
+                // Non-classic literal error tokens (`#SPILL!`, `#CALC!`, and engine-only
+                // `#CIRC!`, `#N/IMPL!`, `#ERROR!`, `#CANCELLED!`) are emitted as inline
+                // strings so both Excel and Formualizer's source-preserving recalculation
+                // accept the exported archive (matching legacy Umya behavior).
+                let token = e.kind.to_string();
+                write_inline_string_cell(out, col_a1, row, &token);
+            }
         }
         LiteralValue::Date(d) => match d.and_hms_opt(0, 0, 0) {
             Some(dt) => {
@@ -405,6 +449,16 @@ fn write_value_cell(
             );
         }
     }
+}
+
+fn write_inline_string_cell(out: &mut String, col_a1: &str, row: u32, s: &str) {
+    let _ = write!(out, r#"<c r="{col_a1}{row}" t="inlineStr"><is><t"#);
+    if needs_xml_space_preserve(s) {
+        out.push_str(r#" xml:space="preserve""#);
+    }
+    out.push('>');
+    push_xml_escaped_ooxml_string(out, s);
+    out.push_str("</t></is></c>");
 }
 
 fn needs_xml_space_preserve(s: &str) -> bool {
@@ -457,19 +511,18 @@ fn push_xml_escaped_text(out: &mut String, s: &str) {
 /// Escape text for OOXML `ST_Xstring` elements (`<t>`, `<v t="str">`).
 ///
 /// Escapes XML metacharacters, preserves `\r` via `&#xD;`, encodes XML 1.0
-/// illegal control characters as `_x00HH_`, and escapes literal `_x00HH_`
-/// sequences as `_x005F_x00HH_` so readers that decode OOXML hex escapes
-/// recover the exact original string.
+/// illegal control characters as `_xHHHH_`, and escapes any literal `_xHHHH_`
+/// (`_x[0-9A-Fa-f]{4}_`) sequence as `_x005F_xHHHH_` per OOXML spec so readers
+/// that decode OOXML hex escapes recover the exact original string.
 fn push_xml_escaped_ooxml_string(out: &mut String, s: &str) {
     let bytes = s.as_bytes();
     let mut i = 0usize;
     while i < bytes.len() {
         if bytes[i] == b'_'
             && i + 7 <= bytes.len()
-            && &bytes[i..i + 4] == b"_x00"
+            && bytes[i + 1] == b'x'
             && bytes[i + 6] == b'_'
-            && bytes[i + 4].is_ascii_hexdigit()
-            && bytes[i + 5].is_ascii_hexdigit()
+            && bytes[i + 2..i + 6].iter().all(u8::is_ascii_hexdigit)
         {
             out.push_str("_x005F_");
             i += 1;
