@@ -109,15 +109,10 @@ fn visit(ctx: &mut Ctx<'_>, r: SemanticReference<'_>) -> Result<(), ExcelError> 
         }
         SemanticReference::Table(t) => {
             if let Some(e) = ctx.g.resolve_table_entry(&t.name) {
-                let rr = &e.range;
-                ctx.out.push((
-                    false,
-                    rr.start.sheet_id,
-                    rr.start.coord.row(),
-                    rr.start.coord.col(),
-                    rr.end.coord.row(),
-                    rr.end.coord.col(),
-                ));
+                let (top, left, bottom, right) =
+                    crate::engine::authority::extract::table_read_region(e, t.specifier.as_ref());
+                ctx.out
+                    .push((false, e.range.start.sheet_id, top, left, bottom, right));
             }
         }
         _ => {}
